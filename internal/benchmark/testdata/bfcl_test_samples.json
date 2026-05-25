@@ -1,0 +1,109 @@
+[
+  {
+    "id": "bfcl_case_01_flight_booking",
+    "dataset": "bfcl",
+    "system_prompt": "You are a helpful travel assistant. You help users search, book, and verify flight details.",
+    "tools": [
+      {
+        "name": "search_flights",
+        "description": "Search flights between an origin and destination for a specific date.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "origin": { "type": "string", "description": "The city or airport code the flight departs from." },
+            "destination": { "type": "string", "description": "The city or airport code the flight arrives at." },
+            "date": { "type": "string", "description": "The date of the flight." }
+          },
+          "required": ["origin", "destination", "date"]
+        }
+      },
+      {
+        "name": "book_flight",
+        "description": "Book a specific flight by ID for a passenger.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "flight_id": { "type": "string", "description": "The ID of the flight to book." },
+            "passenger_name": { "type": "string", "description": "Full name of the passenger." }
+          },
+          "required": ["flight_id", "passenger_name"]
+        }
+      },
+      {
+        "name": "get_ticket_status",
+        "description": "Retrieve status and seat details of a booked ticket.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "ticket_id": { "type": "string", "description": "The ticket booking reference number." }
+          },
+          "required": ["ticket_id"]
+        }
+      }
+    ],
+    "turns": [
+      {
+        "user_message": "Find a flight from New York to Paris on June 15.",
+        "expected_tool_call": "search_flights",
+        "expected_args": { "origin": "New York", "destination": "Paris", "date": "June 15" },
+        "mock_response": "{\"flights\":[{\"flight_id\":\"PAR-456\",\"price\":450}]}"
+      },
+      {
+        "user_message": "Great! Please book that flight PAR-456 for passenger John Doe.",
+        "expected_tool_call": "book_flight",
+        "expected_args": { "flight_id": "PAR-456", "passenger_name": "John Doe" },
+        "mock_response": "{\"ticket_id\":\"TKT-789\",\"status\":\"booked\"}"
+      },
+      {
+        "user_message": "Now check the ticket status for TKT-789.",
+        "expected_tool_call": "get_ticket_status",
+        "expected_args": { "ticket_id": "TKT-789" },
+        "mock_response": "{\"status\":\"confirmed\",\"seat\":\"14B\"}"
+      }
+    ]
+  },
+  {
+    "id": "bfcl_case_02_weather_alerts",
+    "dataset": "bfcl",
+    "system_prompt": "You are a local weather alert assistant. Check weather and activate alerts for users.",
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Check current weather condition and temperature for a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string", "description": "The city to check weather for." }
+          },
+          "required": ["city"]
+        }
+      },
+      {
+        "name": "create_alert",
+        "description": "Create an active weather alert notification for a specific condition in a city.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": { "type": "string", "description": "The target city for the alert." },
+            "condition": { "type": "string", "description": "The weather condition to alert for (e.g. rainy, snowy, stormy)." }
+          },
+          "required": ["city", "condition"]
+        }
+      }
+    ],
+    "turns": [
+      {
+        "user_message": "Check the weather in Tokyo.",
+        "expected_tool_call": "get_weather",
+        "expected_args": { "city": "Tokyo" },
+        "mock_response": "{\"city\":\"Tokyo\",\"temperature\":18,\"condition\":\"rainy\"}"
+      },
+      {
+        "user_message": "Since it is rainy in Tokyo, please set an alert for Tokyo for condition rainy.",
+        "expected_tool_call": "create_alert",
+        "expected_args": { "city": "Tokyo", "condition": "rainy" },
+        "mock_response": "{\"alert_id\":\"ALT-123\",\"status\":\"active\"}"
+      }
+    ]
+  }
+]

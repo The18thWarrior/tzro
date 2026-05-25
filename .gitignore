@@ -1,0 +1,43 @@
+# Compiled binaries
+bin/
+tzro_engine
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Runtime data
+**/.tzro/
+tzro.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.bak
+
+# Local runtime config (ephemeral)
+.tzro/logs/
+.tzro/.llama-server.port
+
+# Agent scratch workspace
+.scratch/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Environment / secrets
+.env
+.env.*
+
+# Node (belt-and-suspenders with web/.gitignore)
+node_modules/
+
+# Test / coverage
+coverage/
+
+# Editor
+.idea/
+.vscode/
+*.sw?
