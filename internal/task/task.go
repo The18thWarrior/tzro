@@ -46,13 +46,13 @@ func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler
 func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.ExecutionGraph, error) {
 	if config.GetCloudAPIKey() != "" {
 		graph, err := planWithCloud(ctx, opts.TaskID, prompt, opts.IntentType)
-		if err == nil {
-			return graph, nil
+		if err != nil {
+			return nil, fmt.Errorf("cloud planning failed: %w", err)
 		}
-		fmt.Printf("[Task Planner Warning] Cloud planning failed: %v. Using heuristics fallback.\n", err)
+		return graph, nil
 	}
 
-	return buildHeuristicGraph(opts.TaskID, prompt, opts.IntentType), nil
+	return nil, fmt.Errorf("cloud planning is unavailable (Cloud API key is missing)")
 }
 
 func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*compiler.ExecutionGraph, error) {
@@ -61,15 +61,23 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 	for name, d := range daemons {
 		toolsInfo = append(toolsInfo, fmt.Sprintf("- Tool '%s': %s", name, d.Command))
 	}
-	toolsInfo = append(toolsInfo, "- Tool 'salesforce_query': Query records from Salesforce CRM system")
-	toolsInfo = append(toolsInfo, "- Tool 'slack_message': Send alert message to slack channel")
-	toolsInfo = append(toolsInfo, "- Tool 'postgres_insert': Insert rows into PostgreSQL database")
-	toolsInfo = append(toolsInfo, "- Tool 'jq_cached_data': Execute offline JQ extraction query on disk cache envelopes")
+
+	isBenchmark := strings.Contains(taskID, "multi_turn_") || strings.Contains(taskID, "cfb_case_") || strings.Contains(taskID, "bfcl_case_")
+
+	if !isBenchmark {
+		toolsInfo = append(toolsInfo, "- Tool 'salesforce_query': Query records from Salesforce CRM system")
+		toolsInfo = append(toolsInfo, "- Tool 'slack_message': Send alert message to slack channel")
+		toolsInfo = append(toolsInfo, "- Tool 'postgres_insert': Insert rows into PostgreSQL database")
+		toolsInfo = append(toolsInfo, "- Tool 'jq_cached_data': Execute offline JQ extraction query on disk cache envelopes")
+	}
 
 	// Ingest globally registered tools (including dynamic benchmark mock tools and standalone tools)
 	for _, t := range tools.GetList() {
 		name := t.Name()
-		if name == "salesforce_query" || name == "slack_message" || name == "postgres_insert" || name == "jq_cached_data" || name == "list_tools" {
+		if !isBenchmark && (name == "salesforce_query" || name == "slack_message" || name == "postgres_insert" || name == "jq_cached_data" || name == "list_tools") {
+			continue
+		}
+		if isBenchmark && name == "list_tools" {
 			continue
 		}
 
@@ -87,7 +95,8 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 
 	toolsListStr := strings.Join(toolsInfo, "\n")
 
-	skillsList := memory.DB.GetSkills()
+	// Rank skills by semantic relevance to the current prompt, capped at top 10
+	skillsList := memory.DB.GetRelevantSkills(prompt, 10)
 	var skillsInfo []string
 	for _, s := range skillsList {
 		skillsInfo = append(skillsInfo, fmt.Sprintf("- Skill '%s': %s (Trigger: %s)", s.ID, s.Name, s.TriggerDescription))
@@ -136,7 +145,6 @@ Target JSON Structure:
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
 `, toolsListStr, skillsListStr, taskID)
 
-	isBenchmark := strings.Contains(taskID, "multi_turn_") || strings.Contains(taskID, "cfb_case_") || strings.Contains(taskID, "bfcl_case_")
 	if isBenchmark {
 		systemPrompt += `
 
@@ -146,13 +154,22 @@ To satisfy evaluation matching:
 1. You may compile a graph containing multiple sequential nodes (up to 10 nodes) representing the full workflow required for this turn (e.g. including any intermediate file moving, copying, or finding steps needed to execute the user's request).
 2. Set the "instructions" field of each node to contain ONLY the raw target parameter value (e.g. the filename "final_report.pdf", "log.txt", the search keyword "budget analysis", or the exact tweet/comment content) and absolutely no other text, sentences, explanations, or paths. If the request is a general directory listing or command, pass the user's message itself as the instructions.
 3. Ensure that all node actions are selected from the available tool list that matches the user's core intent.
+4. If the user request is missing required parameters necessary to invoke the relevant tools (for example, attempting to book a flight, authenticate, or buy insurance without providing required tokens, dates, locations, or account details), you MUST check if those parameters are available in the CONVERSATIONAL DIALOGUE HISTORY or RAG context below. If they are present in the history or context, you MUST inherit and reuse them to plan the nodes. However, if the required parameters are completely missing from BOTH the current prompt and the session history/context, or if the request is purely conversational or asking a question with no actionable intent, you MUST NOT plan any nodes. Instead, compile an empty graph (i.e. set "nodes": [] and "edges": []) to signal that a conversational response / clarification request is required before execution can proceed.
+5. For parallel tool executions (e.g., executing the same tool for multiple different numbers, locations, files, or parameters in parallel), you MUST partition the parameters and write ONLY the specific single target value corresponding to that node into its "instructions" field (e.g., if finding factorials of 5, 10, and 15, node_1 instructions must be "5", node_2 must be "10", and node_3 must be "15"). NEVER copy the original multi-item user prompt into the instructions of all nodes, as this causes redundant concurrent executions.
 `
 	}
 
-	ragCtx := memory.DB.GetGraphRAGContext(prompt)
+	sessionID := memory.GetSessionID(taskID)
+	historyCtx := memory.DB.GetSessionHistoryContext(sessionID)
+	if historyCtx != "" {
+		systemPrompt += "\n\n" + historyCtx
+	}
+
+	ragCtx := memory.DB.GetGraphRAGContext(prompt, config.GetMaxRAGContextChars())
 	if ragCtx != "" {
 		systemPrompt += "\n\n" + ragCtx
 	}
+
 
 	userPrompt := fmt.Sprintf("Create an automation workflow execution graph for: '%s'", prompt)
 

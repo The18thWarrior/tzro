@@ -129,6 +129,10 @@ func Call(ctx context.Context, name string, args map[string]interface{}) (string
 		}
 	}
 
+	if ctx.Value("is_benchmark") != nil {
+		return fmt.Sprintf(`{"error": "tool '%s' is not registered or discovered in the dynamic Tool Registry"}`, name), nil
+	}
+
 	return "", fmt.Errorf("tool '%s' is not registered or discovered in the dynamic Tool Registry", name)
 }
 

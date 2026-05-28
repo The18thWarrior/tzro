@@ -56,6 +56,16 @@ _Avoid_: WASM plugin, executable skill, CGO connector
 A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
 _Avoid_: Text parser, JSON clean filter
 
+**Session History Compaction**:
+The selective pruning, truncation, or summarization of conversational prompt history within interactive multi-turn sessions to prevent local slot thrashing and attention bias.
+_Avoid_: Context compaction, prompt clipping, prompt truncation
+
+
+**Virtual Filesystem State**:
+A simulated POSIX directory structure and active path context maintained in-memory by the offline benchmark runner to preserve stateful environmental continuity for the executing agent across conversation turns.
+_Avoid_: Mock folder, hardcoded directory, local sandbox path
+
+
 **Disk-Backed JQ Cache**:
 An on-disk caching layer storing large compacted payloads and exposing a targeted JQ exploration guide interface to the executor.
 _Avoid_: Local temp file, tool database

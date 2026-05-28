@@ -94,6 +94,12 @@ func TestCLI_JSONFormatHelper(t *testing.T) {
 }
 
 func TestCLI_BenchmarkFlagResolution(t *testing.T) {
+	// Assert default mode
+	benchmarkRunCmd.ParseFlags([]string{})
+	if benchmarkMode != "interactive" {
+		t.Errorf("expected default mode interactive, got: %s", benchmarkMode)
+	}
+
 	// Parse benchmark flags manually to assert registration and parsing
 	benchmarkRunCmd.SetArgs([]string{"--dataset", "complexfuncbench", "--mode", "interactive", "--verbose"})
 	err := benchmarkRunCmd.ParseFlags([]string{"--dataset", "complexfuncbench", "--mode", "interactive", "--verbose"})

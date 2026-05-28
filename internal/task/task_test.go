@@ -3,23 +3,15 @@ package task
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 )
 
 func TestPlan_HeuristicFallback(t *testing.T) {
-	ctx := context.Background()
-
 	// 1. Test heartbeat planning
-	optsHeartbeat := ExecuteOptions{
-		TaskID:     "t_heartbeat",
-		IntentType: "heartbeat",
-	}
-	graphHeartbeat, err := Plan(ctx, "run system check", optsHeartbeat)
-	if err != nil {
-		t.Fatalf("unexpected error planning heartbeat: %v", err)
-	}
+	graphHeartbeat := buildHeuristicGraph("t_heartbeat", "run system check", "heartbeat")
 	if len(graphHeartbeat.Nodes) != 2 {
 		t.Errorf("expected 2 nodes for heartbeat, got %d", len(graphHeartbeat.Nodes))
 	}
@@ -28,13 +20,7 @@ func TestPlan_HeuristicFallback(t *testing.T) {
 	}
 
 	// 2. Test Salesforce/Sheet keywords
-	optsSF := ExecuteOptions{
-		TaskID: "t_salesforce",
-	}
-	graphSF, err := Plan(ctx, "Fetch leads from Google Sheets and dedup contacts", optsSF)
-	if err != nil {
-		t.Fatalf("unexpected error planning Salesforce task: %v", err)
-	}
+	graphSF := buildHeuristicGraph("t_salesforce", "Fetch leads from Google Sheets and dedup contacts", "")
 	if len(graphSF.Nodes) != 3 {
 		t.Errorf("expected 3 nodes for Salesforce leads flow, got %d", len(graphSF.Nodes))
 	}
@@ -43,13 +29,7 @@ func TestPlan_HeuristicFallback(t *testing.T) {
 	}
 
 	// 3. Test Slack keywords
-	optsSlack := ExecuteOptions{
-		TaskID: "t_slack",
-	}
-	graphSlack, err := Plan(ctx, "Post message to slack: Job complete", optsSlack)
-	if err != nil {
-		t.Fatalf("unexpected error planning Slack task: %v", err)
-	}
+	graphSlack := buildHeuristicGraph("t_slack", "Post message to slack: Job complete", "")
 	if len(graphSlack.Nodes) != 1 {
 		t.Errorf("expected 1 node for Slack post, got %d", len(graphSlack.Nodes))
 	}
@@ -58,13 +38,7 @@ func TestPlan_HeuristicFallback(t *testing.T) {
 	}
 
 	// 4. Test Generic Fallback
-	optsGeneric := ExecuteOptions{
-		TaskID: "t_generic",
-	}
-	graphGeneric, err := Plan(ctx, "Do some work", optsGeneric)
-	if err != nil {
-		t.Fatalf("unexpected error planning generic task: %v", err)
-	}
+	graphGeneric := buildHeuristicGraph("t_generic", "Do some work", "")
 	if len(graphGeneric.Nodes) != 2 {
 		t.Errorf("expected 2 nodes for generic fallback, got %d", len(graphGeneric.Nodes))
 	}
@@ -100,6 +74,24 @@ func TestPlan_DelegatedSecrets(t *testing.T) {
 	// GetCloudAPIKey should resolve the secret
 	if key := config.GetCloudAPIKey(); key != "dummy-secret-12345" {
 		t.Errorf("expected GetCloudAPIKey to resolve to dummy-secret-12345, got: %s", key)
+	}
+}
+
+func TestPlan_NoHeuristicFallback(t *testing.T) {
+	ctx := context.Background()
+	oldConfig := config.Get()
+	defer config.Override(&oldConfig)
+
+	// Force empty API Key to trigger failure
+	cfg := oldConfig
+	cfg.CloudAPIKey = ""
+	config.Override(&cfg)
+
+	_, err := Plan(ctx, "Do some work", ExecuteOptions{TaskID: "t_test"})
+	if err == nil {
+		t.Error("expected Plan to fail when Cloud API key is missing, but it succeeded")
+	} else if !strings.Contains(err.Error(), "cloud planning is unavailable") {
+		t.Errorf("expected error 'cloud planning is unavailable', got: %v", err)
 	}
 }
 

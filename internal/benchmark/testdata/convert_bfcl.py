@@ -1,229 +1,318 @@
 import json
 import os
 import re
+import glob
 
-def find_best_tool_for_msg(user_msg, path, used_indices, turn_idx):
-    user_msg_lower = user_msg.lower()
-    
-    keyword_map = {
-        "find": ["find", "locate", "search", "gather"],
-        "mv": ["move", "shift", "transfer", "rename", "mv"],
-        "grep": ["grep", "search", "investigate", "occurrence", "keyword", "identify"],
-        "sort": ["sort", "arrange", "alphabetical", "order"],
-        "diff": ["diff", "compare", "distinction", "disparity", "difference", "juxtapose"],
-        "post_tweet": ["tweet", "post", "social media", "broadcast", "share"],
-        "comment": ["comment", "reply"],
-        "mkdir": ["mkdir", "directory", "folder", "create"],
-        "cd": ["cd", "change directory", "go to", "navigate", "enter", "open"],
-        "echo": ["echo", "write", "put", "jot down", "draft", "statistics"],
-        "cp": ["cp", "copy", "duplicate", "backup"],
-        "wc": ["wc", "word count", "character count", "tally", "lines", "words", "characters"],
-        "cat": ["cat", "view", "peek", "display", "read", "show"],
-        "tail": ["tail", "last 20 lines", "end of file", "last 20"],
-        "touch": ["touch", "create file", "new file", "producing a file"],
-        "close_ticket": ["close", "resolve"],
-        "resolve_ticket": ["resolve", "check it off"]
-    }
-    
-    best_score = -100.0
-    best_idx = -1
-    
-    for idx, tool in enumerate(path):
-        action = tool.split(".")[-1]
-        score = 0.0
+def parse_tool_call_string(call_str):
+    """
+    Parses a Python-like tool call string, e.g.:
+      "mv(source='final_report.pdf', destination='temp')"
+      "mean(numbers=[3, 16, 60])"
+      "ls(a=True)"
+      "sort('final_report.pdf')"
+    Returns (tool_name, expected_args)
+    """
+    match = re.match(r"^([\w\.]+)\((.*)\)$", call_str.strip())
+    if not match:
+        return None, {}
         
-        # Check direct action name matching
-        if action.lower() in user_msg_lower:
-            score += 15.0
-            
-        # Check semantic keyword matching
-        if action in keyword_map:
-            for kw in keyword_map[action]:
-                if kw in user_msg_lower:
-                    score += 10.0
-                    
-        # Proximity bias to keep turn mapping aligned with chronological golden execution path
-        proximity_penalty = abs(idx - turn_idx) * 0.5
-        score -= proximity_penalty
+    tool_name = match.group(1)
+    args_str = match.group(2).strip()
+    
+    args = {}
+    if not args_str:
+        return tool_name, args
         
-        # Prefer tools that haven't been used yet to encourage dynamic selection
-        if idx not in used_indices:
-            score += 3.0
-            
-        if score > best_score:
-            best_score = score
-            best_idx = idx
-            
-    return best_idx
+    # Handle single positional argument without keywords, e.g. "sort('final_report.pdf')"
+    if "=" not in args_str:
+        val = args_str.strip("'\"")
+        if val.lower() == "true":
+            return tool_name, {"query": [True]}
+        elif val.lower() == "false":
+            return tool_name, {"query": [False]}
+        else:
+            try:
+                return tool_name, {"query": [float(val) if '.' in val else int(val)]}
+            except ValueError:
+                return tool_name, {"query": [val]}
+                
+    try:
+        # Evaluate safely under limited globals
+        safe_globals = {
+            "__builtins__": None,
+            "True": True,
+            "False": False,
+            "None": None,
+            "true": True,
+            "false": False
+        }
+        parsed = eval(f"dict({args_str})", safe_globals)
+        
+        # Wrap each value inside a list of acceptable values
+        wrapped = {}
+        for k, v in parsed.items():
+            if isinstance(v, list):
+                wrapped[k] = [v]
+            else:
+                wrapped[k] = [v]
+        return tool_name, wrapped
+    except Exception as e:
+        # Fallback simple regex parsing if eval fails
+        pairs = re.findall(r"(\w+)\s*=\s*('[^']*'|\"[^\"]*\"|\[[^\]]*\]|[\w\.\-]+)", args_str)
+        wrapped = {}
+        for k, v in pairs:
+            val = v.strip("'\"")
+            if val.lower() == "true":
+                wrapped[k] = [True]
+            elif val.lower() == "false":
+                wrapped[k] = [False]
+            elif val.startswith("[") and val.endswith("]"):
+                # Simple list parsing
+                try:
+                    wrapped[k] = [json.loads(val.replace("'", '"'))]
+                except Exception:
+                    wrapped[k] = [val]
+            else:
+                try:
+                    wrapped[k] = [float(val) if '.' in val else int(val)]
+                except ValueError:
+                    wrapped[k] = [val]
+        return tool_name, wrapped
 
 def convert_local_bfcl():
     src_dir = "internal/benchmark/testdata/bfcl"
     dest_dir = "internal/benchmark/testdata"
-    dest_path = os.path.join(dest_dir, "bfcl_full_samples.json")
+    answers_dir = os.path.join(src_dir, "possible-answers")
     
     if not os.path.exists(src_dir):
         print(f"Error: source directory '{src_dir}' does not exist.")
         return
+    if not os.path.exists(answers_dir):
+        print(f"Error: possible-answers directory '{answers_dir}' does not exist.")
+        return
         
+    answer_files = glob.glob(os.path.join(answers_dir, "BFCL_v4_*.json"))
+    if not answer_files:
+        print(f"Warning: No possible answer files found in {answers_dir}.")
+        return
+        
+    # Load all real multi-turn function schemas
+    real_schemas = {}
+    func_docs_dir = "internal/benchmark/testdata/gorilla-main/berkeley-function-call-leaderboard/bfcl_eval/data/multi_turn_func_doc"
+    if os.path.exists(func_docs_dir):
+        doc_files = glob.glob(os.path.join(func_docs_dir, "*.json"))
+        for doc_file in doc_files:
+            with open(doc_file, "r") as df:
+                for line in df:
+                    if not line.strip():
+                        continue
+                    try:
+                        t = json.loads(line)
+                        name = t.get("name")
+                        if not name:
+                            continue
+                        params = t.get("parameters", {})
+                        if params.get("type") == "dict":
+                            params["type"] = "object"
+                        props = params.get("properties", {})
+                        for pk, pv in props.items():
+                            if isinstance(pv, dict) and pv.get("type") == "dict":
+                                pv["type"] = "object"
+                        real_schemas[name] = {
+                            "name": name,
+                            "description": t.get("description", ""),
+                            "parameters": params
+                        }
+                    except Exception as e:
+                        print(f"Error parsing schema line from {doc_file}: {e}")
+        print(f"Successfully loaded {len(real_schemas)} real multi-turn function schemas from {func_docs_dir}.")
+    else:
+        print(f"Warning: multi_turn_func_doc directory not found at {func_docs_dir}.")
+
     converted_cases = []
     
-    # List of raw files to process
-    files_to_process = [
-        "BFCL_v3_multi_turn_base.json",
-        "BFCL_v3_multiple.json",
-        "BFCL_v3_parallel.json",
-        "BFCL_v3_parallel_multiple.json"
-    ]
-    
-    for filename in files_to_process:
-        filepath = os.path.join(src_dir, filename)
-        if not os.path.exists(filepath):
-            print(f"Warning: File {filename} not found in {src_dir}. Skipping.")
+    for ans_filepath in sorted(answer_files):
+        filename = os.path.basename(ans_filepath)
+        raw_filepath = os.path.join(src_dir, filename)
+        
+        if not os.path.exists(raw_filepath):
+            print(f"Warning: Raw file {filename} not found in {src_dir}. Skipping.")
+            continue
+            
+        if "memory" in filename or "web_search" in filename:
+            print(f"Skipping non-function-calling dataset: {filename}")
             continue
             
         print(f"Processing local dataset file: {filename}...")
         
-        try:
-            with open(filepath, "r") as f:
-                lines = f.readlines()
-        except Exception as e:
-            print(f"Error reading {filename}: {e}")
-            continue
+        # Load all possible answers for this file into a lookup map
+        answers_by_id = {}
+        with open(ans_filepath, "r") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                    answers_by_id[record["id"]] = record.get("ground_truth", [])
+                except Exception as e:
+                    print(f"Error parsing possible-answers line: {e}")
+                    
+        # Load raw dataset cases
+        with open(raw_filepath, "r") as f:
+            lines = f.readlines()
             
-        print(f"Read {len(lines)} raw records. Translating...")
-        
         is_multi_turn = "multi_turn" in filename
+        translated_count = 0
         
-        for idx, line in enumerate(lines):
+        for line in lines:
             if not line.strip():
                 continue
             try:
                 raw_case = json.loads(line)
-            except Exception as e:
+            except Exception:
                 continue
                 
-            case_id = raw_case.get("id", f"{filename.split('.')[0]}_{idx}")
+            case_id = raw_case.get("id")
+            if not case_id or case_id not in answers_by_id:
+                continue
+                
+            ground_truth = answers_by_id[case_id]
             
-            # Extract tools / functions
+            # Map tools/functions schema
             tools_list = []
+            raw_funcs = raw_case.get("function", [])
+            for t in raw_funcs:
+                params = t.get("parameters", {})
+                if params.get("type") == "dict":
+                    params["type"] = "object"
+                props = params.get("properties", {})
+                for pk, pv in props.items():
+                    if isinstance(pv, dict) and pv.get("type") == "dict":
+                        pv["type"] = "object"
+                tools_list.append({
+                    "name": t.get("name", ""),
+                    "description": t.get("description", ""),
+                    "parameters": params
+                })
+                
+            turns = []
             
             if is_multi_turn:
-                # Multi-turn base uses dynamic classes, path contains tools sequence
-                path = raw_case.get("path", [])
-                unique_tools = list(set(path))
-                
-                # Register mock tool schema formats for each unique tool
-                for tool_name in unique_tools:
-                    tools_list.append({
-                        "name": tool_name,
-                        "description": f"Dynamic BFCL benchmark tool mapping for {tool_name}",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": { "type": "string" }
-                            },
-                            "required": []
-                        }
-                    })
-                    
-                # Reconstruct turns using our semantic turn-to-tool matcher
-                turns = []
+                # Reconstruct multi-turn steps
                 question_turns = raw_case.get("question", [])
-                used_indices = set()
-                for turn_idx, q_turn in enumerate(question_turns):
-                    if len(q_turn) == 0:
-                        continue
-                    user_msg = q_turn[0].get("content", "")
+                questions = [q[0]["content"] for q in question_turns if q]
+                
+                for turn_idx, question in enumerate(questions):
+                    if turn_idx >= len(ground_truth):
+                        break
+                    expected_calls_strings = ground_truth[turn_idx]
                     
-                    best_tool_idx = find_best_tool_for_msg(user_msg, path, used_indices, turn_idx)
-                    used_indices.add(best_tool_idx)
-                    expected_call = path[best_tool_idx]
+                    turn_expected_calls = []
+                    for call_str in expected_calls_strings:
+                        expected_call, expected_args = parse_tool_call_string(call_str)
+                        if expected_call:
+                            # Register dynamic mock tool in tools_list if it doesn't already exist
+                            exists = any(tool["name"] == expected_call for tool in tools_list)
+                            if not exists:
+                                if expected_call in real_schemas:
+                                    tools_list.append(real_schemas[expected_call])
+                                else:
+                                    tools_list.append({
+                                        "name": expected_call,
+                                        "description": f"Dynamic BFCL benchmark tool mapping for {expected_call}",
+                                        "parameters": {
+                                            "type": "object",
+                                            "properties": {
+                                                "query": { "type": "string" }
+                                            },
+                                            "required": []
+                                        }
+                                    })
+                            turn_expected_calls.append({
+                                "tool_name": expected_call,
+                                "args": expected_args
+                            })
                     
-                    # Heuristically extract arguments from user prompt text to mock ExpectedArgs
-                    # E.g. find quoted words like 'final_report.pdf' or numbers
-                    expected_args = {}
-                    quoted_words = re.findall(r"'([^']+)'|\"([^\"]+)\"", user_msg)
-                    flat_quoted = [w[0] or w[1] for w in quoted_words]
-                    if len(flat_quoted) > 0:
-                        expected_args["query"] = flat_quoted[0]
-                    else:
-                        expected_args["query"] = user_msg
+                    legacy_call = ""
+                    legacy_args = {}
+                    if len(turn_expected_calls) == 1:
+                        legacy_call = turn_expected_calls[0]["tool_name"]
+                        legacy_args = turn_expected_calls[0]["args"]
                         
                     turns.append({
-                        "user_message": user_msg,
-                        "expected_tool_call": expected_call,
-                        "expected_args": expected_args,
+                        "user_message": question,
+                        "expected_calls": turn_expected_calls,
+                        "expected_tool_call": legacy_call,
+                        "expected_args": legacy_args,
                         "mock_response": "{\"status\":\"success\"}"
                     })
-                    
             else:
-                # Single-turn files: multiple, parallel, parallel_multiple
-                raw_funcs = raw_case.get("function", [])
-                for t in raw_funcs:
-                    params = t.get("parameters", {})
-                    # Clean type field if it is "dict"
-                    if params.get("type") == "dict":
-                        params["type"] = "object"
-                        
-                    # Clean parameter types nested inside properties
-                    props = params.get("properties", {})
-                    for pk, pv in props.items():
-                        if isinstance(pv, dict) and pv.get("type") == "dict":
-                            pv["type"] = "object"
-                            
-                    tools_list.append({
-                        "name": t.get("name", ""),
-                        "description": t.get("description", ""),
-                        "parameters": params
-                    })
-                    
+                # Single-turn datasets
                 question_turns = raw_case.get("question", [])
                 user_msg = ""
                 if len(question_turns) > 0 and len(question_turns[0]) > 0:
                     user_msg = question_turns[0][0].get("content", "")
                     
-                # For single-turn, the expected tool call is the primary function name
-                expected_call = tools_list[0]["name"] if len(tools_list) > 0 else "unknown_tool"
-                
-                # Mock ExpectedArgs based on first parameters required field or any properties
-                expected_args = {}
-                if len(tools_list) > 0:
-                    req_fields = tools_list[0]["parameters"].get("required", [])
-                    props = tools_list[0]["parameters"].get("properties", {})
-                    for r in req_fields:
-                        if r in props:
-                            p_type = props[r].get("type", "string")
-                            if p_type == "integer" or p_type == "number":
-                                expected_args[r] = 5  # default mock integer
-                            elif p_type == "boolean":
-                                expected_args[r] = True
-                            else:
-                                expected_args[r] = "mock_value"
-                                
-                turns = [{
+                turn_expected_calls = []
+                for gt_dict in ground_truth:
+                    if not gt_dict:
+                        continue
+                    for expected_call, expected_args in gt_dict.items():
+                        turn_expected_calls.append({
+                            "tool_name": expected_call,
+                            "args": expected_args
+                        })
+                        
+                legacy_call = ""
+                legacy_args = {}
+                if len(turn_expected_calls) == 1:
+                    legacy_call = turn_expected_calls[0]["tool_name"]
+                    legacy_args = turn_expected_calls[0]["args"]
+                    
+                turns.append({
                     "user_message": user_msg,
-                    "expected_tool_call": expected_call,
-                    "expected_args": expected_args,
+                    "expected_calls": turn_expected_calls,
+                    "expected_tool_call": legacy_call,
+                    "expected_args": legacy_args,
                     "mock_response": "{\"status\":\"success\"}"
-                }]
-                
-            if len(turns) > 0:
+                })
+                        
+            if turns:
                 converted_cases.append({
                     "id": case_id,
                     "dataset": "bfcl",
                     "system_prompt": raw_case.get("system_prompt", "You are a helpful function-calling assistant."),
                     "tools": tools_list,
-                    "turns": turns
+                    "turns": turns,
+                    "initial_config": raw_case.get("initial_config", {})
                 })
+                translated_count += 1
                 
-    # Save the consolidated array of test cases
-    with open(dest_path, "w") as f:
-        json.dump(converted_cases, f, indent=2)
+        print(f"Successfully compiled {translated_count} test cases.")
         
-    print(f"\nSuccessfully compiled and translated all raw local BFCL files!")
-    print(f"Housed {len(converted_cases)} fully translated test cases in: {dest_path}")
-    print(f"You can now run this full suite via:")
-    print(f"  ./bin/tzro benchmark run --dataset bfcl_full --mode consolidated")
+    # Save the consolidated array of test cases to both target paths
+    for target_file in ["bfcl_samples.json", "bfcl_full_samples.json"]:
+        dest_path = os.path.join(dest_dir, target_file)
+        with open(dest_path, "w") as f:
+            json.dump(converted_cases, f, indent=2)
+        print(f"Housed {len(converted_cases)} fully translated test cases in: {dest_path}")
+        
+    # Also save the lightweight test samples to keep the test environment fast!
+    test_cases = []
+    found_types = set()
+    for c in converted_cases:
+        c_type = c["id"].split("_")[0]
+        if c_type not in found_types:
+            test_cases.append(c)
+            found_types.add(c_type)
+        if len(test_cases) >= 3:
+            break
+            
+    test_dest_path = os.path.join(dest_dir, "bfcl_test_samples.json")
+    with open(test_dest_path, "w") as f:
+        json.dump(test_cases, f, indent=2)
+    print(f"Housed lightweight test sample in: {test_dest_path}")
+    print(f"Successfully compiled all BFCL V4 dataset components!")
 
 if __name__ == "__main__":
     convert_local_bfcl()

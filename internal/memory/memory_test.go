@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -666,6 +667,294 @@ func TestSqliteDatabase_SchemaMigration(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Could not retrieve memory added after migration")
+	}
+}
+
+func TestSqliteDatabase_GraphRAGContextTruncation(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_truncation.db")
+	jsonPath := filepath.Join(tempDir, "test_truncation_db.json")
+	defer cleanupTestDBs(t, dbPath, jsonPath)
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	// Seed 20 nodes with varying weights, all connected to a root entity
+	rootNode := KGNode{ID: "root", NodeType: "account", Name: "Root Corp", Metadata: map[string]interface{}{}, Source: "test", Weight: 1.0}
+	if err := db.AddNode(rootNode); err != nil {
+		t.Fatalf("Failed to add root node: %v", err)
+	}
+
+	for i := 0; i < 20; i++ {
+		nodeID := fmt.Sprintf("entity_%02d", i)
+		weight := float64(20-i) / 20.0 // entity_00=1.0, entity_01=0.95, ... entity_19=0.05
+		n := KGNode{
+			ID:       nodeID,
+			NodeType: "contact",
+			Name:     fmt.Sprintf("Contact_%02d", i),
+			Metadata: map[string]interface{}{"index": i},
+			Source:   "benchmark",
+			Weight:   weight,
+		}
+		if err := db.AddNode(n); err != nil {
+			t.Fatalf("Failed to add node %s: %v", nodeID, err)
+		}
+
+		e := KGEdge{
+			ID:       fmt.Sprintf("edge_root_%02d", i),
+			EdgeType: "employs",
+			SourceID: "root",
+			TargetID: nodeID,
+			Weight:   1.0,
+		}
+		if err := db.AddEdge(e); err != nil {
+			t.Fatalf("Failed to add edge to %s: %v", nodeID, err)
+		}
+	}
+
+	// Also connect entity_00 -> entity_01 to test edge filtering
+	crossEdge := KGEdge{
+		ID: "edge_cross_00_01", EdgeType: "knows",
+		SourceID: "entity_00", TargetID: "entity_01", Weight: 0.9,
+	}
+	if err := db.AddEdge(crossEdge); err != nil {
+		t.Fatalf("Failed to add cross edge: %v", err)
+	}
+
+	// Test 1: Unlimited mode returns all 21 entities
+	t.Run("Unlimited", func(t *testing.T) {
+		ctx := db.GetGraphRAGContext("Tell me about Root Corp")
+		if ctx == "" {
+			t.Fatal("Expected non-empty context, got empty")
+		}
+		entityCount := strings.Count(ctx, "| entity_")
+		rootCount := strings.Count(ctx, "| root |")
+		totalRows := entityCount + rootCount
+		if totalRows != 21 {
+			t.Errorf("Unlimited: expected 21 entity rows, got %d (entity=%d, root=%d)", totalRows, entityCount, rootCount)
+		}
+		if strings.Contains(ctx, "truncated") {
+			t.Error("Unlimited: should not contain truncation notice")
+		}
+	})
+
+	// Test 2: maxChars=0 behaves as unlimited
+	t.Run("ExplicitZeroIsUnlimited", func(t *testing.T) {
+		ctx := db.GetGraphRAGContext("Tell me about Root Corp", 0)
+		entityCount := strings.Count(ctx, "| entity_")
+		rootCount := strings.Count(ctx, "| root |")
+		if entityCount+rootCount != 21 {
+			t.Errorf("maxChars=0: expected 21 entity rows, got %d", entityCount+rootCount)
+		}
+	})
+
+	// Test 3: Tight char limit triggers truncation and retains highest-weight entities
+	t.Run("TruncationDropsLowestWeight", func(t *testing.T) {
+		ctx := db.GetGraphRAGContext("Tell me about Root Corp", 800)
+		if ctx == "" {
+			t.Fatal("Expected non-empty context with tight limit")
+		}
+		if len(ctx) > 800 {
+			t.Errorf("Output exceeds limit: %d chars > 800", len(ctx))
+		}
+		if !strings.Contains(ctx, "truncated") {
+			t.Error("Expected truncation notice in output")
+		}
+		if !strings.Contains(ctx, "entity_00") {
+			t.Error("Highest weight entity entity_00 should be retained after truncation")
+		}
+		if !strings.Contains(ctx, "root") {
+			t.Error("Root entity should be retained after truncation")
+		}
+		if strings.Contains(ctx, "entity_19") {
+			t.Error("Lowest weight entity entity_19 should be dropped during truncation")
+		}
+	})
+
+	// Test 4: Edges are filtered to only retained entity pairs
+	t.Run("EdgeFilteringOnTruncation", func(t *testing.T) {
+		ctx := db.GetGraphRAGContext("Tell me about Root Corp", 1500)
+		if strings.Contains(ctx, "entity_19") {
+			t.Error("entity_19 should be dropped")
+		}
+		if strings.Contains(ctx, "entity_00") && strings.Contains(ctx, "entity_01") {
+			if !strings.Contains(ctx, "knows") {
+				t.Error("Cross-edge 'knows' between retained entities should survive truncation")
+			}
+		}
+	})
+}
+
+func TestSqliteDatabase_GetRelevantSkills(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_skills_rank.db")
+	jsonPath := filepath.Join(tempDir, "test_skills_rank_db.json")
+	defer cleanupTestDBs(t, dbPath, jsonPath)
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	// Seed 15 skills with distinct trigger descriptions
+	skillTopics := []string{
+		"hubspot crm contact sync pipeline",
+		"docker container deployment cluster",
+		"sqlite database query optimization",
+		"salesforce lead deduplication workflow",
+		"slack notification alert message",
+		"jira ticket management tracking",
+		"spreadsheet data import export",
+		"aws cloud infrastructure scaling",
+		"graph rag memory retrieval",
+		"cache compaction pipeline",
+		"workflow task compiler execution",
+		"telemetry monitoring dashboard",
+		"email campaign automation",
+		"invoice payment processing",
+		"customer support ticket resolution",
+	}
+
+	for i, topic := range skillTopics {
+		skill := &Skill{
+			Name:               fmt.Sprintf("SOP: %s", topic),
+			TriggerDescription: fmt.Sprintf("Submitting requests related to: %s", topic),
+			SOPContent:         fmt.Sprintf("# SOP for %s\nStep 1: Do the thing.", topic),
+			CreatedAt:          int64(1000 + i),
+		}
+		if err := db.AddSkill(skill); err != nil {
+			t.Fatalf("Failed to add skill %d: %v", i, err)
+		}
+	}
+
+	// Verify all 15 skills exist
+	all := db.GetSkills()
+	if len(all) != 15 {
+		t.Fatalf("Expected 15 skills, got %d", len(all))
+	}
+
+	// Test 1: maxSkills=0 returns all
+	t.Run("ZeroLimitReturnsAll", func(t *testing.T) {
+		result := db.GetRelevantSkills("anything", 0)
+		if len(result) != 15 {
+			t.Errorf("maxSkills=0: expected 15 skills, got %d", len(result))
+		}
+	})
+
+	// Test 2: When fewer skills than limit, return all
+	t.Run("UnderLimitReturnsAll", func(t *testing.T) {
+		result := db.GetRelevantSkills("anything", 20)
+		if len(result) != 15 {
+			t.Errorf("maxSkills=20: expected 15 skills, got %d", len(result))
+		}
+	})
+
+	// Test 3: Cap at top 5
+	t.Run("CapsAtLimit", func(t *testing.T) {
+		result := db.GetRelevantSkills("hubspot crm contact sync", 5)
+		if len(result) != 5 {
+			t.Errorf("maxSkills=5: expected 5 skills, got %d", len(result))
+		}
+		// The CRM-related skill should be ranked first or near the top
+		topNames := ""
+		for _, s := range result {
+			topNames += s.Name + " | "
+		}
+		if !strings.Contains(result[0].Name, "hubspot") {
+			t.Logf("Top skills for 'hubspot crm contact sync': %s", topNames)
+			// Not a hard failure since similarity depends on tokenization, but log for visibility
+		}
+	})
+
+	// Test 4: Different prompt should rank different skills higher
+	t.Run("DifferentPromptRanksCorrectly", func(t *testing.T) {
+		result := db.GetRelevantSkills("deploy docker container to aws cluster", 3)
+		if len(result) != 3 {
+			t.Errorf("maxSkills=3: expected 3 skills, got %d", len(result))
+		}
+		// Docker and AWS related skills should surface
+		topNames := ""
+		for _, s := range result {
+			topNames += s.Name + " | "
+		}
+		foundRelevant := false
+		for _, s := range result {
+			if strings.Contains(s.Name, "docker") || strings.Contains(s.Name, "aws") {
+				foundRelevant = true
+				break
+			}
+		}
+		if !foundRelevant {
+			t.Errorf("Expected docker/aws skills in top 3 for deployment query, got: %s", topNames)
+		}
+	})
+}
+
+func TestSessionHistoryCompaction(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_compaction.db")
+	jsonPath := filepath.Join(tempDir, "test_compaction_db.json")
+	defer cleanupTestDBs(t, dbPath, jsonPath)
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	sessionID := "session_abc_123"
+
+	// 1. Add 4 turns of dialogue
+	db.AddSessionTurn(sessionID, "Move final_report.pdf to temp folder.", []string{"GorillaFileSystem.mv(source=final_report.pdf, dest=temp/final_report.pdf)"})
+	db.AddSessionTurn(sessionID, "Search for 'budget' in final_report.pdf.", []string{"GorillaFileSystem.grep(query=budget, file=temp/final_report.pdf)"})
+	db.AddSessionTurn(sessionID, "Sort the file lines.", []string{"GorillaFileSystem.sort(file=temp/final_report.pdf)"})
+	db.AddSessionTurn(sessionID, "Post the results to Twitter.", []string{"TwitterAPI.post_tweet(content=sorted results)"})
+
+	// 2. Fetch history context and verify sliding window + rollup behavior
+	ctx := db.GetSessionHistoryContext(sessionID)
+	if ctx == "" {
+		t.Fatal("Expected history context, got empty string")
+	}
+
+	t.Logf("Generated Dialogue History:\n%s", ctx)
+
+	// Verify header
+	if !strings.Contains(ctx, "### CONVERSATIONAL DIALOGUE HISTORY") {
+		t.Error("Missing conversation history header")
+	}
+
+	// Verify sliding window (last 2 turns: Turn 3 and Turn 4) are in FULL detail
+	if !strings.Contains(ctx, "#### [Turn 4]") {
+		t.Error("Expected Turn 4 detailed section")
+	}
+	if !strings.Contains(ctx, "TwitterAPI.post_tweet") {
+		t.Error("Expected Turn 4 details to contain Twitter tool name")
+	}
+	if !strings.Contains(ctx, "#### [Turn 3]") {
+		t.Error("Expected Turn 3 detailed section")
+	}
+	if !strings.Contains(ctx, "GorillaFileSystem.sort") {
+		t.Error("Expected Turn 3 details to contain sort tool name")
+	}
+
+	// Verify rollup summary (Turn 1 and Turn 2 should be in the rollup summary)
+	if !strings.Contains(ctx, "#### Summary of Prior Turns") {
+		t.Error("Expected Rollup summary section")
+	}
+	if !strings.Contains(ctx, "*   **Turn 1**: User asked: \"Move final_report.pdf to temp folder.\". Agent executed tools: GorillaFileSystem.mv") {
+		t.Error("Expected Turn 1 rolled up concisely")
+	}
+	if !strings.Contains(ctx, "*   **Turn 2**: User asked: \"Search for 'budget' in final_report.pdf.\". Agent executed tools: GorillaFileSystem.grep") {
+		t.Error("Expected Turn 2 rolled up concisely")
+	}
+
+	// Verify that Turn 1 and Turn 2 do NOT have detailed sections
+	if strings.Contains(ctx, "#### [Turn 1]") || strings.Contains(ctx, "#### [Turn 2]") {
+		t.Error("Turns 1 and 2 should be summarized, not shown in full detail sections")
 	}
 }
 

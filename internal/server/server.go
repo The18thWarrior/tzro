@@ -172,6 +172,19 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				fmt.Printf("[Server Executor Error] %v\n", err)
 			}
+
+			// Log dialogue turn to memory (Session History Compaction support)
+			var executedTools []string
+			for _, node := range graph.Nodes {
+				state, ok := memory.DB.GetNodeState(graph.TaskID, node.ID)
+				if ok && state.Status == "completed" {
+					executedTools = append(executedTools, fmt.Sprintf("%s(instructions: %q, output: %q)", node.Action, node.Instructions, state.Output))
+				} else {
+					executedTools = append(executedTools, fmt.Sprintf("%s(instructions: %q, status: %q)", node.Action, node.Instructions, state.Status))
+				}
+			}
+			sessionID := memory.GetSessionID(graph.TaskID)
+			memory.DB.AddSessionTurn(sessionID, req.Message, executedTools)
 		}()
 	} else {
 		// Conversational query of T0 complexity - streams LLM response in the background
@@ -195,15 +208,27 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 			}
 
 			systemPrompt := "You are a helpful conversational AI assistant. Keep your responses clear, helpful, and concise."
-			ragCtx := memory.DB.GetGraphRAGContext(userMessage)
+			ragCtx := memory.DB.GetGraphRAGContext(userMessage, config.GetMaxRAGContextChars())
 			if ragCtx != "" {
 				systemPrompt += "\n\n" + ragCtx
 			}
 
+			var finalReply string
 			if useLocal {
-				_, _ = inference.GlobalLocalModel.CallLocalModelStream(ctx, systemPrompt, userMessage, "", meta)
+				res, err := inference.GlobalLocalModel.CallLocalModelStream(ctx, systemPrompt, userMessage, "", meta)
+				if err == nil && res != nil {
+					finalReply = res.Content
+				}
 			} else {
-				_, _ = inference.CallCloudModelStream(ctx, systemPrompt, userMessage, "", meta, nil)
+				reply, err := inference.CallCloudModelStream(ctx, systemPrompt, userMessage, "", meta, nil)
+				if err == nil {
+					finalReply = reply
+				}
+			}
+
+			if finalReply != "" {
+				sessionID := memory.GetSessionID(taskID)
+				memory.DB.AddSessionTurn(sessionID, userMessage, []string{fmt.Sprintf("reply(%s)", finalReply)})
 			}
 		}(resp.TaskID, streamID, req.Message)
 	}

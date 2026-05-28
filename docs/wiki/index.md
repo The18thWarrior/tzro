@@ -12,8 +12,15 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 
 ## Bugs & Post-Mortems
 *Analyses of critical bugs, diagnostic loops, and prevention measures.*
+- [Benchmark Dataset Ground-Truth Corruption & Multi-Turn Label Shifting](bugs/benchmark-dataset-corruption-and-label-shifting.md) - Expose a systematic 1-turn lag in multi-turn test annotations and scrambled single-turn ground truths in the BFCL dataset. (Verified: 2026-05-25)
 - [Missing Embedding SQLite Column & Cloud Schema Format HTTP 400](bugs/missing-embedding-column-and-cloud-schema-400.md) - Resolve SQL errors for missing DB vector columns and HTTP 400 errors for non-standard cloud response format payloads. (Verified: 2026-05-24)
 - [Local Sidecar Inactive / Benchmark API Key Loading Bug](bugs/local-sidecar-inactive-benchmark-fallback-bug.md) - Fix configuration loading in CLI process for offline benchmarks and optimize test suite datasets to run unit tests in seconds instead of minutes. (Verified: 2026-05-25)
+- [Cloud Planner Timeout & Heuristic Fallback Pollution](bugs/cloud-planner-timeout-and-heuristic-fallback-pollution.md) - Analyze cloud planner timeout bottlenecks and the static heuristic builder injecting unregistered tools during failures. (Verified: 2026-05-25)
+- [Cooperative Engine Benchmark Evaluation (2026-05-27 Run 1)](bugs/benchmark-analysis-2026-05-27.md) - Deep diagnostic audit of 11 failures, establishing schema coercion and sequential de-noising action plans. (Verified: 2026-05-27)
+- [Cooperative Engine Benchmark Evaluation (2026-05-27 Run 2)](bugs/benchmark-analysis-2026-05-27-1146.md) - Diagnostic analysis of Run 2 achieving a 68.00% success rate (+12.00% absolute increase) after deploying Schema-Aware Parameter Validation in harness. (Verified: 2026-05-27)
+- [Cooperative Engine Benchmark Evaluation (2026-05-27 Run 3)](bugs/benchmark-analysis-2026-05-27-1205.md) - Full-scale 100-case diagnostic analysis of Run 3 maintaining a 64.00% success rate at 4x dataset scale. (Verified: 2026-05-27)
+- [Cooperative Engine Benchmark Evaluation (2026-05-27 Run 4)](bugs/benchmark-analysis-2026-05-27-1304.md) - Full-scale 400-case diagnostic analysis of Run 4 achieving a 65.50% success rate at production scale. (Verified: 2026-05-27)
+
 
 
 ## Architecture & Concepts
@@ -42,6 +49,7 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 - [ADR-0011: Deep Task Engine Seam and Domain Separation](../adr/0011-deep-task-engine-seam-and-domain-separation.md) - Establishes unified task.Execute entrypoint and decouples workflow orchestration from planning/compilation.
 - [ADR-0012: Durable Proactive Notification System](../adr/0012-durable-proactive-notification-system.md) - Design for persisted, real-time lifecycle notifications with target deep-linking and debouncing.
 - [ADR-0013: Unified Daemon-Mediated State Mutations](../adr/0013-unified-daemon-mediated-state-mutations.md) - Enforces pure client-server daemon communication for all state mutations to preserve telemetry and prevent write conflicts.
+- [ADR-0014: Stateful Graph-Aligned Multi-Turn Benchmarks](../adr/0014-stateful-graph-aligned-multi-turn-benchmarks.md) - Transitions multi-turn benchmarks to preserve original turns, utilize in-memory virtual filesystem observers, and execute multiset graph matching.
 
 
 ## Ingested Sources

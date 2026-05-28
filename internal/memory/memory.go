@@ -729,7 +729,8 @@ func (sdb *SqliteDatabase) getEntityNeighborhoodLocked(
 
 // GetGraphRAGContext scans a natural language prompt, matches active entity Names or IDs,
 // traverses up to 2-hop neighborhoods, and outputs a formatted Markdown Graph-RAG context.
-func (sdb *SqliteDatabase) GetGraphRAGContext(prompt string) string {
+// maxChars controls the maximum character length of the output (0 = unlimited).
+func (sdb *SqliteDatabase) GetGraphRAGContext(prompt string, maxChars ...int) string {
 	sdb.mutex.RLock()
 	defer sdb.mutex.RUnlock()
 
@@ -796,7 +797,47 @@ func (sdb *SqliteDatabase) GetGraphRAGContext(prompt string) string {
 		}
 	}
 
-	// 3. Format into Markdown
+	// Resolve the effective character limit
+	charLimit := 0
+	if len(maxChars) > 0 {
+		charLimit = maxChars[0]
+	}
+
+	// 3. Format into Markdown (with optional truncation)
+	return sdb.formatRAGContext(dedupNodes, dedupEdges, charLimit)
+}
+
+// formatRAGContext builds the Markdown output, applying weight-based truncation if charLimit > 0.
+func (sdb *SqliteDatabase) formatRAGContext(dedupNodes map[string]KGNode, dedupEdges map[string]KGEdge, charLimit int) string {
+	totalEntityCount := len(dedupNodes)
+
+	// Sort node IDs by weight descending (highest relevance first), breaking ties by ID
+	var sortedNodeIDs []string
+	for id := range dedupNodes {
+		sortedNodeIDs = append(sortedNodeIDs, id)
+	}
+	sort.Slice(sortedNodeIDs, func(i, j int) bool {
+		wi := dedupNodes[sortedNodeIDs[i]].Weight
+		wj := dedupNodes[sortedNodeIDs[j]].Weight
+		if wi != wj {
+			return wi > wj // higher weight first
+		}
+		return sortedNodeIDs[i] < sortedNodeIDs[j] // alphabetical tie-break
+	})
+
+	// Try rendering with all entities first; if over limit, progressively drop lowest-weight entities
+	for {
+		output := sdb.renderRAGMarkdown(sortedNodeIDs, dedupNodes, dedupEdges, charLimit > 0 && len(sortedNodeIDs) < totalEntityCount, totalEntityCount)
+		if charLimit <= 0 || len(output) <= charLimit || len(sortedNodeIDs) <= 1 {
+			return output
+		}
+		// Drop the last entity (lowest weight) and retry
+		sortedNodeIDs = sortedNodeIDs[:len(sortedNodeIDs)-1]
+	}
+}
+
+// renderRAGMarkdown produces the final Markdown string for the given entity subset.
+func (sdb *SqliteDatabase) renderRAGMarkdown(sortedNodeIDs []string, dedupNodes map[string]KGNode, dedupEdges map[string]KGEdge, truncated bool, totalEntityCount int) string {
 	var sb strings.Builder
 	sb.WriteString("### RELATIONAL KNOWLEDGE GRAPH CONTEXT (Graph-RAG)\n")
 	sb.WriteString("Based on active entities detected in your request, the following local sub-graph has been retrieved:\n\n")
@@ -805,14 +846,9 @@ func (sdb *SqliteDatabase) GetGraphRAGContext(prompt string) string {
 	sb.WriteString("| ID | Type | Name | Weight | Source | Metadata |\n")
 	sb.WriteString("| --- | --- | --- | --- | --- | --- |\n")
 
-	// Sort node IDs deterministically
-	var sortedNodeIDs []string
-	for id := range dedupNodes {
-		sortedNodeIDs = append(sortedNodeIDs, id)
-	}
-	sort.Strings(sortedNodeIDs)
-
+	retainedIDs := make(map[string]bool)
 	for _, id := range sortedNodeIDs {
+		retainedIDs[id] = true
 		n := dedupNodes[id]
 		metaBytes, _ := json.Marshal(n.Metadata)
 		metaStr := string(metaBytes)
@@ -823,18 +859,28 @@ func (sdb *SqliteDatabase) GetGraphRAGContext(prompt string) string {
 	}
 	sb.WriteString("\n")
 
+	// Filter edges to only include those whose source AND target are in the retained set
 	sb.WriteString("#### Relationships\n")
-	if len(dedupEdges) == 0 {
+	var validEdges []KGEdge
+	for _, e := range dedupEdges {
+		if retainedIDs[e.SourceID] && retainedIDs[e.TargetID] {
+			validEdges = append(validEdges, e)
+		}
+	}
+
+	if len(validEdges) == 0 {
 		sb.WriteString("No active relationships within the retrieved neighborhood.\n")
 	} else {
 		var sortedEdgeIDs []string
-		for id := range dedupEdges {
-			sortedEdgeIDs = append(sortedEdgeIDs, id)
+		edgeMap := make(map[string]KGEdge)
+		for _, e := range validEdges {
+			sortedEdgeIDs = append(sortedEdgeIDs, e.ID)
+			edgeMap[e.ID] = e
 		}
 		sort.Strings(sortedEdgeIDs)
 
 		for _, id := range sortedEdgeIDs {
-			e := dedupEdges[id]
+			e := edgeMap[id]
 			srcName := e.SourceID
 			if sn, exists := dedupNodes[e.SourceID]; exists {
 				srcName = sn.Name
@@ -853,7 +899,70 @@ func (sdb *SqliteDatabase) GetGraphRAGContext(prompt string) string {
 		}
 	}
 
+	if truncated {
+		sb.WriteString(fmt.Sprintf("\n> ⚠️ Context truncated: showing top %d of %d entities by relevance weight.\n", len(sortedNodeIDs), totalEntityCount))
+	}
+
 	return sb.String()
+}
+
+// GetRelevantSkills returns skills ranked by semantic relevance to the prompt, capped at maxSkills.
+// Uses the EmbeddingEngine for vector similarity when available, falling back to string-based cosine similarity.
+// If maxSkills <= 0, returns all skills unfiltered.
+func (sdb *SqliteDatabase) GetRelevantSkills(prompt string, maxSkills int) []Skill {
+	allSkills := sdb.GetSkills()
+
+	if maxSkills <= 0 || len(allSkills) <= maxSkills {
+		return allSkills
+	}
+
+	type scoredSkill struct {
+		skill Skill
+		score float64
+	}
+
+	var scored []scoredSkill
+
+	// Try embedding-based similarity first
+	if sdb.EmbeddingEngine != nil {
+		promptVec, err := sdb.EmbeddingEngine.Embed(context.Background(), prompt)
+		if err == nil {
+			for _, s := range allSkills {
+				// Embed the skill's trigger description for comparison
+				triggerVec, err := sdb.EmbeddingEngine.Embed(context.Background(), s.TriggerDescription+" "+s.Name)
+				if err == nil && len(triggerVec) > 0 {
+					sim := float64(sdb.EmbeddingEngine.CosineSimilarity(promptVec, triggerVec))
+					scored = append(scored, scoredSkill{skill: s, score: sim})
+				} else {
+					scored = append(scored, scoredSkill{skill: s, score: 0})
+				}
+			}
+		}
+	}
+
+	// Fallback to string-based cosine similarity if embedding engine unavailable or failed
+	if len(scored) == 0 {
+		for _, s := range allSkills {
+			sim := embeddings.CosineSimilarity(prompt, s.TriggerDescription+" "+s.Name)
+			scored = append(scored, scoredSkill{skill: s, score: sim})
+		}
+	}
+
+	// Sort by score descending
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
+
+	// Return top-N
+	if len(scored) > maxSkills {
+		scored = scored[:maxSkills]
+	}
+
+	result := make([]Skill, len(scored))
+	for i, s := range scored {
+		result[i] = s.skill
+	}
+	return result
 }
 
 // isWordMatch helper to perform a precise, case-insensitive word-boundary search
@@ -1642,4 +1751,133 @@ func sqlNullString(s string) interface{} {
 	}
 	return s
 }
+
+// GetSessionID extracts the canonical session identifier from a taskID.
+// It removes any turn-specific trailing suffix (e.g. "_t0", "_t1").
+func GetSessionID(taskID string) string {
+	if idx := strings.Index(taskID, "_t"); idx != -1 {
+		return taskID[:idx]
+	}
+	return taskID
+}
+
+// AddSessionTurn automatically determines the next turn index, structures the Dialogue Turn log,
+// and durably persists it in SQLite under the session ID.
+func (sdb *SqliteDatabase) AddSessionTurn(sessionID string, userMessage string, executedTools []string) {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	if sdb.db == nil {
+		return
+	}
+
+	var count int
+	_ = sdb.db.QueryRow("SELECT COUNT(*) FROM fact_memories WHERE type = 'session_turn' AND context = ?", sessionID).Scan(&count)
+
+	log := SessionTurnLog{
+		TurnIdx:       count + 1,
+		UserMessage:   userMessage,
+		ExecutedTools: executedTools,
+	}
+
+	logBytes, err := json.Marshal(log)
+	if err != nil {
+		return
+	}
+
+	id := fmt.Sprintf("mem_%d", time.Now().UnixNano())
+	createdAt := time.Now()
+	_, _ = sdb.db.Exec(`INSERT INTO fact_memories (id, user_id, type, content, context, confidence, source, created_at)
+		VALUES (?, 'default', 'session_turn', ?, ?, 1.0, 'auto_history', ?)`, id, string(logBytes), sessionID, createdAt)
+}
+
+
+// SessionTurnLog represents a compacted summary of a single dialogue turn.
+type SessionTurnLog struct {
+	TurnIdx       int      `json:"turnIdx"`
+	UserMessage   string   `json:"userMessage"`
+	ExecutedTools []string `json:"executedTools"`
+}
+
+// GetSessionHistoryContext retrieves the dialogue and tool execution history for a session,
+// applying a sliding window of detail (last 2 turns in full detail, older turns in bulleted rollup).
+func (sdb *SqliteDatabase) GetSessionHistoryContext(sessionID string) string {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return ""
+	}
+
+	// Query memories of type 'session_turn' for the given sessionID (stored in context field)
+	rows, err := sdb.db.Query("SELECT content FROM fact_memories WHERE type = 'session_turn' AND context = ? ORDER BY created_at ASC", sessionID)
+	if err != nil {
+		fmt.Printf("[Memory Error] Failed to query session turns: %v\n", err)
+		return ""
+	}
+	defer rows.Close()
+
+	var logs []SessionTurnLog
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err == nil {
+			var log SessionTurnLog
+			if json.Unmarshal([]byte(content), &log) == nil {
+				logs = append(logs, log)
+			}
+		}
+	}
+
+	if len(logs) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("### CONVERSATIONAL DIALOGUE HISTORY\n")
+	sb.WriteString("Below is the record of previous user instructions and the actions executed by the agent in this session:\n\n")
+
+	// Sliding window boundary: we keep the last 2 turns in full detail
+	fullDetailThreshold := len(logs) - 2
+
+	// Bulleted Rollup for older turns
+	var rollupLines []string
+	for i := 0; i < fullDetailThreshold; i++ {
+		log := logs[i]
+		toolsStr := "None"
+		if len(log.ExecutedTools) > 0 {
+			toolsStr = strings.Join(log.ExecutedTools, ", ")
+		}
+		rollupLines = append(rollupLines, fmt.Sprintf("*   **Turn %d**: User asked: \"%s\". Agent executed tools: %s.", log.TurnIdx, log.UserMessage, toolsStr))
+	}
+
+	if len(rollupLines) > 0 {
+		sb.WriteString("#### Summary of Prior Turns\n")
+		sb.WriteString(strings.Join(rollupLines, "\n"))
+		sb.WriteString("\n\n")
+	}
+
+	// Full detail for the last 2 turns
+	startDetail := fullDetailThreshold
+	if startDetail < 0 {
+		startDetail = 0
+	}
+
+	for i := startDetail; i < len(logs); i++ {
+		log := logs[i]
+		sb.WriteString(fmt.Sprintf("#### [Turn %d]\n", log.TurnIdx))
+		sb.WriteString(fmt.Sprintf("*   **User Instruction**: \"%s\"\n", log.UserMessage))
+		if len(log.ExecutedTools) > 0 {
+			sb.WriteString("*   **Actions Executed**:\n")
+			for _, t := range log.ExecutedTools {
+				sb.WriteString(fmt.Sprintf("    *   `%s`\n", t))
+			}
+		} else {
+			sb.WriteString("*   **Actions Executed**: None (No tool calls required/made).\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
 

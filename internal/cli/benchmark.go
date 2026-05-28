@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -52,13 +53,16 @@ var benchmarkRunCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		oldStdout := os.Stdout
+		oldStderr := os.Stderr
+
 		var out io.Writer
 		if globalFlags.JSONOut {
 			if benchmarkVerbose {
-				out = os.Stderr
+				out = oldStderr
 			}
 		} else {
-			out = os.Stdout
+			out = oldStdout
 		}
 
 		if out != nil {
@@ -75,41 +79,52 @@ var benchmarkRunCmd = &cobra.Command{
 			}
 		}
 
-		results, err := benchmark.RunSuite(ctx, benchmarkDataset, benchmarkMode, benchmarkModelMode, benchmarkReal, benchmarkLimit)
+		// Load test cases to build dynamic rows and tracking
+		testCases, err := benchmark.LoadTestCases(benchmarkDataset)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Benchmark execution failed: %v\n", err)
+			fmt.Fprintf(oldStderr, "Failed to load test cases: %v\n", err)
 			os.Exit(1)
 		}
-
-		if globalFlags.JSONOut {
-			_ = printJSON(os.Stdout, results)
-			if !benchmarkVerbose {
-				return
-			}
+		if benchmarkLimit > 0 && benchmarkLimit < len(testCases) {
+			testCases = benchmark.StratifiedSample(testCases, benchmarkLimit)
 		}
 
-		// Display tabular results with color highlights
 		headers := []string{"CASE ID", "PLAN MATCH", "PARAM MATCH", "DURATION", "TOKENS (L/C)", "STATUS"}
 		var rows [][]string
+		caseIndex := make(map[string]int)
 
-		passedCount := 0
-		planMatchCount := 0
-		paramMatchCount := 0
-		var totalDuration int64 = 0
+		for idx, tc := range testCases {
+			caseIndex[tc.ID] = idx
+			rows = append(rows, []string{
+				tc.ID,
+				"\u001b[90m...\u001b[0m", // Gray dots
+				"\u001b[90m...\u001b[0m",
+				"\u001b[90m...\u001b[0m",
+				"\u001b[90m...\u001b[0m",
+				"\u001b[90mPENDING\u001b[0m",
+			})
+		}
 
-		var totalLocalPrompt, totalLocalCompletion, totalLocalTotal int
-		var totalCloudPrompt, totalCloudCompletion, totalCloudTotal int
-
-		for _, r := range results {
-			duration := fmt.Sprintf("%dms", r.ExecutionDurationMs)
-			totalDuration += r.ExecutionDurationMs
-
-			planStatus := "\u001b[31mFAIL\u001b[0m" // Red
-			if r.PlanningMatch {
-				planStatus = "\u001b[32mPASS\u001b[0m" // Green
-				planMatchCount++
+		var lastLinesPrinted int
+		redrawTable := func(w io.Writer, h []string, r [][]string) {
+			if benchmarkVerbose {
+				return
 			}
+			if lastLinesPrinted > 0 {
+				fmt.Fprintf(w, "\033[%dA\033[J", lastLinesPrinted)
+			}
+			var buf bytes.Buffer
+			printBenchmarkTable(&buf, h, r)
+			_, _ = w.Write(buf.Bytes())
+			lastLinesPrinted = strings.Count(buf.String(), "\n")
+		}
 
+		formatResultRow := func(r benchmark.BenchmarkResult) []string {
+			duration := fmt.Sprintf("%dms", r.ExecutionDurationMs)
+			planStatus := "\u001b[31mFAIL\u001b[0m"
+			if r.PlanningMatch {
+				planStatus = "\u001b[32mPASS\u001b[0m"
+			}
 			paramStatus := "\u001b[31mFAIL\u001b[0m"
 			if r.ParameterMatch {
 				if r.FuzzyMatchUsed {
@@ -117,30 +132,115 @@ var benchmarkRunCmd = &cobra.Command{
 				} else {
 					paramStatus = "\u001b[32mPASS\u001b[0m"
 				}
-				paramMatchCount++
 			}
-
 			status := "\u001b[31mFAILED\u001b[0m"
 			if r.Passed {
 				status = "\u001b[32mPASSED\u001b[0m"
-				passedCount++
 			}
-
 			tokensStr := fmt.Sprintf("%d / %d", r.LocalTokens.TotalTokens, r.CloudTokens.TotalTokens)
+			return []string{r.TestCaseID, planStatus, paramStatus, duration, tokensStr, status}
+		}
 
-			totalLocalPrompt += r.LocalTokens.PromptTokens
-			totalLocalCompletion += r.LocalTokens.CompletionTokens
-			totalLocalTotal += r.LocalTokens.TotalTokens
+		formatRunningRow := func(id string) []string {
+			return []string{
+				id,
+				"\u001b[90m...\u001b[0m",
+				"\u001b[90m...\u001b[0m",
+				"\u001b[90m...\u001b[0m",
+				"\u001b[90m...\u001b[0m",
+				"\u001b[33mRUNNING\u001b[0m",
+			}
+		}
 
-			totalCloudPrompt += r.CloudTokens.PromptTokens
-			totalCloudCompletion += r.CloudTokens.CompletionTokens
-			totalCloudTotal += r.CloudTokens.TotalTokens
+		passedCount := 0
+		planMatchCount := 0
+		paramMatchCount := 0
+		var totalDuration int64 = 0
+		var totalLocalPrompt, totalLocalCompletion, totalLocalTotal int
+		var totalCloudPrompt, totalCloudCompletion, totalCloudTotal int
 
-			rows = append(rows, []string{r.TestCaseID, planStatus, paramStatus, duration, tokensStr, status})
+		// Print the initial pending table
+		if out != nil {
+			redrawTable(out, headers, rows)
+		}
+
+		// Setup callbacks
+		callbacks := benchmark.SuiteCallbacks{
+			OnTestStart: func(testCaseID string) {
+				idx, ok := caseIndex[testCaseID]
+				if ok {
+					rows[idx] = formatRunningRow(testCaseID)
+					if out != nil {
+						redrawTable(out, headers, rows)
+					}
+				}
+			},
+			OnTestComplete: func(res benchmark.BenchmarkResult) {
+				idx, ok := caseIndex[res.TestCaseID]
+				if ok {
+					rows[idx] = formatResultRow(res)
+					if out != nil {
+						redrawTable(out, headers, rows)
+					}
+				}
+				// Accumulate metrics
+				totalDuration += res.ExecutionDurationMs
+				if res.PlanningMatch {
+					planMatchCount++
+				}
+				if res.ParameterMatch {
+					paramMatchCount++
+				}
+				if res.Passed {
+					passedCount++
+				}
+				totalLocalPrompt += res.LocalTokens.PromptTokens
+				totalLocalCompletion += res.LocalTokens.CompletionTokens
+				totalLocalTotal += res.LocalTokens.TotalTokens
+				totalCloudPrompt += res.CloudTokens.PromptTokens
+				totalCloudCompletion += res.CloudTokens.CompletionTokens
+				totalCloudTotal += res.CloudTokens.TotalTokens
+			},
+		}
+
+		// Silence stderr and stdout unless verbose mode is requested
+		if !benchmarkVerbose {
+			nullFile, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+			if err == nil {
+				os.Stdout = nullFile
+				os.Stderr = nullFile
+				defer func() {
+					os.Stdout = oldStdout
+					os.Stderr = oldStderr
+					nullFile.Close()
+				}()
+			}
+		}
+
+		results, err := benchmark.RunSuite(ctx, benchmarkDataset, benchmarkMode, benchmarkModelMode, benchmarkReal, benchmarkLimit, callbacks)
+		if err != nil {
+			// Restore output descriptors before printing failure
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+			fmt.Fprintf(oldStderr, "Benchmark execution failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Restore output descriptors
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+
+		if globalFlags.JSONOut {
+			_ = printJSON(oldStdout, results)
+			if !benchmarkVerbose {
+				return
+			}
 		}
 
 		if out != nil {
-			printBenchmarkTable(out, headers, rows)
+			if benchmarkVerbose {
+				printBenchmarkTable(out, headers, rows)
+			}
 
 			totalCases := len(results)
 			passedPercent := 0.0
@@ -160,7 +260,11 @@ var benchmarkRunCmd = &cobra.Command{
 			fmt.Fprintf(out, "Total Token Usage:\n")
 			fmt.Fprintf(out, "  Local:               %d tokens (%d prompt, %d completion)\n", totalLocalTotal, totalLocalPrompt, totalLocalCompletion)
 			fmt.Fprintf(out, "  Cloud:               %d tokens (%d prompt, %d completion)\n", totalCloudTotal, totalCloudPrompt, totalCloudCompletion)
-			fmt.Fprintf(out, "Total Elapsed Time:    %.2fs (Avg: %dms/case)\n", float64(totalDuration)/1000.0, int(totalDuration)/totalCases)
+			if totalCases > 0 {
+				fmt.Fprintf(out, "Total Elapsed Time:    %.2fs (Avg: %dms/case)\n", float64(totalDuration)/1000.0, int(totalDuration)/totalCases)
+			} else {
+				fmt.Fprintf(out, "Total Elapsed Time:    0.00s\n")
+			}
 			fmt.Fprintf(out, "===================================\n")
 		}
 	},
@@ -230,10 +334,10 @@ func printBenchmarkDivider(out io.Writer, widths []int) {
 
 func init() {
 	benchmarkRunCmd.Flags().StringVarP(&benchmarkDataset, "dataset", "d", "bfcl", "Benchmark target dataset ('bfcl' or 'complexfuncbench')")
-	benchmarkRunCmd.Flags().StringVarP(&benchmarkMode, "mode", "m", "consolidated", "Simulation evaluation mode ('consolidated' or 'interactive')")
+	benchmarkRunCmd.Flags().StringVarP(&benchmarkMode, "mode", "m", "interactive", "Simulation evaluation mode ('consolidated' or 'interactive')")
 	benchmarkRunCmd.Flags().StringVarP(&benchmarkModelMode, "model-mode", "t", "local", "Model routing execution tier ('local', 'cooperative', or 'cloud')")
 	benchmarkRunCmd.Flags().BoolVarP(&benchmarkReal, "real", "r", false, "Run evaluation against actual LLM model endpoints without ground-truth mock completions")
-	benchmarkRunCmd.Flags().IntVarP(&benchmarkLimit, "limit", "l", 0, "Limit the number of benchmark test cases to evaluate (0 for all)")
+	benchmarkRunCmd.Flags().IntVarP(&benchmarkLimit, "limit", "l", 0, "Limit the number of benchmark test cases to evaluate (0 for all, draws a random sample if specified)")
 	benchmarkRunCmd.Flags().BoolVarP(&benchmarkVerbose, "verbose", "v", false, "Enable verbose output to stderr when JSON mode is on")
 
 	benchmarkCmd.AddCommand(benchmarkRunCmd)

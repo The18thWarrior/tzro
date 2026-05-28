@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"tzro/internal/config"
 	"tzro/internal/memory"
 )
 
@@ -313,7 +314,7 @@ func NewQueryKGTool() *BaseAgentTool {
 			}
 
 			// Match context
-			ragCtx := memory.DB.GetGraphRAGContext(in.Query)
+			ragCtx := memory.DB.GetGraphRAGContext(in.Query, config.GetMaxRAGContextChars())
 			if ragCtx == "" {
 				return ToolSuccess(map[string]interface{}{
 					"nodeCount": 0,

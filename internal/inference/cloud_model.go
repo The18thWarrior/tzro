@@ -89,7 +89,7 @@ func callCloudModel(ctx context.Context, systemPrompt, userPrompt string, schema
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+config.GetCloudAPIKey())
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

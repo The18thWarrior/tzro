@@ -15,8 +15,9 @@ type EngineConfig struct {
 	CloudModel     string  `json:"cloudModel"`     // the cloud model name to use (e.g. gemini-flash-latest)
 	SpeedFloor     float64 `json:"speedFloor"`     // default 5.0 t/s
 	SidecarEnabled bool    `json:"sidecarEnabled"` // default true
-	GGUFModelPath  string  `json:"ggufModelPath"`  // path to local gguf model file
-	ModelsDir      string  `json:"modelsDir"`      // directory for downloaded models
+	GGUFModelPath       string  `json:"ggufModelPath"`       // path to local gguf model file
+	ModelsDir           string  `json:"modelsDir"`           // directory for downloaded models
+	MaxRAGContextChars  int     `json:"maxRagContextChars,omitempty"` // max chars for Graph-RAG context injection (0 = use default 2000)
 }
 
 var (
@@ -173,4 +174,17 @@ func GetCloudModel() string {
 		return "gpt-4o-mini"
 	}
 	return "gemini-flash-latest"
+}
+
+// GetMaxRAGContextChars returns the configured max character limit for Graph-RAG context injection.
+// Defaults to 2000 (~500 tokens) if not explicitly configured.
+func GetMaxRAGContextChars() int {
+	configMutex.RLock()
+	limit := GlobalConfig.MaxRAGContextChars
+	configMutex.RUnlock()
+
+	if limit <= 0 {
+		return 2000
+	}
+	return limit
 }

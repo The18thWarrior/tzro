@@ -5,6 +5,8 @@ tzro_engine
 *.dll
 *.so
 *.dylib
+tzro_cli
+tzro_quickstart.db7
 
 # Runtime data
 **/.tzro/
@@ -41,3 +43,6 @@ coverage/
 .idea/
 .vscode/
 *.sw?
+
+gorilla-main
+*.zip

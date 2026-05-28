@@ -183,7 +183,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, taskID string, 
 	}
 
 	// Fetch Graph-RAG context for matched entities
-	ragCtx := memory.DB.GetGraphRAGContext(interpolatedPrompt)
+	ragCtx := memory.DB.GetGraphRAGContext(interpolatedPrompt, config.GetMaxRAGContextChars())
 
 	// 3. Determine Execution Tier and call model using unified seam
 	cfg := config.Get()
