@@ -455,4 +455,3 @@ func GetGBNFSchema(inputSchema map[string]interface{}) (string, error) {
 	}
 	return string(bytes), nil
 }
-

@@ -21,7 +21,7 @@ func TestSynthesizeSOPDeduplication(t *testing.T) {
 
 	// Set temporary test paths
 	memory.DB.SetDBPathForTesting(dbPath)
-	
+
 	if err := memory.DB.Init(); err != nil {
 		t.Fatalf("Failed to initialize test SQLite DB: %v", err)
 	}

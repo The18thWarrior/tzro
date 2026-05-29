@@ -37,7 +37,7 @@ func TestDirectDBClient_ReadOperations(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	dbFile := filepath.Join(tempDir, "test_tzro.db")
-	
+
 	// Temporarily switch DB path for direct writes during setup
 	originalDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting(dbFile)

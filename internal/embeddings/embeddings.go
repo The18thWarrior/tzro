@@ -271,4 +271,3 @@ func CosineSimilarity(s1, s2 string) float64 {
 
 	return dot / (math.Sqrt(norm1) * math.Sqrt(norm2))
 }
-

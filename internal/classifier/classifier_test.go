@@ -221,7 +221,7 @@ func TestTaskToWorkflowPromotionEngine_ToolCap(t *testing.T) {
 	// Tool 1: fetch_sheet_records
 	// We'll connect it to 13 other tools and skills
 	_ = memory.DB.AddNode(memory.KGNode{ID: "fetch_sheet_records", NodeType: "tool", Name: "Fetch Sheets"})
-	
+
 	// Let's add 13 nodes (making the neighborhood total 14 tools/skills)
 	for i := 1; i <= 13; i++ {
 		nodeID := fmt.Sprintf("helper_tool_%d", i)
@@ -230,7 +230,7 @@ func TestTaskToWorkflowPromotionEngine_ToolCap(t *testing.T) {
 			nodeType = "skill"
 		}
 		_ = memory.DB.AddNode(memory.KGNode{ID: nodeID, NodeType: nodeType, Name: "Helper Node"})
-		
+
 		// Connect them
 		edgeID := fmt.Sprintf("edge_h_%d", i)
 		_ = memory.DB.AddEdge(memory.KGEdge{

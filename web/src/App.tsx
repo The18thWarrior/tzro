@@ -28,6 +28,30 @@ import {
 } from 'lucide-react';
 
 // Type definitions matching tzro backend
+interface DBNotification {
+  id: string;
+  status: 'unread' | 'read' | 'dismissed';
+  taskId?: string;
+  workflowId?: string;
+  targetId?: string;
+  type?: 'warning' | 'error' | 'action_required' | 'info';
+  source: string;
+  content: string;
+  createdAt: number;
+  title: string;
+  message: string;
+}
+
+interface OpenAPIIntegration {
+  id: string;
+  name: string;
+  openapiSpec: string;
+  authType: string;
+  authKey?: string;
+  authValue?: string;
+  createdAt: number;
+}
+
 interface FactMemory {
   id: string;
   type: string;
@@ -160,7 +184,7 @@ interface StreamChunk {
 export default function App() {
   // Real-time state
   const [chatInput, setChatInput] = useState('');
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<DBNotification[]>([]);
   const [isNotifDrawerOpen, setIsNotifDrawerOpen] = useState(false);
   const [isChatFullscreen, setIsChatFullscreen] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
@@ -251,7 +275,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'tactics' | 'workflows' | 'settings'>('tactics');
 
   // OpenAPI integrations state hooks
-  const [openapiIntegrations, setOpenapiIntegrations] = useState<any[]>([]);
+  const [openapiIntegrations, setOpenapiIntegrations] = useState<OpenAPIIntegration[]>([]);
   const [oaId, setOaId] = useState('');
   const [oaName, setOaName] = useState('');
   const [oaAuthType, setOaAuthType] = useState('none');
@@ -810,7 +834,7 @@ export default function App() {
     }
   };
 
-  const handleNotifClick = (n: any) => {
+  const handleNotifClick = (n: DBNotification) => {
     if (n.status === 'unread') {
       handleMarkRead(n.id, 'read');
     }
@@ -1002,13 +1026,13 @@ export default function App() {
         setIsDownloading(false);
       }, 30 * 60 * 1000);
 
-    } catch (err: any) {
+    } catch (err) {
       console.error('Model download failed:', err);
       setIsDownloading(false);
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setChatHistory(prev => [...prev, { 
         sender: 'Model Manager', 
-        text: `Download failed: ${err.message}`, 
+        text: `Download failed: ${(err as Error).message}`, 
         type: 'system', 
         time: timeStr 
       }]);
@@ -1239,7 +1263,7 @@ export default function App() {
 
       // Dynamic palette from entity type registry
       const matchedType = entityTypes.find(et => et.id === node.nodeType);
-      let color = matchedType?.color || 'hsl(220, 70%, 55%)';
+      const color = matchedType?.color || 'hsl(220, 70%, 55%)';
 
       // Outer glow boundary for current centered node
       if (isCenter) {
@@ -1362,9 +1386,9 @@ export default function App() {
           setCurrentLevels(levels);
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       const errorTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setChatHistory(prev => [...prev, { sender: 'System Error', text: `Failed to route query: ${err.message}`, type: 'system', time: errorTime }]);
+      setChatHistory(prev => [...prev, { sender: 'System Error', text: `Failed to route query: ${(err as Error).message}`, type: 'system', time: errorTime }]);
     }
   };
 
@@ -1413,7 +1437,7 @@ export default function App() {
           }
         ]);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Failed to add KG node entity:', err);
     }
   };
@@ -1435,7 +1459,7 @@ export default function App() {
         const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         setChatHistory(prev => [...prev, { sender: 'Settings Sync', text: 'Global configuration parameters synced and persisted successfully.', type: 'system', time: timeStr }]);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Config sync failure:', err);
     }
   };
@@ -1452,8 +1476,8 @@ export default function App() {
 
     try {
       JSON.parse(oaSpec);
-    } catch (err: any) {
-      setOaError(`Invalid OpenAPI Spec JSON: ${err.message}`);
+    } catch (err) {
+      setOaError(`Invalid OpenAPI Spec JSON: ${(err as Error).message}`);
       return;
     }
 
@@ -1493,8 +1517,8 @@ export default function App() {
         const txt = await resp.text();
         setOaError(`Registration failed: ${txt}`);
       }
-    } catch (err: any) {
-      setOaError(`Failed to save: ${err.message}`);
+    } catch (err) {
+      setOaError(`Failed to save: ${(err as Error).message}`);
     }
   };
 
@@ -1523,8 +1547,8 @@ export default function App() {
         const txt = await resp.text();
         alert(`Failed to delete: ${txt}`);
       }
-    } catch (err: any) {
-      alert(`Deletion failed: ${err.message}`);
+    } catch (err) {
+      alert(`Deletion failed: ${(err as Error).message}`);
     }
   };
 
@@ -3280,8 +3304,8 @@ export default function App() {
               ) : (
                 notifications.map((n) => {
                   const isUnread = n.status === 'unread';
-                  let typeColor = 'border-teal-500/20 bg-teal-500/5 hover:bg-teal-500/10 text-teal-400';
-                  let iconBg = 'bg-teal-500/10 text-teal-400';
+                  let typeColor: string;
+                  let iconBg: string;
                   if (n.type === 'warning') {
                     typeColor = isUnread ? 'border-amber-500 border-l-4 bg-amber-500/5 hover:bg-amber-500/10' : 'border-white/5 bg-white/3 hover:bg-white/5 text-amber-400';
                     iconBg = 'bg-amber-500/10 text-amber-400';

@@ -4,6 +4,32 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-05-28T15:20:00Z] refactor | Complete Code Quality Decomposition & Transactional Migration Upgrade
+
+- **Activity**: Successfully completed the TDD-driven architectural decomposition of the two remaining monolithic hotspots (`internal/benchmark/runner.go` and `internal/memory/memory.go`) to achieve structural modularization under the repository's strict 1,000-line maintainability threshold.
+- **Key Decisions & Outcomes**:
+  - Reduced `internal/benchmark/runner.go` from **1,738 lines to 813 lines** by isolating POSIX filesystem observers, HTTP Completions servers, fuzzy param matcher calculations, and SSE wrappers into clean, reusable modules (`vfs`, `mock`, `matcher`).
+  - Parallelized simulated offline benchmark suite execution utilizing `errgroup` with a serialization mutex (`transportMu`) on local intercept completions to prevent concurrent `http.DefaultTransport` hijack collisions.
+  - Reduced `internal/memory/memory.go` from **1,884 lines to ~740 lines** (strictly under the maintainability limit) by extracting DB schema entity types (`models.go`), semantic vector Graph-RAG neighborhood traversers (`graph_rag.go`), workflow SQLite CRUD operations (`workflows.go`), and memories/skills CRUD functions (`memories.go`).
+  - Wrapped SQLite table creation and dynamic column schema migrations inside robust transactional scopes (`tx, err := sdb.db.Begin()`) inside `createTables` to prevent schema locking contentions and write failures.
+  - Resolved compiler-level undefined references for external modules and verified 100% green compilation across all workspace integration test suites.
+- **Files Created/Modified**:
+  - [MODIFY] [memory.go](../../internal/memory/memory.go) (Monolithic DB logic reduction, transactional table creation, schema migration updates)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-05-28T08:10:00Z] ingest | PRD: Code Quality and Architectural Refactoring
+- **Activity**: Ingested and published the Product Requirements Document (PRD) for decomposing the monolithic execution engine and SQLite database connection management files (`runner.go` and `memory.go`) into isolated sub-modules.
+- **Key Decisions & Outcomes**:
+  - Aligned on decomposing `internal/benchmark/runner.go` into isolated packages for the virtual filesystem (`vfs`), HTTP mock server (`mock`), and parameter relaxer (`matcher`).
+  - Aligned on decomposing `internal/memory/memory.go` into isolated sub-modules for database schemas (`models`), semantic traversals (`graph_rag`), workflow queries (`workflows`), and memory modules (`memories`).
+  - Formulated a configurable, typed `RelaxationPolicy` model to completely remove hardcoded string and filepath bypasses from the core validation logic.
+  - Planned bounded parallel test execution and transaction-wrapped SQLite schema upgrades to increase runner speed and state safety.
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/code-quality-refactors/PRD.md) (Local issue tracker PRD)
+  - [NEW] [code-quality-refactors.md](features/code-quality-refactors.md) (Wiki feature page)
+  - [MODIFY] [index.md](index.md) (Updated local wiki index links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 ## [2026-05-27T15:32:00Z] analysis | Evaluate Cooperative Engine Full-Scale Benchmark Run 4 Results (400 Cases)
 
 - **Activity**: Analyzed the full-scale offline benchmark run `benchmark_results_5_27_2026_13_04.json` (400 cases) to evaluate cooperative engine success rates and diagnose failures at a much larger production scale.

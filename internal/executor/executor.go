@@ -50,7 +50,6 @@ You have access to the following special tools to explore and query this cached 
 
 If you need to analyze, filter, paginate, or count records from the cache, you MUST use one of these tools instead of attempting to read the raw cache envelope directly.`
 
-
 // ExecuteGraph runs the compiled topological execution levels.
 // It executes nodes at the same Kahn level in parallel via goroutines,
 // writing states to memory and pushing audit events to the observer.
@@ -152,11 +151,9 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	return nil
 }
 
-
-
 func (e *ExecutionEngine) executeSingleNode(ctx context.Context, taskID string, node *compiler.GraphNode) error {
 	fmt.Fprintf(os.Stderr, "[Executor] Executing Action Node: %s (Type: %s, Action: %s)\n", node.ID, node.Type, node.Action)
-	
+
 	// Update node state to running
 	_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
 	e.getPublisher().PublishEvent("node_started", taskID, node.ID, fmt.Sprintf("Started %s", node.Action))
@@ -343,7 +340,6 @@ func interpolateVariables(instruction string, taskID string) string {
 	return instruction
 }
 
-
 func extractToolArguments(raw string) map[string]interface{} {
 	startIdx := strings.Index(raw, "{")
 	endIdx := strings.LastIndex(raw, "}")
@@ -358,5 +354,3 @@ func extractToolArguments(raw string) map[string]interface{} {
 	}
 	return map[string]interface{}{"query": raw}
 }
-
-

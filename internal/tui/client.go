@@ -11,10 +11,10 @@ import (
 
 // TaskStateItem mirrors the server's task payload structure.
 type TaskStateItem struct {
-	TaskID    string                  `json:"taskId"`
+	TaskID    string                   `json:"taskId"`
 	Graph     *compiler.ExecutionGraph `json:"graph"`
-	States    map[string]interface{}  `json:"states"`
-	CreatedAt int64                   `json:"createdAt"`
+	States    map[string]interface{}   `json:"states"`
+	CreatedAt int64                    `json:"createdAt"`
 }
 
 // MemoryPayload mirrors the server's memory payload structure.

@@ -327,7 +327,7 @@ func printBenchmarkTable(out io.Writer, headers []string, rows [][]string) {
 func printBenchmarkDivider(out io.Writer, widths []int) {
 	fmt.Fprint(out, "+")
 	for _, w := range widths {
-		fmt.Fprint(out, strings.Repeat("-", w+2) + "+")
+		fmt.Fprint(out, strings.Repeat("-", w+2)+"+")
 	}
 	fmt.Fprintln(out)
 }

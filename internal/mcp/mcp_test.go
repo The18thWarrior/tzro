@@ -321,4 +321,3 @@ func TestMCPDaemon_Docker(t *testing.T) {
 		t.Errorf("expected STATIC_VAR to be injected, got: %s", argsStr)
 	}
 }
-

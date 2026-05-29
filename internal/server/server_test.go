@@ -132,7 +132,7 @@ data: [DONE]
 	listenerAddr := mockLlamaServer.Listener.Addr().String()
 	parts := strings.Split(listenerAddr, ":")
 	portStr := parts[len(parts)-1]
-	
+
 	// Set the port
 	var activePort int
 	for _, char := range portStr {

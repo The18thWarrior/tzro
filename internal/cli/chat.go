@@ -68,7 +68,7 @@ var chatCmd = &cobra.Command{
 			fmt.Printf("Monitor status using: tzro task status %s\n", chatResp.TaskID)
 		} else if chatResp.StreamID != "" {
 			fmt.Println("--- LLM CONVERSATIONAL RESPONSE ---")
-			
+
 			// Establish SSE connection to tail chunks live
 			eventsResp, err := http.Get(globalFlags.URL + "/api/events")
 			if err != nil {

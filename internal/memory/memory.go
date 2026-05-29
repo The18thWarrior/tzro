@@ -1,142 +1,17 @@
 package memory
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 	"tzro/internal/embeddings"
 
 	_ "modernc.org/sqlite"
 )
-
-type FactMemory struct {
-	ID         string    `json:"id"`
-	UserID     string    `json:"userId"`
-	Type       string    `json:"type"` // "fact" | "preference" | "insight" | "correction" | "anti_pattern" | "strategy"
-	Content    string    `json:"content"`
-	Context    string    `json:"context"`
-	Confidence float64   `json:"confidence"`
-	Source     string    `json:"source"`
-	CreatedAt  time.Time `json:"createdAt"`
-	Embedding  []float32 `json:"embedding,omitempty"`
-}
-
-type KGNode struct {
-	ID        string                 `json:"id"`
-	NodeType  string                 `json:"nodeType"` // "account" | "contact" | "ticket" | "document"
-	Name      string                 `json:"name"`
-	Metadata  map[string]interface{} `json:"metadata"`
-	Source    string                 `json:"source"`
-	Weight    float64                `json:"weight"`
-	Embedding []float32              `json:"embedding,omitempty"`
-}
-
-type KGEdge struct {
-	ID       string                 `json:"id"`
-	EdgeType string                 `json:"edgeType"` // "belongs_to" | "assigned_to" | "references"
-	SourceID string                 `json:"sourceId"`
-	TargetID string                 `json:"targetId"`
-	Metadata map[string]interface{} `json:"metadata"`
-	Weight   float64                `json:"weight"`
-}
-
-type KGSubGraph struct {
-	Nodes []KGNode `json:"nodes"`
-	Edges []KGEdge `json:"edges"`
-}
-
-type NodeState struct {
-	TaskID      string `json:"taskId"`
-	NodeID      string `json:"nodeId"`
-	Status      string `json:"status"` // "pending" | "running" | "completed" | "failed" | "skipped"
-	Output      string `json:"output"`
-	CompletedAt int64  `json:"completedAt"`
-}
-
-type Skill struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	TriggerDescription string `json:"triggerDescription"`
-	SOPContent         string `json:"sopContent"`
-	CreatedAt          int64  `json:"createdAt"`
-}
-
-type EntityType struct {
-	ID      string `json:"id"`      // Machine key used in KGNode.NodeType (e.g. "contact")
-	Label   string `json:"label"`   // Human-readable display name (e.g. "Contact")
-	Color   string `json:"color"`   // CSS HSL color string for canvas rendering
-	Icon    string `json:"icon"`    // Optional icon hint (e.g. "user", "building", "tag")
-	BuiltIn bool   `json:"builtIn"` // true for default types that cannot be deleted
-}
-
-type WorkflowDefinition struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	TriggerType   string `json:"triggerType"`   // "cron" | "manual"
-	TriggerConfig string `json:"triggerConfig"` // cron expression
-	Status        string `json:"status"`        // "active" | "paused"
-	NextRunAt     int64  `json:"nextRunAt"`     // unix timestamp
-	CreatedAt     int64  `json:"createdAt"`
-	UpdatedAt     int64  `json:"updatedAt"`
-}
-
-type WorkflowTask struct {
-	WorkflowID     string `json:"workflowId"`
-	TaskTemplateID string `json:"taskTemplateId"`
-	Name           string `json:"name"`
-	Instructions   string `json:"instructions"`
-	Dependencies   string `json:"dependencies"` // comma-separated taskTemplateIds
-}
-
-type WorkflowExecution struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflowId"`
-	Status      string `json:"status"` // "running" | "completed" | "failed" | "cancelled"
-	StartedAt   int64  `json:"startedAt"`
-	CompletedAt int64  `json:"completedAt,omitempty"`
-}
-
-type WorkflowTaskExecution struct {
-	WorkflowExecutionID string `json:"workflowExecutionId"`
-	TaskTemplateID      string `json:"taskTemplateId"`
-	TaskExecutionID     string `json:"taskExecutionId"` // tzro taskId
-	Status              string `json:"status"`          // "pending" | "running" | "completed" | "failed"
-	StartedAt           int64  `json:"startedAt"`
-	CompletedAt         int64  `json:"completedAt,omitempty"`
-}
-
-type OpenAPIIntegration struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	OpenAPISpec string `json:"openapiSpec"`
-	AuthType    string `json:"authType"`
-	AuthKey     string `json:"authKey,omitempty"`
-	AuthValue   string `json:"authValue,omitempty"`
-	CreatedAt   int64  `json:"createdAt"`
-}
-
-type DurableNotification struct {
-	ID            string `json:"id"`
-	Source        string `json:"source"`
-	Type          string `json:"type"`
-	Title         string `json:"title"`
-	Message       string `json:"message"`
-	TaskID        string `json:"taskId,omitempty"`
-	WorkflowID    string `json:"workflowId,omitempty"`
-	TargetID      string `json:"targetId,omitempty"`
-	Status        string `json:"status"`
-	ActionPayload string `json:"actionPayload,omitempty"`
-	CreatedAt     int64  `json:"createdAt"`
-}
-
 
 // SqliteDatabase replaces JSONDatabase
 type SqliteDatabase struct {
@@ -169,7 +44,6 @@ func (sdb *SqliteDatabase) RawDB() *sql.DB {
 	defer sdb.mutex.RUnlock()
 	return sdb.db
 }
-
 
 // Init loads the database from disk, creates tables, seeds defaults, and runs legacy migration if present
 func (sdb *SqliteDatabase) Init() error {
@@ -214,6 +88,12 @@ func (sdb *SqliteDatabase) Close() error {
 }
 
 func (sdb *SqliteDatabase) createTables() error {
+	tx, err := sdb.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS fact_memories (
 			id TEXT PRIMARY KEY,
@@ -331,24 +211,24 @@ func (sdb *SqliteDatabase) createTables() error {
 	}
 
 	for _, query := range queries {
-		if _, err := sdb.db.Exec(query); err != nil {
+		if _, err := tx.Exec(query); err != nil {
 			return err
 		}
 	}
 
 	// Dynamic column migrations for backward compatibility with pre-vector databases
-	if err := sdb.ensureColumnExists("fact_memories", "embedding", "TEXT"); err != nil {
+	if err := sdb.ensureColumnExistsTx(tx, "fact_memories", "embedding", "TEXT"); err != nil {
 		return fmt.Errorf("failed to migrate fact_memories schema: %w", err)
 	}
-	if err := sdb.ensureColumnExists("kg_nodes", "embedding", "TEXT"); err != nil {
+	if err := sdb.ensureColumnExistsTx(tx, "kg_nodes", "embedding", "TEXT"); err != nil {
 		return fmt.Errorf("failed to migrate kg_nodes schema: %w", err)
 	}
 
-	return nil
+	return tx.Commit()
 }
 
-func (sdb *SqliteDatabase) ensureColumnExists(tableName, columnName, columnType string) error {
-	rows, err := sdb.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+func (sdb *SqliteDatabase) ensureColumnExistsTx(tx *sql.Tx, tableName, columnName, columnType string) error {
+	rows, err := tx.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
 	if err != nil {
 		return fmt.Errorf("failed to query table info for %s: %w", tableName, err)
 	}
@@ -374,13 +254,12 @@ func (sdb *SqliteDatabase) ensureColumnExists(tableName, columnName, columnType 
 	if !hasColumn {
 		fmt.Printf("[Migration] Column '%s' is missing in table '%s'. Adding it...\n", columnName, tableName)
 		alterQuery := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tableName, columnName, columnType)
-		if _, err := sdb.db.Exec(alterQuery); err != nil {
+		if _, err := tx.Exec(alterQuery); err != nil {
 			return fmt.Errorf("failed to execute alter table for %s: %w", tableName, err)
 		}
 	}
 	return nil
 }
-
 
 type legacyJSONDB struct {
 	Memories    []FactMemory         `json:"memories"`
@@ -521,645 +400,6 @@ func (sdb *SqliteDatabase) seedEntityTypes() error {
 	return tx.Commit()
 }
 
-type NeighborhoodParams struct {
-	NodeTypes     []string
-	EdgeTypes     []string
-	MinNodeWeight float64
-	MinEdgeWeight float64
-	Direction     string // "incoming", "outgoing", "undirected" (default)
-	Limit         int    // max total nodes returned
-}
-
-type NeighborhoodOption func(*NeighborhoodParams)
-
-func WithNodeTypes(types []string) NeighborhoodOption {
-	return func(p *NeighborhoodParams) {
-		p.NodeTypes = types
-	}
-}
-
-func WithEdgeTypes(types []string) NeighborhoodOption {
-	return func(p *NeighborhoodParams) {
-		p.EdgeTypes = types
-	}
-}
-
-func WithMinNodeWeight(w float64) NeighborhoodOption {
-	return func(p *NeighborhoodParams) {
-		p.MinNodeWeight = w
-	}
-}
-
-func WithMinEdgeWeight(w float64) NeighborhoodOption {
-	return func(p *NeighborhoodParams) {
-		p.MinEdgeWeight = w
-	}
-}
-
-func WithDirection(dir string) NeighborhoodOption {
-	return func(p *NeighborhoodParams) {
-		p.Direction = dir
-	}
-}
-
-func WithLimit(limit int) NeighborhoodOption {
-	return func(p *NeighborhoodParams) {
-		p.Limit = limit
-	}
-}
-
-// GetEntityNeighborhood traverses connected nodes up to maxHops (Graph-RAG traversal) with customizable filters.
-func (sdb *SqliteDatabase) GetEntityNeighborhood(entityID string, maxHops int, opts ...NeighborhoodOption) KGSubGraph {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	if sdb.db == nil {
-		return KGSubGraph{}
-	}
-
-	nodes, err := sdb.getNodesMapLocked()
-	if err != nil {
-		return KGSubGraph{}
-	}
-	edges, err := sdb.getEdgesSliceLocked()
-	if err != nil {
-		return KGSubGraph{}
-	}
-
-	return sdb.getEntityNeighborhoodLocked(entityID, maxHops, nodes, edges, opts...)
-}
-
-func (sdb *SqliteDatabase) getEntityNeighborhoodLocked(
-	entityID string,
-	maxHops int,
-	nodes map[string]KGNode,
-	edges []KGEdge,
-	opts ...NeighborhoodOption,
-) KGSubGraph {
-	p := &NeighborhoodParams{
-		Direction: "undirected",
-	}
-	for _, opt := range opts {
-		opt(p)
-	}
-
-	nodeTypeMap := make(map[string]bool)
-	for _, t := range p.NodeTypes {
-		nodeTypeMap[t] = true
-	}
-
-	edgeTypeMap := make(map[string]bool)
-	for _, t := range p.EdgeTypes {
-		edgeTypeMap[t] = true
-	}
-
-	visited := map[string]bool{entityID: true}
-	var allNodes []KGNode
-	var allEdges []KGEdge
-
-	// Add start node if it exists
-	if startNode, exists := nodes[entityID]; exists {
-		if len(nodeTypeMap) > 0 && !nodeTypeMap[startNode.NodeType] {
-			return KGSubGraph{}
-		}
-		if p.MinNodeWeight > 0 && startNode.Weight < p.MinNodeWeight {
-			return KGSubGraph{}
-		}
-		allNodes = append(allNodes, startNode)
-	} else {
-		return KGSubGraph{}
-	}
-
-	if p.Limit > 0 && len(allNodes) >= p.Limit {
-		return KGSubGraph{Nodes: allNodes, Edges: []KGEdge{}}
-	}
-
-	frontier := []string{entityID}
-
-	for hop := 0; hop < maxHops && len(frontier) > 0; hop++ {
-		var nextFrontier []string
-		reachedLimit := false
-
-		for _, nodeID := range frontier {
-			// Find edges connected to nodeID
-			for _, edge := range edges {
-				if p.MinEdgeWeight > 0 && edge.Weight < p.MinEdgeWeight {
-					continue
-				}
-				if len(edgeTypeMap) > 0 && !edgeTypeMap[edge.EdgeType] {
-					continue
-				}
-
-				// Identify neighbor node and validate direction
-				var neighborID string
-				var isValidDir bool
-				if edge.SourceID == nodeID {
-					neighborID = edge.TargetID
-					isValidDir = (p.Direction == "outgoing" || p.Direction == "undirected" || p.Direction == "")
-				} else if edge.TargetID == nodeID {
-					neighborID = edge.SourceID
-					isValidDir = (p.Direction == "incoming" || p.Direction == "undirected" || p.Direction == "")
-				}
-
-				if !isValidDir {
-					continue
-				}
-
-				// Fetch neighbor node
-				neighborNode, exists := nodes[neighborID]
-				if !exists {
-					continue
-				}
-
-				// Filter neighbor node
-				if len(nodeTypeMap) > 0 && !nodeTypeMap[neighborNode.NodeType] {
-					continue
-				}
-				if p.MinNodeWeight > 0 && neighborNode.Weight < p.MinNodeWeight {
-					continue
-				}
-
-				// Append edge if not already added
-				alreadyAdded := false
-				for _, existingEdge := range allEdges {
-					if existingEdge.ID == edge.ID {
-						alreadyAdded = true
-						break
-					}
-				}
-				if !alreadyAdded {
-					allEdges = append(allEdges, edge)
-				}
-
-				// Visit neighbor
-				if !visited[neighborID] {
-					visited[neighborID] = true
-					nextFrontier = append(nextFrontier, neighborID)
-					allNodes = append(allNodes, neighborNode)
-					if p.Limit > 0 && len(allNodes) >= p.Limit {
-						reachedLimit = true
-						break
-					}
-				}
-			}
-			if reachedLimit {
-				break
-			}
-		}
-		if reachedLimit {
-			break
-		}
-		frontier = nextFrontier
-	}
-
-	// Filter edges to only include those whose source and target are in the final nodes set
-	finalNodeIDs := make(map[string]bool)
-	for _, n := range allNodes {
-		finalNodeIDs[n.ID] = true
-	}
-	var finalEdges []KGEdge
-	for _, e := range allEdges {
-		if finalNodeIDs[e.SourceID] && finalNodeIDs[e.TargetID] {
-			finalEdges = append(finalEdges, e)
-		}
-	}
-
-	return KGSubGraph{Nodes: allNodes, Edges: finalEdges}
-}
-
-// GetGraphRAGContext scans a natural language prompt, matches active entity Names or IDs,
-// traverses up to 2-hop neighborhoods, and outputs a formatted Markdown Graph-RAG context.
-// maxChars controls the maximum character length of the output (0 = unlimited).
-func (sdb *SqliteDatabase) GetGraphRAGContext(prompt string, maxChars ...int) string {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	if sdb.db == nil {
-		return ""
-	}
-
-	nodes, err := sdb.getNodesMapLocked()
-	if err != nil || len(nodes) == 0 {
-		return ""
-	}
-	edges, err := sdb.getEdgesSliceLocked()
-	if err != nil {
-		return ""
-	}
-
-	// 1. Identify matched nodes in the prompt via Hybrid Vector Search
-	var matchedIDs []string
-	matchedIDsMap := make(map[string]bool)
-
-	// First, check exact word matches (FTS5 / literal candidate pool fallback)
-	for id, node := range nodes {
-		if isWordMatch(prompt, id) || isWordMatch(prompt, node.Name) {
-			matchedIDs = append(matchedIDs, id)
-			matchedIDsMap[id] = true
-		}
-	}
-
-	// Second, if EmbeddingEngine is available, calculate semantic similarity for candidates
-	if sdb.EmbeddingEngine != nil {
-		promptVec, err := sdb.EmbeddingEngine.Embed(context.Background(), prompt)
-		if err == nil {
-			for id, node := range nodes {
-				if matchedIDsMap[id] {
-					continue
-				}
-				if len(node.Embedding) > 0 {
-					sim := sdb.EmbeddingEngine.CosineSimilarity(promptVec, node.Embedding)
-					// Threshold of 0.30 indicates strong semantic alignment for sparse vectors
-					if sim >= 0.30 {
-						matchedIDs = append(matchedIDs, id)
-						matchedIDsMap[id] = true
-					}
-				}
-			}
-		}
-	}
-
-	if len(matchedIDs) == 0 {
-		return ""
-	}
-
-	// 2. Traverse neighborhood (2 hops) for all matched nodes and deduplicate
-	dedupNodes := make(map[string]KGNode)
-	dedupEdges := make(map[string]KGEdge)
-
-	for _, matchedID := range matchedIDs {
-		sub := sdb.getEntityNeighborhoodLocked(matchedID, 2, nodes, edges)
-		for _, n := range sub.Nodes {
-			dedupNodes[n.ID] = n
-		}
-		for _, e := range sub.Edges {
-			dedupEdges[e.ID] = e
-		}
-	}
-
-	// Resolve the effective character limit
-	charLimit := 0
-	if len(maxChars) > 0 {
-		charLimit = maxChars[0]
-	}
-
-	// 3. Format into Markdown (with optional truncation)
-	return sdb.formatRAGContext(dedupNodes, dedupEdges, charLimit)
-}
-
-// formatRAGContext builds the Markdown output, applying weight-based truncation if charLimit > 0.
-func (sdb *SqliteDatabase) formatRAGContext(dedupNodes map[string]KGNode, dedupEdges map[string]KGEdge, charLimit int) string {
-	totalEntityCount := len(dedupNodes)
-
-	// Sort node IDs by weight descending (highest relevance first), breaking ties by ID
-	var sortedNodeIDs []string
-	for id := range dedupNodes {
-		sortedNodeIDs = append(sortedNodeIDs, id)
-	}
-	sort.Slice(sortedNodeIDs, func(i, j int) bool {
-		wi := dedupNodes[sortedNodeIDs[i]].Weight
-		wj := dedupNodes[sortedNodeIDs[j]].Weight
-		if wi != wj {
-			return wi > wj // higher weight first
-		}
-		return sortedNodeIDs[i] < sortedNodeIDs[j] // alphabetical tie-break
-	})
-
-	// Try rendering with all entities first; if over limit, progressively drop lowest-weight entities
-	for {
-		output := sdb.renderRAGMarkdown(sortedNodeIDs, dedupNodes, dedupEdges, charLimit > 0 && len(sortedNodeIDs) < totalEntityCount, totalEntityCount)
-		if charLimit <= 0 || len(output) <= charLimit || len(sortedNodeIDs) <= 1 {
-			return output
-		}
-		// Drop the last entity (lowest weight) and retry
-		sortedNodeIDs = sortedNodeIDs[:len(sortedNodeIDs)-1]
-	}
-}
-
-// renderRAGMarkdown produces the final Markdown string for the given entity subset.
-func (sdb *SqliteDatabase) renderRAGMarkdown(sortedNodeIDs []string, dedupNodes map[string]KGNode, dedupEdges map[string]KGEdge, truncated bool, totalEntityCount int) string {
-	var sb strings.Builder
-	sb.WriteString("### RELATIONAL KNOWLEDGE GRAPH CONTEXT (Graph-RAG)\n")
-	sb.WriteString("Based on active entities detected in your request, the following local sub-graph has been retrieved:\n\n")
-
-	sb.WriteString("#### Connected Entities\n")
-	sb.WriteString("| ID | Type | Name | Weight | Source | Metadata |\n")
-	sb.WriteString("| --- | --- | --- | --- | --- | --- |\n")
-
-	retainedIDs := make(map[string]bool)
-	for _, id := range sortedNodeIDs {
-		retainedIDs[id] = true
-		n := dedupNodes[id]
-		metaBytes, _ := json.Marshal(n.Metadata)
-		metaStr := string(metaBytes)
-		if metaStr == "" {
-			metaStr = "{}"
-		}
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %.2f | %s | %s |\n", n.ID, n.NodeType, n.Name, n.Weight, n.Source, metaStr))
-	}
-	sb.WriteString("\n")
-
-	// Filter edges to only include those whose source AND target are in the retained set
-	sb.WriteString("#### Relationships\n")
-	var validEdges []KGEdge
-	for _, e := range dedupEdges {
-		if retainedIDs[e.SourceID] && retainedIDs[e.TargetID] {
-			validEdges = append(validEdges, e)
-		}
-	}
-
-	if len(validEdges) == 0 {
-		sb.WriteString("No active relationships within the retrieved neighborhood.\n")
-	} else {
-		var sortedEdgeIDs []string
-		edgeMap := make(map[string]KGEdge)
-		for _, e := range validEdges {
-			sortedEdgeIDs = append(sortedEdgeIDs, e.ID)
-			edgeMap[e.ID] = e
-		}
-		sort.Strings(sortedEdgeIDs)
-
-		for _, id := range sortedEdgeIDs {
-			e := edgeMap[id]
-			srcName := e.SourceID
-			if sn, exists := dedupNodes[e.SourceID]; exists {
-				srcName = sn.Name
-			}
-			tgtName := e.TargetID
-			if tn, exists := dedupNodes[e.TargetID]; exists {
-				tgtName = tn.Name
-			}
-			metaBytes, _ := json.Marshal(e.Metadata)
-			metaStr := string(metaBytes)
-			if metaStr == "" {
-				metaStr = "{}"
-			}
-			sb.WriteString(fmt.Sprintf("- **%s** (`%s`) --[%s (Weight: %.2f)]--> **%s** (`%s`) | Metadata: %s\n",
-				srcName, e.SourceID, e.EdgeType, e.Weight, tgtName, e.TargetID, metaStr))
-		}
-	}
-
-	if truncated {
-		sb.WriteString(fmt.Sprintf("\n> ⚠️ Context truncated: showing top %d of %d entities by relevance weight.\n", len(sortedNodeIDs), totalEntityCount))
-	}
-
-	return sb.String()
-}
-
-// GetRelevantSkills returns skills ranked by semantic relevance to the prompt, capped at maxSkills.
-// Uses the EmbeddingEngine for vector similarity when available, falling back to string-based cosine similarity.
-// If maxSkills <= 0, returns all skills unfiltered.
-func (sdb *SqliteDatabase) GetRelevantSkills(prompt string, maxSkills int) []Skill {
-	allSkills := sdb.GetSkills()
-
-	if maxSkills <= 0 || len(allSkills) <= maxSkills {
-		return allSkills
-	}
-
-	type scoredSkill struct {
-		skill Skill
-		score float64
-	}
-
-	var scored []scoredSkill
-
-	// Try embedding-based similarity first
-	if sdb.EmbeddingEngine != nil {
-		promptVec, err := sdb.EmbeddingEngine.Embed(context.Background(), prompt)
-		if err == nil {
-			for _, s := range allSkills {
-				// Embed the skill's trigger description for comparison
-				triggerVec, err := sdb.EmbeddingEngine.Embed(context.Background(), s.TriggerDescription+" "+s.Name)
-				if err == nil && len(triggerVec) > 0 {
-					sim := float64(sdb.EmbeddingEngine.CosineSimilarity(promptVec, triggerVec))
-					scored = append(scored, scoredSkill{skill: s, score: sim})
-				} else {
-					scored = append(scored, scoredSkill{skill: s, score: 0})
-				}
-			}
-		}
-	}
-
-	// Fallback to string-based cosine similarity if embedding engine unavailable or failed
-	if len(scored) == 0 {
-		for _, s := range allSkills {
-			sim := embeddings.CosineSimilarity(prompt, s.TriggerDescription+" "+s.Name)
-			scored = append(scored, scoredSkill{skill: s, score: sim})
-		}
-	}
-
-	// Sort by score descending
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].score > scored[j].score
-	})
-
-	// Return top-N
-	if len(scored) > maxSkills {
-		scored = scored[:maxSkills]
-	}
-
-	result := make([]Skill, len(scored))
-	for i, s := range scored {
-		result[i] = s.skill
-	}
-	return result
-}
-
-// isWordMatch helper to perform a precise, case-insensitive word-boundary search
-func isWordMatch(text, word string) bool {
-	if len(word) == 0 {
-		return false
-	}
-	textLower := strings.ToLower(text)
-	wordLower := strings.ToLower(word)
-
-	start := 0
-	for {
-		idx := strings.Index(textLower[start:], wordLower)
-		if idx == -1 {
-			return false
-		}
-		pos := start + idx
-
-		// Check boundary before
-		beforeWord := true
-		if pos > 0 {
-			rBefore := rune(textLower[pos-1])
-			if unicode.IsLetter(rBefore) || unicode.IsDigit(rBefore) || rBefore == '_' {
-				beforeWord = false
-			}
-		}
-
-		// Check boundary after
-		afterWord := true
-		endPos := pos + len(wordLower)
-		if endPos < len(textLower) {
-			rAfter := rune(textLower[endPos])
-			if unicode.IsLetter(rAfter) || unicode.IsDigit(rAfter) || rAfter == '_' {
-				afterWord = false
-			}
-		}
-
-		if beforeWord && afterWord {
-			return true
-		}
-
-		start = pos + 1
-	}
-}
-
-// Tabular KV Memory methods
-func (sdb *SqliteDatabase) AddMemory(m FactMemory) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	m.ID = fmt.Sprintf("mem_%d", time.Now().UnixNano())
-	m.CreatedAt = time.Now()
-
-	embStr := ""
-	if len(m.Embedding) > 0 {
-		b, _ := json.Marshal(m.Embedding)
-		embStr = string(b)
-	}
-
-	_, err := sdb.db.Exec(`INSERT INTO fact_memories (id, user_id, type, content, context, confidence, source, created_at, embedding)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.ID, m.UserID, m.Type, m.Content, m.Context, m.Confidence, m.Source, m.CreatedAt, embStr)
-	return err
-}
-
-func (sdb *SqliteDatabase) GetMemories() []FactMemory {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	rows, err := sdb.db.Query("SELECT id, user_id, type, content, context, confidence, source, created_at, embedding FROM fact_memories ORDER BY created_at DESC")
-	if err != nil {
-		fmt.Printf("[Memory Error] Failed to query memories: %v\n", err)
-		return []FactMemory{}
-	}
-	defer rows.Close()
-
-	var list []FactMemory
-	for rows.Next() {
-		var m FactMemory
-		var embStr sql.NullString
-		err := rows.Scan(&m.ID, &m.UserID, &m.Type, &m.Content, &m.Context, &m.Confidence, &m.Source, &m.CreatedAt, &embStr)
-		if err != nil {
-			fmt.Printf("[Memory Error] Failed to scan memory row: %v\n", err)
-			continue
-		}
-		if embStr.Valid && embStr.String != "" {
-			_ = json.Unmarshal([]byte(embStr.String), &m.Embedding)
-		}
-		list = append(list, m)
-	}
-	if list == nil {
-		list = []FactMemory{}
-	}
-	return list
-}
-
-// Relational Knowledge Graph methods
-func (sdb *SqliteDatabase) AddNode(n KGNode) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	embStr := ""
-	if len(n.Embedding) > 0 {
-		b, _ := json.Marshal(n.Embedding)
-		embStr = string(b)
-	}
-
-	metaStr := serializeMetadata(n.Metadata)
-	_, err := sdb.db.Exec(`INSERT OR REPLACE INTO kg_nodes (id, node_type, name, metadata, source, weight, embedding)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, n.ID, n.NodeType, n.Name, metaStr, n.Source, n.Weight, embStr)
-	return err
-}
-
-func (sdb *SqliteDatabase) AddEdge(e KGEdge) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	metaStr := serializeMetadata(e.Metadata)
-	_, err := sdb.db.Exec(`INSERT OR REPLACE INTO kg_edges (id, edge_type, source_id, target_id, metadata, weight)
-		VALUES (?, ?, ?, ?, ?, ?)`, e.ID, e.EdgeType, e.SourceID, e.TargetID, metaStr, e.Weight)
-	return err
-}
-
-func (sdb *SqliteDatabase) GetNodes() map[string]KGNode {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	nodes, err := sdb.getNodesMapLocked()
-	if err != nil {
-		fmt.Printf("[Memory Error] Failed to query nodes: %v\n", err)
-		return make(map[string]KGNode)
-	}
-	return nodes
-}
-
-func (sdb *SqliteDatabase) getNodesMapLocked() (map[string]KGNode, error) {
-	rows, err := sdb.db.Query("SELECT id, node_type, name, metadata, source, weight, embedding FROM kg_nodes")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	nodes := make(map[string]KGNode)
-	for rows.Next() {
-		var n KGNode
-		var metaStr string
-		var embStr sql.NullString
-		err := rows.Scan(&n.ID, &n.NodeType, &n.Name, &metaStr, &n.Source, &n.Weight, &embStr)
-		if err != nil {
-			return nil, err
-		}
-		n.Metadata = deserializeMetadata(metaStr)
-		if embStr.Valid && embStr.String != "" {
-			_ = json.Unmarshal([]byte(embStr.String), &n.Embedding)
-		}
-		nodes[n.ID] = n
-	}
-	return nodes, nil
-}
-
-func (sdb *SqliteDatabase) GetEdges() map[string]KGEdge {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	edges, err := sdb.getEdgesSliceLocked()
-	if err != nil {
-		fmt.Printf("[Memory Error] Failed to query edges: %v\n", err)
-		return make(map[string]KGEdge)
-	}
-
-	edgeMap := make(map[string]KGEdge)
-	for _, e := range edges {
-		edgeMap[e.ID] = e
-	}
-	return edgeMap
-}
-
-func (sdb *SqliteDatabase) getEdgesSliceLocked() ([]KGEdge, error) {
-	rows, err := sdb.db.Query("SELECT id, edge_type, source_id, target_id, metadata, weight FROM kg_edges")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var edges []KGEdge
-	for rows.Next() {
-		var e KGEdge
-		var metaStr string
-		err := rows.Scan(&e.ID, &e.EdgeType, &e.SourceID, &e.TargetID, &metaStr, &e.Weight)
-		if err != nil {
-			return nil, err
-		}
-		e.Metadata = deserializeMetadata(metaStr)
-		edges = append(edges, e)
-	}
-	return edges, nil
-}
-
 // State Checkpointing methods
 func (sdb *SqliteDatabase) SetNodeState(taskID, nodeID, status, output string) error {
 	sdb.mutex.Lock()
@@ -1201,50 +441,6 @@ func (sdb *SqliteDatabase) GetLatestNodeOutput(taskID string) (string, error) {
 		return "", err
 	}
 	return output, nil
-}
-
-// Skill Synthesizer methods
-func (sdb *SqliteDatabase) AddSkill(s *Skill) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	s.ID = fmt.Sprintf("skill_%d", time.Now().UnixNano())
-	s.CreatedAt = time.Now().Unix()
-
-	_, err := sdb.db.Exec(`INSERT INTO skills (id, name, trigger_description, sop_content, created_at)
-		VALUES (?, ?, ?, ?, ?)`, s.ID, s.Name, s.TriggerDescription, s.SOPContent, s.CreatedAt)
-	return err
-}
-
-func (sdb *SqliteDatabase) GetSkills() []Skill {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	if sdb.db == nil {
-		return []Skill{}
-	}
-
-	rows, err := sdb.db.Query("SELECT id, name, trigger_description, sop_content, created_at FROM skills ORDER BY created_at DESC")
-	if err != nil {
-		fmt.Printf("[Memory Error] Failed to query skills: %v\n", err)
-		return []Skill{}
-	}
-	defer rows.Close()
-
-	var list []Skill
-	for rows.Next() {
-		var s Skill
-		err := rows.Scan(&s.ID, &s.Name, &s.TriggerDescription, &s.SOPContent, &s.CreatedAt)
-		if err != nil {
-			fmt.Printf("[Memory Error] Failed to scan skill row: %v\n", err)
-			continue
-		}
-		list = append(list, s)
-	}
-	if list == nil {
-		list = []Skill{}
-	}
-	return list
 }
 
 // EntityType registry methods
@@ -1341,337 +537,6 @@ func deserializeMetadata(s string) map[string]interface{} {
 	}
 	return m
 }
-// Workflows Persistence Operations
-
-
-func (sdb *SqliteDatabase) SaveWorkflow(wf WorkflowDefinition, tasks []WorkflowTask) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	tx, err := sdb.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	// 1. Save or replace workflow definition
-	_, err = tx.Exec(`INSERT OR REPLACE INTO workflows (id, name, description, trigger_type, trigger_config, status, next_run_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, wf.ID, wf.Name, wf.Description, wf.TriggerType, wf.TriggerConfig, wf.Status, wf.NextRunAt, wf.CreatedAt, wf.UpdatedAt)
-	if err != nil {
-		return err
-	}
-
-	// 2. Clear old tasks for this workflow
-	_, err = tx.Exec(`DELETE FROM workflow_tasks WHERE workflow_id = ?`, wf.ID)
-	if err != nil {
-		return err
-	}
-
-	// 3. Save new tasks
-	for _, t := range tasks {
-		_, err = tx.Exec(`INSERT INTO workflow_tasks (workflow_id, task_template_id, name, instructions, dependencies)
-			VALUES (?, ?, ?, ?, ?)`, wf.ID, t.TaskTemplateID, t.Name, t.Instructions, t.Dependencies)
-		if err != nil {
-			return err
-		}
-	}
-
-	return tx.Commit()
-}
-
-func (sdb *SqliteDatabase) GetWorkflows() ([]WorkflowDefinition, error) {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	if sdb.db == nil {
-		return []WorkflowDefinition{}, nil
-	}
-
-	rows, err := sdb.db.Query("SELECT id, name, description, trigger_type, trigger_config, status, next_run_at, created_at, updated_at FROM workflows ORDER BY created_at DESC")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var list []WorkflowDefinition
-	for rows.Next() {
-		var wf WorkflowDefinition
-		var nextRun sql.NullInt64
-		err := rows.Scan(&wf.ID, &wf.Name, &wf.Description, &wf.TriggerType, &wf.TriggerConfig, &wf.Status, &nextRun, &wf.CreatedAt, &wf.UpdatedAt)
-		if err != nil {
-			return nil, err
-		}
-		if nextRun.Valid {
-			wf.NextRunAt = nextRun.Int64
-		}
-		list = append(list, wf)
-	}
-	if list == nil {
-		list = []WorkflowDefinition{}
-	}
-	return list, nil
-}
-
-func (sdb *SqliteDatabase) GetWorkflowTasks(wfID string) ([]WorkflowTask, error) {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	if sdb.db == nil {
-		return []WorkflowTask{}, nil
-	}
-
-	rows, err := sdb.db.Query("SELECT workflow_id, task_template_id, name, instructions, dependencies FROM workflow_tasks WHERE workflow_id = ?", wfID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var list []WorkflowTask
-	for rows.Next() {
-		var t WorkflowTask
-		var dep sql.NullString
-		err := rows.Scan(&t.WorkflowID, &t.TaskTemplateID, &t.Name, &t.Instructions, &dep)
-		if err != nil {
-			return nil, err
-		}
-		if dep.Valid {
-			t.Dependencies = dep.String
-		}
-		list = append(list, t)
-	}
-	if list == nil {
-		list = []WorkflowTask{}
-	}
-	return list, nil
-}
-
-func (sdb *SqliteDatabase) DeleteWorkflow(wfID string) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	_, err := sdb.db.Exec("DELETE FROM workflows WHERE id = ?", wfID)
-	return err
-}
-
-func (sdb *SqliteDatabase) ToggleWorkflow(wfID string, status string) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	_, err := sdb.db.Exec("UPDATE workflows SET status = ?, updated_at = ? WHERE id = ?", status, time.Now().Unix(), wfID)
-	return err
-}
-
-func (sdb *SqliteDatabase) UpdateWorkflowNextRun(wfID string, nextRun int64) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	_, err := sdb.db.Exec("UPDATE workflows SET next_run_at = ? WHERE id = ?", nextRun, wfID)
-	return err
-}
-
-func (sdb *SqliteDatabase) CreateWorkflowExecution(exec WorkflowExecution, taskRuns []WorkflowTaskExecution) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	tx, err := sdb.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec(`INSERT INTO workflow_executions (id, workflow_id, status, started_at)
-		VALUES (?, ?, ?, ?)`, exec.ID, exec.WorkflowID, exec.Status, exec.StartedAt)
-	if err != nil {
-		return err
-	}
-
-	for _, tr := range taskRuns {
-		var taskExecID sql.NullString
-		if tr.TaskExecutionID != "" {
-			taskExecID.String = tr.TaskExecutionID
-			taskExecID.Valid = true
-		}
-		_, err = tx.Exec(`INSERT INTO workflow_task_executions (workflow_execution_id, task_template_id, task_execution_id, status, started_at)
-			VALUES (?, ?, ?, ?, ?)`, tr.WorkflowExecutionID, tr.TaskTemplateID, taskExecID, tr.Status, tr.StartedAt)
-		if err != nil {
-			return err
-		}
-	}
-
-	return tx.Commit()
-}
-
-func (sdb *SqliteDatabase) UpdateWorkflowExecutionStatus(execID string, status string, completedAt int64) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	var completedVal interface{}
-	if completedAt > 0 {
-		completedVal = completedAt
-	} else {
-		completedVal = nil
-	}
-
-	_, err := sdb.db.Exec("UPDATE workflow_executions SET status = ?, completed_at = ? WHERE id = ?", status, completedVal, execID)
-	return err
-}
-
-func (sdb *SqliteDatabase) UpdateWorkflowTaskExecution(execID string, taskTemplateID string, taskExecID string, status string, completedAt int64) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	var completedVal interface{}
-	if completedAt > 0 {
-		completedVal = completedAt
-	} else {
-		completedVal = nil
-	}
-
-	var taskExecVal interface{}
-	if taskExecID != "" {
-		taskExecVal = taskExecID
-	} else {
-		taskExecVal = nil
-	}
-
-	_, err := sdb.db.Exec(`UPDATE workflow_task_executions 
-		SET status = ?, task_execution_id = ?, completed_at = ?
-		WHERE workflow_execution_id = ? AND task_template_id = ?`, status, taskExecVal, completedVal, execID, taskTemplateID)
-	return err
-}
-
-func (sdb *SqliteDatabase) GetWorkflowExecutions(wfID string) ([]WorkflowExecution, error) {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	var rows *sql.Rows
-	var err error
-	if wfID != "" {
-		rows, err = sdb.db.Query("SELECT id, workflow_id, status, started_at, completed_at FROM workflow_executions WHERE workflow_id = ? ORDER BY started_at DESC", wfID)
-	} else {
-		rows, err = sdb.db.Query("SELECT id, workflow_id, status, started_at, completed_at FROM workflow_executions ORDER BY started_at DESC")
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var list []WorkflowExecution
-	for rows.Next() {
-		var exec WorkflowExecution
-		var completed sql.NullInt64
-		err := rows.Scan(&exec.ID, &exec.WorkflowID, &exec.Status, &exec.StartedAt, &completed)
-		if err != nil {
-			return nil, err
-		}
-		if completed.Valid {
-			exec.CompletedAt = completed.Int64
-		}
-		list = append(list, exec)
-	}
-	if list == nil {
-		list = []WorkflowExecution{}
-	}
-	return list, nil
-}
-
-func (sdb *SqliteDatabase) GetWorkflowExecutionDetails(execID string) (*WorkflowExecution, []WorkflowTaskExecution, error) {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	var exec WorkflowExecution
-	var completed sql.NullInt64
-	err := sdb.db.QueryRow("SELECT id, workflow_id, status, started_at, completed_at FROM workflow_executions WHERE id = ?", execID).
-		Scan(&exec.ID, &exec.WorkflowID, &exec.Status, &exec.StartedAt, &completed)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil, fmt.Errorf("workflow execution '%s' not found", execID)
-		}
-		return nil, nil, err
-	}
-	if completed.Valid {
-		exec.CompletedAt = completed.Int64
-	}
-
-	rows, err := sdb.db.Query("SELECT workflow_execution_id, task_template_id, task_execution_id, status, started_at, completed_at FROM workflow_task_executions WHERE workflow_execution_id = ?", execID)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer rows.Close()
-
-	var taskRuns []WorkflowTaskExecution
-	for rows.Next() {
-		var tr WorkflowTaskExecution
-		var taskExecID sql.NullString
-		var completedVal sql.NullInt64
-		err := rows.Scan(&tr.WorkflowExecutionID, &tr.TaskTemplateID, &taskExecID, &tr.Status, &tr.StartedAt, &completedVal)
-		if err != nil {
-			return nil, nil, err
-		}
-		if taskExecID.Valid {
-			tr.TaskExecutionID = taskExecID.String
-		}
-		if completedVal.Valid {
-			tr.CompletedAt = completedVal.Int64
-		}
-		taskRuns = append(taskRuns, tr)
-	}
-	if taskRuns == nil {
-		taskRuns = []WorkflowTaskExecution{}
-	}
-
-	return &exec, taskRuns, nil
-}
-
-// OpenAPI Integrations persistence methods
-func (sdb *SqliteDatabase) SaveOpenAPIIntegration(oi OpenAPIIntegration) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	_, err := sdb.db.Exec(`INSERT OR REPLACE INTO openapi_integrations (id, name, openapi_spec, auth_type, auth_key, auth_value, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, oi.ID, oi.Name, oi.OpenAPISpec, oi.AuthType, oi.AuthKey, oi.AuthValue, oi.CreatedAt)
-	return err
-}
-
-func (sdb *SqliteDatabase) GetOpenAPIIntegrations() ([]OpenAPIIntegration, error) {
-	sdb.mutex.RLock()
-	defer sdb.mutex.RUnlock()
-
-	rows, err := sdb.db.Query("SELECT id, name, openapi_spec, auth_type, auth_key, auth_value, created_at FROM openapi_integrations ORDER BY created_at DESC")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var list []OpenAPIIntegration
-	for rows.Next() {
-		var oi OpenAPIIntegration
-		var authKey, authValue sql.NullString
-		err := rows.Scan(&oi.ID, &oi.Name, &oi.OpenAPISpec, &oi.AuthType, &authKey, &authValue, &oi.CreatedAt)
-		if err != nil {
-			return nil, err
-		}
-		if authKey.Valid {
-			oi.AuthKey = authKey.String
-		}
-		if authValue.Valid {
-			oi.AuthValue = authValue.String
-		}
-		list = append(list, oi)
-	}
-	if list == nil {
-		list = []OpenAPIIntegration{}
-	}
-	return list, nil
-}
-
-func (sdb *SqliteDatabase) DeleteOpenAPIIntegration(id string) error {
-	sdb.mutex.Lock()
-	defer sdb.mutex.Unlock()
-
-	_, err := sdb.db.Exec("DELETE FROM openapi_integrations WHERE id = ?", id)
-	return err
-}
 
 func (sdb *SqliteDatabase) AddNotification(n DurableNotification) error {
 	sdb.mutex.Lock()
@@ -1752,6 +617,56 @@ func sqlNullString(s string) interface{} {
 	return s
 }
 
+// OpenAPI Integrations persistence methods
+func (sdb *SqliteDatabase) SaveOpenAPIIntegration(oi OpenAPIIntegration) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec(`INSERT OR REPLACE INTO openapi_integrations (id, name, openapi_spec, auth_type, auth_key, auth_value, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, oi.ID, oi.Name, oi.OpenAPISpec, oi.AuthType, oi.AuthKey, oi.AuthValue, oi.CreatedAt)
+	return err
+}
+
+func (sdb *SqliteDatabase) GetOpenAPIIntegrations() ([]OpenAPIIntegration, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	rows, err := sdb.db.Query("SELECT id, name, openapi_spec, auth_type, auth_key, auth_value, created_at FROM openapi_integrations ORDER BY created_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []OpenAPIIntegration
+	for rows.Next() {
+		var oi OpenAPIIntegration
+		var authKey, authValue sql.NullString
+		err := rows.Scan(&oi.ID, &oi.Name, &oi.OpenAPISpec, &oi.AuthType, &authKey, &authValue, &oi.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		if authKey.Valid {
+			oi.AuthKey = authKey.String
+		}
+		if authValue.Valid {
+			oi.AuthValue = authValue.String
+		}
+		list = append(list, oi)
+	}
+	if list == nil {
+		list = []OpenAPIIntegration{}
+	}
+	return list, nil
+}
+
+func (sdb *SqliteDatabase) DeleteOpenAPIIntegration(id string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec("DELETE FROM openapi_integrations WHERE id = ?", id)
+	return err
+}
+
 // GetSessionID extracts the canonical session identifier from a taskID.
 // It removes any turn-specific trailing suffix (e.g. "_t0", "_t1").
 func GetSessionID(taskID string) string {
@@ -1789,14 +704,6 @@ func (sdb *SqliteDatabase) AddSessionTurn(sessionID string, userMessage string, 
 	createdAt := time.Now()
 	_, _ = sdb.db.Exec(`INSERT INTO fact_memories (id, user_id, type, content, context, confidence, source, created_at)
 		VALUES (?, 'default', 'session_turn', ?, ?, 1.0, 'auto_history', ?)`, id, string(logBytes), sessionID, createdAt)
-}
-
-
-// SessionTurnLog represents a compacted summary of a single dialogue turn.
-type SessionTurnLog struct {
-	TurnIdx       int      `json:"turnIdx"`
-	UserMessage   string   `json:"userMessage"`
-	ExecutedTools []string `json:"executedTools"`
 }
 
 // GetSessionHistoryContext retrieves the dialogue and tool execution history for a session,
@@ -1879,5 +786,3 @@ func (sdb *SqliteDatabase) GetSessionHistoryContext(sessionID string) string {
 
 	return sb.String()
 }
-
-

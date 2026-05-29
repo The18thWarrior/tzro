@@ -94,7 +94,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Hydrate TUI with the most recent running or past task
 			latest := msg[len(msg)-1]
 			m.ActiveGraph = latest.Graph
-			
+
 			// Reconstruct standard levels from edges topologically using Kahn sort compiler
 			levels, err := compiler.CompileAndSort(latest.Graph)
 			if err == nil {

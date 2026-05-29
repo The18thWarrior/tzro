@@ -2,16 +2,16 @@ package inference
 
 // ModelEntry represents a downloadable GGUF model in the catalog.
 type ModelEntry struct {
-	ID            string `json:"id"`
-	DisplayName   string `json:"displayName"`
-	Params        string `json:"params"`
-	SizeBytes     int64  `json:"sizeBytes"`
-	SizeLabel     string `json:"sizeLabel"`
-	DownloadURL   string `json:"downloadUrl"`
-	Filename      string `json:"filename"`
-	Description   string `json:"description"`
-	ToolCallTier  string `json:"toolCallTier"`
-	IsDefault     bool   `json:"isDefault"`
+	ID           string `json:"id"`
+	DisplayName  string `json:"displayName"`
+	Params       string `json:"params"`
+	SizeBytes    int64  `json:"sizeBytes"`
+	SizeLabel    string `json:"sizeLabel"`
+	DownloadURL  string `json:"downloadUrl"`
+	Filename     string `json:"filename"`
+	Description  string `json:"description"`
+	ToolCallTier string `json:"toolCallTier"`
+	IsDefault    bool   `json:"isDefault"`
 }
 
 var modelCatalog = []ModelEntry{

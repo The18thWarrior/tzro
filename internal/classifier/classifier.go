@@ -8,7 +8,7 @@ import (
 )
 
 type IntentResult struct {
-	Type       string                 `json:"type"`       // "chat" | "workflow" | "research" | "heartbeat" | "mission"
+	Type       string                 `json:"type"` // "chat" | "workflow" | "research" | "heartbeat" | "mission"
 	Confidence float64                `json:"confidence"`
 	Summary    string                 `json:"summary"`
 	Params     map[string]interface{} `json:"params"`

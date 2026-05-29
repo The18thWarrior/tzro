@@ -664,12 +664,12 @@ func NewCreateTaskTool() *BaseAgentTool {
 			_ = memory.DB.SetNodeState(taskID, "orchestrator", "completed", fmt.Sprintf("Task '%s' successfully spawned. Objective: %s", in.Name, in.Objective))
 
 			return ToolSuccess(map[string]interface{}{
-				"id":        taskID,
-				"name":      in.Name,
-				"goal":      in.Goal,
-				"queenId":   "queen_" + taskID,
-				"status":    "pending",
-				"message":   "Orchestration task successfully initialized",
+				"id":      taskID,
+				"name":    in.Name,
+				"goal":    in.Goal,
+				"queenId": "queen_" + taskID,
+				"status":  "pending",
+				"message": "Orchestration task successfully initialized",
 			}), nil
 		},
 	}

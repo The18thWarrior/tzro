@@ -75,7 +75,7 @@ func TestTUI_NavigationLoop(t *testing.T) {
 	// Send keypress Msg: down arrow
 	msg := tea.KeyMsg{Type: tea.KeyDown, Runes: []rune{}}
 	resModel, cmd := m.Update(msg)
-	
+
 	newModel, ok := resModel.(Model)
 	if !ok {
 		t.Fatalf("expected tea.Model to cast back to tui.Model, got: %T", resModel)

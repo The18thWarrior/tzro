@@ -93,7 +93,7 @@ func TestQuickstartFlow(t *testing.T) {
 
 	// Save original sidecar state and inject mock server coordinates
 	oldStatus, oldPort, oldPID, oldProgress, oldModel := inference.GlobalLocalModel.GetStatusInfo()
-	
+
 	inference.GlobalLocalModel.Status = "Adopted"
 	inference.GlobalLocalModel.ActivePort = mockPort
 

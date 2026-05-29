@@ -530,6 +530,3 @@ func TestLocalDatabaseConcurrency(t *testing.T) {
 		t.Errorf("expected %d logs inserted, got: %d", numWriters, count)
 	}
 }
-
-
-

@@ -14,13 +14,13 @@ func SynthesizeSOP(taskID string, goal string, nodes []memory.NodeState) (memory
 	sb.WriteString(fmt.Sprintf("# Standard Operating Procedure: %s\n\n", goal))
 	sb.WriteString("## Trigger Context\n")
 	sb.WriteString(fmt.Sprintf("This SOP was automatically synthesized by the **tzro** engine from task execution `%s` on %s.\n\n", taskID, time.Now().Format(time.RFC822)))
-	
+
 	sb.WriteString("## Sequence of Operations (SOP)\n")
 	for i, node := range nodes {
 		sb.WriteString(fmt.Sprintf("### Step %d: Action `%s`\n", i+1, node.NodeID))
 		sb.WriteString(fmt.Sprintf("- **Final Status**: %s\n", node.Status))
 		sb.WriteString("- **Observed Output Trace**:\n")
-		
+
 		outputLines := strings.Split(node.Output, "\n")
 		hasLines := false
 		for _, line := range outputLines {

@@ -1,0 +1,130 @@
+package memory
+
+import "time"
+
+type FactMemory struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"userId"`
+	Type       string    `json:"type"` // "fact" | "preference" | "insight" | "correction" | "anti_pattern" | "strategy"
+	Content    string    `json:"content"`
+	Context    string    `json:"context"`
+	Confidence float64   `json:"confidence"`
+	Source     string    `json:"source"`
+	CreatedAt  time.Time `json:"createdAt"`
+	Embedding  []float32 `json:"embedding,omitempty"`
+}
+
+type KGNode struct {
+	ID        string                 `json:"id"`
+	NodeType  string                 `json:"nodeType"` // "account" | "contact" | "ticket" | "document"
+	Name      string                 `json:"name"`
+	Metadata  map[string]interface{} `json:"metadata"`
+	Source    string                 `json:"source"`
+	Weight    float64                `json:"weight"`
+	Embedding []float32              `json:"embedding,omitempty"`
+}
+
+type KGEdge struct {
+	ID       string                 `json:"id"`
+	EdgeType string                 `json:"edgeType"` // "belongs_to" | "assigned_to" | "references"
+	SourceID string                 `json:"sourceId"`
+	TargetID string                 `json:"targetId"`
+	Metadata map[string]interface{} `json:"metadata"`
+	Weight   float64                `json:"weight"`
+}
+
+type KGSubGraph struct {
+	Nodes []KGNode `json:"nodes"`
+	Edges []KGEdge `json:"edges"`
+}
+
+type NodeState struct {
+	TaskID      string `json:"taskId"`
+	NodeID      string `json:"nodeId"`
+	Status      string `json:"status"` // "pending" | "running" | "completed" | "failed" | "skipped"
+	Output      string `json:"output"`
+	CompletedAt int64  `json:"completedAt"`
+}
+
+type Skill struct {
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	TriggerDescription string `json:"triggerDescription"`
+	SOPContent         string `json:"sopContent"`
+	CreatedAt          int64  `json:"createdAt"`
+}
+
+type EntityType struct {
+	ID      string `json:"id"`      // Machine key used in KGNode.NodeType (e.g. "contact")
+	Label   string `json:"label"`   // Human-readable display name (e.g. "Contact")
+	Color   string `json:"color"`   // CSS HSL color string for canvas rendering
+	Icon    string `json:"icon"`    // Optional icon hint (e.g. "user", "building", "tag")
+	BuiltIn bool   `json:"builtIn"` // true for default types that cannot be deleted
+}
+
+type WorkflowDefinition struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	TriggerType   string `json:"triggerType"`   // "cron" | "manual"
+	TriggerConfig string `json:"triggerConfig"` // cron expression
+	Status        string `json:"status"`        // "active" | "paused"
+	NextRunAt     int64  `json:"nextRunAt"`     // unix timestamp
+	CreatedAt     int64  `json:"createdAt"`
+	UpdatedAt     int64  `json:"updatedAt"`
+}
+
+type WorkflowTask struct {
+	WorkflowID     string `json:"workflowId"`
+	TaskTemplateID string `json:"taskTemplateId"`
+	Name           string `json:"name"`
+	Instructions   string `json:"instructions"`
+	Dependencies   string `json:"dependencies"` // comma-separated taskTemplateIds
+}
+
+type WorkflowExecution struct {
+	ID          string `json:"id"`
+	WorkflowID  string `json:"workflowId"`
+	Status      string `json:"status"` // "running" | "completed" | "failed" | "cancelled"
+	StartedAt   int64  `json:"startedAt"`
+	CompletedAt int64  `json:"completedAt,omitempty"`
+}
+
+type WorkflowTaskExecution struct {
+	WorkflowExecutionID string `json:"workflowExecutionId"`
+	TaskTemplateID      string `json:"taskTemplateId"`
+	TaskExecutionID     string `json:"taskExecutionId"` // tzro taskId
+	Status              string `json:"status"`          // "pending" | "running" | "completed" | "failed"
+	StartedAt           int64  `json:"startedAt"`
+	CompletedAt         int64  `json:"completedAt,omitempty"`
+}
+
+type OpenAPIIntegration struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	OpenAPISpec string `json:"openapiSpec"`
+	AuthType    string `json:"authType"`
+	AuthKey     string `json:"authKey,omitempty"`
+	AuthValue   string `json:"authValue,omitempty"`
+	CreatedAt   int64  `json:"createdAt"`
+}
+
+type DurableNotification struct {
+	ID            string `json:"id"`
+	Source        string `json:"source"`
+	Type          string `json:"type"`
+	Title         string `json:"title"`
+	Message       string `json:"message"`
+	TaskID        string `json:"taskId,omitempty"`
+	WorkflowID    string `json:"workflowId,omitempty"`
+	TargetID      string `json:"targetId,omitempty"`
+	Status        string `json:"status"`
+	ActionPayload string `json:"actionPayload,omitempty"`
+	CreatedAt     int64  `json:"createdAt"`
+}
+
+type SessionTurnLog struct {
+	TurnIdx       int      `json:"turnIdx"`
+	UserMessage   string   `json:"userMessage"`
+	ExecutedTools []string `json:"executedTools"`
+}

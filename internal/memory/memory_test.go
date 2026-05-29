@@ -524,9 +524,9 @@ func TestSqliteDatabase_HybridVectorSearch(t *testing.T) {
 
 	engine := embeddings.NewPureGoEmbeddingEngine()
 	db := &SqliteDatabase{
-		jsonPath:         jsonPath,
-		dbPath:           dbPath,
-		EmbeddingEngine:  engine,
+		jsonPath:        jsonPath,
+		dbPath:          dbPath,
+		EmbeddingEngine: engine,
 	}
 
 	if err := db.Init(); err != nil {
@@ -565,11 +565,11 @@ func TestSqliteDatabase_HybridVectorSearch(t *testing.T) {
 
 	// Connect Bob -> Acme Corp
 	eAB := KGEdge{
-		ID:        "edge_ab",
-		EdgeType:  "belongs_to",
-		SourceID:  "node_b",
-		TargetID:  "node_a",
-		Weight:    1.0,
+		ID:       "edge_ab",
+		EdgeType: "belongs_to",
+		SourceID: "node_b",
+		TargetID: "node_a",
+		Weight:   1.0,
 	}
 	if err := db.AddEdge(eAB); err != nil {
 		t.Fatalf("AddEdge failed: %v", err)
@@ -957,4 +957,3 @@ func TestSessionHistoryCompaction(t *testing.T) {
 		t.Error("Turns 1 and 2 should be summarized, not shown in full detail sections")
 	}
 }
-

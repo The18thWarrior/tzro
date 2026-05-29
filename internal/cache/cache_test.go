@@ -259,7 +259,7 @@ func TestQueryEngine_Seam(t *testing.T) {
 	store := &sqlCacheStore{}
 	// Note: We don't need a real db because our mock handles it or we bypass query
 	res := store.Query(ctx, "any_cache_id", ".records | select(.Age > 30)")
-	
+
 	// Because raw payload lookup will check database or file, let's isolate by preparing a file backup or DB
 	// Setup isolated test database to allow getRawPayload to return safely
 	oldDBPath := memory.DB.GetDBPathForTesting()

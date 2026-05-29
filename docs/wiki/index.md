@@ -9,6 +9,7 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 ## Features & PRDs
 *Map of system features, product requirements, and specs.*
 - [Durable DAG Benchmarking Suite](features/benchmarking-suite.md) - Evaluate model planning and parameter execution against BFCL and ComplexFuncBench datasets. (Sources: 2 | Last Updated: 2026-05-24)
+- [Code Quality & Architectural Refactoring](features/code-quality-refactors.md) - Decompose monolithic runner.go and memory.go files into highly cohesive sub-modules and clean up hardcoded edge cases. (Sources: 1 | Last Updated: 2026-05-28)
 
 ## Bugs & Post-Mortems
 *Analyses of critical bugs, diagnostic loops, and prevention measures.*

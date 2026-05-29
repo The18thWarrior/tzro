@@ -429,4 +429,3 @@ func TestExecutionEngineTelemetryIsolation(t *testing.T) {
 		t.Errorf("expected second event to be node_started, got %s", events[1])
 	}
 }
-

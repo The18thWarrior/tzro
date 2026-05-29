@@ -16,10 +16,10 @@ import (
 
 // GlobalFlags holds parsed persistent CLI flags.
 type GlobalFlags struct {
-	URL      string
-	Offline  bool
-	DBPath   string
-	JSONOut  bool
+	URL     string
+	Offline bool
+	DBPath  string
+	JSONOut bool
 }
 
 var globalFlags GlobalFlags

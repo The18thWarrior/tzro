@@ -170,7 +170,6 @@ To satisfy evaluation matching:
 		systemPrompt += "\n\n" + ragCtx
 	}
 
-
 	userPrompt := fmt.Sprintf("Create an automation workflow execution graph for: '%s'", prompt)
 
 	graphStr, err := inference.CallCloudModel(ctx, systemPrompt, userPrompt, "")

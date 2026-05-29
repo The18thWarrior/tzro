@@ -111,7 +111,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Intent & Complexity classification
 	intent := classifier.Classify(r.Context(), req.Message, inference.GlobalLocalModel)
-	
+
 	// Collect configured tools names for complexity checks
 	daemonsConfig := mcp.GlobalRegistry.GetList()
 	var toolNames []string
@@ -242,10 +242,10 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 	defer graphsMutex.RUnlock()
 
 	type TaskStateItem struct {
-		TaskID    string                  `json:"taskId"`
+		TaskID    string                   `json:"taskId"`
 		Graph     *compiler.ExecutionGraph `json:"graph"`
-		States    map[string]interface{}  `json:"states"`
-		CreatedAt int64                   `json:"createdAt"`
+		States    map[string]interface{}   `json:"states"`
+		CreatedAt int64                    `json:"createdAt"`
 	}
 
 	var list []TaskStateItem
@@ -320,9 +320,9 @@ func handleMemories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type MemoryPayload struct {
-		Facts  []memory.FactMemory `json:"facts"`
-		Nodes  []memory.KGNode     `json:"nodes"`
-		Edges  []memory.KGEdge     `json:"edges"`
+		Facts []memory.FactMemory `json:"facts"`
+		Nodes []memory.KGNode     `json:"nodes"`
+		Edges []memory.KGEdge     `json:"edges"`
 	}
 
 	facts := memory.DB.GetMemories()
@@ -341,9 +341,9 @@ func handleMemories(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(MemoryPayload{
-		Facts:  facts,
-		Nodes:  nodes,
-		Edges:  edges,
+		Facts: facts,
+		Nodes: nodes,
+		Edges: edges,
 	})
 }
 
@@ -456,8 +456,6 @@ func handleEntityTypes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
-
-
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
@@ -1174,4 +1172,3 @@ func handleOpenAPIMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
-

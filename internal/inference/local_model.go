@@ -156,20 +156,20 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--threads", strconv.Itoa(pCores),
 		"--parallel", "1",
 		"--jinja",
-		"--n-gpu-layers", strconv.Itoa(gpuLayers),    // Q1: platform-aware GPU offload
-		"--ctx-size", "32768",                         // Q2: 32K context window
-		"--cache-type-k", kvCacheType,                 // Q3: mode-dependent KV cache quantization
-		"--cache-type-v", kvCacheType,                 // Q3: mode-dependent KV cache quantization
-		"-fa", "auto",                                 // Q4: flash attention (auto-detect)
-		"--spec-type", "ngram-simple",                 // Q5: n-gram speculative decoding
-		"--spec-draft-n-max", "48",                    // Q5: raised from default 16 for JSON verbatim matches
-		"--cache-reuse", "256",                        // Q6: reuse KV cache for matching prompt prefixes
-		"--n-predict", "16384",                        // Q9: max tokens per generation
-		"--slot-save-path", slotSavePath,              // Q8: enable /slots save/restore API for preemption
+		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
+		"--ctx-size", "32768", // Q2: 32K context window
+		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
+		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
+		"-fa", "auto", // Q4: flash attention (auto-detect)
+		"--spec-type", "ngram-simple", // Q5: n-gram speculative decoding
+		"--spec-draft-n-max", "48", // Q5: raised from default 16 for JSON verbatim matches
+		"--cache-reuse", "256", // Q6: reuse KV cache for matching prompt prefixes
+		"--n-predict", "16384", // Q9: max tokens per generation
+		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
 	}
 
 	m.cmd = exec.CommandContext(ctx, "llama-server", args...)
-	
+
 	// Create logs folder
 	_ = os.MkdirAll(filepath.Join(".tzro", "logs"), 0755)
 	logFile, err := os.Create(filepath.Join(".tzro", "logs", "llama-server.log"))
@@ -423,7 +423,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, systemPrompt, us
 	// Standard OpenAI compatible request dispatching
 	bodyBytes, _ := json.Marshal(reqBody)
 	mcpURL := fmt.Sprintf("http://localhost:%d/v1/chat/completions", m.ActivePort)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", mcpURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
@@ -437,7 +437,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, systemPrompt, us
 
 	// Performance tracking metrics
 	startTime := time.Now()
-	
+
 	// Q10: Use inferenceClient (no fixed timeout) instead of healthClient (3s timeout)
 	resp, err := m.getInferenceClient().Do(req)
 	if err != nil {
@@ -567,7 +567,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, systemProm
 
 	bodyBytes, _ := json.Marshal(reqBody)
 	mcpURL := fmt.Sprintf("http://localhost:%d/v1/chat/completions", m.ActivePort)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", mcpURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err

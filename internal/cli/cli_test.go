@@ -14,7 +14,7 @@ func TestCLI_FlagResolution(t *testing.T) {
 		Use: "tzro",
 		Run: func(cmd *cobra.Command, args []string) {},
 	}
-	
+
 	initRootFlags(cmd)
 
 	// 1. Assert default values
@@ -80,7 +80,7 @@ func TestCLI_JSONFormatHelper(t *testing.T) {
 	// Verify JSON output printing format helper
 	data := map[string]string{"foo": "bar"}
 	var buf bytes.Buffer
-	
+
 	err := printJSON(&buf, data)
 	if err != nil {
 		t.Fatalf("printJSON failed: %v", err)

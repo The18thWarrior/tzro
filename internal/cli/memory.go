@@ -91,7 +91,7 @@ var memoryQueryCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		question := args[0]
-		
+
 		// In offline mode we query SQLite directly; in connected mode we can fetch and serialize.
 		// For consistency and to support direct SQL graph traversal:
 		memory.DB.SetDBPathForTesting(globalFlags.DBPath)

@@ -5,16 +5,16 @@ import (
 )
 
 type GraphNode struct {
-	ID              string                 `json:"id"`
-	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge"
-	Action          string                 `json:"action"`              // Target tool name
-	Instructions    string                 `json:"instructions"`        // Core step instruction
-	AllowedTools    []string               `json:"allowedTools"`        // Whitelist of permitted tools
-	Condition       string                 `json:"condition,omitempty"` // For logical branch nodes
-	DefaultTarget   string                 `json:"defaultTarget,omitempty"`
-	SuggestedSkills []string               `json:"suggestedSkillIds,omitempty"` // Injected micro-skills
-	Status          string                 `json:"status"`              // "pending" | "running" | "completed" | "failed" | "skipped"
-	Output          string                 `json:"output,omitempty"`
+	ID              string   `json:"id"`
+	Type            string   `json:"type"`                // "action" | "deterministic" | "branch" | "merge"
+	Action          string   `json:"action"`              // Target tool name
+	Instructions    string   `json:"instructions"`        // Core step instruction
+	AllowedTools    []string `json:"allowedTools"`        // Whitelist of permitted tools
+	Condition       string   `json:"condition,omitempty"` // For logical branch nodes
+	DefaultTarget   string   `json:"defaultTarget,omitempty"`
+	SuggestedSkills []string `json:"suggestedSkillIds,omitempty"` // Injected micro-skills
+	Status          string   `json:"status"`                      // "pending" | "running" | "completed" | "failed" | "skipped"
+	Output          string   `json:"output,omitempty"`
 }
 
 type GraphEdge struct {
