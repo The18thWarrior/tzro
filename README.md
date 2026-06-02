@@ -86,8 +86,6 @@ Traditional agent loops suffer from brittle, high-latency, and expensive infinit
 3. **Relational Knowledge Graph Memory:** Stores enterprise entities, facts, and links in a local relational network. Uses **Hybrid Vector Search** (combining SQLite FTS5 keyword indexing and local ONNX cosine similarity ranking) for Neighborhood Multi-Hop context retrieval.
 4. **Sandboxed WebAssembly Micro-Skills:** Compiles specialized procedural logic into isolated WASM binaries, executing them safely on-device with strict resource and filesystem limitations.
 5. **Stdio MCP Host Gateway:** Spawns external third-party tool servers dynamically over standard I/O (stdio) with thread-safe process self-healing, automatic recovery, and env-delegated credentials.
-6. **Bubble Tea TUI Client:** Fullscreen interactive terminal console for inspect-and-query SQLite database navigation and active daemon telemetry monitoring.
-7. **SSE Web Dashboard:** A premium React 19 single-page application built on Vite and TailwindCSS that streams live task states, token deltas, and node-edge networks over Server-Sent Events (SSE).
 
 ---
 
