@@ -7,7 +7,7 @@ applications:
           commands:
             - echo "Deploying static website prototype"
       artifacts:
-        baseDirectory: website
+        baseDirectory: .
         files:
           - '**/*'
       cache:
