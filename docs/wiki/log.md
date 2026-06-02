@@ -4,6 +4,69 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-01T06:24:00Z] feature | Implement Numeric Parameter Coercion and Dynamic Resolution
+
+- **Activity**: Implemented numeric parameter coercion and resolution upgrades to solve parameter mismatches in supply chain and finance billing runs.
+- **Key Decisions & Outcomes**:
+  - **Numeric Sign Coercion**: Extended `coerceNumericArguments` in `internal/executor/executor.go` to evaluate and apply coercion on sign mismatches between GBNF-extracted positive values and explicit negative numbers present in the natural language instructions. This successfully resolved GBNF sign-flip failures.
+  - **Dynamic Numeric Upstream Resolution**: Extended `resolveInterpolatedArguments` in `internal/executor/executor.go` to handle numeric parameter types (`float64`, `int`, `int64`, `float32`). Upstream resolved values are converted dynamically using `strconv.ParseFloat` and correctly propagated to dependent steps, solving the dynamic float parameter resolution bypass.
+  - **Aesthetics & Diagnostics**: Generated a beautiful, premium diagnostic HTML report `benchmark-analysis-5_31_2026_20_51.html` outlining the quantitative latency, token, and success metrics alongside before/after Mermaid architectural diagrams of the fixes.
+- **Testing & Verification**:
+  - All automated consolidated test suites pass (100% green).
+- **Files Created/Modified**:
+  - [MODIFY] [executor.go](../../internal/executor/executor.go) (Extended numeric coercion and upstream parameter resolution)
+  - [NEW] [benchmark-analysis-5_31_2026_20_51.html](../../benchmark-analysis-5_31_2026_20_51.html) (Interactive Diagnostic Dashboard)
+  - [NEW] [numeric-parameter-coercion-and-resolution-failures.md](bugs/numeric-parameter-coercion-and-resolution-failures.md) (Wiki Bug Post-Mortem)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-05-31T18:55:00Z] feature | Implement Synchronous Thread-Safe DAG Execution Hooks
+
+- **Activity**: Designed, implemented, and verified the complete synchronous, thread-safe lifecycle execution hooks framework for the `tzro` DAG compiler and Kahn executor.
+- **Key Decisions & Outcomes**:
+  - **Decoupled Blocking Seam**: Created a standard middleware layer exposing `BeforeLevel`, `AfterLevel`, `BeforeNode`, and `AfterNode` hook interfaces. This completely removes operational wrapper pollution from the high-level compiled strategic `Abstract Graph`.
+  - **Durable Gating & HITL (`ActionPause`)**: Implemented `ActionPause` logic that yields a custom `ErrTaskPaused` sentinel, durably checkpointing completed steps to SQLite while pre-emptively de-allocating inference slots on resource-constrained hardware for seamless resumption.
+  - **Secure Parametric Mutation (`AfterNode`)**: Plumbed mutable output pointers (`*string`) to the `AfterNode` hook, allowing dynamic in-memory PII sanitization and credentials shielding before database check-pointing and context compaction.
+  - **Thread-Safety & Deadlock Prevention**: Retained thread-safety under parallel Kahn level executions by copying the hooks slice exactly once at the beginning of `ExecuteGraph` (`getHooksUnlocked()`), eliminating all recursive mutex lock deadlocks.
+- **Testing & Verification**:
+  - Maintained 100% test-first and unit verification practices under `internal/executor/executor_hooks_test.go`.
+  - Covered hook ordering sequences, skip propagation and edge-pruning, task abortion, durable pausing/resuming, inline string mutation, and high-goroutine lock safety.
+  - Ensured all tests pass perfectly in Go (`go test ./...` successful) and the entire suite remains 100% green.
+- **Files Created/Modified**:
+  - [MODIFY] [executor.go](../../internal/executor/executor.go) (Implemented HookAction, ExecutionHook, ErrTaskPaused, getHooksUnlocked, and integrated hooks in ExecuteGraph and executeSingleNode)
+  - [NEW] [executor_hooks_test.go](../../internal/executor/executor_hooks_test.go) (Complete unit testing suite for DAG execution hooks)
+  - [MODIFY] [README.md](../../README.md) (Fully documented SDK hook lifecycle usage and actions)
+  - [NEW] [dag-execution-hooks.md](features/dag-execution-hooks.md) (Local wiki feature page for hooks system)
+  - [MODIFY] [index.md](index.md) (Updated local wiki index links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
+## [2026-05-30T15:45:00Z] feature | Complete Pristal Architecture Upgrade (Modules 1-5)
+
+- **Activity**: Successfully designed, developed, and verified the complete Pristal Architecture (Pristal v2) Upgrade for the `tzro` durable local-first execution framework.
+- **Key Decisions & Outcomes**:
+  - **Module 1 (Dynamic Dialect Seams)**: Abstracted raw database queries via `DialectAdapter` registry, enabling seamless runtime selection of SQLite, PostgreSQL, and MySQL dialector connections. Decoupled migrations and SQL CRUD statements to support external cloud DB configurations.
+  - **Module 2 (Connection Pool Caching)**: Replaced ephemeral database descriptors with a thread-safe `localConnectionPool` in `standalone_tools.go`. Tuned pool to `MaxOpenConns = 1` for SQLite, forcing thread-safe write serialization and eliminating concurrent `database is locked` conflicts.
+  - **Module 3 (SCT Compilation)**: Implemented fine-grained Strategist-Compiler-Translator split (`compiler.ExpandToSCTGraph`). Abstract planning DAGs are expanded locally on-device, automatically injecting `gbnf_bridge` logit grammar constraints, `deterministic` tool actions, and terminal `synthesis` nodes.
+  - **Module 4 (Two-Tier KV Cache GC)**: Implemented active slot erasure post-task boundary (Tier 1) and platform-aware Resident Set Size (RSS) monitoring (Tier 2). The local inference sidecar gracefully recycles itself asynchronously if memory exceeds 2GB.
+  - **Module 5 (Hybrid Branch Evaluator & Edge Pruning)**: Engineered dynamic topologic branch skipping and recursive `propagateSkip` propagation. Edge pruning resolves branch conditions via a fast deterministic comparison (JSONPath variables) first, falling back to a structured semantic query to the Local Model (The Tactician) to prevent false-negative branch prunings.
+- **Verification & Testing**:
+  - Maintained 100% TDD compliance, writing failing integration test cases first before code adjustments.
+  - Added full test coverage including `TestLocalConnectionCachingAndSeeding`, `TestStrategicGraphToSCTExpansion`, `TestTwoTierGarbageCollection`, and `TestKahnLevelBranchPruningAndSkipPropagation`.
+  - Achieved 100% green passing status across all core unit/integration packages (`go test ./...` successful).
+- **Files Created/Modified**:
+  - [NEW] [dialect.go](../../internal/db/dialect.go) (Database dialect interface and SQL registries)
+  - [NEW] [postgres.go](../../internal/db/postgres.go) & [mysql.go](../../internal/db/mysql.go) (Postgres & MySQL dialector drivers)
+  - [MODIFY] [memory.go](../../internal/memory/memory.go) (DatabaseManager dialect injection and migration guarding)
+  - [MODIFY] [memories.go](../../internal/memory/memories.go) (Refactored memories insertion query templates)
+  - [MODIFY] [standalone_tools.go](../../internal/tools/standalone_tools.go) (Implemented thread-safe `getCachedLocalDB` connection caching)
+  - [MODIFY] [compiler.go](../../internal/compiler/compiler.go) (Extended GraphNode definitions for SCT output schemas and arguments)
+  - [NEW] [sct_compiler.go](../../internal/compiler/sct_compiler.go) (Strategist-Compiler-Translator DAG compiler expansion)
+  - [MODIFY] [task.go](../../internal/task/task.go) (Integrated SCT compiler pass transparently into the Plan seam)
+  - [MODIFY] [local_model.go](../../internal/inference/local_model.go) (Two-tier Active slot erasure and RSS sidecar recycler)
+  - [MODIFY] [executor.go](../../internal/executor/executor.go) (Integrated post-task GC, recursive skip propagation, and Hybrid Branch Evaluator)
+  - [MODIFY] [executor_test.go](../../internal/executor/executor_test.go) (Comprehensive Kahn-level branch pruning and dynamic semantic fallback tests)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 ## [2026-05-28T15:20:00Z] refactor | Complete Code Quality Decomposition & Transactional Migration Upgrade
 
 - **Activity**: Successfully completed the TDD-driven architectural decomposition of the two remaining monolithic hotspots (`internal/benchmark/runner.go` and `internal/memory/memory.go`) to achieve structural modularization under the repository's strict 1,000-line maintainability threshold.
@@ -648,3 +711,35 @@ Chronological append-only record of wiki operations and major agent engineering 
 - **Files Created/Modified**:
   - [NEW] [analysis_results.md](../../.gemini/antigravity/brain/7ad45125-f8c3-4fd6-b820-82d5e4624b63/analysis_results.md) (Detailed benchmark execution analysis report)
   - [MODIFY] [log.md](log.md) (Appended this entry)
+
+---
+
+## [2026-05-30T14:45:00Z] grill-with-docs | Pristal Architecture Upgrade Planning
+
+- **Activity**: Conducted a thorough `/grill-with-docs` alignment session to design the technical upgrade of `tzro` to align with the Pristal Architecture. Addressed multi-dialect abstraction seams, thread-safe connection pooling, fine-grained SCT graph compilation, two-tier garbage collection, and dynamic parallel edge skipping.
+- **Key Design Decisions**:
+  - **Dialect Abstraction**: Implemented `DialectAdapter` serving as a Dialect Query Registry returning parameterized SQL query templates to bypass driver-specific upsert variations.
+  - **Connection Cache**: Created `localConnectionPool` utilizing Go's native `database/sql` idle reclaiming settings to prevent lock contentions.
+  - **SCT split**: Decoupled cloud planners to plan high-level strategic steps in the Abstract Graph, dynamically translated on-device via a local compiler pass into fine-grained GBNF-bridge and execution nodes.
+  - **Two-Tier GC**: Structured active slot erasure (Tier 1) and background idle RSS recycler limits (Tier 2) to prevent memory leakage.
+  - **Hybrid Branch Evaluator**: Extended the Kahn executor to support dynamic edge pruning via a hybrid evaluator (fast deterministic JSONPath checking with semantic Local Model fallback) and recursive skip propagation.
+- **Key Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Dialect Adapter, Database Manager, Two-Tier Cache GC, Hybrid Branch Evaluator)
+  - [NEW] [0015-pristal-architecture-alignment.md](../adr/0015-pristal-architecture-alignment.md) (Detailed architectural decisions record)
+  - [MODIFY] [index.md](index.md) (Local wiki index)
+  - [MODIFY] [log.md](log.md) (This log entry)
+
+---
+
+## [2026-05-31T08:35:00Z] document | Refactor & Expand Root README.md with Detailed Technical Manual
+- **Activity**: Refactored the core `README.md` to establish a highly comprehensive and peer-to-peer technical guide for the `tzro` durable local execution engine. Added mathematical context compaction equations, high-fidelity ASCII diagrams for the Strategy-vs-Tactics paradigm, concrete SDK integration guides, complete JSON schemas, and resource-optimization mechanics (KV Preemption, Disk-Backed JQ Cache).
+- **Key Deliverables**:
+  - **Strategy vs Tactics**: Detailed the cognitive split between cloud strategist (Eino) and local tactician (llama-server) using rigid GBNF constraints.
+  - **Context Compaction**: Documented the 5-layer compression process including homogeneous JSON-to-TSV array hoisting, delivering a $60\text{--}85\%$ token reduction.
+  - **SQLite Disk-Backed JQ Cache**: Mapped the caching of payloads $>12\text{KB}$ offline and local JQ execution.
+  - **Priority KV Cache Preemption**: Documented context slots saving/erasing/restoring to guarantee sub-450ms TTFT chat latency.
+  - **AI Coding Agent Guidelines**: Dedicated chapter outlining the use of standard nomenclatures (`CONTEXT.md`), Wiki logs (`log.md`), and testing protocols (TDD).
+- **Key Files Created/Modified**:
+  - [MODIFY] [README.md](../../README.md) (Comprehensive technical README overhaul)
+  - [MODIFY] [log.md](log.md) (This log entry)
+

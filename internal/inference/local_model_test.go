@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -245,5 +246,71 @@ func TestExecuteStructuredHeuristic(t *testing.T) {
 	}
 	if resComplexityObj.Complexity != "T0" {
 		t.Errorf("expected T0 complexity, got %s", resComplexityObj.Complexity)
+	}
+}
+
+func TestTwoTierGarbageCollection(t *testing.T) {
+	// Setup mock control-plane server for slots API
+	var slotErased []int
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/slots/") {
+			parts := strings.Split(r.URL.Path, "/")
+			if len(parts) >= 3 {
+				slotID := 0
+				if strings.Contains(parts[2], "0") {
+					slotID = 0
+				} else if strings.Contains(parts[2], "1") {
+					slotID = 1
+				}
+				slotErased = append(slotErased, slotID)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"status": "ok"}`))
+				return
+			}
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	mgr := &LocalModelManager{
+		ActivePort:   port,
+		Status:       "Active",
+		ActivePID:    12345, // Mock PID
+		healthClient: http.DefaultClient,
+	}
+
+	// 1. Verify Tier 1: EraseSlot erases specific slots
+	ctx := context.Background()
+	err = mgr.EraseSlot(ctx, 0)
+	if err != nil {
+		t.Fatalf("EraseSlot 0 failed: %v", err)
+	}
+	err = mgr.EraseSlot(ctx, 1)
+	if err != nil {
+		t.Fatalf("EraseSlot 1 failed: %v", err)
+	}
+
+	if len(slotErased) != 2 || slotErased[0] != 0 || slotErased[1] != 1 {
+		t.Errorf("expected slots 0 and 1 to be erased, got erased list: %v", slotErased)
+	}
+
+	// 2. Verify Tier 1: TriggerGC erases both slot 0 and 1
+	slotErased = []int{}
+	err = mgr.TriggerGC(ctx)
+	if err != nil {
+		t.Fatalf("TriggerGC failed: %v", err)
+	}
+	if len(slotErased) != 2 || slotErased[0] != 0 || slotErased[1] != 1 {
+		t.Errorf("expected TriggerGC to flush both slot 0 and 1, got: %v", slotErased)
 	}
 }

@@ -116,4 +116,13 @@ func TestCLI_BenchmarkFlagResolution(t *testing.T) {
 	if !benchmarkVerbose {
 		t.Error("expected benchmarkVerbose to be true, got false")
 	}
+
+	// Test tzro_dag dataset parsing
+	err = benchmarkRunCmd.ParseFlags([]string{"--dataset", "tzro_dag"})
+	if err != nil {
+		t.Fatalf("failed to parse dataset tzro_dag flag: %v", err)
+	}
+	if benchmarkDataset != "tzro_dag" {
+		t.Errorf("expected dataset tzro_dag, got: %s", benchmarkDataset)
+	}
 }

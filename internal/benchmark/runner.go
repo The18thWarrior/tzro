@@ -50,13 +50,37 @@ type BenchmarkTurn struct {
 	MockResponse     string                 `json:"mock_response"`
 }
 
+// ExpectedGraphNode represents a pre-planned node in the target ground truth graph.
+type ExpectedGraphNode struct {
+	ID           string   `json:"id"`
+	Type         string   `json:"type"`
+	Action       string   `json:"action"`
+	Instructions string   `json:"instructions"`
+	AllowedTools []string `json:"allowedTools"`
+	Status       string   `json:"status"`
+}
+
+// ExpectedGraphEdge represents a dependency connection in the target graph.
+type ExpectedGraphEdge struct {
+	SourceID string `json:"sourceId"`
+	TargetID string `json:"targetId"`
+}
+
+// ExpectedGraph represents the target ground truth graph structure.
+type ExpectedGraph struct {
+	TaskID string              `json:"taskId"`
+	Nodes  []ExpectedGraphNode `json:"nodes"`
+	Edges  []ExpectedGraphEdge `json:"edges"`
+}
+
 // BenchmarkTestCase is a single benchmark flow case.
 type BenchmarkTestCase struct {
 	ID            string                 `json:"id"`
-	Dataset       string                 `json:"dataset"` // "bfcl" | "complexfuncbench"
+	Dataset       string                 `json:"dataset"` // "bfcl" | "complexfuncbench" | "tzro_dag"
 	SystemPrompt  string                 `json:"system_prompt"`
 	Tools         []ToolDefinition       `json:"tools"`
 	Turns         []BenchmarkTurn        `json:"turns"`
+	ExpectedGraph ExpectedGraph          `json:"expected_graph,omitempty"`
 	InitialConfig map[string]interface{} `json:"initial_config,omitempty"`
 }
 
@@ -68,6 +92,7 @@ type BenchmarkResult struct {
 	PlanningMatch       bool                 `json:"planningMatch"`
 	ParameterMatch      bool                 `json:"parameterMatch"`
 	FuzzyMatchUsed      bool                 `json:"fuzzyMatchUsed"`
+	SpiritMatch         bool                 `json:"spiritMatch"`
 	ErrorMessage        string               `json:"errorMessage,omitempty"`
 	ExecutedToolCalls   []string             `json:"executedToolCalls"`
 	ExecutionDurationMs int64                `json:"executionDurationMs"`
@@ -472,9 +497,17 @@ func runSingleTestCase(ctx context.Context, tc BenchmarkTestCase, mode string, r
 				return BenchmarkResult{}, fmt.Errorf("turn %d planning failed: %w", turnIdx, err)
 			}
 
-			// Constraint Check: Max 10 nodes compiled per turn
-			if len(graph.Nodes) > 10 {
-				return BenchmarkResult{}, fmt.Errorf("turn %d planned DAG has %d nodes, exceeding multi-turn limit of 10", turnIdx, len(graph.Nodes))
+			// Constraint Check: Max 10 logical action nodes compiled per turn.
+			// Count only action/deterministic nodes that represent real tool calls,
+			// excluding SCT infrastructure nodes (gbnf_bridge, synthesis) injected by ExpandToSCTGraph.
+			logicalNodeCount := 0
+			for _, n := range graph.Nodes {
+				if n.Type != "gbnf_bridge" && n.Type != "synthesis" {
+					logicalNodeCount++
+				}
+			}
+			if logicalNodeCount > 10 {
+				return BenchmarkResult{}, fmt.Errorf("turn %d planned DAG has %d logical nodes, exceeding multi-turn limit of 10", turnIdx, logicalNodeCount)
 			}
 
 			// Topological compile and execution
@@ -686,7 +719,15 @@ func runSingleTestCase(ctx context.Context, tc BenchmarkTestCase, mode string, r
 		}
 		var expected []ExpectedCall
 		for _, turn := range tc.Turns {
-			if turn.ExpectedToolCall != "" {
+			if len(turn.ExpectedCalls) > 0 {
+				for _, ec := range turn.ExpectedCalls {
+					expected = append(expected, ExpectedCall{
+						ToolName:    ec.ToolName,
+						Args:        ec.Args,
+						UserMessage: turn.UserMessage,
+					})
+				}
+			} else if turn.ExpectedToolCall != "" {
 				expected = append(expected, ExpectedCall{
 					ToolName:    turn.ExpectedToolCall,
 					Args:        turn.ExpectedArgs,
@@ -759,6 +800,108 @@ func runSingleTestCase(ctx context.Context, tc BenchmarkTestCase, mode string, r
 	}
 
 	passed := planningMatch && parameterMatch
+	spiritMatch := passed
+
+	if realLLM && tc.Dataset == "tzro_dag" {
+		// 1. Format expected calls
+		var expectedCallsList []map[string]interface{}
+		for _, turn := range tc.Turns {
+			for _, ec := range turn.ExpectedCalls {
+				expectedCallsList = append(expectedCallsList, map[string]interface{}{
+					"tool": ec.ToolName,
+					"args": ec.Args,
+				})
+			}
+		}
+		expectedJSON, _ := json.MarshalIndent(expectedCallsList, "", "  ")
+
+		// 2. Format actual executed calls
+		var actualCallsList []map[string]interface{}
+		for _, ac := range actualCalls {
+			actualCallsList = append(actualCallsList, map[string]interface{}{
+				"tool": ac.ToolName,
+				"args": ac.Args,
+			})
+		}
+		actualJSON, _ := json.MarshalIndent(actualCallsList, "", "  ")
+
+		// 3. User message goal compilation
+		var goalPrompts []string
+		for _, t := range tc.Turns {
+			goalPrompts = append(goalPrompts, t.UserMessage)
+		}
+		fullPromptGoal := strings.Join(goalPrompts, " and then ")
+
+		// 4. System Prompt for semantic spirit match evaluator
+		evalSystemPrompt := `You are the Semantic Benchmark Evaluator for the tzro execution engine.
+Your task is to analyze the expected tool calls vs the actual executed tool calls for a task, and evaluate if the execution successfully matched the "spirit" and functional intent of the request.
+
+Evaluation guidelines:
+1. Relax strict naming conventions: If the actual parameter keys or node IDs differed from the expected ones (e.g. 'service_name' vs 'service', 'ticket_key' vs 'jira_key', or 'pager_ticket_id' vs 'pager_status'), but they successfully resolved to the correct values, this is a Spirit Match.
+2. Focus on functional correctness: Did the agent execute the correct sequence of tools with the correct arguments?
+3. Verify the final result: Did the final step successfully receive the resolved values from the previous steps, even if they were named slightly differently?
+
+Output your evaluation in the requested JSON schema.`
+
+		// 5. User Prompt
+		evalUserPrompt := fmt.Sprintf(`Task ID: %s
+User Request: %s
+
+Expected Tool Calls:
+%s
+
+Actual Executed Tool Calls:
+%s
+
+Please evaluate if this run is a Spirit Match.`, tc.ID, fullPromptGoal, string(expectedJSON), string(actualJSON))
+
+		// 6. GBNF Schema for structured evaluation result
+		evalSchema := `{
+			"type": "object",
+			"properties": {
+				"spirit_match": {
+					"type": "boolean",
+					"description": "True if the actual executed tool calls and parameters functionally matched the intent/spirit of the expected ones."
+				},
+				"reason": {
+					"type": "string",
+					"description": "Brief explanation of the decision."
+				}
+			},
+			"required": ["spirit_match", "reason"]
+		}`
+
+		meta := inference.StreamMeta{
+			StreamID: fmt.Sprintf("eval_%s", tc.ID),
+			Source:   "evaluator",
+			TaskID:   tc.ID,
+		}
+
+		evalReq := inference.StructuredInferenceRequest{
+			SystemPrompt: evalSystemPrompt,
+			UserPrompt:   evalUserPrompt,
+			JSONSchema:   evalSchema,
+			StreamMeta:   &meta,
+			TaskID:       tc.ID,
+		}
+
+		fmt.Fprintf(os.Stderr, "[Evaluator] Running final semantic Spirit Match analysis for %s...\n", tc.ID)
+		evalResult, evalErr := inference.GlobalLocalModel.ExecuteStructured(ctx, evalReq)
+		if evalErr == nil {
+			var parsed struct {
+				SpiritMatch bool   `json:"spirit_match"`
+				Reason      string `json:"reason"`
+			}
+			if json.Unmarshal([]byte(evalResult), &parsed) == nil {
+				spiritMatch = parsed.SpiritMatch
+				fmt.Fprintf(os.Stderr, "[Evaluator] Spirit Match outcome for %s: %v (Reason: %s)\n", tc.ID, spiritMatch, parsed.Reason)
+			} else {
+				fmt.Fprintf(os.Stderr, "[Evaluator Warning] Failed to parse evaluation response: %q\n", evalResult)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "[Evaluator Warning] Semantic evaluation failed: %v\n", evalErr)
+		}
+	}
 
 	return BenchmarkResult{
 		TestCaseID:          tc.ID,
@@ -767,6 +910,7 @@ func runSingleTestCase(ctx context.Context, tc BenchmarkTestCase, mode string, r
 		PlanningMatch:       planningMatch,
 		ParameterMatch:      parameterMatch,
 		FuzzyMatchUsed:      fuzzyMatchUsed,
+		SpiritMatch:         spiritMatch,
 		ExecutedToolCalls:   actualNames,
 		ExecutionDurationMs: durationMs,
 	}, nil

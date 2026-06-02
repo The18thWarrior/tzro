@@ -25,8 +25,12 @@ A non-executed JSON schema blueprint generated during planning that maps step no
 _Avoid_: Execution sequence, flowchart JSON
 
 **Kahn Compiler**:
-The compilation compiler that runs Kahn's topological sort algorithm to organize step nodes into deterministic parallel layers.
+The compiler engine that translates simplified strategic Abstract Graphs into fine-grained execution nodes (GBNF-bridge, deterministic, and synthesis) and runs Kahn's topological sort algorithm to organize them into parallel, cycle-free layers.
 _Avoid_: Graph builder, sort pipeline
+
+**Hybrid Branch Evaluator**:
+A two-tier conditional execution engine that resolves branch skip decisions first via fast deterministic JSONPath comparisons and falls back to semantic Local Model inference if comparison fails, preventing incorrect path skipping.
+_Avoid_: Simple compiler, condition parser, LLM evaluator
 
 **Local Model**:
 The default-path local LLM workhorse handling all structured work: intent classification, tool call construction, step execution, conversation compaction, and error recovery. Cloud is only invoked when the **Local Model** lacks the knowledge or latency profile required.
@@ -55,6 +59,10 @@ _Avoid_: WASM plugin, executable skill, CGO connector
 **Compaction Pipeline**:
 A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
 _Avoid_: Text parser, JSON clean filter
+
+**Two-Tier Cache GC**:
+An automated resource recovery mechanism that clears idle context slots immediately upon Task completion (Tier 1) and gracefully recycles the local inference sidecar process if RSS memory usage exceeds limits during idle windows (Tier 2).
+_Avoid_: Memory cleaner, server killer, process resetter
 
 **Session History Compaction**:
 The selective pruning, truncation, or summarization of conversational prompt history within interactive multi-turn sessions to prevent local slot thrashing and attention bias.
@@ -93,6 +101,14 @@ _Avoid_: Keyring credential, keychain secret, encrypted token
 **Durable Notification**:
 A structured alert record persisted in SQLite and dispatched over the StreamBus, allowing background Tasks, Workflows, or the Observer Agent to communicate asynchronous lifecycle states, warnings, or action requests to the user across restarts and page refreshes.
 _Avoid_: Toast, alert popup, chat message
+
+**Dialect Adapter**:
+An abstraction seam that decouples SQL syntax, connection drivers, table schema validation, and dialect-specific UPSERT templates, allowing tzro's relational memory and task checkpointing databases to run seamlessly against SQLite, PostgreSQL, MySQL, or MSSQL.
+_Avoid_: Raw SQL driver, custom DB connector
+
+**Database Manager**:
+The unified relational storage engine orchestrating persistence, schema migration, vector memory retrieval, and transaction checkpointing across both local and dynamic remote databases.
+_Avoid_: SqliteDatabase (too narrow), JSON DB, storage client
 
 ---
 

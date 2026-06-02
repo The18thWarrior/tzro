@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"tzro/internal/db"
 	"tzro/internal/memory"
 )
 
@@ -528,5 +529,56 @@ func TestLocalDatabaseConcurrency(t *testing.T) {
 	count := int(firstRow["cnt"].(float64))
 	if count != numWriters {
 		t.Errorf("expected %d logs inserted, got: %d", numWriters, count)
+	}
+}
+
+func TestLocalConnectionCachingAndSeeding(t *testing.T) {
+	path := "tzro_caching_test.db"
+	defer os.Remove(path)
+
+	// Fetch cached database connection
+	conn1, err := getCachedLocalDB(path)
+	if err != nil {
+		t.Fatalf("failed to get cached connection: %v", err)
+	}
+
+	// Fetch again and verify it is the same pointer
+	conn2, err := getCachedLocalDB(path)
+	if err != nil {
+		t.Fatalf("failed to get cached connection 2nd time: %v", err)
+	}
+
+	if conn1 != conn2 {
+		t.Errorf("expected conn1 and conn2 to be identical cached pointers, got different handles")
+	}
+
+	// Verify WAL mode is configured
+	var journalMode string
+	err = conn1.QueryRow("PRAGMA journal_mode;").Scan(&journalMode)
+	if err != nil {
+		t.Fatalf("failed to query journal_mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Errorf("expected journal_mode to be WAL, got: %s", journalMode)
+	}
+
+	// Test Dialect Init queries execution using a new DatabaseManager
+	var dbManager memory.DatabaseManager
+	dialect := &db.SqliteDialect{}
+
+	err = dbManager.InitWithConnection(conn1, dialect)
+	if err != nil {
+		t.Fatalf("failed to initialize DatabaseManager with cached connection: %v", err)
+	}
+	defer dbManager.Close()
+
+	// Verify tables are created
+	var count int
+	err = conn1.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='fact_memories'").Scan(&count)
+	if err != nil {
+		t.Fatalf("failed to check fact_memories table existence: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected table fact_memories to exist, count was: %d", count)
 	}
 }

@@ -39,6 +39,18 @@ func TestDatasetLoading(t *testing.T) {
 		t.Errorf("expected non-empty ComplexFuncBench test cases array")
 	}
 
+	// 3. Test loading tzro_dag dataset
+	tzroDagCases, err := LoadTestCases("tzro_dag")
+	if err != nil {
+		t.Fatalf("failed to load tzro_dag cases: %v", err)
+	}
+	if len(tzroDagCases) == 0 {
+		t.Errorf("expected non-empty tzro_dag test cases array")
+	}
+	if len(tzroDagCases[0].ExpectedGraph.Nodes) == 0 {
+		t.Errorf("expected parsed ExpectedGraph in tzro_dag cases to contain nodes")
+	}
+
 	// Assert on structural parsing checks of first element
 	firstCase := bfclCases[0]
 	if firstCase.ID == "" || firstCase.Dataset != "bfcl" || len(firstCase.Tools) == 0 || len(firstCase.Turns) == 0 {
@@ -126,6 +138,26 @@ func TestBenchmarkRunConsolidatedMode(t *testing.T) {
 	firstRes := results[0]
 	if firstRes.TestCaseID == "" || !firstRes.Passed || !firstRes.PlanningMatch || !firstRes.ParameterMatch {
 		t.Errorf("Consolidated execution analytics failed to match target expectation: %+v", firstRes)
+	}
+}
+
+func TestBenchmarkRunTzroDagConsolidated(t *testing.T) {
+	// Complete suite simulation run of the new tzro_dag standard in Consolidated Mode
+	ctx := context.Background()
+	// Let's run a limit of 5 to keep the test extremely fast while verifying full flow
+	results, err := RunSuite(ctx, "tzro_dag", "consolidated", "local", false, 5)
+	if err != nil {
+		t.Fatalf("tzro_dag benchmark suite execution failed: %v", err)
+	}
+
+	if len(results) != 5 {
+		t.Fatalf("expected 5 evaluation results, got %d", len(results))
+	}
+
+	for idx, res := range results {
+		if res.TestCaseID == "" || !res.Passed || !res.PlanningMatch || !res.ParameterMatch {
+			t.Errorf("tzro_dag case %d (%s) failed target expectation: %+v", idx, res.TestCaseID, res)
+		}
 	}
 }
 

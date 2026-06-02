@@ -168,7 +168,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
 	}
 
-	m.cmd = exec.CommandContext(ctx, "llama-server", args...)
+	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
 
 	// Create logs folder
 	_ = os.MkdirAll(filepath.Join(".tzro", "logs"), 0755)
@@ -242,8 +242,8 @@ func (m *LocalModelManager) getInferenceClient() *http.Client {
 	return http.DefaultClient
 }
 
-// TriggerGC (Tier 1 Active Slot Erasure) clears slot token context post-task boundary
-func (m *LocalModelManager) TriggerGC(ctx context.Context) error {
+// EraseSlot clears prompt context for a specific slot to prevent memory leakage
+func (m *LocalModelManager) EraseSlot(ctx context.Context, slotID int) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -251,8 +251,8 @@ func (m *LocalModelManager) TriggerGC(ctx context.Context) error {
 		return nil
 	}
 
-	fmt.Println("[Llama Sidecar GC] Running Tier 1 Active Slot context erasure...")
-	eraseURL := fmt.Sprintf("http://localhost:%d/slots/0?action=erase", m.ActivePort)
+	fmt.Printf("[Llama Sidecar GC] Erasing slot %d context...\n", slotID)
+	eraseURL := fmt.Sprintf("http://localhost:%d/slots/%d?action=erase", m.ActivePort, slotID)
 	req, err := http.NewRequestWithContext(ctx, "POST", eraseURL, nil)
 	if err != nil {
 		return err
@@ -260,11 +260,78 @@ func (m *LocalModelManager) TriggerGC(ctx context.Context) error {
 
 	resp, err := m.getHealthClient().Do(req)
 	if err != nil {
-		return fmt.Errorf("GC active slot erasure failed: %w", err)
+		return fmt.Errorf("active slot erasure failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("erase API returned status: %d", resp.StatusCode)
+	}
 	return nil
+}
+
+// TriggerGC (Tier 1 Active Slot Erasure) clears slot token context post-task boundary
+func (m *LocalModelManager) TriggerGC(ctx context.Context) error {
+	_ = m.EraseSlot(ctx, 0)
+	_ = m.EraseSlot(ctx, 1)
+	return nil
+}
+
+func (m *LocalModelManager) getProcessRSS(pid int) (int64, error) {
+	out, err := exec.Command("ps", "-o", "rss=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0, err
+	}
+	clean := strings.TrimSpace(string(out))
+	kb, err := strconv.ParseInt(clean, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return kb * 1024, nil
+}
+
+// CheckAndTriggerTier2GC evaluates Resident Set Size (RSS) memory after a task completes,
+// and gracefully recycles the local inference sidecar if memory limits are exceeded (e.g., 2GB).
+func (m *LocalModelManager) CheckAndTriggerTier2GC(ctx context.Context) {
+	m.mutex.Lock()
+	pid := m.ActivePID
+	status := m.Status
+	m.mutex.Unlock()
+
+	if status != "Active" || pid <= 0 {
+		return
+	}
+
+	rss, err := m.getProcessRSS(pid)
+	if err != nil {
+		fmt.Printf("[Llama Sidecar GC Warning] Failed to check RSS memory usage: %v\n", err)
+		return
+	}
+
+	// 8GB threshold limit = 8 * 1024 * 1024 * 1024 bytes
+	const threshold = 8 * 1024 * 1024 * 1024
+	fmt.Printf("[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 8192MB)\n", rss/(1024*1024))
+
+	if rss > threshold {
+		fmt.Println("[Llama Sidecar GC] RSS threshold exceeded. Triggering Tier 2 Graceful Process Recycling...")
+
+		m.getPublisher().PublishEvent("sidecar_recycling", "system", strconv.Itoa(pid), fmt.Sprintf("RSS memory (%dMB) exceeded threshold; recycling sidecar process", rss/(1024*1024)))
+
+		// Stop the server sidecar gracefully
+		_ = m.Stop()
+
+		// Start a fresh one in the background asynchronously
+		go func() {
+			time.Sleep(1 * time.Second)
+			bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if err := m.Start(bgCtx); err != nil {
+				fmt.Printf("[Llama Sidecar GC Error] Asynchronous process restart failed: %v\n", err)
+			} else {
+				fmt.Println("[Llama Sidecar GC] Successfully completed Tier 2 sidecar process recycling!")
+			}
+		}()
+	}
 }
 
 // PreemptForChat (KV Cache Preemption) saves active background task context to slot_0.bin,

@@ -25,8 +25,8 @@ func (sdb *SqliteDatabase) AddMemory(m FactMemory) error {
 		embStr = string(b)
 	}
 
-	_, err := sdb.db.Exec(`INSERT INTO fact_memories (id, user_id, type, content, context, confidence, source, created_at, embedding)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.ID, m.UserID, m.Type, m.Content, m.Context, m.Confidence, m.Source, m.CreatedAt, embStr)
+	query := sdb.dialect.InsertMemoryQuery()
+	_, err := sdb.db.Exec(query, m.ID, m.UserID, m.Type, m.Content, m.Context, m.Confidence, m.Source, m.CreatedAt, embStr)
 	return err
 }
 

@@ -6,7 +6,7 @@ import (
 
 type GraphNode struct {
 	ID              string   `json:"id"`
-	Type            string   `json:"type"`                // "action" | "deterministic" | "branch" | "merge"
+	Type            string   `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "gbnf_bridge" | "synthesis" | "hypothesis"
 	Action          string   `json:"action"`              // Target tool name
 	Instructions    string   `json:"instructions"`        // Core step instruction
 	AllowedTools    []string `json:"allowedTools"`        // Whitelist of permitted tools
@@ -15,6 +15,9 @@ type GraphNode struct {
 	SuggestedSkills []string `json:"suggestedSkillIds,omitempty"` // Injected micro-skills
 	Status          string   `json:"status"`                      // "pending" | "running" | "completed" | "failed" | "skipped"
 	Output          string   `json:"output,omitempty"`
+	OutputSchema    string   `json:"outputSchema,omitempty"` // Added for bridge nodes (GBNF grammar)
+	StaticArgs      string   `json:"staticArgs,omitempty"`   // Added for pre-known arguments
+	Error           string   `json:"error,omitempty"`
 }
 
 type GraphEdge struct {

@@ -36,8 +36,8 @@ var benchmarkRunCmd = &cobra.Command{
 
 		// Validate inputs
 		benchmarkDataset = strings.ToLower(benchmarkDataset)
-		if benchmarkDataset != "bfcl" && benchmarkDataset != "complexfuncbench" {
-			fmt.Fprintf(os.Stderr, "Error: unsupported dataset %q. Choose 'bfcl' or 'complexfuncbench'.\n", benchmarkDataset)
+		if benchmarkDataset != "bfcl" && benchmarkDataset != "complexfuncbench" && benchmarkDataset != "tzro_dag" {
+			fmt.Fprintf(os.Stderr, "Error: unsupported dataset %q. Choose 'bfcl', 'complexfuncbench', or 'tzro_dag'.\n", benchmarkDataset)
 			os.Exit(1)
 		}
 
@@ -90,19 +90,36 @@ var benchmarkRunCmd = &cobra.Command{
 		}
 
 		headers := []string{"CASE ID", "PLAN MATCH", "PARAM MATCH", "DURATION", "TOKENS (L/C)", "STATUS"}
+		if benchmarkDataset == "tzro_dag" {
+			headers = []string{"CASE ID", "PLAN MATCH", "PARAM MATCH", "SPIRIT MATCH", "DURATION", "TOKENS (L/C)", "STATUS"}
+		}
 		var rows [][]string
 		caseIndex := make(map[string]int)
 
 		for idx, tc := range testCases {
 			caseIndex[tc.ID] = idx
-			rows = append(rows, []string{
-				tc.ID,
-				"\u001b[90m...\u001b[0m", // Gray dots
-				"\u001b[90m...\u001b[0m",
-				"\u001b[90m...\u001b[0m",
-				"\u001b[90m...\u001b[0m",
-				"\u001b[90mPENDING\u001b[0m",
-			})
+			var pendingRow []string
+			if benchmarkDataset == "tzro_dag" {
+				pendingRow = []string{
+					tc.ID,
+					"\u001b[90m...\u001b[0m", // Gray dots
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90mPENDING\u001b[0m",
+				}
+			} else {
+				pendingRow = []string{
+					tc.ID,
+					"\u001b[90m...\u001b[0m", // Gray dots
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90mPENDING\u001b[0m",
+				}
+			}
+			rows = append(rows, pendingRow)
 		}
 
 		var lastLinesPrinted int
@@ -138,10 +155,29 @@ var benchmarkRunCmd = &cobra.Command{
 				status = "\u001b[32mPASSED\u001b[0m"
 			}
 			tokensStr := fmt.Sprintf("%d / %d", r.LocalTokens.TotalTokens, r.CloudTokens.TotalTokens)
+
+			if benchmarkDataset == "tzro_dag" {
+				spiritStatus := "\u001b[31mFAIL\u001b[0m"
+				if r.SpiritMatch {
+					spiritStatus = "\u001b[32mPASS\u001b[0m"
+				}
+				return []string{r.TestCaseID, planStatus, paramStatus, spiritStatus, duration, tokensStr, status}
+			}
 			return []string{r.TestCaseID, planStatus, paramStatus, duration, tokensStr, status}
 		}
 
 		formatRunningRow := func(id string) []string {
+			if benchmarkDataset == "tzro_dag" {
+				return []string{
+					id,
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[90m...\u001b[0m",
+					"\u001b[33mRUNNING\u001b[0m",
+				}
+			}
 			return []string{
 				id,
 				"\u001b[90m...\u001b[0m",
@@ -155,6 +191,7 @@ var benchmarkRunCmd = &cobra.Command{
 		passedCount := 0
 		planMatchCount := 0
 		paramMatchCount := 0
+		spiritMatchCount := 0
 		var totalDuration int64 = 0
 		var totalLocalPrompt, totalLocalCompletion, totalLocalTotal int
 		var totalCloudPrompt, totalCloudCompletion, totalCloudTotal int
@@ -190,6 +227,9 @@ var benchmarkRunCmd = &cobra.Command{
 				}
 				if res.ParameterMatch {
 					paramMatchCount++
+				}
+				if res.SpiritMatch {
+					spiritMatchCount++
 				}
 				if res.Passed {
 					passedCount++
@@ -246,10 +286,12 @@ var benchmarkRunCmd = &cobra.Command{
 			passedPercent := 0.0
 			planPercent := 0.0
 			paramPercent := 0.0
+			spiritPercent := 0.0
 			if totalCases > 0 {
 				passedPercent = float64(passedCount) / float64(totalCases) * 100.0
 				planPercent = float64(planMatchCount) / float64(totalCases) * 100.0
 				paramPercent = float64(paramMatchCount) / float64(totalCases) * 100.0
+				spiritPercent = float64(spiritMatchCount) / float64(totalCases) * 100.0
 			}
 
 			fmt.Fprintf(out, "\n=== BENCHMARK ANALYTICS SUMMARY ===\n")
@@ -257,6 +299,9 @@ var benchmarkRunCmd = &cobra.Command{
 			fmt.Fprintf(out, "Successful Runs:       %d (%s%.1f%%\u001b[0m)\n", passedCount, getColor(passedPercent), passedPercent)
 			fmt.Fprintf(out, "DAG Planning Accuracy: %d (%s%.1f%%\u001b[0m)\n", planMatchCount, getColor(planPercent), planPercent)
 			fmt.Fprintf(out, "GBNF Parameter Acc:    %d (%s%.1f%%\u001b[0m)\n", paramMatchCount, getColor(paramPercent), paramPercent)
+			if benchmarkDataset == "tzro_dag" {
+				fmt.Fprintf(out, "Spirit Match Accuracy: %d (%s%.1f%%\u001b[0m)\n", spiritMatchCount, getColor(spiritPercent), spiritPercent)
+			}
 			fmt.Fprintf(out, "Total Token Usage:\n")
 			fmt.Fprintf(out, "  Local:               %d tokens (%d prompt, %d completion)\n", totalLocalTotal, totalLocalPrompt, totalLocalCompletion)
 			fmt.Fprintf(out, "  Cloud:               %d tokens (%d prompt, %d completion)\n", totalCloudTotal, totalCloudPrompt, totalCloudCompletion)
@@ -333,7 +378,7 @@ func printBenchmarkDivider(out io.Writer, widths []int) {
 }
 
 func init() {
-	benchmarkRunCmd.Flags().StringVarP(&benchmarkDataset, "dataset", "d", "bfcl", "Benchmark target dataset ('bfcl' or 'complexfuncbench')")
+	benchmarkRunCmd.Flags().StringVarP(&benchmarkDataset, "dataset", "d", "bfcl", "Benchmark target dataset ('bfcl', 'complexfuncbench', or 'tzro_dag')")
 	benchmarkRunCmd.Flags().StringVarP(&benchmarkMode, "mode", "m", "interactive", "Simulation evaluation mode ('consolidated' or 'interactive')")
 	benchmarkRunCmd.Flags().StringVarP(&benchmarkModelMode, "model-mode", "t", "local", "Model routing execution tier ('local', 'cooperative', or 'cloud')")
 	benchmarkRunCmd.Flags().BoolVarP(&benchmarkReal, "real", "r", false, "Run evaluation against actual LLM model endpoints without ground-truth mock completions")

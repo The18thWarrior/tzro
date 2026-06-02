@@ -8,23 +8,29 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"tzro/internal/db"
 	"tzro/internal/embeddings"
 
 	_ "modernc.org/sqlite"
 )
 
-// SqliteDatabase replaces JSONDatabase
+// SqliteDatabase replaces JSONDatabase. Conceptually acts as DatabaseManager.
 type SqliteDatabase struct {
 	db              *sql.DB
+	dialect         db.DialectAdapter
 	jsonPath        string
 	dbPath          string
 	mutex           sync.RWMutex
 	EmbeddingEngine embeddings.EmbeddingEngine
 }
 
+// DatabaseManager is a type alias for SqliteDatabase to support Pristal standards
+type DatabaseManager = SqliteDatabase
+
 var DB = &SqliteDatabase{
 	jsonPath: "tzro_db.json",
 	dbPath:   "tzro.db",
+	dialect:  &db.SqliteDialect{},
 }
 
 func (sdb *SqliteDatabase) SetDBPathForTesting(path string) {
@@ -45,6 +51,38 @@ func (sdb *SqliteDatabase) RawDB() *sql.DB {
 	return sdb.db
 }
 
+func (sdb *SqliteDatabase) InitWithConnection(conn *sql.DB, dialect db.DialectAdapter) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	sdb.db = conn
+	sdb.dialect = dialect
+	sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+
+	// Run initialization queries provided by dialect
+	tx, err := sdb.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, query := range dialect.SchemaInitQueries() {
+		if _, err := tx.Exec(query); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Seed default entity types
+	if err := sdb.seedEntityTypes(); err != nil {
+		return fmt.Errorf("failed to seed entity types: %w", err)
+	}
+
+	return nil
+}
+
 // Init loads the database from disk, creates tables, seeds defaults, and runs legacy migration if present
 func (sdb *SqliteDatabase) Init() error {
 	sdb.mutex.Lock()
@@ -54,6 +92,10 @@ func (sdb *SqliteDatabase) Init() error {
 	sdb.db, err = sql.Open("sqlite", sdb.dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open sqlite database: %w", err)
+	}
+
+	if sdb.dialect == nil {
+		sdb.dialect = &db.SqliteDialect{}
 	}
 
 	// Initialize the default Pure Go Embedding Engine for local semantic matching
@@ -128,6 +170,7 @@ func (sdb *SqliteDatabase) createTables() error {
 			node_id TEXT,
 			status TEXT,
 			output TEXT,
+			raw_output TEXT DEFAULT '',
 			completed_at INTEGER,
 			PRIMARY KEY (task_id, node_id)
 		);`,
@@ -223,11 +266,17 @@ func (sdb *SqliteDatabase) createTables() error {
 	if err := sdb.ensureColumnExistsTx(tx, "kg_nodes", "embedding", "TEXT"); err != nil {
 		return fmt.Errorf("failed to migrate kg_nodes schema: %w", err)
 	}
+	if err := sdb.ensureColumnExistsTx(tx, "node_states", "raw_output", "TEXT"); err != nil {
+		return fmt.Errorf("failed to migrate node_states schema: %w", err)
+	}
 
 	return tx.Commit()
 }
 
 func (sdb *SqliteDatabase) ensureColumnExistsTx(tx *sql.Tx, tableName, columnName, columnType string) error {
+	if sdb.dialect != nil && sdb.dialect.DriverName() != "sqlite" {
+		return nil
+	}
 	rows, err := tx.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
 	if err != nil {
 		return fmt.Errorf("failed to query table info for %s: %w", tableName, err)
@@ -406,8 +455,8 @@ func (sdb *SqliteDatabase) SetNodeState(taskID, nodeID, status, output string) e
 	defer sdb.mutex.Unlock()
 
 	completedAt := time.Now().Unix()
-	_, err := sdb.db.Exec(`INSERT OR REPLACE INTO node_states (task_id, node_id, status, output, completed_at)
-		VALUES (?, ?, ?, ?, ?)`, taskID, nodeID, status, output, completedAt)
+	query := sdb.dialect.UpsertNodeStateQuery()
+	_, err := sdb.db.Exec(query, taskID, nodeID, status, output, completedAt)
 	return err
 }
 
@@ -416,8 +465,9 @@ func (sdb *SqliteDatabase) GetNodeState(taskID, nodeID string) (NodeState, bool)
 	defer sdb.mutex.RUnlock()
 
 	var ns NodeState
-	err := sdb.db.QueryRow("SELECT task_id, node_id, status, output, completed_at FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).
-		Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &ns.CompletedAt)
+	var rawOutput sql.NullString
+	err := sdb.db.QueryRow("SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, completed_at FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).
+		Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &ns.CompletedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return NodeState{}, false
@@ -425,7 +475,20 @@ func (sdb *SqliteDatabase) GetNodeState(taskID, nodeID string) (NodeState, bool)
 		fmt.Printf("[Memory Error] Failed to query node state: %v\n", err)
 		return NodeState{}, false
 	}
+	if rawOutput.Valid {
+		ns.RawOutput = rawOutput.String
+	}
 	return ns, true
+}
+
+// SetNodeRawOutput stores clean tool output for a node, used by downstream variable interpolation.
+// This is separate from the display-formatted Output to avoid corruption from tier prefixes and compaction.
+func (sdb *SqliteDatabase) SetNodeRawOutput(taskID, nodeID, rawOutput string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec("UPDATE node_states SET raw_output = ? WHERE task_id = ? AND node_id = ?", rawOutput, taskID, nodeID)
+	return err
 }
 
 func (sdb *SqliteDatabase) GetLatestNodeOutput(taskID string) (string, error) {
@@ -441,6 +504,43 @@ func (sdb *SqliteDatabase) GetLatestNodeOutput(taskID string) (string, error) {
 		return "", err
 	}
 	return output, nil
+}
+
+// GetAllNodeStates returns all node states for a task, ordered by completion time ascending.
+// Used by the accumulated context builder to collect upstream node outputs for structured
+// context injection into GBNF bridge prompts.
+func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return nil
+	}
+
+	rows, err := sdb.db.Query(
+		"SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, completed_at FROM node_states WHERE task_id = ? ORDER BY completed_at ASC",
+		taskID,
+	)
+	if err != nil {
+		fmt.Printf("[Memory Error] Failed to query all node states: %v\n", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var states []NodeState
+	for rows.Next() {
+		var ns NodeState
+		var rawOutput sql.NullString
+		if err := rows.Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &ns.CompletedAt); err != nil {
+			fmt.Printf("[Memory Error] Failed to scan node state row: %v\n", err)
+			continue
+		}
+		if rawOutput.Valid {
+			ns.RawOutput = rawOutput.String
+		}
+		states = append(states, ns)
+	}
+	return states
 }
 
 // EntityType registry methods
@@ -546,9 +646,8 @@ func (sdb *SqliteDatabase) AddNotification(n DurableNotification) error {
 		return fmt.Errorf("database not initialized")
 	}
 
-	_, err := sdb.db.Exec(`INSERT OR REPLACE INTO durable_notifications 
-		(id, source, type, title, message, task_id, workflow_id, target_id, status, action_payload, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	query := sdb.dialect.UpsertNotificationQuery()
+	_, err := sdb.db.Exec(query,
 		n.ID, n.Source, n.Type, n.Title, n.Message,
 		sqlNullString(n.TaskID), sqlNullString(n.WorkflowID), sqlNullString(n.TargetID),
 		n.Status, sqlNullString(n.ActionPayload), n.CreatedAt)
@@ -702,8 +801,8 @@ func (sdb *SqliteDatabase) AddSessionTurn(sessionID string, userMessage string, 
 
 	id := fmt.Sprintf("mem_%d", time.Now().UnixNano())
 	createdAt := time.Now()
-	_, _ = sdb.db.Exec(`INSERT INTO fact_memories (id, user_id, type, content, context, confidence, source, created_at)
-		VALUES (?, 'default', 'session_turn', ?, ?, 1.0, 'auto_history', ?)`, id, string(logBytes), sessionID, createdAt)
+	query := sdb.dialect.InsertMemoryQuery()
+	_, _ = sdb.db.Exec(query, id, "default", "session_turn", string(logBytes), sessionID, 1.0, "auto_history", createdAt, "")
 }
 
 // GetSessionHistoryContext retrieves the dialogue and tool execution history for a session,

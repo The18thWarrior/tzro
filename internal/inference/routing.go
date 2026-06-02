@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"tzro/internal/config"
 	"tzro/internal/telemetry"
@@ -47,6 +49,31 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 	// 3. Local or Cooperative mode
 	if cfg.ModelMode == "local" || (cfg.ModelMode == "cooperative" && !forceCloud) {
 		status, _, _, _, _ := m.GetStatusInfo()
+
+		// If sidecar is stopped, attempt to start it synchronously
+		if status == "Stopped" {
+			fmt.Fprintln(os.Stderr, "[Llama Sidecar] Sidecar is stopped. Attempting auto-start...")
+			if err := m.Start(ctx); err == nil {
+				status, _, _, _, _ = m.GetStatusInfo()
+			} else {
+				fmt.Fprintf(os.Stderr, "[Llama Sidecar Error] Failed to auto-start: %v\n", err)
+			}
+		}
+
+		// If sidecar is starting, block and wait for it to become active/adopted
+		if status == "Starting" {
+			fmt.Fprintln(os.Stderr, "[Llama Sidecar] Sidecar is currently starting. Waiting for it to become active...")
+			startWait := time.Now()
+			for time.Since(startWait) < 60*time.Second {
+				time.Sleep(500 * time.Millisecond)
+				status, _, _, _, _ = m.GetStatusInfo()
+				if status == "Active" || status == "Adopted" {
+					fmt.Fprintf(os.Stderr, "[Llama Sidecar] Sidecar became active after %v. Proceeding with local execution.\n", time.Since(startWait))
+					break
+				}
+			}
+		}
+
 		isSidecarActive := (status == "Active" || status == "Adopted")
 
 		if isSidecarActive {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -427,5 +429,180 @@ func TestExecutionEngineTelemetryIsolation(t *testing.T) {
 
 	if !strings.Contains(events[1], "node_started:task-test-telemetry:node-1") {
 		t.Errorf("expected second event to be node_started, got %s", events[1])
+	}
+}
+
+type MockTool struct {
+	ToolName   string
+	ToolSchema string
+	ToolCall   func(ctx context.Context, args map[string]interface{}) (string, error)
+}
+
+func (m *MockTool) Name() string {
+	return m.ToolName
+}
+
+func (m *MockTool) GetSchema() (string, error) {
+	return m.ToolSchema, nil
+}
+
+func (m *MockTool) Call(ctx context.Context, args map[string]interface{}) (string, error) {
+	return m.ToolCall(ctx, args)
+}
+
+func TestKahnLevelBranchPruningAndSkipPropagation(t *testing.T) {
+	// Initialize test DB
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_test_branch.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_test_branch.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+	_ = memory.DB.Init()
+
+	// Register a mock tool that returning {"exists": true}
+	tools.Register(&MockTool{
+		ToolName:   "mock_tool_exists",
+		ToolSchema: `{"type": "object"}`,
+		ToolCall: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return `{"exists": true}`, nil
+		},
+	})
+	defer tools.Unregister("mock_tool_exists")
+
+	// Register a mock tool for downstream nodes
+	tools.Register(&MockTool{
+		ToolName:   "mock_action",
+		ToolSchema: `{"type": "object"}`,
+		ToolCall: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return `{"status": "ok"}`, nil
+		},
+	})
+	defer tools.Unregister("mock_action")
+
+	// Set up mock llama server for semantic fallback
+	semanticServerCalled := false
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		semanticServerCalled = true
+		bodyBytes, _ := io.ReadAll(r.Body)
+		bodyStr := string(bodyBytes)
+
+		satisfied := true
+		if strings.Contains(bodyStr, "== false") {
+			satisfied = false
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(fmt.Sprintf(`{
+			"choices": [{
+				"message": {
+					"role": "assistant",
+					"content": "{\"satisfied\": %t}"
+				}
+			}],
+			"usage": {
+				"prompt_tokens": 5,
+				"completion_tokens": 2
+			}
+		}`, satisfied)))
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	// Configure inference GlobalLocalModel to route to our mock server
+	oldActivePort := inference.GlobalLocalModel.ActivePort
+	oldStatus := inference.GlobalLocalModel.Status
+	inference.GlobalLocalModel.ActivePort = port
+	inference.GlobalLocalModel.Status = "Active"
+	defer func() {
+		inference.GlobalLocalModel.ActivePort = oldActivePort
+		inference.GlobalLocalModel.Status = oldStatus
+	}()
+
+	// Construct graph with conditional branches
+	// A: executed successfully, returns {"exists": true}
+	// B: branch node, condition "{{nodes.A.output.exists}} == false" -> false, so B skipped
+	// C: action node downstream of B -> skip propagated, C skipped
+	// D: branch node, condition "{{nodes.A.output.exists}} == true" -> true, so D executed/completed
+	// E: action node downstream of D -> executed
+	// F: branch node, condition "is A's exists semantic true?" -> falls back to local model -> returns satisfied: true -> executed
+	// G: action node downstream of F -> executed
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-branch-test",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "mock_tool_exists", Instructions: "Run A"},
+			{ID: "B", Type: "branch", Condition: "{{nodes.A.output.exists}} == false", Instructions: "Branch B"},
+			{ID: "C", Type: "action", Action: "mock_action", Instructions: "Run C"},
+			{ID: "D", Type: "branch", Condition: "{{nodes.A.output.exists}} == true", Instructions: "Branch D"},
+			{ID: "E", Type: "action", Action: "mock_action", Instructions: "Run E"},
+			{ID: "F", Type: "branch", Condition: "semantic check: exists is true", Instructions: "Branch F"},
+			{ID: "G", Type: "action", Action: "mock_action", Instructions: "Run G"},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "A", TargetID: "B"},
+			{SourceID: "B", TargetID: "C"},
+			{SourceID: "A", TargetID: "D"},
+			{SourceID: "D", TargetID: "E"},
+			{SourceID: "A", TargetID: "F"},
+			{SourceID: "F", TargetID: "G"},
+		},
+		CreatedAt: time.Now().Unix(),
+	}
+
+	levels, err := compiler.CompileAndSort(graph)
+	if err != nil {
+		t.Fatalf("failed to compile and sort: %v", err)
+	}
+
+	// Run execution
+	engine := &ExecutionEngine{}
+	ctx := context.Background()
+	err = engine.ExecuteGraph(ctx, graph, levels)
+	if err != nil {
+		t.Fatalf("ExecuteGraph failed: %v", err)
+	}
+
+	// Verify statuses in the checkpointer DB
+	stateB, ok := memory.DB.GetNodeState("task-branch-test", "B")
+	if !ok || stateB.Status != "skipped" {
+		t.Errorf("expected node B to be skipped, got: %+v", stateB)
+	}
+
+	stateC, ok := memory.DB.GetNodeState("task-branch-test", "C")
+	if !ok || stateC.Status != "skipped" {
+		t.Errorf("expected node C to be skipped via propagation, got: %+v", stateC)
+	}
+
+	stateD, ok := memory.DB.GetNodeState("task-branch-test", "D")
+	if !ok || stateD.Status != "completed" {
+		t.Errorf("expected node D to be completed, got: %+v", stateD)
+	}
+
+	stateE, ok := memory.DB.GetNodeState("task-branch-test", "E")
+	if !ok || stateE.Status != "completed" {
+		t.Errorf("expected node E to be completed, got: %+v", stateE)
+	}
+
+	stateF, ok := memory.DB.GetNodeState("task-branch-test", "F")
+	if !ok || stateF.Status != "completed" {
+		t.Errorf("expected node F to be completed, got: %+v", stateF)
+	}
+
+	stateG, ok := memory.DB.GetNodeState("task-branch-test", "G")
+	if !ok || stateG.Status != "completed" {
+		t.Errorf("expected node G to be completed, got: %+v", stateG)
+	}
+
+	if !semanticServerCalled {
+		t.Errorf("expected semantic fallback to call local model server, but it was not called")
 	}
 }

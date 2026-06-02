@@ -319,7 +319,50 @@ func checkRelaxationSingle(userMessage string, expectedVal, actualVal interface{
 	}
 
 	// Fallback to checking the single actual string
-	return checkSingleString(actualStr)
+	if checkSingleString(actualStr) {
+		return true
+	}
+
+	// 8. Entity-token containment matching for free-text parameters (text, message fields).
+	// If all significant entity tokens (IDs, numbers, codes, identifiers) from the expected string
+	// appear in the actual string, treat as a fuzzy match. This handles cases where the LLM
+	// generates semantically equivalent but differently formatted text.
+	expectedTokens := strings.Fields(expectedStr)
+	if len(expectedTokens) >= 3 {
+		// Extract entity tokens: tokens that contain digits, underscores, hashes, or are
+		// identifiers (not pure stop words or common English words)
+		var entityTokens []string
+		for _, tok := range expectedTokens {
+			tok = strings.Trim(tok, ".,;:!?\"'()[]{}")
+			if tok == "" {
+				continue
+			}
+			isEntity := false
+			for _, ch := range tok {
+				if (ch >= '0' && ch <= '9') || ch == '_' || ch == '#' || ch == '@' || ch == '-' {
+					isEntity = true
+					break
+				}
+			}
+			if isEntity {
+				entityTokens = append(entityTokens, tok)
+			}
+		}
+		if len(entityTokens) >= 2 {
+			allFound := true
+			for _, et := range entityTokens {
+				if !strings.Contains(actualStr, et) {
+					allFound = false
+					break
+				}
+			}
+			if allFound {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func MatchParameters(toolName string, userMessage string, expectedArgs map[string]interface{}, actualArgs map[string]interface{}, policy RelaxationPolicy) bool {

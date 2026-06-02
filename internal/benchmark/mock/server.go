@@ -31,12 +31,33 @@ type MockBenchmarkTurn struct {
 	MockResponse     string                 `json:"mock_response"`
 }
 
+type MockExpectedGraphNode struct {
+	ID           string   `json:"id"`
+	Type         string   `json:"type"`
+	Action       string   `json:"action"`
+	Instructions string   `json:"instructions"`
+	AllowedTools []string `json:"allowedTools"`
+	Status       string   `json:"status"`
+}
+
+type MockExpectedGraphEdge struct {
+	SourceID string `json:"sourceId"`
+	TargetID string `json:"targetId"`
+}
+
+type MockExpectedGraph struct {
+	TaskID string                  `json:"taskId"`
+	Nodes  []MockExpectedGraphNode `json:"nodes"`
+	Edges  []MockExpectedGraphEdge `json:"edges"`
+}
+
 type MockTestCase struct {
 	ID            string                 `json:"id"`
 	Dataset       string                 `json:"dataset"`
 	SystemPrompt  string                 `json:"system_prompt"`
 	Tools         []MockToolDefinition   `json:"tools"`
 	Turns         []MockBenchmarkTurn    `json:"turns"`
+	ExpectedGraph MockExpectedGraph      `json:"expected_graph,omitempty"`
 	InitialConfig map[string]interface{} `json:"initial_config,omitempty"`
 }
 
@@ -155,7 +176,24 @@ func (r *Runner) StartMockServer(tcJSON []byte, mode string) {
 			var nodes []compiler.GraphNode
 			var edges []compiler.GraphEdge
 
-			if mode == "consolidated" {
+			if len(tc.ExpectedGraph.Nodes) > 0 {
+				for _, n := range tc.ExpectedGraph.Nodes {
+					nodes = append(nodes, compiler.GraphNode{
+						ID:           n.ID,
+						Type:         n.Type,
+						Action:       n.Action,
+						Instructions: n.Instructions,
+						AllowedTools: n.AllowedTools,
+						Status:       n.Status,
+					})
+				}
+				for _, e := range tc.ExpectedGraph.Edges {
+					edges = append(edges, compiler.GraphEdge{
+						SourceID: e.SourceID,
+						TargetID: e.TargetID,
+					})
+				}
+			} else if mode == "consolidated" {
 				// Consolidated DAG plans the entire sequence of turns with intermediate variable bindings
 				for i, turn := range tc.Turns {
 					if turn.ExpectedToolCall == "" {
@@ -252,25 +290,51 @@ func (r *Runner) StartMockServer(tcJSON []byte, mode string) {
 		// 2. Is this a Local Tactician Node Executor parameter mapping request?
 		if strings.Contains(systemPrompt, "Local Tactician") {
 			// Determine expected tool call parameters
-			var matchedTurn MockBenchmarkTurn
+			var expectedArgs map[string]interface{}
 			found := false
 
 			// Match based on tool Action whitelist contained in systemPrompt
 			for _, turn := range tc.Turns {
-				if strings.Contains(systemPrompt, turn.ExpectedToolCall) {
-					matchedTurn = turn
+				if len(turn.ExpectedCalls) > 0 {
+					for _, ec := range turn.ExpectedCalls {
+						if strings.Contains(systemPrompt, ec.ToolName) {
+							expectedArgs = ec.Args
+							found = true
+							break
+						}
+					}
+					if found {
+						break
+					}
+				} else if turn.ExpectedToolCall != "" && strings.Contains(systemPrompt, turn.ExpectedToolCall) {
+					expectedArgs = turn.ExpectedArgs
 					found = true
 					break
 				}
 			}
 
 			if !found && len(tc.Turns) > 0 {
-				matchedTurn = tc.Turns[0]
+				if len(tc.Turns[0].ExpectedCalls) > 0 {
+					expectedArgs = tc.Turns[0].ExpectedCalls[0].Args
+				} else {
+					expectedArgs = tc.Turns[0].ExpectedArgs
+				}
 			}
 
 			// Format expected_args inside tool_arguments GBNF compliance wrapper
+			// In expected_calls standard, arguments inside ExpectedCalls.Args are wrapped in arrays representing options (e.g. `["USD", "usd"]`).
+			// Let's unwrap them to single values (preferring the first item in the array or the value itself) to return standard JSON to the parser.
+			unwrappedArgs := make(map[string]interface{})
+			for k, v := range expectedArgs {
+				if arr, ok := v.([]interface{}); ok && len(arr) > 0 {
+					unwrappedArgs[k] = arr[0]
+				} else {
+					unwrappedArgs[k] = v
+				}
+			}
+
 			respBody := map[string]interface{}{
-				"tool_arguments": matchedTurn.ExpectedArgs,
+				"tool_arguments": unwrappedArgs,
 			}
 			respBytes, _ := json.Marshal(respBody)
 

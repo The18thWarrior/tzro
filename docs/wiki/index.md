@@ -10,6 +10,7 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 *Map of system features, product requirements, and specs.*
 - [Durable DAG Benchmarking Suite](features/benchmarking-suite.md) - Evaluate model planning and parameter execution against BFCL and ComplexFuncBench datasets. (Sources: 2 | Last Updated: 2026-05-24)
 - [Code Quality & Architectural Refactoring](features/code-quality-refactors.md) - Decompose monolithic runner.go and memory.go files into highly cohesive sub-modules and clean up hardcoded edge cases. (Sources: 1 | Last Updated: 2026-05-28)
+- [Synchronous DAG Execution Hooks](features/dag-execution-hooks.md) - Middleware layer for synchronous task intercepting, validation, output mutation, and durable pausing. (Sources: 1 | Last Updated: 2026-05-31)
 
 ## Bugs & Post-Mortems
 *Analyses of critical bugs, diagnostic loops, and prevention measures.*
@@ -21,6 +22,17 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 - [Cooperative Engine Benchmark Evaluation (2026-05-27 Run 2)](bugs/benchmark-analysis-2026-05-27-1146.md) - Diagnostic analysis of Run 2 achieving a 68.00% success rate (+12.00% absolute increase) after deploying Schema-Aware Parameter Validation in harness. (Verified: 2026-05-27)
 - [Cooperative Engine Benchmark Evaluation (2026-05-27 Run 3)](bugs/benchmark-analysis-2026-05-27-1205.md) - Full-scale 100-case diagnostic analysis of Run 3 maintaining a 64.00% success rate at 4x dataset scale. (Verified: 2026-05-27)
 - [Cooperative Engine Benchmark Evaluation (2026-05-27 Run 4)](bugs/benchmark-analysis-2026-05-27-1304.md) - Full-scale 400-case diagnostic analysis of Run 4 achieving a 65.50% success rate at production scale. (Verified: 2026-05-27)
+- [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 10:58)](bugs/benchmark-analysis-2026-05-30-1058.md) - 5-case diagnostic of SCT bridge interpolation failures causing 40% pass rate; root cause is exec node output storage corruption. (Verified: 2026-05-30)
+- [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 11:23)](bugs/benchmark-analysis-2026-05-30-1123.md) - 5-case diagnostic after RawOutput and coerceNumericArguments P0 fixes, achieving 60% pass rate. (Verified: 2026-05-30)
+- [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 11:32)](bugs/benchmark-analysis-2026-05-30-1132.md) - First full-scale 100-case benchmark revealing category-dependent parameter extraction failures at 21% pass rate. (Verified: 2026-05-30)
+- [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 13:00)](bugs/benchmark-analysis-2026-05-30-1300.md) - Post-coercion-fix 100-case benchmark showing marginal +1% improvement (22% pass rate); confirms post-extraction coercion ceiling reached. (Verified: 2026-05-30)
+- [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 17:10)](bugs/benchmark-analysis-2026-05-30-1710.md) - Post-accumulated-context-architecture 10-case benchmark achieving 90% pass rate (+68% improvement); bimodal local/cloud execution split with Tier-2 sidecar recycle. (Verified: 2026-05-30)
+- [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 17:35)](bugs/benchmark-analysis-2026-05-30-1735.md) - Full-scale 100-case diagnostic validation of accumulated context architecture showing +41% net improvement (63% pass rate) but identifying dynamic parameter resolution offset shifts. (Verified: 2026-05-30)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 00:04)](bugs/benchmark-analysis-2026-05-31-0004.md) - Full-scale 100-case diagnostic validation of GBNF parameter matching achieving 65.0% pass rate (+2% improvement) but identifying the "_exec" suffix mismatch and background thread sidecar orphanage bugs. (Verified: 2026-05-31)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 08:24)](bugs/benchmark-analysis-2026-05-31-0824.md) - Diagnostic analysis of GBNF parameter matching and transient network planning failures achieving a 61.0% pass rate. (Verified: 2026-05-31)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 11:16)](bugs/benchmark-analysis-2026-05-31-1116.md) - Full-scale 100-case diagnostic validation of GBNF parameter matching achieving 68.0% pass rate (+7.0% improvement) but identifying the "_exec" suffix template mismatch. (Verified: 2026-05-31)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 13:25)](bugs/benchmark-analysis-2026-05-31-1325.md) - Full-scale 100-case diagnostic evaluation achieving 63.0% pass rate under cooperative model mode, triaging the _exec suffix mismatch and topological concurrency ordering races. (Verified: 2026-05-31)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 15:15)](bugs/benchmark-analysis-2026-05-31-1515.md) - Full-scale 100-case diagnostic validation achieving 100.0% overall pass rate by resolving the "_exec" suffix template mismatch and persistent sidecar daemon context orphanage bugs. (Verified: 2026-05-31)
 
 
 
@@ -51,7 +63,7 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 - [ADR-0012: Durable Proactive Notification System](../adr/0012-durable-proactive-notification-system.md) - Design for persisted, real-time lifecycle notifications with target deep-linking and debouncing.
 - [ADR-0013: Unified Daemon-Mediated State Mutations](../adr/0013-unified-daemon-mediated-state-mutations.md) - Enforces pure client-server daemon communication for all state mutations to preserve telemetry and prevent write conflicts.
 - [ADR-0014: Stateful Graph-Aligned Multi-Turn Benchmarks](../adr/0014-stateful-graph-aligned-multi-turn-benchmarks.md) - Transitions multi-turn benchmarks to preserve original turns, utilize in-memory virtual filesystem observers, and execute multiset graph matching.
-
+- [ADR-0015: Pristal Architecture Alignment](../adr/0015-pristal-architecture-alignment.md) - Aligns database, compilation, memory cache, and execution pruning engines with Pristal v2 standards.
 
 ## Ingested Sources
 *Immutable third-party references, notes, and raw inputs.*

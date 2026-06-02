@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"tzro/internal/config"
 	"tzro/internal/memory"
@@ -702,14 +703,50 @@ func resolveDBPath(dbID int) (string, error) {
 	return path, nil
 }
 
-func openLocalDB(path string) (*sql.DB, error) {
+var (
+	localConnectionPool   = make(map[string]*sql.DB)
+	localConnectionPoolMu sync.RWMutex
+)
+
+func getCachedLocalDB(path string) (*sql.DB, error) {
+	localConnectionPoolMu.RLock()
+	conn, exists := localConnectionPool[path]
+	localConnectionPoolMu.RUnlock()
+	if exists {
+		if err := conn.Ping(); err == nil {
+			return conn, nil
+		}
+	}
+
+	localConnectionPoolMu.Lock()
+	defer localConnectionPoolMu.Unlock()
+
+	// Double-check under lock
+	if conn, exists = localConnectionPool[path]; exists {
+		if err := conn.Ping(); err == nil {
+			return conn, nil
+		}
+	}
+
 	conn, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
+
+	// Optimize connection limits to prevent descriptor leaks under high parallel load
+	conn.SetMaxOpenConns(1)
+	conn.SetMaxIdleConns(1)
+	conn.SetConnMaxIdleTime(5 * time.Minute)
+
 	_, _ = conn.Exec("PRAGMA journal_mode=WAL;")
 	_, _ = conn.Exec("PRAGMA busy_timeout = 5000;")
+
+	localConnectionPool[path] = conn
 	return conn, nil
+}
+
+func openLocalDB(path string) (*sql.DB, error) {
+	return getCachedLocalDB(path)
 }
 
 func validateReadOnlySQL(sqlQuery string) error {
@@ -770,10 +807,7 @@ func NewCreateDatabaseTool() *BaseAgentTool {
 			id, _ := res.LastInsertId()
 
 			// Provision file
-			localConn, err := openLocalDB(path)
-			if err == nil {
-				localConn.Close()
-			}
+			_, _ = openLocalDB(path)
 
 			return ToolSuccess(map[string]interface{}{
 				"id":   id,
@@ -861,7 +895,6 @@ func NewCreateTableTool() *BaseAgentTool {
 			if err != nil {
 				return ToolError("failed to open local database file: " + err.Error()), nil
 			}
-			defer localConn.Close()
 
 			_, err = localConn.Exec(createSQL)
 			if err != nil {
@@ -918,7 +951,6 @@ func NewInsertTool() *BaseAgentTool {
 			if err != nil {
 				return ToolError("failed to open local database file: " + err.Error()), nil
 			}
-			defer localConn.Close()
 
 			_, err = localConn.Exec(insertSQL, vals...)
 			if err != nil {
@@ -985,7 +1017,6 @@ func NewUpdateTool() *BaseAgentTool {
 			if err != nil {
 				return ToolError("failed to open local database file: " + err.Error()), nil
 			}
-			defer localConn.Close()
 
 			_, err = localConn.Exec(updateSQL, vals...)
 			if err != nil {
@@ -1043,7 +1074,6 @@ func NewDeleteTool() *BaseAgentTool {
 			if err != nil {
 				return ToolError("failed to open local database file: " + err.Error()), nil
 			}
-			defer localConn.Close()
 
 			_, err = localConn.Exec(deleteSQL, vals...)
 			if err != nil {
@@ -1089,7 +1119,6 @@ func NewQueryTool() *BaseAgentTool {
 			if err != nil {
 				return ToolError("failed to open local database file: " + err.Error()), nil
 			}
-			defer localConn.Close()
 
 			rows, err := localConn.Query(in.SQL)
 			if err != nil {

@@ -43,6 +43,7 @@ type NodeState struct {
 	NodeID      string `json:"nodeId"`
 	Status      string `json:"status"` // "pending" | "running" | "completed" | "failed" | "skipped"
 	Output      string `json:"output"`
+	RawOutput   string `json:"rawOutput,omitempty"` // Clean tool output for interpolation (no tier prefix, no compaction)
 	CompletedAt int64  `json:"completedAt"`
 }
 
