@@ -1,0 +1,14 @@
+version: 1
+applications:
+  - appRoot: website
+    frontend:
+      phases:
+        build:
+          commands:
+            - echo "Deploying static website prototype"
+      artifacts:
+        baseDirectory: website
+        files:
+          - '**/*'
+      cache:
+        paths: []
