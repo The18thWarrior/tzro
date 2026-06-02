@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 	"time"
-	"tzro/internal/tui"
+	"tzro/examples/tui"
 
 	"github.com/spf13/cobra"
 )

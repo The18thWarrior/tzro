@@ -14,7 +14,7 @@ import (
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
-	"tzro/internal/tui"
+	"tzro/examples/tui"
 )
 
 // Re-expose standard offline mutation error for CLI client commands.

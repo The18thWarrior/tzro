@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 	"tzro/internal/config"
-	"tzro/internal/tui"
+	"tzro/examples/tui"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"

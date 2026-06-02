@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>tzro — Durable Local-First Agentic Engine</title>
+  <meta name="description" content="tzro coordinates complex, secure multi-system automations on local hardware using strategy-vs-tactics planning, Kahn parallel compiling, and 5-layer context compaction.">
+  
+  <!-- Modern Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;1,400&family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+</head>
+<body class="verdant-synth">
+
+  <!-- Universal Header -->
+  <header class="tzro-header">
+    <div class="header-container">
+      <a href="#" class="logo-area">
+        <svg class="tzro-logo" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="512" height="512" rx="128" fill="#0A110D"/>
+          <g filter="drop-shadow(0px 8px 16px rgba(182, 255, 0, 0.15))">
+            <!-- Main Loop Body (Muted Sage) -->
+            <!-- The vertical T stem -->
+            <path d="M 256,160 L 256,360" stroke="#5C6B62" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+            
+            <!-- The Z path (which also forms the T top bar) -->
+            <path d="M 160,160 L 352,160 L 160,352 L 352,352" stroke="#5C6B62" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            
+            <!-- The Cyber Lime inner execution stream -->
+            <path d="M 256,184 L 256,336" stroke="#B6FF00" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M 184,160 L 328,160 L 184,352 L 328,352" stroke="#B6FF00" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          </g>
+        </svg>
+        <span class="logo-text">tzro</span>
+      </a>
+      <nav class="header-nav">
+        <a href="#approach" class="nav-link">Approach</a>
+        <a href="#kahn-executor" class="nav-link">Kahn Sorter</a>
+        <a href="#compactor" class="nav-link">Compaction</a>
+        <a href="#sdk-hub" class="nav-link">Developer SDK</a>
+        <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener noreferrer" class="github-btn" id="github-link">
+          <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12C2 16.42 4.87 20.17 8.85 21.5C9.35 21.58 9.53 21.28 9.53 21.02C9.53 20.78 9.52 19.98 9.52 19.14C7 19.58 6.35 18.52 6.15 17.96C6.04 17.68 5.56 16.8 5.14 16.56C4.79 16.37 4.29 15.91 5.13 15.9C5.92 15.89 6.48 16.63 6.67 16.93C7.57 18.45 9.02 18.02 9.59 17.76C9.68 17.11 9.94 16.67 10.23 16.42C7.97 16.16 5.6 15.28 5.6 11.39C5.6 10.28 5.99 9.37 6.64 8.66C6.54 8.4 6.19 7.37 6.74 5.98C6.74 5.98 7.59 5.71 9.52 7.02C10.33 6.79 11.19 6.68 12.05 6.68C12.91 6.68 13.77 6.79 14.58 7.02C16.51 5.7 17.36 5.98 17.36 5.98C17.91 7.37 17.56 8.4 17.46 8.66C18.11 9.37 18.5 10.27 18.5 11.39C18.5 15.29 16.12 16.16 13.86 16.41C14.23 16.73 14.55 17.35 14.55 18.31C14.55 19.69 14.54 20.8 14.54 21.02C14.54 21.28 14.72 21.59 15.23 21.49C19.21 20.16 22 16.42 22 12C22 6.477 17.52 2 12 2Z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Grounded Bio-Synthetic Backdrops -->
+  <div class="cyber-grid"></div>
+  <div class="horizon-pulse-line" id="vA-horizon-pulse"></div>
+
+  <!-- MAIN LANDING FLOW -->
+  <main class="landing-main">
+
+    <!-- HERO SECTION -->
+    <section class="hero-section">
+      <div class="hero-container">
+        <div class="hero-badge">OPERATIONAL MODE: DECENTRALIZED</div>
+        <h1 class="hero-title text-balance"><span class="glow-text">tzro</span> — Durable Local-First Agentic Engine</h1>
+        <p class="hero-desc text-pretty">Deterministic topological task compilation, hybrid relational memory, and sandboxed WASM/stdio execution coordinated securely on resource-constrained offline hardware.</p>
+      </div>
+    </section>
+
+    <!-- ARCHITECTURE PARADIGM SECTION -->
+    <section class="approach-section" id="approach">
+      <div class="hero-container">
+        <span class="glass-badge">Architectural Shift</span>
+        <h2 class="section-title text-balance">Surgically Separate Strategy &amp; Tactics</h2>
+        <p class="section-desc text-pretty">Traditional AI loops throttle inside expensive, high-latency cloud cycles. tzro resolves this by surgically separating cognitive loads: a frontier cloud planner constructs abstract blueprints ONCE, delegating physical execution to local, GBNF-constrained tacticians.</p>
+
+        <!-- Columns Split Showcase -->
+        <div class="split-architecture">
+          <div class="glass-card premium-border">
+            <div class="card-icon red-g">☁️</div>
+            <h2>The Strategist</h2>
+            <div class="subtitle">Cloud Frontier LLM (e.g. Gemini 3.5 Flash)</div>
+            <ul class="benefit-list">
+              <li><strong>Execution Frequency:</strong> Invoked exactly <strong>once</strong> at task startup.</li>
+              <li><strong>SOP &amp; Skill Indexing:</strong> Ingests compressed procedural skill signatures using Hybrid Vector keyword and cosine similarity rankings.</li>
+              <li><strong>Abstract Graph Declaration:</strong> Compiles a coarse cycle-free JSON blueprint defining dependency edges and tool white-lists.</li>
+              <li><strong>Cost Efficiency:</strong> Yields up to **80% prompt reduction**, completely avoiding expensive cloud context window slot thrashing.</li>
+            </ul>
+          </div>
+
+          <div class="glass-card premium-border">
+            <div class="card-icon green-g">💻</div>
+            <h2>The Tactician</h2>
+            <div class="subtitle">Local GGUF llama-server (4B/8B Model)</div>
+            <ul class="benefit-list">
+              <li><strong>Execution Frequency:</strong> Runs sequentially per active compiled topological action node.</li>
+              <li><strong>GBNF-Constrained Completion:</strong> Backus-Naur grammar structures guarantee 100% syntactically correct tool arguments.</li>
+              <li><strong>5-Layer Compaction Pipeline:</strong> Hoists homogeneous tabular CRM tables into TSV format to save 85% of attention context space.</li>
+              <li><strong>Priority Cache Preemption:</strong> Wipes background task context slots instantly to serve sub-450ms human chats.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLAYGROUND 1: KAHN PARALLEL EXECUTION SORTER -->
+    <section class="playground-section" id="kahn-executor">
+      <div class="hero-container">
+        <span class="glass-badge">Engine Core</span>
+        <h2 class="section-title">1. Kahn Parallel Execution Simulator</h2>
+        <p class="section-desc">Observe the Go runtime compiler topological Kahn sort sequencer. Independent nodes at the same topological level run in parallel goroutines, satisfying dependency edges before unblocking downstream nodes.</p>
+
+        <div class="dashboard-grid">
+          <!-- Left: Subsystem Terminal -->
+          <div class="terminal-card">
+            <div class="terminal-header">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+              <span class="terminal-title">tzro_daemon_monitor.sh</span>
+            </div>
+            <div class="terminal-body monospace">
+              <div class="line"><span class="cyan">$</span> tzro status</div>
+              <div class="line success">[OK] SQLite Persistence Layer Initialized: ~/.tzro/data/tzro.db</div>
+              <div class="line success">[OK] Llama-Server Tactician Linked: port 36888 [Active Slots: 1]</div>
+              <div class="line success">[OK] Eino Strategist Adapter Ready: mode = cooperative</div>
+              <div class="line"><span class="cyan">$</span> tzro list-subsystems</div>
+              <div class="line active-subsystems">
+                <table>
+                  <tr><th>ID</th><th>Subsystem</th><th>Engine</th></tr>
+                  <tr><td>01</td><td>Durable Execution</td><td>SQLite Checkpoints</td></tr>
+                  <tr><td>02</td><td>Kahn Graph Compiler</td><td>DAG Topological Sorter</td></tr>
+                  <tr><td>03</td><td>Relational Memory</td><td>FTS5 Vector ONNX</td></tr>
+                  <tr><td>04</td><td>WASM Micro-Skills</td><td>Isolated Sandbox Wasmtime</td></tr>
+                  <tr><td>05</td><td>Stdio MCP Gateway</td><td>Process Host Auto-Healing</td></tr>
+                </table>
+              </div>
+              <div class="line"><span class="cyan">$</span> <span class="blink">_</span></div>
+            </div>
+          </div>
+
+          <!-- Right: Kahn Compiler Simulator Card -->
+          <div class="simulator-card">
+            <div class="card-header-vA">
+              <h3>Kahn Parallel Execution Simulator</h3>
+              <p>Watch goroutines compile abstract strategic nodes and execute them concurrently based on dependency limits.</p>
+            </div>
+            
+            <div class="sim-controls">
+              <button id="vA-start-btn" class="sim-btn glow-btn">Compile &amp; Run DAG</button>
+              <button id="vA-reset-btn" class="sim-btn secondary-btn">Reset Graph</button>
+            </div>
+
+            <!-- Visual Graph Levels -->
+            <div class="graph-visualizer">
+              <div class="level-column" id="level-strat">
+                <span class="level-label">1. Cloud Plan</span>
+                <div class="sim-node planner" id="node-planner">
+                  <div class="node-id">Strategist (Gemini)</div>
+                  <div class="node-action">Goal Intent Routing</div>
+                </div>
+              </div>
+              
+              <div class="level-arrow">⟶</div>
+              
+              <div class="level-column" id="level-0">
+                <span class="level-label">2. Level 0 (Parallel)</span>
+                <div class="sim-node pending" id="node-01">
+                  <div class="node-id">node_01 [Go]</div>
+                  <div class="node-action">archive_files</div>
+                </div>
+                <div class="sim-node pending" id="node-02">
+                  <div class="node-id">node_02 [WASM]</div>
+                  <div class="node-action">fetch_user_details</div>
+                </div>
+              </div>
+
+              <div class="level-arrow">⟶</div>
+
+              <div class="level-column" id="level-1">
+                <span class="level-label">3. Level 1 (Dependent)</span>
+                <div class="sim-node pending" id="node-03">
+                  <div class="node-id">node_03 [MCP]</div>
+                  <div class="node-action">send_team_alert</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminal Output Log -->
+            <div class="sim-log-console monospace" id="vA-console">
+              <div class="log-line text-muted">Awaiting topological compilation triggers...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLAYGROUND 2: 5-LAYER CONTEXT COMPACTOR -->
+    <section class="playground-section" id="compactor">
+      <div class="hero-container">
+        <span class="glass-badge">Optimization</span>
+        <h2 class="section-title">2. 5-Layer Context Compaction Pipeline</h2>
+        <p class="section-desc">Prevent context window slot thrashing. Select homogeneous CRM tables, diagnostic stack traces, or scraped HTML scrapings, and watch the executor compress key structures natively before prompting local LLMs.</p>
+
+        <div class="compactor-container premium-border">
+          <div class="compactor-header">
+            <h2>Context Compaction &amp; SQLite Cache Playground</h2>
+            <p>Select structured raw data inputs and watch the Go system compile them into compressed, attention-friendly layers.</p>
+          </div>
+
+          <div class="compactor-grid">
+            <div class="compactor-controls">
+              <label>Select Sample Dataset Payload</label>
+              <div class="preset-buttons">
+                <button class="preset-btn active" data-preset="crm">homogeneous CRM Array [22.4KB]</button>
+                <button class="preset-btn" data-preset="logs">System Exception Logs [48.1KB]</button>
+                <button class="preset-btn" data-preset="scraped">Web Scraped HTML [80.6KB]</button>
+              </div>
+
+              <div class="compaction-pipeline-visual">
+                <div class="pipeline-step-item" id="step-0"><span>Layer 0: Binary Pruning</span><span class="status">Idle</span></div>
+                <div class="pipeline-step-item" id="step-1"><span>Layer 1: HTML-to-Markdown</span><span class="status">Idle</span></div>
+                <div class="pipeline-step-item" id="step-2"><span>Layer 2: TSV Tabular Hoisting</span><span class="status">Idle</span></div>
+                <div class="pipeline-step-item" id="step-3"><span>Layer 3: KV Flattening</span><span class="status">Idle</span></div>
+                <div class="pipeline-step-item" id="step-4"><span>Layer 4: Dot-Notation Compressor</span><span class="status">Idle</span></div>
+              </div>
+
+              <button id="vB-compress-btn" class="compress-trigger">Run Compaction Pipeline</button>
+            </div>
+
+            <!-- Side-by-side Payload Views -->
+            <div class="payload-visuals">
+              <div class="payload-box">
+                <div class="box-tag">Raw Data Input (<span id="raw-size">22.4</span> KB)</div>
+                <textarea id="raw-payload-display" readonly class="monospace"></textarea>
+              </div>
+              
+              <div class="payload-box">
+                <div class="box-tag">Compacted Context Output (<span id="compacted-size">0.0</span> KB)</div>
+                <div class="compacted-output-wrapper">
+                  <pre id="compacted-payload-display" class="monospace text-success"></pre>
+                  
+                  <!-- Disk Cache Banner -->
+                  <div class="disk-cache-banner" id="disk-cache-banner" style="display: none;">
+                    <div class="banner-title">⚠️ Payload exceeds 12KB threshold! Triggering SQLite Cache.</div>
+                    <p>Raw values written securely to local disk. Returns lightweight Cache Envelope with local JQ Exploration guide.</p>
+                    <div class="cache-json-output monospace">
+                      { "cache_envelope_id": "env_8c3b7a", "records": 150, "jq_query_tool": "jq_cached_data" }
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="compactor-metrics" id="compactor-metrics" style="display: none;">
+            <div class="metric-circle">
+              <span class="percent" id="metric-saving">0%</span>
+              <span class="label">Tokens Saved</span>
+            </div>
+            <div class="metric-stats">
+              <div><span>Initial Size:</span> <strong id="metric-initial">22.4 KB</strong></div>
+              <div><span>Compressed Size:</span> <strong id="metric-final">2.8 KB</strong></div>
+              <div><span>Context Slot Saving:</span> <strong id="metric-ratio">8:1 Reduction</strong></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLAYGROUND 3: DEVELOPER SDK HUB & HOOKS -->
+    <section class="playground-section" id="sdk-hub">
+      <div class="hero-container">
+        <span class="glass-badge">Developer SDK</span>
+        <h2 class="section-title">3. Go SDK &amp; Synchronous Middleware Hooks</h2>
+        <p class="section-desc">Fully typed Go SDK packages handle configuration loading, custom native tool registrations, Kahn sorted runs, and async telemetry streams. Inject blocking middleware hooks to scrub PII, enforce safety guardrails, or trigger HITL gates.</p>
+
+        <div class="dx-showcase-grid">
+          <!-- Left: Code Snippet Browser -->
+          <div class="dx-nav-panel">
+            <div class="dx-nav-title">Engine Integration Guides</div>
+            <button class="dx-nav-btn active" data-tab="config">1. Configuration &amp; Env Secrets</button>
+            <button class="dx-nav-btn" data-tab="tools">2. Stdio MCP &amp; WASM Tool Registry</button>
+            <button class="dx-nav-btn" data-tab="compile">3. Kahn Sorting &amp; Compilation</button>
+            <button class="dx-nav-btn" data-tab="telemetry">4. Telemetry StreamBus Sync</button>
+            <button class="dx-nav-btn" data-tab="hooks">5. Synchronous Middleware Hooks</button>
+          </div>
+
+          <!-- Middle: Visual Code Editor -->
+          <div class="dx-editor-panel">
+            <div class="editor-header">
+              <span class="file-name" id="dx-filename">config.go</span>
+              <span class="lang-tag">Go</span>
+            </div>
+            <div class="editor-body">
+              <pre class="monospace"><code id="dx-code-display">
+// Loading snippet...
+              </code></pre>
+            </div>
+          </div>
+
+          <!-- Right: Interactive Hook Sandbox -->
+          <div class="dx-interactive-sandbox">
+            <h3>Synchronous Hook Playground</h3>
+            <p>Inject custom Go middleware hook events natively into the active DAG task loop to intercept executions dynamically.</p>
+
+            <div class="toggles-list">
+              <div class="toggle-row">
+                <div class="toggle-text">
+                  <label for="hook-pii">PII Sanitization Hook</label>
+                  <span>Redacts credentials and SSN values inside <code>AfterNode</code></span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="hook-pii">
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="toggle-row">
+                <div class="toggle-text">
+                  <label for="hook-guard">Destructive Safety Guardrail</label>
+                  <span>Intercepts and skips <code>delete_all_records</code> tool nodes</span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="hook-guard">
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="toggle-row">
+                <div class="toggle-text">
+                  <label for="hook-hitl">Human-in-the-Loop Gateway</label>
+                  <span>Pauses compiled tasks at Level 1 to prompt supervisor checks</span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="hook-hitl">
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <button id="vC-run-btn" class="dx-run-trigger">Execute Hooked Runtime</button>
+
+            <!-- Hook Console Log -->
+            <div class="dx-console monospace" id="dx-console">
+              <div class="console-line text-muted">Initialize the pipeline configuration to run...</div>
+            </div>
+
+            <!-- HITL Gateway Prompt -->
+            <div class="hitl-prompt" id="hitl-prompt" style="display: none;">
+              <div class="prompt-text">⚠️ TASK PAUSED: ErrTaskPaused. Manual approval required before Level 1 tool dispatch.</div>
+              <div class="prompt-actions">
+                <button id="hitl-approve-btn" class="prompt-btn approve">Approve Level 1 Run</button>
+                <button id="hitl-abort-btn" class="prompt-btn abort">Abort Task</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ZERO-SETUP QUICKSTART SECTION -->
+    <section class="quickstart-section">
+      <div class="hero-container">
+        <h2>Zero-Setup Quickstart</h2>
+        <div class="commands-row">
+          <div class="code-box">
+            <div class="code-box-header">1. Install CLI Engine</div>
+            <pre class="monospace"><code>curl -sSL https://tzro.network/install.sh | bash</code></pre>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header">2. Launch Telemetry TUI</div>
+            <pre class="monospace"><code>tzro --offline</code></pre>
+          </div>
+          <div class="code-box">
+            <div class="code-box-header">3. Start Web UI Daemon</div>
+            <pre class="monospace"><code>go run cmd/tzrod/main.go</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Universal Footer -->
+  <footer class="tzro-footer">
+    <div class="footer-container">
+      <p>&copy; 2026 tzro Project. Released under Apache-2.0 License.</p>
+      <div class="footer-links">
+        <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener noreferrer">GitHub Codebase</a>
+        <a href="#approach">Approach</a>
+        <a href="#sdk-hub">Developer SDK</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

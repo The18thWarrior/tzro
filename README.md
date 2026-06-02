@@ -1,6 +1,6 @@
 # tzro — Durable Local-First Agentic Engine
 
-![tzro Project Banner](docs/assets/tzro_banner.png)
+![tzro App Icon](static/icon.png)
 
 > **tzro** is a durable, local-first agentic execution engine designed to coordinate complex multi-system automations securely on resource-constrained hardware. It combines topological task compilation, hybrid relational memory, dynamic Model Context Protocol (MCP) integrations, and sandboxed WebAssembly (WASM) execution, packaged with a fullscreen Bubble Tea terminal console (TUI) and a real-time Server-Sent Events (SSE) web control center.
 
@@ -645,3 +645,10 @@ npm --prefix web run lint
 # Build production bundle cleanly
 npm --prefix web run build
 ```
+
+---
+
+## 📄 License
+
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
+
