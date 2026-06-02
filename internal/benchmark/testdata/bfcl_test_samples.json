@@ -1,0 +1,629 @@
+[
+  {
+    "id": "live_multiple_0-0-0",
+    "dataset": "bfcl",
+    "system_prompt": "You are a helpful function-calling assistant.",
+    "tools": [
+      {
+        "name": "ChaFod",
+        "description": "Changes the food item based on the customer's request, allowing for modifications to the ingredients or preparation method.",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "foodItem"
+          ],
+          "properties": {
+            "foodItem": {
+              "type": "string",
+              "description": "The name of the food item to be modified as requested by the customer."
+            },
+            "newIngredients": {
+              "type": "string",
+              "description": "A comma-separated list of new ingredients to include in the food item, if any.",
+              "default": ""
+            },
+            "removeIngredients": {
+              "type": "string",
+              "description": "A comma-separated list of ingredients to remove from the food item, if any.",
+              "default": ""
+            },
+            "specialInstructions": {
+              "type": "string",
+              "description": "Special preparation instructions provided by the customer, such as 'extra spicy' or 'no salt'.",
+              "default": ""
+            }
+          }
+        }
+      },
+      {
+        "name": "ChaDri.change_drink",
+        "description": "Modifies the existing drink order to accommodate the customer's new request, ensuring the drink is updated according to the specified preferences.",
+        "parameters": {
+          "type": "object",
+          "required": [
+            "new_preferences"
+          ],
+          "properties": {
+            "drink_id": {
+              "type": "string",
+              "description": "The unique identifier of the drink to be changed.",
+              "default": "0000-0000-0000"
+            },
+            "new_preferences": {
+              "type": "object",
+              "description": "The updated preferences for the drink order.",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "description": "The size of the drink the customer prefers.",
+                  "enum": [
+                    "small",
+                    "medium",
+                    "large"
+                  ],
+                  "default": "medium"
+                },
+                "temperature": {
+                  "type": "string",
+                  "description": "The temperature at which the drink should be served.",
+                  "enum": [
+                    "cold",
+                    "warm",
+                    "hot"
+                  ],
+                  "default": "cold"
+                },
+                "sweetness_level": {
+                  "type": "string",
+                  "description": "The sweetness level the customer requests for the drink.",
+                  "enum": [
+                    "none",
+                    "light",
+                    "regular",
+                    "extra"
+                  ],
+                  "default": "regular"
+                },
+                "milk_type": {
+                  "type": "string",
+                  "description": "The type of milk to be used in the drink, if applicable.",
+                  "enum": [
+                    "regular",
+                    "soy",
+                    "almond",
+                    "coconut"
+                  ],
+                  "default": "regular"
+                },
+                "special_instructions": {
+                  "type": "string",
+                  "description": "Any additional instructions provided by the customer for the drink preparation.",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "turns": [
+      {
+        "user_message": "update my latte to a large size with coconut milk and make it extra sweet? make it served 'boiling hot' as the special request. The drink id is 'latte'",
+        "expected_calls": [
+          {
+            "tool_name": "ChaDri.change_drink",
+            "args": {
+              "drink_id": [
+                "latte"
+              ],
+              "new_preferences": [
+                {
+                  "size": [
+                    "large"
+                  ],
+                  "milk_type": [
+                    "coconut"
+                  ],
+                  "sweetness_level": [
+                    "extra"
+                  ],
+                  "temperature": [
+                    "hot"
+                  ],
+                  "special_instructions": [
+                    "served boiling hot",
+                    "serve boiling hot",
+                    "boiling hot",
+                    "served 'boiling hot'"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "expected_tool_call": "ChaDri.change_drink",
+        "expected_args": {
+          "drink_id": [
+            "latte"
+          ],
+          "new_preferences": [
+            {
+              "size": [
+                "large"
+              ],
+              "milk_type": [
+                "coconut"
+              ],
+              "sweetness_level": [
+                "extra"
+              ],
+              "temperature": [
+                "hot"
+              ],
+              "special_instructions": [
+                "served boiling hot",
+                "serve boiling hot",
+                "boiling hot",
+                "served 'boiling hot'"
+              ]
+            }
+          ]
+        },
+        "mock_response": "{\"status\":\"success\"}"
+      }
+    ],
+    "initial_config": {}
+  },
+  {
+    "id": "multi_turn_base_0",
+    "dataset": "bfcl",
+    "system_prompt": "You are a helpful function-calling assistant.",
+    "tools": [
+      {
+        "name": "cd",
+        "description": "This tool belongs to the Gorilla file system. It is a simple file system that allows users to perform basic file operations such as navigating directories, creating files and directories, reading and writing to files, etc. Tool description: Change the current working directory to the specified folder.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "folder": {
+              "type": "string",
+              "description": "The folder of the directory to change to. You can only change one folder level at a time. "
+            }
+          },
+          "required": [
+            "folder"
+          ]
+        }
+      },
+      {
+        "name": "mkdir",
+        "description": "This tool belongs to the Gorilla file system. It is a simple file system that allows users to perform basic file operations such as navigating directories, creating files and directories, reading and writing to files, etc. Tool description: Create a new directory in the current directory.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "dir_name": {
+              "type": "string",
+              "description": "The name of the new directory at current directory. You can only create directory at current directory."
+            }
+          },
+          "required": [
+            "dir_name"
+          ]
+        }
+      },
+      {
+        "name": "mv",
+        "description": "This tool belongs to the Gorilla file system. It is a simple file system that allows users to perform basic file operations such as navigating directories, creating files and directories, reading and writing to files, etc. Tool description: Move a file or directory from one location to another.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "description": "Source name of the file or directory to move. Source must be local to the current directory."
+            },
+            "destination": {
+              "type": "string",
+              "description": "The destination name to move the file or directory to. Destination must be local to the current directory and cannot be a path. If destination is not an existing directory like when renaming something, destination is the new file name. "
+            }
+          },
+          "required": [
+            "source",
+            "destination"
+          ]
+        }
+      },
+      {
+        "name": "grep",
+        "description": "This tool belongs to the Gorilla file system. It is a simple file system that allows users to perform basic file operations such as navigating directories, creating files and directories, reading and writing to files, etc. Tool description: Search for lines in a file of any extension at current directory that contain the specified pattern.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_name": {
+              "type": "string",
+              "description": "The name of the file to search. No path is allowed and you can only perform on file at local directory."
+            },
+            "pattern": {
+              "type": "string",
+              "description": "The pattern to search for. "
+            }
+          },
+          "required": [
+            "file_name",
+            "pattern"
+          ]
+        }
+      },
+      {
+        "name": "sort",
+        "description": "This tool belongs to the Gorilla file system. It is a simple file system that allows users to perform basic file operations such as navigating directories, creating files and directories, reading and writing to files, etc. Tool description: Sort the contents of a file line by line.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_name": {
+              "type": "string",
+              "description": "The name of the file appeared at current directory to sort. "
+            }
+          },
+          "required": [
+            "file_name"
+          ]
+        }
+      },
+      {
+        "name": "diff",
+        "description": "This tool belongs to the Gorilla file system. It is a simple file system that allows users to perform basic file operations such as navigating directories, creating files and directories, reading and writing to files, etc. Tool description: Compare two files of any extension line by line at the current directory.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_name1": {
+              "type": "string",
+              "description": "The name of the first file in current directory."
+            },
+            "file_name2": {
+              "type": "string",
+              "description": "The name of the second file in current directory. "
+            }
+          },
+          "required": [
+            "file_name1",
+            "file_name2"
+          ]
+        }
+      }
+    ],
+    "turns": [
+      {
+        "user_message": "Move 'final_report.pdf' within document directory to 'temp' directory in document. Make sure to create the directory",
+        "expected_calls": [
+          {
+            "tool_name": "cd",
+            "args": {
+              "folder": [
+                "document"
+              ]
+            }
+          },
+          {
+            "tool_name": "mkdir",
+            "args": {
+              "dir_name": [
+                "temp"
+              ]
+            }
+          },
+          {
+            "tool_name": "mv",
+            "args": {
+              "source": [
+                "final_report.pdf"
+              ],
+              "destination": [
+                "temp"
+              ]
+            }
+          }
+        ],
+        "expected_tool_call": "",
+        "expected_args": {},
+        "mock_response": "{\"status\":\"success\"}"
+      },
+      {
+        "user_message": "Perform a detailed search using grep to identify sections in the file pertaining to 'budget analysis'.",
+        "expected_calls": [
+          {
+            "tool_name": "cd",
+            "args": {
+              "folder": [
+                "temp"
+              ]
+            }
+          },
+          {
+            "tool_name": "grep",
+            "args": {
+              "file_name": [
+                "final_report.pdf"
+              ],
+              "pattern": [
+                "budget analysis"
+              ]
+            }
+          }
+        ],
+        "expected_tool_call": "",
+        "expected_args": {},
+        "mock_response": "{\"status\":\"success\"}"
+      },
+      {
+        "user_message": "Upon identifying the requisite 'budget analysis' content, sort the 'final_report.pdf' by line for improved clarity and comprehension.",
+        "expected_calls": [
+          {
+            "tool_name": "sort",
+            "args": {
+              "query": [
+                "final_report.pdf"
+              ]
+            }
+          }
+        ],
+        "expected_tool_call": "sort",
+        "expected_args": {
+          "query": [
+            "final_report.pdf"
+          ]
+        },
+        "mock_response": "{\"status\":\"success\"}"
+      },
+      {
+        "user_message": "Move 'previous_report.pdf' in document directory to temp as well and having final report also there, proceed to juxtapose it with 'previous_report.pdf' to detect any critical alterations.",
+        "expected_calls": [
+          {
+            "tool_name": "cd",
+            "args": {
+              "folder": [
+                ".."
+              ]
+            }
+          },
+          {
+            "tool_name": "mv",
+            "args": {
+              "source": [
+                "previous_report.pdf"
+              ],
+              "destination": [
+                "temp"
+              ]
+            }
+          },
+          {
+            "tool_name": "cd",
+            "args": {
+              "folder": [
+                "temp"
+              ]
+            }
+          },
+          {
+            "tool_name": "diff",
+            "args": {
+              "file_name1": [
+                "final_report.pdf"
+              ],
+              "file_name2": [
+                "previous_report.pdf"
+              ]
+            }
+          }
+        ],
+        "expected_tool_call": "",
+        "expected_args": {},
+        "mock_response": "{\"status\":\"success\"}"
+      }
+    ],
+    "initial_config": {
+      "GorillaFileSystem": {
+        "root": {
+          "workspace": {
+            "type": "directory",
+            "contents": {
+              "document": {
+                "type": "directory",
+                "contents": {
+                  "final_report.pdf": {
+                    "type": "file",
+                    "content": "Year2024 This is the final report content including budget analysis and other sections."
+                  },
+                  "previous_report.pdf": {
+                    "type": "file",
+                    "content": "Year203 This is the previous report content with different budget analysis."
+                  }
+                }
+              },
+              "archive": {
+                "type": "directory",
+                "contents": {}
+              }
+            }
+          }
+        }
+      },
+      "TwitterAPI": {
+        "tweet_counter": 3,
+        "tweets": {
+          "0": {
+            "id": 0,
+            "username": "analyst_pro",
+            "content": "Just finished analyzing the reports!",
+            "tags": [
+              "#analysis",
+              "#reports"
+            ],
+            "mentions": []
+          },
+          "1": {
+            "id": 1,
+            "username": "analyst_pro",
+            "content": "Budget analysis insights coming soon!",
+            "tags": [
+              "#budget",
+              "#analysis",
+              "#insights"
+            ],
+            "mentions": []
+          },
+          "2": {
+            "id": 2,
+            "username": "analyst_pro",
+            "content": "Stay tuned for more updates!",
+            "tags": [
+              "#updates",
+              "#staytuned"
+            ],
+            "mentions": []
+          }
+        },
+        "username": "analyst_pro",
+        "password": "Kj8#mP9$vL2"
+      }
+    }
+  },
+  {
+    "id": "multiple_0",
+    "dataset": "bfcl",
+    "system_prompt": "You are a helpful function-calling assistant.",
+    "tools": [
+      {
+        "name": "triangle_properties.get",
+        "description": "Retrieve the dimensions, such as area and perimeter, of a triangle if lengths of three sides are given.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "side1": {
+              "type": "integer",
+              "description": "The length of first side of the triangle."
+            },
+            "side2": {
+              "type": "integer",
+              "description": "The length of second side of the triangle."
+            },
+            "side3": {
+              "type": "integer",
+              "description": "The length of third side of the triangle."
+            },
+            "get_area": {
+              "type": "boolean",
+              "description": "A flag to determine whether to calculate the area of triangle. Default is true.",
+              "default": true,
+              "optional": true
+            },
+            "get_perimeter": {
+              "type": "boolean",
+              "description": "A flag to determine whether to calculate the perimeter of triangle. Default is true.",
+              "default": true,
+              "optional": true
+            },
+            "get_angles": {
+              "type": "boolean",
+              "description": "A flag to determine whether to calculate the internal angles of triangle. Default is true.",
+              "default": true,
+              "optional": true
+            }
+          },
+          "required": [
+            "side1",
+            "side2",
+            "side3"
+          ]
+        }
+      },
+      {
+        "name": "circle_properties.get",
+        "description": "Retrieve the dimensions, such as area and circumference, of a circle if radius is given.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "radius": {
+              "type": "float",
+              "description": "The length of radius of the circle."
+            },
+            "get_area": {
+              "type": "boolean",
+              "description": "A flag to determine whether to calculate the area of circle. Default is true.",
+              "default": true,
+              "optional": true
+            },
+            "get_circumference": {
+              "type": "boolean",
+              "description": "A flag to determine whether to calculate the circumference of circle. Default is true.",
+              "default": true,
+              "optional": true
+            }
+          },
+          "required": [
+            "radius"
+          ]
+        }
+      }
+    ],
+    "turns": [
+      {
+        "user_message": "Can I find the dimensions and properties of a triangle, if I know its three sides are 5 units, 4 units and 3 units long?",
+        "expected_calls": [
+          {
+            "tool_name": "triangle_properties.get",
+            "args": {
+              "side1": [
+                5
+              ],
+              "side2": [
+                4
+              ],
+              "side3": [
+                3
+              ],
+              "get_area": [
+                "",
+                true
+              ],
+              "get_perimeter": [
+                "",
+                true
+              ],
+              "get_angles": [
+                "",
+                true
+              ]
+            }
+          }
+        ],
+        "expected_tool_call": "triangle_properties.get",
+        "expected_args": {
+          "side1": [
+            5
+          ],
+          "side2": [
+            4
+          ],
+          "side3": [
+            3
+          ],
+          "get_area": [
+            "",
+            true
+          ],
+          "get_perimeter": [
+            "",
+            true
+          ],
+          "get_angles": [
+            "",
+            true
+          ]
+        },
+        "mock_response": "{\"status\":\"success\"}"
+      }
+    ],
+    "initial_config": {}
+  }
+]

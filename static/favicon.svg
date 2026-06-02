@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <rect width="512" height="512" rx="128" fill="#0A110D"/>
+  
+  <g filter="drop-shadow(0px 8px 16px rgba(182, 255, 0, 0.15))">
+    <!-- Main Loop Body (Muted Sage) -->
+    <!-- The vertical T stem -->
+    <path d="M 256,160 L 256,360" stroke="#5C6B62" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- The Z path (which also forms the T top bar) -->
+    <path d="M 160,160 L 352,160 L 160,352 L 352,352" stroke="#5C6B62" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    
+    <!-- The Cyber Lime inner execution stream -->
+    <path d="M 256,184 L 256,336" stroke="#B6FF00" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 184,160 L 328,160 L 184,352 L 328,352" stroke="#B6FF00" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+</svg>
