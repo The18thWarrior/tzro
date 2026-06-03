@@ -88,9 +88,9 @@ If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](
 ### Update Local Wiki
 
 When terms are resolved, `CONTEXT.md` is updated, or new ADRs are created during a session:
+
 - Update the corresponding glossary, concept, or decision summary pages under `docs/wiki/architecture/`.
 - Ensure new ADRs are mapped into `docs/wiki/index.md` under **Architecture & Concepts**.
 - Log the session outcomes, resolved terms, and ADR details in `docs/wiki/log.md`.
 
 </supporting-info>
-

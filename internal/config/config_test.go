@@ -80,3 +80,68 @@ func TestConfig_ProviderFallback(t *testing.T) {
 		t.Errorf("expected CloudAPIKey to fallback to GEMINI_API_KEY, got: %s", resolvedKey)
 	}
 }
+
+func TestConfig_IsObserverEnabled(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		cfg      EngineConfig
+		expected bool
+	}{
+		{
+			name: "Explicit true",
+			cfg: EngineConfig{
+				ObserverEnabled: &trueVal,
+			},
+			expected: true,
+		},
+		{
+			name: "Explicit false",
+			cfg: EngineConfig{
+				ObserverEnabled: &falseVal,
+			},
+			expected: false,
+		},
+		{
+			name: "Default (nil) for llama-server",
+			cfg: EngineConfig{
+				InferenceBackend: BackendConfig{
+					Type: "llama-server",
+				},
+				ObserverEnabled: nil,
+			},
+			expected: true,
+		},
+		{
+			name: "Default (nil) for empty type",
+			cfg: EngineConfig{
+				InferenceBackend: BackendConfig{
+					Type: "",
+				},
+				ObserverEnabled: nil,
+			},
+			expected: true,
+		},
+		{
+			name: "Default (nil) for openai-compatible",
+			cfg: EngineConfig{
+				InferenceBackend: BackendConfig{
+					Type: "openai-compatible",
+				},
+				ObserverEnabled: nil,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.cfg.IsObserverEnabled()
+			if got != tc.expected {
+				t.Errorf("Expected %v, got %v", tc.expected, got)
+			}
+		})
+	}
+}

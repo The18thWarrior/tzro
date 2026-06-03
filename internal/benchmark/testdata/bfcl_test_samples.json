@@ -9,9 +9,7 @@
         "description": "Changes the food item based on the customer's request, allowing for modifications to the ingredients or preparation method.",
         "parameters": {
           "type": "object",
-          "required": [
-            "foodItem"
-          ],
+          "required": ["foodItem"],
           "properties": {
             "foodItem": {
               "type": "string",
@@ -40,9 +38,7 @@
         "description": "Modifies the existing drink order to accommodate the customer's new request, ensuring the drink is updated according to the specified preferences.",
         "parameters": {
           "type": "object",
-          "required": [
-            "new_preferences"
-          ],
+          "required": ["new_preferences"],
           "properties": {
             "drink_id": {
               "type": "string",
@@ -56,43 +52,25 @@
                 "size": {
                   "type": "string",
                   "description": "The size of the drink the customer prefers.",
-                  "enum": [
-                    "small",
-                    "medium",
-                    "large"
-                  ],
+                  "enum": ["small", "medium", "large"],
                   "default": "medium"
                 },
                 "temperature": {
                   "type": "string",
                   "description": "The temperature at which the drink should be served.",
-                  "enum": [
-                    "cold",
-                    "warm",
-                    "hot"
-                  ],
+                  "enum": ["cold", "warm", "hot"],
                   "default": "cold"
                 },
                 "sweetness_level": {
                   "type": "string",
                   "description": "The sweetness level the customer requests for the drink.",
-                  "enum": [
-                    "none",
-                    "light",
-                    "regular",
-                    "extra"
-                  ],
+                  "enum": ["none", "light", "regular", "extra"],
                   "default": "regular"
                 },
                 "milk_type": {
                   "type": "string",
                   "description": "The type of milk to be used in the drink, if applicable.",
-                  "enum": [
-                    "regular",
-                    "soy",
-                    "almond",
-                    "coconut"
-                  ],
+                  "enum": ["regular", "soy", "almond", "coconut"],
                   "default": "regular"
                 },
                 "special_instructions": {
@@ -113,23 +91,13 @@
           {
             "tool_name": "ChaDri.change_drink",
             "args": {
-              "drink_id": [
-                "latte"
-              ],
+              "drink_id": ["latte"],
               "new_preferences": [
                 {
-                  "size": [
-                    "large"
-                  ],
-                  "milk_type": [
-                    "coconut"
-                  ],
-                  "sweetness_level": [
-                    "extra"
-                  ],
-                  "temperature": [
-                    "hot"
-                  ],
+                  "size": ["large"],
+                  "milk_type": ["coconut"],
+                  "sweetness_level": ["extra"],
+                  "temperature": ["hot"],
                   "special_instructions": [
                     "served boiling hot",
                     "serve boiling hot",
@@ -143,23 +111,13 @@
         ],
         "expected_tool_call": "ChaDri.change_drink",
         "expected_args": {
-          "drink_id": [
-            "latte"
-          ],
+          "drink_id": ["latte"],
           "new_preferences": [
             {
-              "size": [
-                "large"
-              ],
-              "milk_type": [
-                "coconut"
-              ],
-              "sweetness_level": [
-                "extra"
-              ],
-              "temperature": [
-                "hot"
-              ],
+              "size": ["large"],
+              "milk_type": ["coconut"],
+              "sweetness_level": ["extra"],
+              "temperature": ["hot"],
               "special_instructions": [
                 "served boiling hot",
                 "serve boiling hot",
@@ -190,9 +148,7 @@
               "description": "The folder of the directory to change to. You can only change one folder level at a time. "
             }
           },
-          "required": [
-            "folder"
-          ]
+          "required": ["folder"]
         }
       },
       {
@@ -206,9 +162,7 @@
               "description": "The name of the new directory at current directory. You can only create directory at current directory."
             }
           },
-          "required": [
-            "dir_name"
-          ]
+          "required": ["dir_name"]
         }
       },
       {
@@ -226,10 +180,7 @@
               "description": "The destination name to move the file or directory to. Destination must be local to the current directory and cannot be a path. If destination is not an existing directory like when renaming something, destination is the new file name. "
             }
           },
-          "required": [
-            "source",
-            "destination"
-          ]
+          "required": ["source", "destination"]
         }
       },
       {
@@ -247,10 +198,7 @@
               "description": "The pattern to search for. "
             }
           },
-          "required": [
-            "file_name",
-            "pattern"
-          ]
+          "required": ["file_name", "pattern"]
         }
       },
       {
@@ -264,9 +212,7 @@
               "description": "The name of the file appeared at current directory to sort. "
             }
           },
-          "required": [
-            "file_name"
-          ]
+          "required": ["file_name"]
         }
       },
       {
@@ -284,10 +230,7 @@
               "description": "The name of the second file in current directory. "
             }
           },
-          "required": [
-            "file_name1",
-            "file_name2"
-          ]
+          "required": ["file_name1", "file_name2"]
         }
       }
     ],
@@ -298,28 +241,20 @@
           {
             "tool_name": "cd",
             "args": {
-              "folder": [
-                "document"
-              ]
+              "folder": ["document"]
             }
           },
           {
             "tool_name": "mkdir",
             "args": {
-              "dir_name": [
-                "temp"
-              ]
+              "dir_name": ["temp"]
             }
           },
           {
             "tool_name": "mv",
             "args": {
-              "source": [
-                "final_report.pdf"
-              ],
-              "destination": [
-                "temp"
-              ]
+              "source": ["final_report.pdf"],
+              "destination": ["temp"]
             }
           }
         ],
@@ -333,20 +268,14 @@
           {
             "tool_name": "cd",
             "args": {
-              "folder": [
-                "temp"
-              ]
+              "folder": ["temp"]
             }
           },
           {
             "tool_name": "grep",
             "args": {
-              "file_name": [
-                "final_report.pdf"
-              ],
-              "pattern": [
-                "budget analysis"
-              ]
+              "file_name": ["final_report.pdf"],
+              "pattern": ["budget analysis"]
             }
           }
         ],
@@ -360,17 +289,13 @@
           {
             "tool_name": "sort",
             "args": {
-              "query": [
-                "final_report.pdf"
-              ]
+              "query": ["final_report.pdf"]
             }
           }
         ],
         "expected_tool_call": "sort",
         "expected_args": {
-          "query": [
-            "final_report.pdf"
-          ]
+          "query": ["final_report.pdf"]
         },
         "mock_response": "{\"status\":\"success\"}"
       },
@@ -380,39 +305,27 @@
           {
             "tool_name": "cd",
             "args": {
-              "folder": [
-                ".."
-              ]
+              "folder": [".."]
             }
           },
           {
             "tool_name": "mv",
             "args": {
-              "source": [
-                "previous_report.pdf"
-              ],
-              "destination": [
-                "temp"
-              ]
+              "source": ["previous_report.pdf"],
+              "destination": ["temp"]
             }
           },
           {
             "tool_name": "cd",
             "args": {
-              "folder": [
-                "temp"
-              ]
+              "folder": ["temp"]
             }
           },
           {
             "tool_name": "diff",
             "args": {
-              "file_name1": [
-                "final_report.pdf"
-              ],
-              "file_name2": [
-                "previous_report.pdf"
-              ]
+              "file_name1": ["final_report.pdf"],
+              "file_name2": ["previous_report.pdf"]
             }
           }
         ],
@@ -455,31 +368,21 @@
             "id": 0,
             "username": "analyst_pro",
             "content": "Just finished analyzing the reports!",
-            "tags": [
-              "#analysis",
-              "#reports"
-            ],
+            "tags": ["#analysis", "#reports"],
             "mentions": []
           },
           "1": {
             "id": 1,
             "username": "analyst_pro",
             "content": "Budget analysis insights coming soon!",
-            "tags": [
-              "#budget",
-              "#analysis",
-              "#insights"
-            ],
+            "tags": ["#budget", "#analysis", "#insights"],
             "mentions": []
           },
           "2": {
             "id": 2,
             "username": "analyst_pro",
             "content": "Stay tuned for more updates!",
-            "tags": [
-              "#updates",
-              "#staytuned"
-            ],
+            "tags": ["#updates", "#staytuned"],
             "mentions": []
           }
         },
@@ -530,11 +433,7 @@
               "optional": true
             }
           },
-          "required": [
-            "side1",
-            "side2",
-            "side3"
-          ]
+          "required": ["side1", "side2", "side3"]
         }
       },
       {
@@ -560,9 +459,7 @@
               "optional": true
             }
           },
-          "required": [
-            "radius"
-          ]
+          "required": ["radius"]
         }
       }
     ],
@@ -573,53 +470,23 @@
           {
             "tool_name": "triangle_properties.get",
             "args": {
-              "side1": [
-                5
-              ],
-              "side2": [
-                4
-              ],
-              "side3": [
-                3
-              ],
-              "get_area": [
-                "",
-                true
-              ],
-              "get_perimeter": [
-                "",
-                true
-              ],
-              "get_angles": [
-                "",
-                true
-              ]
+              "side1": [5],
+              "side2": [4],
+              "side3": [3],
+              "get_area": ["", true],
+              "get_perimeter": ["", true],
+              "get_angles": ["", true]
             }
           }
         ],
         "expected_tool_call": "triangle_properties.get",
         "expected_args": {
-          "side1": [
-            5
-          ],
-          "side2": [
-            4
-          ],
-          "side3": [
-            3
-          ],
-          "get_area": [
-            "",
-            true
-          ],
-          "get_perimeter": [
-            "",
-            true
-          ],
-          "get_angles": [
-            "",
-            true
-          ]
+          "side1": [5],
+          "side2": [4],
+          "side3": [3],
+          "get_area": ["", true],
+          "get_perimeter": ["", true],
+          "get_angles": ["", true]
         },
         "mock_response": "{\"status\":\"success\"}"
       }

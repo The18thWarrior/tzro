@@ -116,11 +116,11 @@ type ToolResult struct {
 
 ### Helper functions
 
-| Function | Signature | Purpose |
-|----------|-----------|---------|
-| `ToolError` | `(msg string, opts ...ErrorOption) *ToolResult` | Create a standardised error with optional hint and related tools |
-| `ToolSuccess` | `(data any, opts ...SuccessOption) *ToolResult` | Create a standardised success result |
-| `WithToolMeta` | `(toolName string, fn ExecuteFn) ExecuteFn` | Middleware that wraps an Execute function to inject `_meta` timing |
+| Function       | Signature                                       | Purpose                                                            |
+| -------------- | ----------------------------------------------- | ------------------------------------------------------------------ |
+| `ToolError`    | `(msg string, opts ...ErrorOption) *ToolResult` | Create a standardised error with optional hint and related tools   |
+| `ToolSuccess`  | `(data any, opts ...SuccessOption) *ToolResult` | Create a standardised success result                               |
+| `WithToolMeta` | `(toolName string, fn ExecuteFn) ExecuteFn`     | Middleware that wraps an Execute function to inject `_meta` timing |
 
 ```go
 // ErrorOption configures optional fields on an error result.
@@ -181,6 +181,7 @@ func WithToolMeta(toolName string, fn ExecuteFn) ExecuteFn {
 **When the LLM should call this**: When the user asks for up-to-date information, news, current prices, recent events, or anything that requires live web data.
 
 **Input struct**:
+
 ```go
 type WebSearchInput struct {
     Query      string `json:"query"`                // required — the search query
@@ -189,11 +190,13 @@ type WebSearchInput struct {
 ```
 
 **Execute contract**:
+
 1. Call a backend search API (multi-engine: Google → Brave → Bing → DDG fallback chain)
 2. Return `ToolSuccess(WebSearchResult{...})` on success
 3. On failure: return `ToolError(msg)` — never return a Go `error`; always wrap in ToolResult
 
 **Return data shape**:
+
 ```go
 type WebSearchResult struct {
     Results []SearchResult `json:"results"`
@@ -217,6 +220,7 @@ type SearchResult struct {
 **When the LLM should call this**: When the user asks about internal company information that should be in uploaded documents. NOT for live CRM or integration data.
 
 **Input struct**:
+
 ```go
 type SearchKBInput struct {
     Query string `json:"query" validate:"required,min=1"` // natural-language search query
@@ -225,11 +229,13 @@ type SearchKBInput struct {
 ```
 
 **Execute contract**:
+
 1. `POST /kb/search` with `{ userId, query, limit }`
 2. Return formatted excerpts with document names and relevance scores
 3. HTTP 503 = no embedding model configured (return specific error message)
 
 **Return data shape**:
+
 ```go
 type KBSearchResult struct {
     Results []KBExcerpt `json:"results"`
@@ -257,6 +263,7 @@ Three tools that give the agent a **persistent relational memory** — a graph o
 **Purpose**: Natural-language relational query over the knowledge graph. Answers "How does X affect Y?" and "Who is connected to Z?" questions.
 
 **Input struct**:
+
 ```go
 type QueryKGInput struct {
     Query     string   `json:"query"`               // required — natural-language question
@@ -269,6 +276,7 @@ type QueryKGInput struct {
 **Execute contract**: `GET /knowledge-graph/query?q=...&nodeTypes=...&maxHops=...&topK=...`
 
 **Return data shape**:
+
 ```go
 type KGQueryResult struct {
     NodeCount int      `json:"nodeCount"`
@@ -286,6 +294,7 @@ type KGQueryResult struct {
 **Purpose**: Add entities and relationships from new information (chat, research, integrations).
 
 **Input struct**:
+
 ```go
 type IngestKGInput struct {
     Source    string       `json:"source"`             // "salesforce", "research", "chat", "web_search"
@@ -319,6 +328,7 @@ type KGRelation struct {
 **Purpose**: Retrieve the neighbourhood of a known entity — all connected entities within N hops.
 
 **Input struct**:
+
 ```go
 type ExploreEntityInput struct {
     EntityID string `json:"entityId"`            // required — entity ID from a previous query
@@ -329,6 +339,7 @@ type ExploreEntityInput struct {
 **Execute contract**: `GET /knowledge-graph/entity/{id}/neighborhood?hops=N`
 
 **Return data shape**:
+
 ```go
 type ExploreEntityResult struct {
     EntityID  string   `json:"entityId"`
@@ -356,6 +367,7 @@ Three tools for **explicit long-term memory** — the agent can save, search, an
 **Purpose**: Persist a piece of reusable knowledge for future conversations.
 
 **Input struct**:
+
 ```go
 type SaveMemoryInput struct {
     // Type classifies the memory:
@@ -386,6 +398,7 @@ type SaveMemoryInput struct {
 **When to call**: Proactively at the start of tasks to check if anything relevant was learned before.
 
 **Input struct**:
+
 ```go
 type RecallMemoryInput struct {
     Query         string   `json:"query" validate:"required"`       // natural-language search
@@ -406,6 +419,7 @@ type RecallMemoryInput struct {
 **Purpose**: Delete an outdated or incorrect memory by ID.
 
 **Input struct**:
+
 ```go
 type ForgetMemoryInput struct {
     MemoryID string `json:"memoryId" validate:"required"` // memory item ID
@@ -428,6 +442,7 @@ type ForgetMemoryInput struct {
 **When to call**: For complex, multi-step operations: parallel investigations, background research across multiple sources, automated operations.
 
 **Input struct**:
+
 ```go
 type CreateTaskInput struct {
     Name      string `json:"name" validate:"required"`    // display name
@@ -455,6 +470,7 @@ type CreateTaskInput struct {
 **Why this exists**: With many tools, including all schemas in the system prompt would consume too many tokens. Instead, extended-tier tools have collapsed schemas and the agent calls `list_tools` to discover details on demand.
 
 **Input struct**:
+
 ```go
 type ListToolsInput struct {
     Namespace         string `json:"namespace,omitempty"`         // filter by namespace (e.g. "salesforce")
@@ -463,12 +479,14 @@ type ListToolsInput struct {
 ```
 
 **Execute contract**:
+
 1. Receive the tool registry (`map[string]ToolDef`) via the tool's constructor (dependency injection)
 2. Iterate tool entries, filter by namespace (match namespace metadata OR tool name prefix)
 3. Exclude `list_tools` itself from the output
 4. If `IncludeParameters` is true, call each tool's `Parameters()` method and include the JSON schema
 
 **Return data shape**:
+
 ```go
 type ListToolsResult struct {
     TotalCount int            `json:"totalCount"`
@@ -501,6 +519,7 @@ All 6 tools share a common dispatch pattern: they call the backend via `POST /ap
 **Purpose**: Provision a new named local SQLite database file.
 
 **Input struct**:
+
 ```go
 type CreateDatabaseInput struct {
     Name        string `json:"name" validate:"required,min=1,max=64"`  // human-readable name
@@ -509,6 +528,7 @@ type CreateDatabaseInput struct {
 ```
 
 **Return data shape**:
+
 ```go
 type CreateDatabaseResult struct {
     ID   int    `json:"id"`
@@ -526,6 +546,7 @@ type CreateDatabaseResult struct {
 **Automatic columns**: `id INTEGER PRIMARY KEY`, `created_at`, `updated_at` are added automatically — the agent should only specify domain-specific columns.
 
 **Input struct**:
+
 ```go
 type CreateTableInput struct {
     DbID      int         `json:"dbId" validate:"required,gt=0"`       // database ID from create_database
@@ -550,6 +571,7 @@ type ColumnDef struct {
 **Purpose**: Insert a single row. Do not include `id`, `created_at`, or `updated_at`.
 
 **Input struct**:
+
 ```go
 type InsertInput struct {
     DbID      int            `json:"dbId" validate:"required,gt=0"`
@@ -565,6 +587,7 @@ type InsertInput struct {
 **Purpose**: Update rows matching an equality filter. `updated_at` is set automatically.
 
 **Input struct**:
+
 ```go
 type UpdateInput struct {
     DbID      int            `json:"dbId" validate:"required,gt=0"`
@@ -584,6 +607,7 @@ type UpdateInput struct {
 **Purpose**: Delete rows matching an equality filter. At least one WHERE condition is always required.
 
 **Input struct**:
+
 ```go
 type DeleteInput struct {
     DbID      int            `json:"dbId" validate:"required,gt=0"`
@@ -602,6 +626,7 @@ type DeleteInput struct {
 **Purpose**: Execute a read-only `SELECT` statement. Only `SELECT` (and `WITH...SELECT` CTEs) are permitted.
 
 **Input struct**:
+
 ```go
 type QueryInput struct {
     DbID int    `json:"dbId" validate:"required,gt=0"`
@@ -632,19 +657,21 @@ LLMs can reason about data within a single conversation, but they have fundament
 
 The Local DB gives the agent a **private, persistent, relational workspace** that is:
 
-| Property | What it means |
-|----------|---------------|
-| **Persistent** | Databases survive across conversations. The agent can build a dataset in session A and query it in session B. |
-| **Relational** | Full SQL schema — tables, columns, types, constraints. Not just key-value blobs. |
-| **Safe** | Completely isolated from external integrations. No risk of corrupting Salesforce data. |
-| **Queryable** | Full SQLite SELECT support including JOINs, CTEs, aggregations, window functions. |
-| **User-owned** | Each user has their own database namespace. Databases are visible and manageable in the UI. |
+| Property        | What it means                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Persistent**  | Databases survive across conversations. The agent can build a dataset in session A and query it in session B.                   |
+| **Relational**  | Full SQL schema — tables, columns, types, constraints. Not just key-value blobs.                                                |
+| **Safe**        | Completely isolated from external integrations. No risk of corrupting Salesforce data.                                          |
+| **Queryable**   | Full SQLite SELECT support including JOINs, CTEs, aggregations, window functions.                                               |
+| **User-owned**  | Each user has their own database namespace. Databases are visible and manageable in the UI.                                     |
 | **Zero-config** | No connection strings, no credentials, no Docker containers. SQLite files on disk. Uses `modernc.org/sqlite` (pure Go, no CGO). |
 
 ### Use Cases This Unlocks
 
 #### 1. Data Pipeline Staging
+
 The agent queries Salesforce for pipeline data, queries HubSpot for marketing attribution, and needs to **join them**. With Local DB, it:
+
 - Creates a `pipeline_analysis` database
 - Creates `sf_opportunities` and `hs_attribution` tables
 - Inserts data from both sources
@@ -652,43 +679,51 @@ The agent queries Salesforce for pipeline data, queries HubSpot for marketing at
 - The dataset persists for follow-up questions
 
 #### 2. Progressive List Building
+
 "Help me build a list of prospects that match these criteria." Over multiple conversations:
+
 - Session 1: Create `prospect_db` → `prospects` table → insert 50 from Salesforce
 - Session 2: "Add the LinkedIn contacts I found" → insert 30 more
 - Session 3: "Remove anyone who hasn't been active in 6 months" → `DELETE WHERE ...`
 - Session 4: "Export the final list" → `SELECT * FROM prospects ORDER BY score DESC`
 
 #### 3. Computation Without Context Overflow
+
 User uploads a 10,000-row CSV. Instead of keeping it all in context:
+
 - Agent creates a table, inserts all rows
 - Runs analytical `SELECT` queries (GROUP BY, aggregations)
 - Context only holds the query results, not the raw data
 - Data is available for follow-up analysis in future sessions
 
 #### 4. Safe Experimentation Before Integration Writes
+
 Before proposing a bulk update to Salesforce:
+
 - Agent stages the changes in a local table
 - User can review the staged data via `local_db_query`
 - Once approved, agent creates proposals from the local table
 - Audit trail is preserved locally
 
 #### 5. Agent-Curated Knowledge
+
 The agent discovers patterns while analyzing data:
+
 - "These 15 accounts share a common buying pattern"
 - Creates `insights` database → `buying_patterns` table
 - Future conversations can query these patterns for proactive recommendations
 
 ### Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| **SQLite via `modernc.org/sqlite`** | Pure Go, no CGO required. Zero-config, embedded, file-based. No server process needed. |
-| **Audit columns auto-added** | `id`, `created_at`, `updated_at` on every table ensures traceability without agent overhead |
-| **SELECT-only in `local_db_query`** | Mutations go through dedicated insert/update/delete tools so the agent can't accidentally `DROP TABLE` via freeform SQL |
-| **Equality-only WHERE in update/delete** | Prevents accidental mass mutations. Complex filtering should use query first, then targeted updates. |
-| **`Where` filter is required** | No tool allows a full-table UPDATE or DELETE. This is a safety rail. |
-| **Column types are SQLite-native** | `TEXT`, `INTEGER`, `REAL`, `BLOB` — no abstraction layer, maximum compatibility |
-| **Always available** | Unlike integration skills that require OAuth, Local DB needs zero external connections |
+| Decision                                 | Rationale                                                                                                               |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **SQLite via `modernc.org/sqlite`**      | Pure Go, no CGO required. Zero-config, embedded, file-based. No server process needed.                                  |
+| **Audit columns auto-added**             | `id`, `created_at`, `updated_at` on every table ensures traceability without agent overhead                             |
+| **SELECT-only in `local_db_query`**      | Mutations go through dedicated insert/update/delete tools so the agent can't accidentally `DROP TABLE` via freeform SQL |
+| **Equality-only WHERE in update/delete** | Prevents accidental mass mutations. Complex filtering should use query first, then targeted updates.                    |
+| **`Where` filter is required**           | No tool allows a full-table UPDATE or DELETE. This is a safety rail.                                                    |
+| **Column types are SQLite-native**       | `TEXT`, `INTEGER`, `REAL`, `BLOB` — no abstraction layer, maximum compatibility                                         |
+| **Always available**                     | Unlike integration skills that require OAuth, Local DB needs zero external connections                                  |
 
 ### Relationship to Other Memory Systems
 
@@ -721,17 +756,20 @@ The agent discovers patterns while analyzing data:
 Implement in this order to satisfy dependencies:
 
 ### Phase 1 — Foundations
+
 1. `ToolResult` envelope + `ToolError` / `ToolSuccess` / `WithToolMeta`
 2. `ToolDef` interface + tool registry (`map[string]ToolDef`)
 3. JSON Schema generation from Go struct tags (for `Parameters()` method)
 
 ### Phase 2 — Independent Tools
+
 4. `web_search`
 5. `search_knowledge_base`
 6. `create_task`
 7. `list_tools`
 
 ### Phase 3 — Memory & Knowledge
+
 8. `save_memory`
 9. `recall_memory`
 10. `forget_memory`
@@ -740,6 +778,7 @@ Implement in this order to satisfy dependencies:
 13. `explore_entity`
 
 ### Phase 4 — Local Database
+
 14. `local_db_create_database`
 15. `local_db_create_table`
 16. `local_db_insert`
@@ -755,15 +794,15 @@ Implement in this order to satisfy dependencies:
 
 Use Go's `testing` package. Every tool should have table-driven tests covering:
 
-| Scenario | What to test |
-|----------|--------------|
-| **Happy path** | Valid input → expected `ToolResult{Success: true, ...}` |
-| **Missing required fields** | Validation rejects → `ToolResult{Success: false, Error: "..."}` |
-| **Backend error** | Mock HTTP 500 → `ToolResult{Success: false, Error: ..., Hint: ..., RelatedTools: [...]}` |
-| **Not found** | Mock HTTP 404 → tool-specific "not found" message |
-| **Network failure** | HTTP client error → graceful ToolResult error (never panic) |
-| **`Meta` injection** | `WithToolMeta` wrapper adds timing, tool name, timestamp |
-| **Context cancellation** | `ctx.Done()` → immediate return with cancellation error |
+| Scenario                    | What to test                                                                             |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| **Happy path**              | Valid input → expected `ToolResult{Success: true, ...}`                                  |
+| **Missing required fields** | Validation rejects → `ToolResult{Success: false, Error: "..."}`                          |
+| **Backend error**           | Mock HTTP 500 → `ToolResult{Success: false, Error: ..., Hint: ..., RelatedTools: [...]}` |
+| **Not found**               | Mock HTTP 404 → tool-specific "not found" message                                        |
+| **Network failure**         | HTTP client error → graceful ToolResult error (never panic)                              |
+| **`Meta` injection**        | `WithToolMeta` wrapper adds timing, tool name, timestamp                                 |
+| **Context cancellation**    | `ctx.Done()` → immediate return with cancellation error                                  |
 
 ```go
 func TestWebSearch_HappyPath(t *testing.T) {
@@ -785,11 +824,11 @@ func TestWebSearch_HappyPath(t *testing.T) {
 
 ### Local DB Specific Tests
 
-| Scenario | What to test |
-|----------|--------------|
-| Create → Table → Insert → Query round-trip | Full lifecycle works end-to-end |
-| SELECT-only enforcement | `local_db_query` rejects `INSERT`, `UPDATE`, `DELETE`, `DROP` |
-| WHERE required for update/delete | Empty `Where` map → `ToolResult{Success: false}` |
-| Auto-columns | `id`, `created_at`, `updated_at` are present without being specified |
-| Column type validation | Only `TEXT`, `INTEGER`, `REAL`, `BLOB` accepted |
-| Concurrent access | Multiple goroutines reading/writing the same DB safely (SQLite WAL mode) |
+| Scenario                                   | What to test                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------ |
+| Create → Table → Insert → Query round-trip | Full lifecycle works end-to-end                                          |
+| SELECT-only enforcement                    | `local_db_query` rejects `INSERT`, `UPDATE`, `DELETE`, `DROP`            |
+| WHERE required for update/delete           | Empty `Where` map → `ToolResult{Success: false}`                         |
+| Auto-columns                               | `id`, `created_at`, `updated_at` are present without being specified     |
+| Column type validation                     | Only `TEXT`, `INTEGER`, `REAL`, `BLOB` accepted                          |
+| Concurrent access                          | Multiple goroutines reading/writing the same DB safely (SQLite WAL mode) |

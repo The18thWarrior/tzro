@@ -83,7 +83,7 @@ Side effects happen inline as decisions crystallize:
 ### 4. Update Local Wiki
 
 Once decisions are finalized and the architectural improvements are agreed upon or implemented:
+
 - Create or update the relevant architectural concept or module design page under `docs/wiki/architecture/` (e.g., `<concept-slug>.md`), detailing the deepened modules, seams, and interfaces.
 - Link the page in `docs/wiki/index.md` under **Architecture & Concepts**.
 - Log the architectural updates and operations in `docs/wiki/log.md`.
-

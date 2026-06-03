@@ -19,4 +19,3 @@ Single-context layout with `CONTEXT.md` and `docs/adr/` at the repository root. 
 ### Local Wiki
 
 A persistent, compounding knowledge base of system features, bug diagnoses, architecture, and ingested sources under `docs/wiki/`. Maintain, update, and search the wiki automatically during all workflows. See `docs/agents/wiki.md`.
-

@@ -4,7 +4,76 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
-## [2026-06-01T06:24:00Z] feature | Implement Numeric Parameter Coercion and Dynamic Resolution
+## [2026-06-03T01:07:00Z] feature | Implement Dynamic Client Tool Dispatch & Create MCP Setup Guide
+
+- **Activity**: Implemented Phase 5 (Tool Auto-Registration & Client Dispatch) and created setup guides.
+- **Key Outcomes**:
+  - **Phase 5 Implementation**: Exposed `tzro_register_client_tools`, `tzro_client_tool_list`, and `tzro_client_tool_submit` MCP tools. Implemented `ClientToolHook` intercepting client-side execution steps to pause durably, request execution, and resume upon client output submission.
+  - **MCP Setup Guide**: Created `docs/mcp-setup-guide.md` detailing compilation, Claude Desktop configuration, Cursor configuration, tool metadata, and stdio pipe safety.
+  - **Wiki & README Updates**: Indexed the new MCP Setup Guide in `README.md` and `docs/wiki/index.md`.
+- **Files Created/Modified**:
+  - [NEW] [client_tool.go](../../internal/executor/client_tool.go)
+  - [MODIFY] [tools.go](../../internal/tools/tools.go)
+  - [MODIFY] [bootstrap.go](../../cmd/tzro-mcp/bootstrap.go)
+  - [MODIFY] [main.go](../../cmd/tzrod/main.go)
+  - [MODIFY] [tools.go](../../cmd/tzro-mcp/tools.go)
+  - [MODIFY] [mcp_test.go](../../cmd/tzro-mcp/mcp_test.go)
+  - [NEW] [mcp-setup-guide.md](../mcp-setup-guide.md)
+  - [MODIFY] [README.md](../../README.md)
+  - [MODIFY] [index.md](index.md)
+  - [MODIFY] [log.md](log.md)
+
+## [2026-06-02T23:26:00Z] feature | Implement tzro × Hermes Agent Integration (Phase 1)
+
+- **Activity**: Implemented MCP Server Mode and Pluggable Inference Backend (Phase 1). Exposes tzro durable execution engine over MCP stdio protocol for consumption by Hermes Agent, Claude Desktop, Cursor, etc.
+- **Key Outcomes**:
+  - **Pluggable Inference Backend**: Decoupled local GGUF sidecar (`llama-server`) from LLM execution path, introducing a generic `InferenceBackend` interface. Added `RemoteOpenAIBackend` targeting arbitrary OpenAI-compatible models (Ollama, LMStudio).
+  - **Engine Config Extensions**: Extended configurations with `InferenceBackend` parameters and `ObserverEnabled` flags, introducing defaults (Observer auto-on for `llama-server`, off otherwise).
+  - **Durable MCP Server Mode**: Developed a standalone `cmd/tzro-mcp/` binary that implements the MCP stdio protocol and registers 4 tools (`tzro_run`, `tzro_status`, `tzro_list_tasks`, `tzro_configure_tools`). Implemented stdout redirection during bootstrapping to safeguard the JSON-RPC pipe.
+  - **Plan Routing**: Modified the strategic Planner to fall back to the pluggable `InferenceBackend` if no Cloud API key is present.
+  - **Verification**: Created end-to-end integration tests spawning the compiled server subprocess to run MCP handshakes, tool listings, and task/configuration query calls.
+- **Files Created/Modified**:
+  - [NEW] [backend.go](../../internal/inference/backend.go)
+  - [NEW] [backend_llama.go](../../internal/inference/backend_llama.go)
+  - [NEW] [backend_remote.go](../../internal/inference/backend_remote.go)
+  - [NEW] [backend_test.go](../../internal/inference/backend_test.go)
+  - [MODIFY] [routing.go](../../internal/inference/routing.go)
+  - [MODIFY] [config.go](../../internal/config/config.go)
+  - [MODIFY] [config_test.go](../../internal/config/config_test.go)
+  - [MODIFY] [task.go](../../internal/task/task.go)
+  - [MODIFY] [task_test.go](../../internal/task/task_test.go)
+  - [MODIFY] [main.go](../../cmd/tzrod/main.go)
+  - [NEW] [main.go](../../cmd/tzro-mcp/main.go)
+  - [NEW] [bootstrap.go](../../cmd/tzro-mcp/bootstrap.go)
+  - [NEW] [tools.go](../../cmd/tzro-mcp/tools.go)
+  - [NEW] [mcp_test.go](../../cmd/tzro-mcp/mcp_test.go)
+  - [MODIFY] [log.md](log.md)
+
+## [2026-06-02T22:59:00Z] grill-with-docs | Design Hermes Agent Integration via MCP Server Mode
+
+- **Activity**: Grilling session resolved 11 architectural decisions for integrating tzro as a durable execution backend for the NousResearch Hermes Agent framework via MCP Server Mode.
+- **Terminology Resolved**:
+  - **MCP Host** sharpened: Now explicitly states tool-source agnosticism — the engine dispatches regardless of tool origin.
+  - **MCP Server Mode** added: Alternative runtime personality exposing tzro capabilities as MCP tools over stdio, operating simultaneously with MCP Host role.
+  - **Inference Backend** added: Pluggable provider abstraction decoupling LLM inference from the hosting process. Configured via backend type and endpoint URL.
+- **Key Decisions**:
+  - **Integration strategy**: MCP Server Mode (portable to Claude Desktop, Cursor, Windsurf, not just Hermes).
+  - **Inference split**: Hermes replaces the Cloud Planner; tzro retains SCT expansion + GBNF bridge + deterministic execution via pluggable Inference Backend (ADR-0016).
+  - **Inference Backend**: Config-level pluggable backend (`llama-server` | `openai-compatible`). Replaces the `cooperative | local` mode distinction in MCP Server Mode. Should target the same model Hermes runs.
+  - **Tool boundary**: Option A — tzro-native tools only. Hermes provisions tzro's MCP Host registry via `tzro_configure_tools` during onboarding. No circular MCP dependencies.
+  - **Config ownership**: Last writer wins. No source tracking for Hermes-provisioned vs user-configured entries.
+  - **Graph handoff**: Design C — `tzro_plan` accepts a prompt, uses Inference Backend for planning (tzro owns the prompt template + tool inventory + skill index), then runs SCT expansion locally.
+  - **Entrypoint**: Standalone `cmd/tzro-mcp/` binary. Hermes spawns and owns the lifecycle. Shares SQLite via WAL mode.
+  - **Observer Agent**: Opt-in in MCP Server Mode. Defaults to on when Inference Backend is `llama-server` (dedicated capacity). Off by default for shared/remote backends.
+  - **Phase 1 scope**: 4 MCP tools — `tzro_run`, `tzro_status`, `tzro_list_tasks`, `tzro_configure_tools`.
+  - **`tzro_run` behavior**: Blocks until completion. Falls back to async (returns taskId) if execution exceeds configurable timeout.
+- **ADRs Created**:
+  - [ADR-0016: Pluggable Inference Backend](../adr/0016-pluggable-inference-backend.md) — Split LocalModelManager into pluggable Inference Backend interface and Sidecar Manager.
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Sharpened MCP Host, added MCP Server Mode and Inference Backend terms)
+  - [NEW] [0016-pluggable-inference-backend.md](../adr/0016-pluggable-inference-backend.md) (Pluggable Inference Backend ADR)
+  - [MODIFY] [index.md](index.md) (Updated wiki index with ADR-0016)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
 
 - **Activity**: Implemented numeric parameter coercion and resolution upgrades to solve parameter mismatches in supply chain and finance billing runs.
 - **Key Decisions & Outcomes**:
@@ -38,7 +107,6 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [NEW] [dag-execution-hooks.md](features/dag-execution-hooks.md) (Local wiki feature page for hooks system)
   - [MODIFY] [index.md](index.md) (Updated local wiki index links)
   - [MODIFY] [log.md](log.md) (Appended this entry)
-
 
 ## [2026-05-30T15:45:00Z] feature | Complete Pristal Architecture Upgrade (Modules 1-5)
 
@@ -81,6 +149,7 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
 ## [2026-05-28T08:10:00Z] ingest | PRD: Code Quality and Architectural Refactoring
+
 - **Activity**: Ingested and published the Product Requirements Document (PRD) for decomposing the monolithic execution engine and SQLite database connection management files (`runner.go` and `memory.go`) into isolated sub-modules.
 - **Key Decisions & Outcomes**:
   - Aligned on decomposing `internal/benchmark/runner.go` into isolated packages for the virtual filesystem (`vfs`), HTTP mock server (`mock`), and parameter relaxer (`matcher`).
@@ -204,7 +273,6 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [MODIFY] [runner.go](../../internal/benchmark/runner.go) (Logged executed turn dialogue after execution)
   - [MODIFY] [server.go](../../internal/server/server.go) (Logged production dialogue turns for workflows and conversational streams)
   - [MODIFY] [log.md](log.md) (Appended this entry)
-
 
 ## [2026-05-25T18:40:00Z] feature | Extend Cloud Planner Timeout to 60s & Decommission Heuristic Task Planner Fallback
 
@@ -612,6 +680,7 @@ Chronological append-only record of wiki operations and major agent engineering 
 ---
 
 ## [2026-05-22 02:30] ingest | Local Wiki Integration
+
 - **Activity**: Initialized the Local Wiki (LLM Wiki Style) under `docs/wiki/`. Established wiki structure, schemas, and templates. Updated all codebase engineering skills (`to-prd`, `diagnose`, `improve-codebase-architecture`, `grill-with-docs`, `to-issues`, `tdd`) to automatically populate, log, and maintain the wiki.
 - **Files Touched**:
   - [AGENTS.md](../../AGENTS.md)
@@ -663,6 +732,7 @@ Chronological append-only record of wiki operations and major agent engineering 
 ---
 
 ## [2026-05-25 23:15] triage | Evaluate Benchmark Run 5/25/2026 03:57
+
 - **Activity**: Parsed and analyzed overall success rates, token metrics, execution speeds, and Llama sidecar performance for the latest 25-scenario BFCL benchmark run (`benchmark_results_5_25_2026_03_57.json`). Discovered severe ground-truth label pollution in the single-turn `multiple` datasets and a systematic 1-turn index lag/shift in multi-turn test annotations.
 - **Testing & Verification**:
   - Developed and executed an isolated python evaluation script to analyze sidecar speed, token stats, and failure distributions.
@@ -675,6 +745,7 @@ Chronological append-only record of wiki operations and major agent engineering 
 ---
 
 ## [2026-05-25 23:25] triage | Implement Robust BFCL Dataset Regenerator & Align Ground Truths
+
 - **Activity**: Rewrote `internal/benchmark/testdata/convert_bfcl.py` from scratch, implementing a highly sophisticated, component-aware, and keyword-boosted semantic matching algorithm. Programmatically resolved both the single-turn tool scrambling and the multi-turn 1-turn sequence offset issues.
 - **Testing & Verification**:
   - Regenerated `bfcl_samples.json` and `bfcl_full_samples.json` using the rewritten script.
@@ -732,6 +803,7 @@ Chronological append-only record of wiki operations and major agent engineering 
 ---
 
 ## [2026-05-31T08:35:00Z] document | Refactor & Expand Root README.md with Detailed Technical Manual
+
 - **Activity**: Refactored the core `README.md` to establish a highly comprehensive and peer-to-peer technical guide for the `tzro` durable local execution engine. Added mathematical context compaction equations, high-fidelity ASCII diagrams for the Strategy-vs-Tactics paradigm, concrete SDK integration guides, complete JSON schemas, and resource-optimization mechanics (KV Preemption, Disk-Backed JQ Cache).
 - **Key Deliverables**:
   - **Strategy vs Tactics**: Detailed the cognitive split between cloud strategist (Eino) and local tactician (llama-server) using rigid GBNF constraints.
@@ -742,4 +814,3 @@ Chronological append-only record of wiki operations and major agent engineering 
 - **Key Files Created/Modified**:
   - [MODIFY] [README.md](../../README.md) (Comprehensive technical README overhaul)
   - [MODIFY] [log.md](log.md) (This log entry)
-

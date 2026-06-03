@@ -50,6 +50,26 @@ func GetList() []Tool {
 	return list
 }
 
+// GetTool retrieves a registered tool from the registry.
+func GetTool(name string) Tool {
+	mutex.RLock()
+	defer mutex.RUnlock()
+	return registry[name]
+}
+
+// ClientToolAdapter represents a tool whose execution is delegated to the client.
+type ClientToolAdapter struct {
+	NameVal        string
+	DescriptionVal string
+	SchemaVal      string
+}
+
+func (c *ClientToolAdapter) Name() string               { return c.NameVal }
+func (c *ClientToolAdapter) GetSchema() (string, error) { return c.SchemaVal, nil }
+func (c *ClientToolAdapter) Call(ctx context.Context, args map[string]interface{}) (string, error) {
+	return "", fmt.Errorf("client-side tool '%s' must be executed by client", c.NameVal)
+}
+
 // GetSchema returns the GBNF-wrapped JSON schema for a tool by name.
 func GetSchema(name string) (string, error) {
 	mutex.RLock()

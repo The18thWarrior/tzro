@@ -5,8 +5,8 @@ on:
     branches:
       - main
     paths:
-      - 'website/**'
-      - '.github/workflows/deploy-pages.yml'
+      - "website/**"
+      - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
 # Sets permissions of the test GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -17,7 +17,7 @@ permissions:
 
 # Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queue.
 concurrency:
-  group: 'pages'
+  group: "pages"
   cancel-in-progress: true
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'website'
+          path: "website"
 
       - name: Deploy to GitHub Pages
         id: deployment

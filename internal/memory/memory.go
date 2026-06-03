@@ -1,10 +1,12 @@
 package memory
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -543,6 +545,104 @@ func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
 	return states
 }
 
+// TaskSummary represents a derived summary of a planning task and its node states.
+type TaskSummary struct {
+	TaskID    string `json:"taskId"`
+	Status    string `json:"status"` // "pending" | "running" | "completed" | "failed"
+	CreatedAt int64  `json:"createdAt"`
+	NodeCount int    `json:"nodeCount"`
+}
+
+// GetRecentTasks scans node_states to retrieve derived summaries of recent tasks.
+func (sdb *SqliteDatabase) GetRecentTasks(limit int, statusFilter string) ([]TaskSummary, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	query := `
+		SELECT task_id, 
+		       MAX(completed_at) as last_completed,
+		       COUNT(*) as node_count,
+		       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
+		       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running_count,
+		       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count
+		FROM node_states
+		GROUP BY task_id
+	`
+	var args []interface{}
+	wrappedQuery := fmt.Sprintf(`
+		SELECT task_id, last_completed, node_count, failed_count, running_count, completed_count
+		FROM (%s)
+	`, query)
+	wrappedQuery += " ORDER BY last_completed DESC"
+
+	// If no status filter, we can limit at the database level.
+	// But since we filter status in Go memory (as it is derived), we do limit filtering after.
+	// However, if we do a subquery, we can filter status in SQL!
+	// Let's write the status derivation in SQL so we can filter and limit at DB level:
+	// CASE WHEN failed_count > 0 THEN 'failed' ...
+	// That's even cleaner! Let's do that.
+
+	sqlWithStatus := `
+		SELECT task_id, last_completed, node_count,
+		       CASE 
+		           WHEN failed_count > 0 THEN 'failed'
+		           WHEN running_count > 0 THEN 'running'
+		           WHEN completed_count = node_count AND node_count > 0 THEN 'completed'
+		           ELSE 'pending'
+		       END as derived_status
+		FROM (
+			SELECT task_id, 
+			       MAX(completed_at) as last_completed,
+			       COUNT(*) as node_count,
+			       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
+			       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running_count,
+			       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count
+			FROM node_states
+			GROUP BY task_id
+		)
+	`
+
+	finalQuery := sqlWithStatus
+	if statusFilter != "" && statusFilter != "all" {
+		finalQuery += " WHERE derived_status = ?"
+		args = append(args, statusFilter)
+	}
+	finalQuery += " ORDER BY last_completed DESC"
+	if limit > 0 {
+		finalQuery += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err := sdb.db.Query(finalQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []TaskSummary
+	for rows.Next() {
+		var summary TaskSummary
+		var lastCompleted sql.NullInt64
+		err := rows.Scan(&summary.TaskID, &lastCompleted, &summary.NodeCount, &summary.Status)
+		if err != nil {
+			return nil, err
+		}
+		if lastCompleted.Valid {
+			summary.CreatedAt = lastCompleted.Int64
+		}
+		list = append(list, summary)
+	}
+
+	if list == nil {
+		list = []TaskSummary{}
+	}
+	return list, nil
+}
+
 // EntityType registry methods
 func (sdb *SqliteDatabase) GetEntityTypes() []EntityType {
 	sdb.mutex.RLock()
@@ -884,4 +984,123 @@ func (sdb *SqliteDatabase) GetSessionHistoryContext(sessionID string) string {
 	}
 
 	return sb.String()
+}
+
+// SearchMemoriesAndNodes queries both fact memories and knowledge graph nodes using hybrid vector / cosine text similarity.
+func (sdb *SqliteDatabase) SearchMemoriesAndNodes(query string, limit int) ([]FactMemory, []KGNode, error) {
+	memories := sdb.GetMemories()
+	nodesMap := sdb.GetNodes()
+
+	var matchedMems []FactMemory
+	var matchedNodes []KGNode
+
+	useVector := false
+	if sdb.EmbeddingEngine != nil {
+		queryVec, err := sdb.EmbeddingEngine.Embed(context.Background(), query)
+		if err == nil && len(queryVec) > 0 {
+			type scoredMem struct {
+				m     FactMemory
+				score float64
+			}
+			type scoredNode struct {
+				n     KGNode
+				score float64
+			}
+			var vecMems []scoredMem
+			var vecNodes []scoredNode
+
+			for _, m := range memories {
+				if len(m.Embedding) > 0 {
+					sim := float64(sdb.EmbeddingEngine.CosineSimilarity(queryVec, m.Embedding))
+					if sim >= 0.25 {
+						vecMems = append(vecMems, scoredMem{m: m, score: sim})
+					}
+				}
+			}
+
+			for _, n := range nodesMap {
+				if len(n.Embedding) > 0 {
+					sim := float64(sdb.EmbeddingEngine.CosineSimilarity(queryVec, n.Embedding))
+					if sim >= 0.25 {
+						vecNodes = append(vecNodes, scoredNode{n: n, score: sim})
+					}
+				}
+			}
+
+			if len(vecMems) > 0 || len(vecNodes) > 0 {
+				useVector = true
+				// Sort & slice
+				sort.Slice(vecMems, func(i, j int) bool {
+					return vecMems[i].score > vecMems[j].score
+				})
+				sort.Slice(vecNodes, func(i, j int) bool {
+					return vecNodes[i].score > vecNodes[j].score
+				})
+
+				for i := 0; i < len(vecMems); i++ {
+					if limit > 0 && len(matchedMems) >= limit {
+						break
+					}
+					matchedMems = append(matchedMems, vecMems[i].m)
+				}
+				for i := 0; i < len(vecNodes); i++ {
+					if limit > 0 && len(matchedNodes) >= limit {
+						break
+					}
+					matchedNodes = append(matchedNodes, vecNodes[i].n)
+				}
+			}
+		}
+	}
+
+	if !useVector {
+		// Fallback to text similarity
+		type scoredMem struct {
+			m     FactMemory
+			score float64
+		}
+		type scoredNode struct {
+			n     KGNode
+			score float64
+		}
+		var textMems []scoredMem
+		var textNodes []scoredNode
+
+		for _, m := range memories {
+			sim := embeddings.CosineSimilarity(query, m.Content)
+			if sim >= 0.15 {
+				textMems = append(textMems, scoredMem{m: m, score: sim})
+			}
+		}
+
+		for _, n := range nodesMap {
+			nodeText := n.Name + " " + n.NodeType
+			sim := embeddings.CosineSimilarity(query, nodeText)
+			if sim >= 0.15 {
+				textNodes = append(textNodes, scoredNode{n: n, score: sim})
+			}
+		}
+
+		sort.Slice(textMems, func(i, j int) bool {
+			return textMems[i].score > textMems[j].score
+		})
+		sort.Slice(textNodes, func(i, j int) bool {
+			return textNodes[i].score > textNodes[j].score
+		})
+
+		for i := 0; i < len(textMems); i++ {
+			if limit > 0 && len(matchedMems) >= limit {
+				break
+			}
+			matchedMems = append(matchedMems, textMems[i].m)
+		}
+		for i := 0; i < len(textNodes); i++ {
+			if limit > 0 && len(matchedNodes) >= limit {
+				break
+			}
+			matchedNodes = append(matchedNodes, textNodes[i].n)
+		}
+	}
+
+	return matchedMems, matchedNodes, nil
 }

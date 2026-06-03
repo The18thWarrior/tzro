@@ -310,6 +310,21 @@ func TestSqliteDatabase(t *testing.T) {
 		if saved.Name != s.Name || saved.TriggerDescription != s.TriggerDescription || saved.SOPContent != s.SOPContent {
 			t.Errorf("Field mismatches in retrieved skill: %+v", saved)
 		}
+
+		// Test GetSkill by valid ID
+		retrieved, err := skillDB.GetSkill(saved.ID)
+		if err != nil {
+			t.Fatalf("GetSkill failed for valid ID %s: %v", saved.ID, err)
+		}
+		if retrieved.ID != saved.ID || retrieved.Name != saved.Name {
+			t.Errorf("GetSkill returned incorrect skill details: %+v", retrieved)
+		}
+
+		// Test GetSkill with invalid ID
+		_, err = skillDB.GetSkill("invalid_id")
+		if err == nil {
+			t.Error("Expected error for invalid skill ID, got nil")
+		}
 	})
 
 	// 7. Test Custom EntityTypes CRUD
@@ -956,4 +971,142 @@ func TestSessionHistoryCompaction(t *testing.T) {
 	if strings.Contains(ctx, "#### [Turn 1]") || strings.Contains(ctx, "#### [Turn 2]") {
 		t.Error("Turns 1 and 2 should be summarized, not shown in full detail sections")
 	}
+}
+
+func TestSqliteDatabase_SearchMemoriesAndNodes(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_search_mem.db")
+	jsonPath := filepath.Join(tempDir, "test_search_mem_db.json")
+	defer cleanupTestDBs(t, dbPath, jsonPath)
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	// 1. Seed without embeddings to test Text Fallback
+	m1 := FactMemory{
+		UserID:     "user1",
+		Type:       "fact",
+		Content:    "User prefers kubernetes docker containers for infrastructure",
+		Confidence: 1.0,
+	}
+	m2 := FactMemory{
+		UserID:     "user1",
+		Type:       "insight",
+		Content:    "Avoid raw EC2 instances",
+		Confidence: 0.8,
+	}
+	if err := db.AddMemory(m1); err != nil {
+		t.Fatalf("AddMemory 1 failed: %v", err)
+	}
+	if err := db.AddMemory(m2); err != nil {
+		t.Fatalf("AddMemory 2 failed: %v", err)
+	}
+
+	n1 := KGNode{
+		ID:       "node1",
+		NodeType: "account",
+		Name:     "Kubernetes Cluster",
+		Weight:   1.0,
+	}
+	n2 := KGNode{
+		ID:       "node2",
+		NodeType: "contact",
+		Name:     "HubSpot CRM Contact",
+		Weight:   0.5,
+	}
+	if err := db.AddNode(n1); err != nil {
+		t.Fatalf("AddNode 1 failed: %v", err)
+	}
+	if err := db.AddNode(n2); err != nil {
+		t.Fatalf("AddNode 2 failed: %v", err)
+	}
+
+	// Disable EmbeddingEngine initially to force text fallback
+	db.EmbeddingEngine = nil
+
+	t.Run("Text Fallback Search", func(t *testing.T) {
+		mems, nodes, err := db.SearchMemoriesAndNodes("kubernetes docker containers", 10)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(mems) != 1 || mems[0].Content != m1.Content {
+			t.Errorf("Expected 1 memory matching text search, got: %+v", mems)
+		}
+		if len(nodes) != 1 || nodes[0].ID != n1.ID {
+			t.Errorf("Expected 1 node matching text search, got: %+v", nodes)
+		}
+	})
+
+	t.Run("Text Fallback Limit", func(t *testing.T) {
+		// All nodes might have some low score if there's overlap, but let's query for something matching both to test limits
+		// Let's add another matching node and memory
+		m3 := FactMemory{UserID: "user1", Type: "fact", Content: "Docker images are small", Confidence: 1.0}
+		_ = db.AddMemory(m3)
+
+		mems, _, err := db.SearchMemoriesAndNodes("docker", 1)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(mems) != 1 {
+			t.Errorf("Expected limit of 1 memory, got %d", len(mems))
+		}
+	})
+
+	// 2. Enable EmbeddingEngine to test Vector Search
+	engine := embeddings.NewPureGoEmbeddingEngine()
+	db.EmbeddingEngine = engine
+
+	// Let's re-add memories/nodes with embeddings
+	embMem, _ := engine.Embed(context.Background(), "docker container cluster query")
+	mVec := FactMemory{
+		UserID:     "user1",
+		Type:       "fact",
+		Content:    "docker container cluster query",
+		Embedding:  embMem,
+		Confidence: 1.0,
+	}
+	if err := db.AddMemory(mVec); err != nil {
+		t.Fatalf("AddMemory Vec failed: %v", err)
+	}
+
+	embNode, _ := engine.Embed(context.Background(), "cluster optimizer query")
+	nVec := KGNode{
+		ID:        "node_vec",
+		NodeType:  "account",
+		Name:      "cluster optimizer query",
+		Embedding: embNode,
+		Weight:    1.0,
+	}
+	if err := db.AddNode(nVec); err != nil {
+		t.Fatalf("AddNode Vec failed: %v", err)
+	}
+
+	t.Run("Vector Search", func(t *testing.T) {
+		mems, nodes, err := db.SearchMemoriesAndNodes("cluster query", 10)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		// mVec and nVec should have embeddings that score >= 0.25
+		foundMem := false
+		for _, m := range mems {
+			if m.Content == "docker container cluster query" {
+				foundMem = true
+			}
+		}
+		foundNode := false
+		for _, n := range nodes {
+			if n.ID == "node_vec" {
+				foundNode = true
+			}
+		}
+		if !foundMem {
+			t.Error("Expected vector memory to be found")
+		}
+		if !foundNode {
+			t.Error("Expected vector node to be found")
+		}
+	})
 }

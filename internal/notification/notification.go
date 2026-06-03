@@ -105,7 +105,7 @@ func List(ctx context.Context, statusFilter string) ([]Notification, error) {
 }
 
 func MarkRead(ctx context.Context, id string, status string) error {
-	if status != "read" && status != "dismissed" && status != "unread" {
+	if status != "read" && status != "dismissed" && status != "unread" && status != "approved" {
 		return fmt.Errorf("invalid status: %s", status)
 	}
 	return memory.DB.UpdateNotificationStatus(id, status)

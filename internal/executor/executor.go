@@ -103,9 +103,22 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	fmt.Fprintf(os.Stderr, "[Executor] Starting execution for Task %s with %d topological levels...\n", graph.TaskID, len(levels))
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task execution initiated")
 
-	// Pre-populate states as pending
+	// Resilient task resumption: Cache the execution graph for recovery/resume
+	db := memory.DB.RawDB()
+	if db != nil && graph != nil {
+		graphBytes, err := json.Marshal(graph)
+		if err == nil {
+			createdAt := time.Now().Unix()
+			_, _ = db.Exec("INSERT OR REPLACE INTO disk_cache (cache_id, raw_payload, envelope_json, created_at) VALUES (?, ?, ?, ?)",
+				"graph_"+graph.TaskID, string(graphBytes), "", createdAt)
+		}
+	}
+
+	// Pre-populate states as pending only if not already completed or skipped (for resilient resumes)
 	for _, node := range graph.Nodes {
-		_ = memory.DB.SetNodeState(graph.TaskID, node.ID, "pending", "")
+		if state, ok := memory.DB.GetNodeState(graph.TaskID, node.ID); !ok || (state.Status != "completed" && state.Status != "skipped") {
+			_ = memory.DB.SetNodeState(graph.TaskID, node.ID, "pending", "")
+		}
 	}
 
 	var allCompletedStates []memory.NodeState
@@ -294,10 +307,16 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler.ExecutionGraph, node *compiler.GraphNode, activeHooks []ExecutionHook) error {
 	taskID := graph.TaskID
 
-	// 0. Pre-flight Check: Is node already skipped?
-	if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok && state.Status == "skipped" {
-		fmt.Fprintf(os.Stderr, "[Executor] Node %s is skipped. Skipping execution.\n", node.ID)
-		return nil
+	// 0. Pre-flight Check: Is node already completed or skipped?
+	if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
+		if state.Status == "completed" {
+			fmt.Fprintf(os.Stderr, "[Executor] Node %s is already completed. Skipping execution.\n", node.ID)
+			return nil
+		}
+		if state.Status == "skipped" {
+			fmt.Fprintf(os.Stderr, "[Executor] Node %s is skipped. Skipping execution.\n", node.ID)
+			return nil
+		}
 	}
 
 	// 0.0 Run BeforeNode hooks

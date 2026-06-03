@@ -2,9 +2,10 @@
 
 ## Context & Problem Statement
 
-To coordinate effectively over long business initiatives, AI agents must retain memory. However, flat vector similarity search (the typical approach in RAG pipelines) fails to capture structured context. 
+To coordinate effectively over long business initiatives, AI agents must retain memory. However, flat vector similarity search (the typical approach in RAG pipelines) fails to capture structured context.
 
 For instance, an agent cannot easily understand:
+
 1. **User Preferences/Insights:** Direct rules or corrections the user stated previously (e.g. "Do not email prospects on weekends").
 2. **Relational Connections:** Knowing that a Salesforce Account links to a particular Jira Ticket, which relates to a Slack Message, and a Google Spreadsheet.
 
@@ -116,22 +117,22 @@ func (s *MemoryServer) GetEntityNeighborhood(entityID string, maxHops int) KGSub
 
 	for hop := 0; hop < maxHops && len(frontier) > 0; hop++ {
 		var nextFrontier []string
-		
+
 		// Query edges starting from or pointing to nodes in the frontier queue
 		rows, err := s.db.Query(`
-			SELECT id, edge_type, source_id, target_id, metadata, weight 
-			FROM kg_edges WHERE source_id IN (?) OR target_id IN (?)`, 
+			SELECT id, edge_type, source_id, target_id, metadata, weight
+			FROM kg_edges WHERE source_id IN (?) OR target_id IN (?)`,
 			frontier, frontier,
 		)
 		if err != nil {
 			break
 		}
-		
+
 		for rows.Next() {
 			var e KGEdge
 			rows.Scan(&e.ID, &e.EdgeType, &e.SourceID, &e.TargetID, &e.Metadata, &e.Weight)
 			allEdges = append(allEdges, e)
-			
+
 			for _, nid := range []string{e.SourceID, e.TargetID} {
 				if !visited[nid] {
 					visited[nid] = true
@@ -140,7 +141,7 @@ func (s *MemoryServer) GetEntityNeighborhood(entityID string, maxHops int) KGSub
 			}
 		}
 		rows.Close()
-		
+
 		if len(nextFrontier) > 0 {
 			nodes := s.fetchNodesByIDs(nextFrontier)
 			allNodes = append(allNodes, nodes...)
@@ -189,10 +190,10 @@ Return valid JSON:
 
 ## Consequences
 
-* **Pros:**
-  * **Unified Relational Context:** Bridges the gap between disconnected database fields, enabling deep relational understanding (e.g. Account -> Contacts -> Invoices).
-  * **User Adaptation:** Automatic memory reflection ensures the engine grows personalized to the user's specific workflow style and corrections.
-  * **Deterministic Traversal:** Explicit multi-hop graph retrieval avoids expensive vector indexes while maintaining precise relational relevance.
-* **Cons:**
-  * **Relational Maintenance:** Adding/removing node records requires updating foreign key relations dynamically to prevent graph fragmentation.
-  * **Context Size Inflation:** As neighbor depths ($N$) grow, neighborhood subgraphs can quickly inflate, requiring compaction.
+- **Pros:**
+  - **Unified Relational Context:** Bridges the gap between disconnected database fields, enabling deep relational understanding (e.g. Account -> Contacts -> Invoices).
+  - **User Adaptation:** Automatic memory reflection ensures the engine grows personalized to the user's specific workflow style and corrections.
+  - **Deterministic Traversal:** Explicit multi-hop graph retrieval avoids expensive vector indexes while maintaining precise relational relevance.
+- **Cons:**
+  - **Relational Maintenance:** Adding/removing node records requires updating foreign key relations dynamically to prevent graph fragmentation.
+  - **Context Size Inflation:** As neighbor depths ($N$) grow, neighborhood subgraphs can quickly inflate, requiring compaction.

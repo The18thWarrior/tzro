@@ -19,24 +19,30 @@ Conduct quantitative and architectural analysis of benchmark runs to systematica
 ## Workflows
 
 ### 1. Quantitative Evaluation
+
 - Run `scripts/analyze.py` to extract stratified pass rates, latency percentiles (p50/p90/p99), and token ratios (local sidecar vs cloud).
 - Record overall results and note significant regressions from baseline runs.
 
 ### 2. Failure Mode Clustering & Triage
+
 Classify all failures into one of three canonical buckets:
+
 - **Planning Mismatch**: Wrong tools selected, tool missing from call stack, or incorrect call order.
 - **Parameter Mismatch**: Correct tools chosen but called with empty, malformed, or wrong argument types.
 - **Operational Failures**: Planning and parameters match, but the tool failed to execute or timed out.
 
 ### 3. Deepening Improvements
+
 - Apply the **deletion test** and identify **seams** on the failed modules using the [improve-codebase-architecture](file:///Users/jp/Desktop/Repos/tzro/.agents/skills/improve-codebase-architecture/SKILL.md) skill.
 - Design deeper, high-leverage modules (e.g. semantic validators, schema anchors) behind small interfaces to isolate parameters and planning logic.
 
 ### 4. Trend-Driven Orchestration
+
 - Use the [trend-architect](file:///Users/jp/Desktop/Repos/tzro/.agents/skills/trend-architect/SKILL.md) skill to research modern competitive local-first patterns.
 - Investigate sidecar optimizations, such as KV-cache pinning, predictive parameter pre-fetching, or speculative execution threads.
 
 ### 5. Interactive HTML Report & Wiki Alignment
+
 - Generate a standalone dashboard in `$TMPDIR` titled `benchmark-analysis-<timestamp>.html`.
 - Style elegantly using Tailwind and Mermaid. Include:
   - Quantitative charts (latency, tokens, success rate).

@@ -24,11 +24,11 @@ sequenceDiagram
     App->>Cloud: PlanDAG(prompt, tool_schemas)
     Note over Cloud: Deep-context analysis of user goal & active tools
     Cloud-->>App: Abstract Graph JSON (Suggested Skills + Allowed Tools)
-    
+
     App->>Comp: Compile & Sort (Kahn's Algorithm)
     Note over Comp: Detects cycles, establishes execution levels (0..N)
     Comp-->>App: Compiled Executable Graph
-    
+
     loop Level = 0 to N (Kahn Topo Levels)
         Note over App: Group nodes at Level can execute concurrently
         loop For each node in Level
@@ -41,7 +41,7 @@ sequenceDiagram
             Note over App: Flushes node state to SQLite DB (graph_node_states)
         end
     end
-    
+
     App->>Cloud: Synthesize(Task results & execution traces)
     Cloud-->>App: Highly structured Final summary
     App->>User: Renders interactive UI dashboard with telemetry
@@ -51,9 +51,10 @@ sequenceDiagram
 
 ## 2. Phase 1: The Cloud Planner as the Strategist (DAG Generation)
 
-Constructing a reliable execution graph requires mapping natural language intents to a series of deterministic and agentic execution blocks. 
+Constructing a reliable execution graph requires mapping natural language intents to a series of deterministic and agentic execution blocks.
 
 ### 2.1 Eino Chat Model Instantiation
+
 The Go gateway instantiates the Cloud Planner using Eino's `model.ChatModel` interface, loading the highly capable cloud model (e.g. Gemini 3.5 Flash or GPT-4o-mini).
 
 ```go
@@ -74,6 +75,7 @@ func NewCloudPlannerModel(ctx context.Context, provider string, apiKey string) (
 ```
 
 ### 2.2 Strategist System Prompt
+
 The Eino executor compiles available tool definitions, active user settings, and procedural micro-skills index signatures, and feeds them into the Planner:
 
 ```
@@ -133,15 +135,15 @@ func (c *GoGraphCompiler) CompileAndSort(ctx context.Context, rawJSON string) (*
 	if len(g.Nodes) == 0 {
 		return nil, nil, errors.New("graph contains zero nodes")
 	}
-	
+
 	// 2. Build Dependency Map & Compute In-Degrees
 	inDegree := make(map[string]int)
 	adjList := make(map[string][]string)
-	
+
 	for _, node := range g.Nodes {
 		inDegree[node.ID] = 0
 	}
-	
+
 	for _, edge := range g.Edges {
 		adjList[edge.SourceID] = append(adjList[edge.SourceID], edge.TargetID)
 		inDegree[edge.TargetID]++
@@ -174,7 +176,7 @@ func (c *GoGraphCompiler) CompileAndSort(ctx context.Context, rawJSON string) (*
 				}
 			}
 		}
-		
+
 		executionLevels = append(executionLevels, level)
 		queue = nextQueue
 	}
@@ -195,6 +197,7 @@ func (c *GoGraphCompiler) CompileAndSort(ctx context.Context, rawJSON string) (*
 When an execution level fires, the Go Graph Executor orchestrates node execution. Action nodes are delegated to the **Local Step Executor** (the `llama-server` sidecar running the **GRM-2.5** model).
 
 ### 4.1 Interface Mapping (`openai.NewChatModel` with noThinkTransport)
+
 For each node, Eino instantiates a local ChatModel targeting the dynamic port of the active `llama-server` process, bound to the dynamic GBNF schema generated for the node:
 
 ```go
@@ -232,10 +235,10 @@ func (s *LocalStepExecutor) ExecuteNode(ctx context.Context, node GraphNode, par
 
 	// 5. Build Chat Messages with SOP Injections
 	systemPrompt := fmt.Sprintf(
-		"You are the Local Tactician Node Executor. Your job is to execute the step using the allowed tools.\n\nSOP SKILLS:\n%s", 
+		"You are the Local Tactician Node Executor. Your job is to execute the step using the allowed tools.\n\nSOP SKILLS:\n%s",
 		strings.Join(sopInjections, "\n\n"),
 	)
-	
+
 	messages := []schema.Message{
 		schema.SystemMessage(systemPrompt),
 		schema.UserMessage(instructions),
@@ -280,6 +283,7 @@ To maintain operational continuity across graph transitions, step outputs are fo
 ```
 
 ### 5.1 Interpolation Parser
+
 The variable resolver parses node instructions and injects previous step payloads:
 
 ```go
@@ -309,18 +313,20 @@ func (s *LocalStepExecutor) interpolateVariables(instruction string, parentOutpu
 		if !found {
 			return "null"
 		}
-		
+
 		return fmt.Sprintf("%v", val)
 	})
 }
 ```
 
 ### 5.2 Context Compaction at Node Borders
+
 When a node returns a tool output payload that is returned to the state machine, it is forcefully processed by the **5-Layer Compaction Engine**:
+
 1.  **Tabular Hoisting:** Arrays of object structures are converted into space-saving TSV files, stripping repeating JSON keys.
 2.  **Dot Flattening:** Multi-level JSON objects are flattened to a dot-notation key list up to depth 3, discarding system meta-keys.
 3.  **Base64 Stripping:** Replacing long data strings with size pointers (`[binary:image/png,1.2MB]`).
-This ensures that the parent context variables remain highly compact, fitting comfortably inside local model KV cache slots.
+    This ensures that the parent context variables remain highly compact, fitting comfortably inside local model KV cache slots.
 
 ---
 
@@ -351,6 +357,7 @@ Local environments are highly volatile. A standard consumer laptop might experie
 ```
 
 ### 6.1 Speed Floor Tracking
+
 Generation speed is computed at the end of each local execution step:
 
 $$\text{Generation Speed} = \frac{\text{Tokens Generated}}{\text{Inference Duration (seconds)}}$$
@@ -360,7 +367,8 @@ If the performance falls below **5 tokens/second** for 3 consecutive steps, the 
 $$\text{ExecutionState.ForceCloudFallback} = \text{true}$$
 
 ### 6.2 The Escalation Fallback Router (`callLocalOrCloud`)
-If a local step fails, times out, triggers a memory GC wall, or is flagged by the speed floor monitor, Eino routes the step automatically to the cloud provider. 
+
+If a local step fails, times out, triggers a memory GC wall, or is flagged by the speed floor monitor, Eino routes the step automatically to the cloud provider.
 
 Since cloud providers (Gemini/OpenAI) execute in remote managed environments that cannot accept local GBNF grammar syntax sheets, the compiler dynamically translates the GBNF schema back into strict prompt-injected JSON templates:
 
@@ -419,6 +427,7 @@ CREATE TABLE orchestration_telemetry (
 ```
 
 ### Telemetry Health Rules
-*   **Operational SLA:** Any local node execution running on Perf-cores (M1/M2 Max chips) must sustain a speed of $\ge 25\text{ tok/s}$.
-*   **GC Trigger Threshold:** If `execution_latency_ms` for a local node step exceeds $15,000\text{ms}$ (15s) for a simple tool extraction, the GC worker triggers slot erasure immediately post-step.
-*   **Escalation Rate Alarm:** If more than 30% of steps within a single Kahn level undergo `cloud_fallback` escalation, the Wails dashboard alerts the user that system background resource congestion is high.
+
+- **Operational SLA:** Any local node execution running on Perf-cores (M1/M2 Max chips) must sustain a speed of $\ge 25\text{ tok/s}$.
+- **GC Trigger Threshold:** If `execution_latency_ms` for a local node step exceeds $15,000\text{ms}$ (15s) for a simple tool extraction, the GC worker triggers slot erasure immediately post-step.
+- **Escalation Rate Alarm:** If more than 30% of steps within a single Kahn level undergo `cloud_fallback` escalation, the Wails dashboard alerts the user that system background resource congestion is high.

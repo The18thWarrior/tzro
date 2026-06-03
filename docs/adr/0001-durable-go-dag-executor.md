@@ -2,13 +2,13 @@
 
 ## Context & Problem Statement
 
-Standard agent tool loops (which execute sequentially in a single Chat context) are highly brittle. If the runtime encounters network dropouts, API timeouts, or a local system crash, the entire execution context is lost. When restarted, the agent must re-run costly or non-idempotent operations (such as credit card charges or database mutations). 
+Standard agent tool loops (which execute sequentially in a single Chat context) are highly brittle. If the runtime encounters network dropouts, API timeouts, or a local system crash, the entire execution context is lost. When restarted, the agent must re-run costly or non-idempotent operations (such as credit card charges or database mutations).
 
 Additionally, zero-shot planners are prone to infinite tool-loop hallucinations when allowed to invoke tools without structure.
 
 ## Proposed Decision
 
-We choose to implement a highly resilient, durable, and compiled **Directed Acyclic Graph (DAG) system** in Go. 
+We choose to implement a highly resilient, durable, and compiled **Directed Acyclic Graph (DAG) system** in Go.
 
 1. **Strategic Planner Separation:** A cloud planner model generates an abstract representation of execution steps and dependency relations in JSON. It never invokes tools directly.
 2. **Kahn Compilation Layer:** A Go Graph Compiler validates the JSON graph structure, detects invalid cyclic loops, and orders execution layers using **Kahn's Topological Sort Algorithm**.
@@ -145,9 +145,9 @@ CREATE TABLE graph_node_states (
 
 ## Consequences
 
-* **Pros:**
-  * **Resilience:** Unaffected by runtime desktop crashes; resumes from last checkpointed Kahn topological level.
-  * **Predictability:** Flow behavior is deterministic, removing LLM decision hallucinations during step traversal.
-  * **Concurrence:** Multiple independent tool executions run in parallel, drastically reducing task runtimes.
-* **Cons:**
-  * **Rigidity:** Graph structures must be compiled beforehand. Mid-flight graph restructuring requires explicit compiler re-sorts and checkpoint migrations.
+- **Pros:**
+  - **Resilience:** Unaffected by runtime desktop crashes; resumes from last checkpointed Kahn topological level.
+  - **Predictability:** Flow behavior is deterministic, removing LLM decision hallucinations during step traversal.
+  - **Concurrence:** Multiple independent tool executions run in parallel, drastically reducing task runtimes.
+- **Cons:**
+  - **Rigidity:** Graph structures must be compiled beforehand. Mid-flight graph restructuring requires explicit compiler re-sorts and checkpoint migrations.

@@ -11,7 +11,10 @@
           "type": "object",
           "properties": {
             "city": { "type": "string", "description": "The city to search." },
-            "stars": { "type": "integer", "description": "The hotel star rating (1-5)." }
+            "stars": {
+              "type": "integer",
+              "description": "The hotel star rating (1-5)."
+            }
           },
           "required": ["city", "stars"]
         }
@@ -22,7 +25,10 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "hotel_id": { "type": "string", "description": "The hotel unique code." }
+            "hotel_id": {
+              "type": "string",
+              "description": "The hotel unique code."
+            }
           },
           "required": ["hotel_id"]
         }
@@ -33,8 +39,14 @@
         "parameters": {
           "type": "object",
           "properties": {
-            "destination": { "type": "string", "description": "Where to drive the passenger." },
-            "time": { "type": "string", "description": "The time of pickup (e.g. 6 PM)." }
+            "destination": {
+              "type": "string",
+              "description": "Where to drive the passenger."
+            },
+            "time": {
+              "type": "string",
+              "description": "The time of pickup (e.g. 6 PM)."
+            }
           },
           "required": ["destination", "time"]
         }

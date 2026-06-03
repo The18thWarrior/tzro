@@ -18,6 +18,7 @@ type GraphNode struct {
 	OutputSchema    string   `json:"outputSchema,omitempty"` // Added for bridge nodes (GBNF grammar)
 	StaticArgs      string   `json:"staticArgs,omitempty"`   // Added for pre-known arguments
 	Error           string   `json:"error,omitempty"`
+	RequireApproval bool     `json:"requireApproval,omitempty"` // Pause and wait for approval
 }
 
 type GraphEdge struct {

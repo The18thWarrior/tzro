@@ -9,6 +9,7 @@ And a consolidated graph-planning utility:
 `task.Plan(ctx, prompt, opts)`
 
 The workflow orchestrator (`runWorkflowLoop`) no longer depends on, compiles, or executes DAG graphs directly. It strictly calls `task.Execute`, which encapsulates:
+
 1. LLM planning or heuristic compilation fallbacks
 2. Kahn topological sorting (level-by-level parallel scheduling)
 3. Parallel execution and state updates

@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"os"
 	"time"
-	"tzro/internal/config"
 	"tzro/examples/tui"
+	"tzro/internal/config"
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"

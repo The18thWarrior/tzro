@@ -1,19 +1,23 @@
 # Local Wiki Index
 
-Welcome to the persistent repository knowledge base for the `tzro` project. 
+Welcome to the persistent repository knowledge base for the `tzro` project.
 
 - **Chronological Log**: [Log](log.md)
 
 ---
 
 ## Features & PRDs
-*Map of system features, product requirements, and specs.*
+
+_Map of system features, product requirements, and specs._
+
 - [Durable DAG Benchmarking Suite](features/benchmarking-suite.md) - Evaluate model planning and parameter execution against BFCL and ComplexFuncBench datasets. (Sources: 2 | Last Updated: 2026-05-24)
 - [Code Quality & Architectural Refactoring](features/code-quality-refactors.md) - Decompose monolithic runner.go and memory.go files into highly cohesive sub-modules and clean up hardcoded edge cases. (Sources: 1 | Last Updated: 2026-05-28)
 - [Synchronous DAG Execution Hooks](features/dag-execution-hooks.md) - Middleware layer for synchronous task intercepting, validation, output mutation, and durable pausing. (Sources: 1 | Last Updated: 2026-05-31)
 
 ## Bugs & Post-Mortems
-*Analyses of critical bugs, diagnostic loops, and prevention measures.*
+
+_Analyses of critical bugs, diagnostic loops, and prevention measures._
+
 - [Benchmark Dataset Ground-Truth Corruption & Multi-Turn Label Shifting](bugs/benchmark-dataset-corruption-and-label-shifting.md) - Expose a systematic 1-turn lag in multi-turn test annotations and scrambled single-turn ground truths in the BFCL dataset. (Verified: 2026-05-25)
 - [Missing Embedding SQLite Column & Cloud Schema Format HTTP 400](bugs/missing-embedding-column-and-cloud-schema-400.md) - Resolve SQL errors for missing DB vector columns and HTTP 400 errors for non-standard cloud response format payloads. (Verified: 2026-05-24)
 - [Local Sidecar Inactive / Benchmark API Key Loading Bug](bugs/local-sidecar-inactive-benchmark-fallback-bug.md) - Fix configuration loading in CLI process for offline benchmarks and optimize test suite datasets to run unit tests in seconds instead of minutes. (Verified: 2026-05-25)
@@ -28,18 +32,19 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 - [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 13:00)](bugs/benchmark-analysis-2026-05-30-1300.md) - Post-coercion-fix 100-case benchmark showing marginal +1% improvement (22% pass rate); confirms post-extraction coercion ceiling reached. (Verified: 2026-05-30)
 - [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 17:10)](bugs/benchmark-analysis-2026-05-30-1710.md) - Post-accumulated-context-architecture 10-case benchmark achieving 90% pass rate (+68% improvement); bimodal local/cloud execution split with Tier-2 sidecar recycle. (Verified: 2026-05-30)
 - [Cooperative Engine Benchmark Evaluation (2026-05-30 Run 17:35)](bugs/benchmark-analysis-2026-05-30-1735.md) - Full-scale 100-case diagnostic validation of accumulated context architecture showing +41% net improvement (63% pass rate) but identifying dynamic parameter resolution offset shifts. (Verified: 2026-05-30)
-- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 00:04)](bugs/benchmark-analysis-2026-05-31-0004.md) - Full-scale 100-case diagnostic validation of GBNF parameter matching achieving 65.0% pass rate (+2% improvement) but identifying the "_exec" suffix mismatch and background thread sidecar orphanage bugs. (Verified: 2026-05-31)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 00:04)](bugs/benchmark-analysis-2026-05-31-0004.md) - Full-scale 100-case diagnostic validation of GBNF parameter matching achieving 65.0% pass rate (+2% improvement) but identifying the "\_exec" suffix mismatch and background thread sidecar orphanage bugs. (Verified: 2026-05-31)
 - [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 08:24)](bugs/benchmark-analysis-2026-05-31-0824.md) - Diagnostic analysis of GBNF parameter matching and transient network planning failures achieving a 61.0% pass rate. (Verified: 2026-05-31)
-- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 11:16)](bugs/benchmark-analysis-2026-05-31-1116.md) - Full-scale 100-case diagnostic validation of GBNF parameter matching achieving 68.0% pass rate (+7.0% improvement) but identifying the "_exec" suffix template mismatch. (Verified: 2026-05-31)
-- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 13:25)](bugs/benchmark-analysis-2026-05-31-1325.md) - Full-scale 100-case diagnostic evaluation achieving 63.0% pass rate under cooperative model mode, triaging the _exec suffix mismatch and topological concurrency ordering races. (Verified: 2026-05-31)
-- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 15:15)](bugs/benchmark-analysis-2026-05-31-1515.md) - Full-scale 100-case diagnostic validation achieving 100.0% overall pass rate by resolving the "_exec" suffix template mismatch and persistent sidecar daemon context orphanage bugs. (Verified: 2026-05-31)
-
-
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 11:16)](bugs/benchmark-analysis-2026-05-31-1116.md) - Full-scale 100-case diagnostic validation of GBNF parameter matching achieving 68.0% pass rate (+7.0% improvement) but identifying the "\_exec" suffix template mismatch. (Verified: 2026-05-31)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 13:25)](bugs/benchmark-analysis-2026-05-31-1325.md) - Full-scale 100-case diagnostic evaluation achieving 63.0% pass rate under cooperative model mode, triaging the \_exec suffix mismatch and topological concurrency ordering races. (Verified: 2026-05-31)
+- [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 15:15)](bugs/benchmark-analysis-2026-05-31-1515.md) - Full-scale 100-case diagnostic validation achieving 100.0% overall pass rate by resolving the "\_exec" suffix template mismatch and persistent sidecar daemon context orphanage bugs. (Verified: 2026-05-31)
 
 ## Architecture & Concepts
-*Glossary terms, data models, ADR summaries, and architectural diagrams.*
+
+_Glossary terms, data models, ADR summaries, and architectural diagrams._
+
 - [Repository Domain Context](../../CONTEXT.md) - Durable local-first agentic execution language glossary.
 - [Technical Design](../technical-design.md) - Overview of the tzro durable local execution system.
+- [MCP Setup & Integration Guide](../mcp-setup-guide.md) - Configure tzro as a stdio-based MCP server in Claude Desktop, Cursor, etc.
 - [X Execution Framework](../dynamic-execution-framework.md) - Complete specs of the X execution layers and architecture.
 - [Llama Server Sidecar](../llama-server-sidecar.md) - Spec of llama.cpp local server runtime interface.
 - [Cooperative Local Cloud DAG Execution](../cooperative-local-cloud-dag-execution.md) - Hybrid model of local and remote coordination.
@@ -49,6 +54,7 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
 
 ### Architecture Decision Records (ADRs)
+
 - [ADR-0001: Durable Go DAG Executor](../adr/0001-durable-go-dag-executor.md) - Defines the core DAG task executor engine.
 - [ADR-0002: Local GBNF Constraints](../adr/0002-local-gbnf-constraints.md) - Outlines local worker grammar-constrained output.
 - [ADR-0003: Proactive Observer Agent](../adr/0003-proactive-observer-agent.md) - Audit and monitor long-running workflow state machine.
@@ -64,7 +70,10 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 - [ADR-0013: Unified Daemon-Mediated State Mutations](../adr/0013-unified-daemon-mediated-state-mutations.md) - Enforces pure client-server daemon communication for all state mutations to preserve telemetry and prevent write conflicts.
 - [ADR-0014: Stateful Graph-Aligned Multi-Turn Benchmarks](../adr/0014-stateful-graph-aligned-multi-turn-benchmarks.md) - Transitions multi-turn benchmarks to preserve original turns, utilize in-memory virtual filesystem observers, and execute multiset graph matching.
 - [ADR-0015: Pristal Architecture Alignment](../adr/0015-pristal-architecture-alignment.md) - Aligns database, compilation, memory cache, and execution pruning engines with Pristal v2 standards.
+- [ADR-0016: Pluggable Inference Backend](../adr/0016-pluggable-inference-backend.md) - Splits LocalModelManager into a pluggable Inference Backend interface and Sidecar Manager, enabling tzro to target LMStudio, Ollama, or harness-provided models.
 
 ## Ingested Sources
-*Immutable third-party references, notes, and raw inputs.*
+
+_Immutable third-party references, notes, and raw inputs._
+
 - [LLM Wiki Reference (Karpathy)](../agents/wiki.md) - Design guidelines and templates for local wiki maintenance.

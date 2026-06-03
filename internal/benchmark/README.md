@@ -11,13 +11,17 @@ Unlike traditional chat-loop agents that run turn-by-turn conversational cycles,
 The runner supports two distinct execution simulation modes:
 
 ### A. Consolidated DAG Mode (`--mode consolidated`)
-Converts the entire multi-turn user conversation sequence into a single planned task. 
+
+Converts the entire multi-turn user conversation sequence into a single planned task.
+
 - The Cloud Planner builds a consolidated multi-step DAG with dynamic parameter links (e.g. `{{nodes.node_1.output.flight_id}}`).
 - The Go compiler topological-sorts the DAG and runs node executions in parallel layers.
 - Evaluates if the framework can successfully compile conversational loops into a deterministic planned pipeline.
 
 ### B. Interactive Multi-Turn Mode (`--mode interactive`)
+
 Simulates traditional conversational cycles turn-by-turn.
+
 - At each turn, a sub-DAG of a **maximum of 10 nodes** is planned and executed.
 - The outcome of the tool execution is statefully committed as knowledge in `memory.DB` (saving structured key-value memories in standard SQLite tables and mapping entity links in the Relational Knowledge Graph).
 - For subsequent turns, the **Hybrid Vector Search** and **Neighborhood Graph-RAG Traversal** (up to 2 hops) retrieve relevant contextual facts and dynamically inject them into the system and user prompts.
@@ -44,35 +48,44 @@ The entire test suites are housed 100% offline within the repository to ensure C
 Run the suite using the `tzro benchmark` command.
 
 ### Persistent Options
-* `-d, --dataset`: The target evaluation dataset. Options: `bfcl` (default) or `complexfuncbench`.
-* `-m, --mode`: The simulation mode. Options: `consolidated` (default) or `interactive`.
-* `-t, --model-mode`: The model execution tier. Options: `local` (default), `cooperative`, or `cloud`.
-* `-j, --json`: Print raw minified JSON output instead of styled tabular console summaries.
+
+- `-d, --dataset`: The target evaluation dataset. Options: `bfcl` (default) or `complexfuncbench`.
+- `-m, --mode`: The simulation mode. Options: `consolidated` (default) or `interactive`.
+- `-t, --model-mode`: The model execution tier. Options: `local` (default), `cooperative`, or `cloud`.
+- `-j, --json`: Print raw minified JSON output instead of styled tabular console summaries.
 
 ---
 
 ### Command Examples
 
 #### 1. Run BFCL V3 in Consolidated DAG Mode (Default Local Model)
+
 Evaluates if the local planner compiles flight-booking turns into a clean single DAG run:
+
 ```bash
 ./bin/tzro benchmark run --dataset bfcl --mode consolidated --model-mode local
 ```
 
 #### 2. Run ComplexFuncBench in Interactive Mode (Cooperative Routing)
+
 Evaluates cross-domain hotel/taxi queries with a 10-node sub-DAG compilation ceiling and SQLite Knowledge Graph context updates:
+
 ```bash
 ./bin/tzro benchmark run --dataset complexfuncbench --mode interactive --model-mode cooperative
 ```
 
 #### 3. Run cloud-only evaluation for baseline calibration
+
 Enforces remote cloud planner/local node executor completions:
+
 ```bash
 ./bin/tzro benchmark run --dataset bfcl --mode consolidated --model-mode cloud
 ```
 
 #### 4. JSON Output for Scripting / CI Pipeline integrations
+
 Dump the complete benchmark metrics to a file or stream:
+
 ```bash
 ./bin/tzro benchmark run --dataset bfcl --json > benchmark_run_report.json
 ```

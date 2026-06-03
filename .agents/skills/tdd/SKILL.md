@@ -101,10 +101,10 @@ After all tests pass, look for [refactor candidates](refactoring.md):
 ### 5. Update Local Wiki
 
 Once the implementation is complete, verified, and all tests are GREEN:
+
 - [ ] **Log Action**: Use the `local-wiki` skill to log the implementation details, testing outcomes, and code/test files created or modified in `docs/wiki/log.md`.
 
 ## Checklist Per Cycle
-
 
 ```
 [ ] Test describes behavior, not implementation

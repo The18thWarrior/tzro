@@ -8,12 +8,12 @@ Furthermore, running background audit cycles immediately in response to every si
 
 ## Proposed Decision
 
-We choose to implement a non-blocking background **Observer Agent** running on a debounced, event-driven pipeline. 
+We choose to implement a non-blocking background **Observer Agent** running on a debounced, event-driven pipeline.
 
 1. **Buffered Event Channels:** Active Go execution runners push telemetry events (e.g. step success, database write, API failure) to a non-blocking, globally shared Go channel (`observerChan`) with a capacity of `500`.
-2. **Dual-Gate Debounce Loop:** A background Go routine polls `observerChan` and aggregates events, executing evaluations *only* when:
-   * The system remains inactive for **5 minutes** (ensures no active tasks are slowed).
-   * Or the event queue reaches **10 events** (forces eager evaluations during heavy active periods).
+2. **Dual-Gate Debounce Loop:** A background Go routine polls `observerChan` and aggregates events, executing evaluations _only_ when:
+   - The system remains inactive for **5 minutes** (ensures no active tasks are slowed).
+   - Or the event queue reaches **10 events** (forces eager evaluations during heavy active periods).
 3. **Automated Lifecycle Garbage Collection:** The Observer is equipped with a specific set of tools allowing it to list active heartbeats and task states, evaluate performance metrics (e.g., a cron task failing 5 times consecutively), and execute deactivations automatically.
 4. **Dashboard Synchronization:** Decisions made by the Observer are published to the user's local dashboard using clean, structured Markdown notifications.
 
@@ -57,7 +57,7 @@ func StartObserverLoop(ctx context.Context, db *sql.DB) {
 			return
 		case evt := <-ObserverChan:
 			batch = append(batch, evt)
-			
+
 			// Eager Trigger Gate: Queue accumulated 10 events
 			if len(batch) >= maxBatchSize {
 				timer.Stop()
@@ -124,10 +124,10 @@ When an audit is executed, the Observer evaluates heartbeat metadata:
 
 ## Consequences
 
-* **Pros:**
-  * **Zero Execution Overhead:** The non-blocking channel ensures the critical path of the active Go executor is never blocked by audit overhead.
-  * **Optimized CPU/GPU Usage:** Debouncing prevents the worker LLM from firing on every single tiny event, protecting computer battery life and CPU usage.
-  * **Budget Protection:** Orphaned or malfunctioning API tasks are automatically cleaned up within hours, preventing unexpected API costs.
-* **Cons:**
-  * **Delayed Auditing:** Issues that do not hit the eager threshold are only reviewed 5 minutes after tasks complete, leading to a small lag in metric updates.
-  * **Concurrency Complexity:** Handled via concurrent goroutines; requires robust thread-safety locks (`sync.Mutex`) when modifying shared resources in SQLite databases.
+- **Pros:**
+  - **Zero Execution Overhead:** The non-blocking channel ensures the critical path of the active Go executor is never blocked by audit overhead.
+  - **Optimized CPU/GPU Usage:** Debouncing prevents the worker LLM from firing on every single tiny event, protecting computer battery life and CPU usage.
+  - **Budget Protection:** Orphaned or malfunctioning API tasks are automatically cleaned up within hours, preventing unexpected API costs.
+- **Cons:**
+  - **Delayed Auditing:** Issues that do not hit the eager threshold are only reviewed 5 minutes after tasks complete, leading to a small lag in metric updates.
+  - **Concurrency Complexity:** Handled via concurrent goroutines; requires robust thread-safety locks (`sync.Mutex`) when modifying shared resources in SQLite databases.

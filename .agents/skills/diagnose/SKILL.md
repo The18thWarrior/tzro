@@ -119,4 +119,3 @@ Required before declaring done:
   - Log the post-mortem operation in `docs/wiki/log.md`.
 
 **Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to the `/improve-codebase-architecture` skill with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
-

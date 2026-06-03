@@ -65,6 +65,11 @@ func StartServer(addr string) error {
 		}
 	}
 
+	mux.HandleFunc("/health", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	}))
 	mux.HandleFunc("/api/chat", corsHandler(handleChat))
 	mux.HandleFunc("/api/tasks", corsHandler(handleTasks))
 	mux.HandleFunc("/api/memories", corsHandler(handleMemories))

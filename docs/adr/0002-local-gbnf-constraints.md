@@ -2,7 +2,7 @@
 
 ## Context & Problem Statement
 
-Running complex multi-system automations entirely on standard office laptops presents massive operational challenges. Small local models (ranging from 2B to 4B parameters, such as Qwen 2.5) are highly cost-efficient but lack the syntactic instruction-following capability of giant cloud models. 
+Running complex multi-system automations entirely on standard office laptops presents massive operational challenges. Small local models (ranging from 2B to 4B parameters, such as Qwen 2.5) are highly cost-efficient but lack the syntactic instruction-following capability of giant cloud models.
 
 When instructed to output a structured JSON payload for a tool call (such as a specific database insert or API request), these local models frequently hallucinate markdown backticks, conversational preambles, or malformed/unbalanced braces. This leads to high execution parser failure rates.
 
@@ -12,7 +12,7 @@ Furthermore, processing verbose tool descriptions and large system prompts repea
 
 We choose to implement strict **GBNF (GGML Backus-Naur Form) Grammar Constraints** at the local model inference gateway, coupled with aggressive performance optimization strategies.
 
-1. **GBNF-Constrained Inference:** Every request sent to the local worker LLM (via a local server like `llama.cpp`) is wrapped with a dynamic grammar ruleset that physically permits the model to *only* generate syntax matching the targeted tool parameter schema. Markdown wrappers and conversational filler are mathematically forbidden at the token-selection logit level.
+1. **GBNF-Constrained Inference:** Every request sent to the local worker LLM (via a local server like `llama.cpp`) is wrapped with a dynamic grammar ruleset that physically permits the model to _only_ generate syntax matching the targeted tool parameter schema. Markdown wrappers and conversational filler are mathematically forbidden at the token-selection logit level.
 2. **Speculative Decoding:** We use n-gram simple speculation (`--spec-type ngram-simple`, `--draft-max 48`) to accelerate inference. Instead of loading a separate draft model, the engine finds verbatim n-gram matches in the prompt—which already contains the GBNF schema field names that appear in the output—and speculatively drafts token sequences with zero additional memory.
 3. **KV Cache Prefix-Sharing:** Warm system prompts—which contain the baseline tool descriptions, operational instructions, and core context files—are pinned in KV Cache slot `0`. Sub-steps reuse this slot, bypassing heavy cold-start processing times.
 4. **Active Cache Garbage Collector:** A background scheduler monitors local RAM limits, forcefully purging idle KV caches that have persisted for over 10 minutes.
@@ -64,10 +64,10 @@ ws     ::= [ \t\n\r]*
 
 ## Consequences
 
-* **Pros:**
-  * **100% Parsing Reliability:** GBNF physically prevents the model from generating malformed braces or markdown text wrapper blocks, ensuring error-free parsing.
-  * **Minimized Latency:** Warm KV prefix caching and speculative decoding bring response times down to cloud-like execution speed entirely on local office hardware.
-  * **Memory Preservation:** The garbage collector prevents memory leaks and background resource drain when the worker is inactive.
-* **Cons:**
-  * **Engine Dependency:** Requires inference backends that natively support GBNF logit bias constraints (such as `llama.cpp` or compatible runners).
-  * **Speculation Ceiling:** N-gram simple speculation relies on verbatim prompt n-gram matches; speedup degrades on outputs with tokens not present in the prompt context.
+- **Pros:**
+  - **100% Parsing Reliability:** GBNF physically prevents the model from generating malformed braces or markdown text wrapper blocks, ensuring error-free parsing.
+  - **Minimized Latency:** Warm KV prefix caching and speculative decoding bring response times down to cloud-like execution speed entirely on local office hardware.
+  - **Memory Preservation:** The garbage collector prevents memory leaks and background resource drain when the worker is inactive.
+- **Cons:**
+  - **Engine Dependency:** Requires inference backends that natively support GBNF logit bias constraints (such as `llama.cpp` or compatible runners).
+  - **Speculation Ceiling:** N-gram simple speculation relies on verbatim prompt n-gram matches; speedup degrades on outputs with tokens not present in the prompt context.

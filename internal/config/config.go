@@ -18,6 +18,19 @@ type EngineConfig struct {
 	GGUFModelPath      string  `json:"ggufModelPath"`                // path to local gguf model file
 	ModelsDir          string  `json:"modelsDir"`                    // directory for downloaded models
 	MaxRAGContextChars int     `json:"maxRagContextChars,omitempty"` // max chars for Graph-RAG context injection (0 = use default 2000)
+
+	// Inference Backend (ADR-0016)
+	InferenceBackend BackendConfig `json:"inferenceBackend,omitempty"`
+
+	// Observer Agent
+	ObserverEnabled *bool `json:"observerEnabled,omitempty"` // nil = auto (on for llama-server, off otherwise)
+}
+
+type BackendConfig struct {
+	Type   string `json:"type"`   // "llama-server" | "openai-compatible"
+	URL    string `json:"url"`    // Remote endpoint URL
+	Model  string `json:"model"`  // Model name/ID
+	APIKey string `json:"apiKey"` // Optional, supports $VAR
 }
 
 var (
@@ -68,6 +81,8 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.SpeedFloor = cfg.SpeedFloor
 	GlobalConfig.SidecarEnabled = cfg.SidecarEnabled
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
+	GlobalConfig.InferenceBackend = cfg.InferenceBackend
+	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -87,9 +102,21 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.SpeedFloor = cfg.SpeedFloor
 	GlobalConfig.SidecarEnabled = cfg.SidecarEnabled
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
+	GlobalConfig.InferenceBackend = cfg.InferenceBackend
+	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
+}
+
+// IsObserverEnabled returns true if the observer agent is enabled.
+// If not explicitly set, defaults to true for llama-server (or empty type/embedded sidecar),
+// and false for remote backends.
+func (c EngineConfig) IsObserverEnabled() bool {
+	if c.ObserverEnabled != nil {
+		return *c.ObserverEnabled
+	}
+	return c.InferenceBackend.Type == "" || c.InferenceBackend.Type == "llama-server"
 }
 
 func saveLocked(cfg *EngineConfig) error {

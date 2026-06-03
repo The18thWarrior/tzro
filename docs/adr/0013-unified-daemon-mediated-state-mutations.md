@@ -1,6 +1,6 @@
 # Unified daemon-mediated state mutations
 
-We enforce a strict client-server daemon-mediated model for all CLI and TUI state modifications. The developer CLI (`tzro`) and TUI client will communicate exclusively over HTTP/REST and SSE to the running `tzro` daemon (`tzrod`) for any operations that mutate the system state (Tasks, Workflows, Memories, and the Relational Knowledge Graph). 
+We enforce a strict client-server daemon-mediated model for all CLI and TUI state modifications. The developer CLI (`tzro`) and TUI client will communicate exclusively over HTTP/REST and SSE to the running `tzro` daemon (`tzrod`) for any operations that mutate the system state (Tasks, Workflows, Memories, and the Relational Knowledge Graph).
 
 Direct, out-of-band writes from the CLI binary to the SQLite database file (`tzro.db`) are strictly prohibited, though read-only offline inspection is permitted when the daemon is stopped.
 

@@ -21,42 +21,49 @@ Builtin (Go)  →  WASM (sandboxed)  →  OpenAPI (HTTP dispatch)  →  MCP (std
 
 ## Side-by-Side Comparison
 
-| Dimension | Builtin | WASM (Sandboxed Micro-Skill) | OpenAPI | MCP Host |
-|---|---|---|---|---|
-| **Domain term** | *(none)* | Sandboxed Micro-Skill | *(none)* | MCP Host / Containerized MCP Host |
-| **Runtime** | In-process Go function | In-process wazero sandbox | HTTP client dispatch | Out-of-process child process |
-| **Protocol** | Direct function call | JSON via stdin/stdout (WASI) | HTTP REST | JSON-RPC 2.0 over stdio |
-| **Sandbox** | None (trusted code) | Hermetic — no FS, no network, no env vars | N/A (calls external APIs) | None by default; Docker optional |
-| **State** | In-process | Stateless — fresh per call | Stateless (HTTP) | Stateful — long-lived process |
-| **Tool discovery** | Static registration in `Init()` | Scan `.tzro/wasm/` at init | Parsed from OpenAPI specs in SQLite | Dynamic `tools/list` JSON-RPC |
-| **Tools per source** | 1 per registration | 1 per `.wasm` binary | N per OpenAPI spec | N per MCP server |
-| **Startup cost** | Zero | Microseconds (compile + instantiate) | Zero (HTTP client) | Seconds (process spawn + handshake) |
-| **I/O access** | Full | None | Outbound HTTP only | Full (subprocess permissions) |
-| **Auto-recovery** | N/A | N/A (ephemeral) | N/A | Yes — restart on EOF/crash, single retry |
-| **Result format** | `ToolResult` envelope with meta | Raw string (stdout) | Raw string (HTTP body) | Raw string (JSON-RPC content) |
-| **Source tag** | `"builtin"` | `"wasm"` | `"openapi"` | `"mcp"` |
+| Dimension            | Builtin                         | WASM (Sandboxed Micro-Skill)              | OpenAPI                             | MCP Host                                 |
+| -------------------- | ------------------------------- | ----------------------------------------- | ----------------------------------- | ---------------------------------------- |
+| **Domain term**      | _(none)_                        | Sandboxed Micro-Skill                     | _(none)_                            | MCP Host / Containerized MCP Host        |
+| **Runtime**          | In-process Go function          | In-process wazero sandbox                 | HTTP client dispatch                | Out-of-process child process             |
+| **Protocol**         | Direct function call            | JSON via stdin/stdout (WASI)              | HTTP REST                           | JSON-RPC 2.0 over stdio                  |
+| **Sandbox**          | None (trusted code)             | Hermetic — no FS, no network, no env vars | N/A (calls external APIs)           | None by default; Docker optional         |
+| **State**            | In-process                      | Stateless — fresh per call                | Stateless (HTTP)                    | Stateful — long-lived process            |
+| **Tool discovery**   | Static registration in `Init()` | Scan `.tzro/wasm/` at init                | Parsed from OpenAPI specs in SQLite | Dynamic `tools/list` JSON-RPC            |
+| **Tools per source** | 1 per registration              | 1 per `.wasm` binary                      | N per OpenAPI spec                  | N per MCP server                         |
+| **Startup cost**     | Zero                            | Microseconds (compile + instantiate)      | Zero (HTTP client)                  | Seconds (process spawn + handshake)      |
+| **I/O access**       | Full                            | None                                      | Outbound HTTP only                  | Full (subprocess permissions)            |
+| **Auto-recovery**    | N/A                             | N/A (ephemeral)                           | N/A                                 | Yes — restart on EOF/crash, single retry |
+| **Result format**    | `ToolResult` envelope with meta | Raw string (stdout)                       | Raw string (HTTP body)              | Raw string (JSON-RPC content)            |
+| **Source tag**       | `"builtin"`                     | `"wasm"`                                  | `"openapi"`                         | `"mcp"`                                  |
 
 ---
 
 ## Why Each Paradigm Exists
 
 ### Builtin — Trusted platform primitives
+
 Go functions registered directly. Used for core platform tools: `list_tools`, `web_search`, `search_knowledge_base`, `local_db_*`, etc. Maximum performance, zero overhead, full trust.
 
 ### WASM — Pure compute inside the trust boundary
+
 Deterministic, sandboxed logic that runs locally with zero ambient authority. The module literally cannot read files, make network calls, or see environment variables. Ideal for:
+
 - Data transformations and validators
 - Custom scoring functions
 - Agent-synthesized tools (compile Go → WASM → register at runtime)
 - Any logic where **security isolation** is more important than I/O access
 
 ### OpenAPI — Declarative HTTP integrations
+
 Parsed from OpenAPI specs stored in SQLite. Each operation becomes a tool with schema-driven path/query/body parameter construction and auth header injection. No custom code needed — just register a spec. Ideal for:
+
 - REST API integrations with well-defined schemas
 - Services that already publish OpenAPI/Swagger specs
 
 ### MCP — Rich external tool servers
+
 Spawns a persistent child process speaking JSON-RPC 2.0 over stdio. Supports the entire MCP ecosystem — any compliant server works with zero code changes. Docker mode adds resource isolation via `--cpus`, `--memory`, and strict env var declaration. Ideal for:
+
 - Database access, filesystem operations
 - Complex multi-tool integration servers (Slack, GitHub, PostgreSQL)
 - Tools requiring state persistence between calls
@@ -67,6 +74,7 @@ Spawns a persistent child process speaking JSON-RPC 2.0 over stdio. Supports the
 ## Where They Overlap (Minimally)
 
 The only theoretical overlap is a **simple, self-contained tool that doesn't need I/O**. This could be implemented as either WASM or a trivial MCP server. In practice, WASM is strictly better for this case:
+
 - Sub-millisecond startup vs. seconds for process spawn
 - Hermetic sandbox vs. full subprocess permissions
 - No external dependencies vs. Node.js/Python/Docker runtime

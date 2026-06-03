@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"tzro/examples/tui"
 	"tzro/internal/compiler"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
-	"tzro/examples/tui"
 )
 
 // Re-expose standard offline mutation error for CLI client commands.

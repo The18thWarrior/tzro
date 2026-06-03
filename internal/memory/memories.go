@@ -265,3 +265,20 @@ func (sdb *SqliteDatabase) GetRelevantSkills(prompt string, maxSkills int) []Ski
 	}
 	return result
 }
+
+// GetSkill retrieves a single SOP skill by its ID.
+func (sdb *SqliteDatabase) GetSkill(id string) (Skill, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	var s Skill
+	err := sdb.db.QueryRow("SELECT id, name, trigger_description, sop_content, created_at FROM skills WHERE id = ?", id).
+		Scan(&s.ID, &s.Name, &s.TriggerDescription, &s.SOPContent, &s.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return Skill{}, fmt.Errorf("skill '%s' not found", id)
+		}
+		return Skill{}, err
+	}
+	return s, nil
+}

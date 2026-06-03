@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -119,7 +120,7 @@ func (a *ObserverAgent) Start(ctx context.Context) {
 				threshold := a.auditThreshold
 				a.mu.Unlock()
 
-				fmt.Printf("[Observer] Received event '%s' for Task '%s'\n", event.Type, event.TaskID)
+				fmt.Fprintf(os.Stderr, "[Observer] Received event '%s' for Task '%s'\n", event.Type, event.TaskID)
 
 				if eventCount >= threshold {
 					a.triggerAudit(fmt.Sprintf("%d-event threshold reached", threshold))
@@ -167,9 +168,9 @@ func (a *ObserverAgent) triggerAudit(reason string) {
 		return
 	}
 
-	fmt.Printf("[Observer Audit] Running automated verification: %s. Processing %d events...\n", reason, eventCount)
+	fmt.Fprintf(os.Stderr, "[Observer Audit] Running automated verification: %s. Processing %d events...\n", reason, eventCount)
 	for _, ev := range a.activeEvents {
-		fmt.Printf("  -> Audit Event: Task %s | Node %s | Type %s\n", ev.TaskID, ev.NodeID, ev.Type)
+		fmt.Fprintf(os.Stderr, "  -> Audit Event: Task %s | Node %s | Type %s\n", ev.TaskID, ev.NodeID, ev.Type)
 	}
 
 	// Copy the events to process in the background goroutine
@@ -284,13 +285,13 @@ Return valid JSON in this exact structure:
 				if err == nil {
 					newMemCount++
 				} else {
-					fmt.Printf("[Observer Warning] Failed to commit auto-synthesized memory: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[Observer Warning] Failed to commit auto-synthesized memory: %v\n", err)
 				}
 				time.Sleep(time.Millisecond)
 			}
 		}
 	} else {
-		fmt.Printf("[Observer Warning] Memory reflection LLM call failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[Observer Warning] Memory reflection LLM call failed: %v\n", err)
 	}
 
 	// 2. Run Knowledge Graph Extraction
@@ -405,14 +406,14 @@ Return valid JSON in this exact structure:
 			}
 		}
 	} else {
-		fmt.Printf("[Observer Warning] KG extraction LLM call failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[Observer Warning] KG extraction LLM call failed: %v\n", err)
 	}
 
 	if newMemCount > 0 || newNodeCount > 0 || newEdgeCount > 0 {
 		msg := fmt.Sprintf("Observer Agent auto-reflected on recent events: synthesized %d new memories, %d knowledge graph nodes, and %d relationships.",
 			newMemCount, newNodeCount, newEdgeCount)
 
-		fmt.Println("[Observer]", msg)
+		fmt.Fprintln(os.Stderr, "[Observer]", msg)
 
 		tm.PublishStream(stream.StreamChunk{
 			Source:  "observer",

@@ -33,8 +33,12 @@ A two-tier conditional execution engine that resolves branch skip decisions firs
 _Avoid_: Simple compiler, condition parser, LLM evaluator
 
 **Local Model**:
-The default-path local LLM workhorse handling all structured work: intent classification, tool call construction, step execution, conversation compaction, and error recovery. Cloud is only invoked when the **Local Model** lacks the knowledge or latency profile required.
+The default-path local LLM workhorse handling all structured work: intent classification, tool call construction, step execution, conversation compaction, and error recovery. Cloud is only invoked when the **Local Model** lacks the knowledge or latency profile required. Backed by a pluggable **Inference Backend**.
 _Avoid_: Local Step Executor (too narrow), system LLM, cloud coder
+
+**Inference Backend**:
+A pluggable provider abstraction that decouples structured LLM inference calls from the process that hosts the model. Configured at the config level via a backend type and endpoint URL. Implementations include the embedded llama-server sidecar, remote OpenAI-compatible servers (LMStudio, Ollama, vLLM), or a harness callback routing inference through an external agent framework.
+_Avoid_: Model provider, LLM client, API wrapper
 
 **Cloud Model**:
 The exception-path remote LLM invoked only when the **Local Model** lacks sufficient knowledge, reasoning depth, or latency profile. Used for DAG planning, conversational responses requiring world knowledge, and **T2 Supervised** guardrail oversight.
@@ -68,11 +72,9 @@ _Avoid_: Memory cleaner, server killer, process resetter
 The selective pruning, truncation, or summarization of conversational prompt history within interactive multi-turn sessions to prevent local slot thrashing and attention bias.
 _Avoid_: Context compaction, prompt clipping, prompt truncation
 
-
 **Virtual Filesystem State**:
 A simulated POSIX directory structure and active path context maintained in-memory by the offline benchmark runner to preserve stateful environmental continuity for the executing agent across conversation turns.
 _Avoid_: Mock folder, hardcoded directory, local sandbox path
-
 
 **Disk-Backed JQ Cache**:
 An on-disk caching layer storing large compacted payloads and exposing a targeted JQ exploration guide interface to the executor.
@@ -87,8 +89,12 @@ A multi-tier retrieval process that runs keyword query filtering first to genera
 _Avoid_: Flat vector index, C-vec extension, direct embedding search
 
 **MCP Host**:
-The dynamic tool engine that spawns external integration child processes over standard I/O (stdio) to eliminate custom API coding.
+The inbound tool integration layer that spawns external integration child processes over standard I/O (stdio) to supply tools to the execution engine. The engine is tool-source agnostic — it dispatches to tools regardless of whether they originate from built-in registrations, **MCP Host** child processes, or tools forwarded by an external harness via **MCP Server Mode**.
 _Avoid_: Custom connector, API gateway, native integration
+
+**MCP Server Mode**:
+An alternative runtime personality where the tzro engine presents its capabilities (planning, execution, memory, knowledge graph, skills) as MCP tool schemas over stdio, allowing external agent frameworks to consume tzro as a tool server. Can operate simultaneously with the **MCP Host** role — a single tzro process may both serve tools outward and consume tools inward.
+_Avoid_: MCP Bridge, MCP Gateway, MCP Proxy
 
 **Containerized MCP Host**:
 An **MCP Host** that runs inside an isolated, resource-constrained container (e.g. Docker) rather than directly on the host OS, utilizing strict host environment variable declaration.

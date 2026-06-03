@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"tzro/internal/config"
+	"tzro/internal/executor"
 	"tzro/internal/inference"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/observer"
 	"tzro/internal/server"
+	"tzro/internal/telemetry"
 	"tzro/internal/tools"
 	"tzro/internal/workflow"
 )
@@ -34,12 +36,13 @@ func main() {
 		log.Fatalf("[Init Error] Failed to load settings: %v\n", err)
 	}
 
-	// 3. Pre-warm the local llama-server sidecar if enabled
+	// 3. Initialize and pre-warm the pluggable inference backend if enabled
 	cfg := config.Get()
-	if cfg.SidecarEnabled {
-		fmt.Println("[Init] Pre-warming Llama-Server Sidecar in background thread...")
+	inference.ActiveBackend = inference.NewBackend(cfg.InferenceBackend, telemetry.Default)
+	if cfg.SidecarEnabled || cfg.InferenceBackend.Type != "" {
+		fmt.Println("[Init] Pre-warming active inference backend in background thread...")
 		go func() {
-			_ = inference.GlobalLocalModel.Start(context.Background())
+			_ = inference.ActiveBackend.Start(context.Background())
 		}()
 	}
 
@@ -58,14 +61,23 @@ func main() {
 		fmt.Printf("[Init Warning] Failed to initialize Tool Registry: %v\n", err)
 	}
 
-	// 5. Spawn background debounced event monitor Observer
-	fmt.Println("[Init] Injecting LLM client adapter into Telemetry Observer...")
-	observer.SetLLMClient(&TelemetryLLMAdapter{
-		manager: inference.GlobalLocalModel,
-	})
+	// 5. Spawn background debounced event monitor Observer (if enabled)
+	if cfg.IsObserverEnabled() {
+		fmt.Println("[Init] Injecting LLM client adapter into Telemetry Observer...")
+		observer.SetLLMClient(&TelemetryLLMAdapter{
+			manager: inference.GlobalLocalModel,
+		})
 
-	fmt.Println("[Init] Spawning background debouncer Observer...")
-	observer.Start()
+		fmt.Println("[Init] Spawning background debouncer Observer...")
+		observer.Start()
+	} else {
+		fmt.Println("[Init] Observer Agent is disabled per configuration settings.")
+	}
+
+	// 5.25. Register Hooks Globally
+	fmt.Println("[Init] Registering global hooks...")
+	executor.GlobalEngine.RegisterHook(&executor.McpApprovalHook{})
+	executor.GlobalEngine.RegisterHook(&executor.ClientToolHook{})
 
 	// 5.5. Initialize background cron scheduler and run Boot Recovery
 	fmt.Println("[Init] Starting background cron scheduler & recovering interrupted workflows...")
@@ -91,6 +103,13 @@ type TelemetryLLMAdapter struct {
 }
 
 func (a *TelemetryLLMAdapter) CallModel(ctx context.Context, systemPrompt, userPrompt string, jsonSchema string) (string, error) {
+	if inference.ActiveBackend != nil {
+		res, err := inference.ActiveBackend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+		if err != nil {
+			return "", err
+		}
+		return res.Content, nil
+	}
 	return a.manager.ExecuteStructured(ctx, inference.StructuredInferenceRequest{
 		SystemPrompt: systemPrompt,
 		UserPrompt:   userPrompt,

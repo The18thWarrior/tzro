@@ -1,5 +1,7 @@
 # tzro: Go-Powered Durable Agentic Execution Engine
+
 ## Comprehensive Technical Design & Architecture Specification
+
 **Version:** 1.0.0  
 **Status:** Approved  
 **Author:** AI Pair Programming Agent
@@ -52,13 +54,15 @@ graph TD
 To optimize latency, cost, and local processing overhead, `tzro` routes incoming natural language requests through a two-pass classification layer.
 
 ### 1. Intent Classification
+
 The **Intent Classifier** evaluates the raw prompt, classifies it into a core entity type, and extracts structural parameters to build the target entity:
 
-* **chat:** Conversational Q&A or database query lookups in a single turn. (Fallback default).
-* **task:** A single multi-step goal (e.g., deep research, workflow compilation, syncs).
-* **workflow:** High-level initiative requiring persistent coordination of multiple tasks over days/weeks.
+- **chat:** Conversational Q&A or database query lookups in a single turn. (Fallback default).
+- **task:** A single multi-step goal (e.g., deep research, workflow compilation, syncs).
+- **workflow:** High-level initiative requiring persistent coordination of multiple tasks over days/weeks.
 
 #### Intent Classification Prompt
+
 ```
 You are an intent classification agent for the tzro platform. Your job is to classify a user's natural language request into exactly one of five entity types and extract the necessary parameters to create that entity.
 
@@ -88,6 +92,7 @@ You are an intent classification agent for the tzro platform. Your job is to cla
 ```
 
 ### 2. Complexity Classification (T0 / T1 / T2)
+
 Once categorized as a structured task, the request is rated into an execution tier. To eliminate LLM latency (~200ms) on conversational prompts, a native Go **heuristic pre-classifier** runs regular expression checks first:
 
 ```go
@@ -100,12 +105,12 @@ import (
 func HeuristicClassify(requestText string, toolNames []string) string {
 	lower := strings.ToLower(strings.TrimSpace(requestText))
 	words := strings.Fields(lower)
-	
+
 	// Rule 1: Very short messages are conversational
 	if len(words) <= 2 {
 		return "T0"
 	}
-	
+
 	// Rule 2: Check for definite T1/T2 bulk or multi-step operations
 	t1Patterns := []string{
 		"delete all", "update all", "bulk ", "for each", "migrate ",
@@ -116,7 +121,7 @@ func HeuristicClassify(requestText string, toolNames []string) string {
 			return "" // Inconclusive: Fall through to LLM classification
 		}
 	}
-	
+
 	// Rule 3: Map semantic keywords to active tool schemas to verify tool-dependence
 	referencesTool := false
 	for _, tn := range toolNames {
@@ -126,7 +131,7 @@ func HeuristicClassify(requestText string, toolNames []string) string {
 			break
 		}
 	}
-	
+
 	// Rule 4: If no tools are referenced and it has conversational prefixes, it's T0
 	t0Prefixes := []string{
 		"tell me", "what is", "explain", "describe", "hello", "write ", "create a ",
@@ -136,7 +141,7 @@ func HeuristicClassify(requestText string, toolNames []string) string {
 			return "T0"
 		}
 	}
-	
+
 	return "" // Inconclusive: Let Local LLM decide
 }
 ```
@@ -148,6 +153,7 @@ func HeuristicClassify(requestText string, toolNames []string) string {
 `tzro` enforces a strict separation between planning and execution. Complex tasks are compiled into a Directed Acyclic Graph to prevent infinite tool loops and allow execution recovery.
 
 ### 1. Compiled Data Structures
+
 ```go
 package domain
 
@@ -179,6 +185,7 @@ type ExecutionGraph struct {
 ```
 
 ### 2. Kahn's Topological Sort Implementation
+
 The Go compiler parses the abstract graph schema, validates that no cyclic relationships exist, and groups execution steps into parallel levels:
 
 ```go
@@ -243,8 +250,10 @@ func CompileAndSort(graph *domain.ExecutionGraph) ([][]string, error) {
 ```
 
 ### 3. Checkpointing & Loop Mitigation
-* **Cycle Budgets:** `MaxCycles` is decremented on every node transition. If `MaxCycles == 0`, execution is aborted to prevent infinite runtime charges.
-* **SQLite Checkpoint Table:** The output of every node is flushed to the SQLite database immediately. If the runner crashes, it reads this table to skip previously completed nodes.
+
+- **Cycle Budgets:** `MaxCycles` is decremented on every node transition. If `MaxCycles == 0`, execution is aborted to prevent infinite runtime charges.
+- **SQLite Checkpoint Table:** The output of every node is flushed to the SQLite database immediately. If the runner crashes, it reads this table to skip previously completed nodes.
+
 ```sql
 CREATE TABLE graph_node_states (
     task_id        TEXT NOT NULL,
@@ -263,6 +272,7 @@ CREATE TABLE graph_node_states (
 To force lightweight local worker models (2B-4B) to output 100% syntactically correct tool execution parameters, `tzro` binds **GBNF Grammar Constraints** directly to the local inference engine.
 
 ### 1. GBNF Dynamic JSON Grammar Ruleset
+
 ```ebnf
 # Production grammar compiled dynamically at runtime for tool argument extraction
 root   ::= object
@@ -280,9 +290,10 @@ ws     ::= [ \t\n\r]*
 ```
 
 ### 2. Local Performance Optimization Architecture
-* **Speculative Decoding:** Employs a tiny 135M draft model running alongside the main 4B model to project token sequences forward, increasing local generation speed by up to $1.8\times$.
-* **Warm KV Prefix-Sharing:** Warm system prompts (containing the base tool descriptions and static memories) are locked into KV Cache slot `0`. Sub-steps reuse this slot, bypassing cold-start processing times.
-* **Active Cache GC:** A background service monitors memory boundaries. If a cached model context remains idle for $>10$ minutes, the KV slot is forcefully flushed to protect laptop RAM.
+
+- **Speculative Decoding:** Employs a tiny 135M draft model running alongside the main 4B model to project token sequences forward, increasing local generation speed by up to $1.8\times$.
+- **Warm KV Prefix-Sharing:** Warm system prompts (containing the base tool descriptions and static memories) are locked into KV Cache slot `0`. Sub-steps reuse this slot, bypassing cold-start processing times.
+- **Active Cache GC:** A background service monitors memory boundaries. If a cached model context remains idle for $>10$ minutes, the KV slot is forcefully flushed to protect laptop RAM.
 
 ---
 
@@ -291,7 +302,8 @@ ws     ::= [ \t\n\r]*
 All background system checks, memory compilations, and cron health audits are handled by a non-blocking background Observer loop running over debounced event pipelines.
 
 ### 1. Go Event-Debouncer Implementation
-The Observer loop listens to a buffered Go channel (`ObserverChan`) with a capacity of `500`. It aggregates events and triggers audits *only* when the system has been inactive for 5 minutes, or when 10 events accumulate concurrently.
+
+The Observer loop listens to a buffered Go channel (`ObserverChan`) with a capacity of `500`. It aggregates events and triggers audits _only_ when the system has been inactive for 5 minutes, or when 10 events accumulate concurrently.
 
 ```go
 package observer
@@ -356,10 +368,12 @@ func evaluateBatch(db *sql.DB, events []ObserverEvent) {
 To prevent zero-shot LLM hallucinations of third-party API syntax, the engine extracts and indexes structured Markdown SOPs from successful trajectories.
 
 ### 1. Double-Gate Filters
-* **Complexity Gate:** Scans completed task runs. If the execution trajectory took $<3$ steps, it is aborted as too simple to warrant a reusable procedure.
-* **Semantic Deduplication:** Generates a vector embedding of the trigger description. If the semantic similarity overlap score against an existing SOP exceeds **0.8**, it is skipped to prevent duplicate database bloat.
+
+- **Complexity Gate:** Scans completed task runs. If the execution trajectory took $<3$ steps, it is aborted as too simple to warrant a reusable procedure.
+- **Semantic Deduplication:** Generates a vector embedding of the trigger description. If the semantic similarity overlap score against an existing SOP exceeds **0.8**, it is skipped to prevent duplicate database bloat.
 
 ### 2. SQLite Skill Database Schema
+
 ```sql
 CREATE TABLE synthesized_skills (
     id                  TEXT PRIMARY KEY,
@@ -372,9 +386,11 @@ CREATE TABLE synthesized_skills (
 ```
 
 ### 3. Dual-Inject Architecture
+
 To maximize planning efficiency while protecting local context space:
+
 1. **Cloud Planner (Index-Only Injection):** Receives only a compact JSON index of trigger descriptions and IDs (e.g., `[{"id": 44, "trigger": "bulk contacts update..."}]`). It returns matched IDs inside `suggestedSkillIds`.
-2. **Local Step Executor (Full-Text Injection):** Receives the full Markdown SOP text *only* for the specific IDs matched by the planner.
+2. **Local Step Executor (Full-Text Injection):** Receives the full Markdown SOP text _only_ for the specific IDs matched by the planner.
 
 ---
 
@@ -383,6 +399,7 @@ To maximize planning efficiency while protecting local context space:
 When dealing with large API payloads, the local context window can quickly become overwhelmed. `tzro` utilizes a 5-layer pipeline and disk-backed caching to manage context size.
 
 ### 1. The 5-Layer Compaction Pipeline
+
 ```
                Raw Verbose Tool Payload
                           │
@@ -418,6 +435,7 @@ When dealing with large API payloads, the local context window can quickly becom
 ```
 
 ### 2. Disk-Backed JQ Cache
+
 If the payload exceeds **12KB** after compaction, it is saved to an on-disk SQLite database and the agent receives a compact **Cache Envelope**:
 
 ```json
@@ -441,7 +459,9 @@ If the payload exceeds **12KB** after compaction, it is saved to an on-disk SQLi
   }
 }
 ```
+
 When this envelope is returned, the engine injects a temporary instruction tutorial (**Cache Exploration Guide**) into the prompt:
+
 ```
 ## CACHED DATA EXPLORATION
 A tool result was too large and has been cached on disk. You received a "cacheId".
@@ -464,6 +484,7 @@ Memories are partitioned into Tabular Key-Value facts and a Relational Knowledge
 ### 1. Database SQLite Schemas
 
 #### Tabular Key-Value Memory Layout
+
 ```sql
 CREATE TABLE agent_memories (
     id          TEXT PRIMARY KEY,
@@ -479,6 +500,7 @@ CREATE TABLE agent_memories (
 ```
 
 #### Relational Knowledge Graph Layout
+
 ```sql
 CREATE TABLE kg_nodes (
     id          TEXT PRIMARY KEY,
@@ -506,6 +528,7 @@ CREATE TABLE kg_edges (
 ```
 
 ### 2. Neighborhood Multi-Hop Traversal Implementation
+
 To feed context-rich relations directly into the LLM during Graph-RAG searches, the engine traverses nodes up to $N$ hops to assemble a context subgraph:
 
 ```go
@@ -548,21 +571,21 @@ func (s *MemoryServer) GetEntityNeighborhood(entityID string, maxHops int) KGSub
 
 	for hop := 0; hop < maxHops && len(frontier) > 0; hop++ {
 		var nextFrontier []string
-		
+
 		rows, err := s.db.Query(`
-			SELECT id, edge_type, source_id, target_id, metadata, weight 
-			FROM kg_edges WHERE source_id IN (?) OR target_id IN (?)`, 
+			SELECT id, edge_type, source_id, target_id, metadata, weight
+			FROM kg_edges WHERE source_id IN (?) OR target_id IN (?)`,
 			frontier, frontier,
 		)
 		if err != nil {
 			break
 		}
-		
+
 		for rows.Next() {
 			var e KGEdge
 			rows.Scan(&e.ID, &e.EdgeType, &e.SourceID, &e.TargetID, &e.Metadata, &e.Weight)
 			allEdges = append(allEdges, e)
-			
+
 			for _, nid := range []string{e.SourceID, e.TargetID} {
 				if !visited[nid] {
 					visited[nid] = true
@@ -571,7 +594,7 @@ func (s *MemoryServer) GetEntityNeighborhood(entityID string, maxHops int) KGSub
 			}
 		}
 		rows.Close()
-		
+
 		if len(nextFrontier) > 0 {
 			nodes := s.fetchNodesByIDs(nextFrontier)
 			allNodes = append(allNodes, nodes...)
@@ -594,6 +617,7 @@ func (s *MemoryServer) fetchNodesByIDs(ids []string) []KGNode {
 `tzro` integrates third-party tools dynamically by executing standard Model Context Protocol (MCP) servers locally as child processes over standard I/O (stdio) streams.
 
 ### 1. Process LifeCycle & Daemon Spawning
+
 MCP Host servers (Node or Python based) are spawned dynamically when a **Task** starts execution and are managed as stateful, persistent daemon processes. Go goroutines maintain open stdin/stdout pipes to allow dynamic JSON-RPC 2.0 communication under sub-10ms latency:
 
 ```go
@@ -704,6 +728,7 @@ func (d *MCPDaemon) Stop() error {
 ```
 
 ### 2. Configuration & Secrets Injection
+
 MCP Host processes are configured inside a standard JSON file located at `.tzro/mcp_config.json`. The engine automatically injects OS variables and loads a localized `.env` file at runtime, bypassing hardcoded credentials:
 
 ```json
@@ -731,15 +756,15 @@ MCP Host processes are configured inside a standard JSON file located at `.tzro/
 
 ## 10. Pillar 9: Verification & Testing Suite
 
-* **Kahn Topological Sor-Test:** Local Go unit tests verify cyclic validation limits and topological parallel sorting:
+- **Kahn Topological Sor-Test:** Local Go unit tests verify cyclic validation limits and topological parallel sorting:
   ```bash
   go test -v -run TestCompiler_TopologicalSort ./compiler
   ```
-* **Context Compaction Benchmarks:** Asserts that compaction ratios stay within limits ($>3\text{x}$ for JSON arrays) and nested arrays are flattened under $200\text{ms}$:
+- **Context Compaction Benchmarks:** Asserts that compaction ratios stay within limits ($>3\text{x}$ for JSON arrays) and nested arrays are flattened under $200\text{ms}$:
   ```bash
   go test -v -run BenchmarkCompactToolResult ./compactor
   ```
-* **GBNF Syntax Checking:** Loads dynamic tool GBNF templates to ensure any grammar drifts fail parsing boundaries before reaching downstream execution:
+- **GBNF Syntax Checking:** Loads dynamic tool GBNF templates to ensure any grammar drifts fail parsing boundaries before reaching downstream execution:
   ```bash
   go test -v -run TestGBNF_GrammarCompliance ./gbnf
   ```

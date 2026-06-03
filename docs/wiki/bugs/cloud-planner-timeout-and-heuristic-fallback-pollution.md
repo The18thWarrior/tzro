@@ -9,6 +9,7 @@ During the cooperative benchmark suite execution on `2026-05-25`, the suite expe
 ## 1. Root Cause Analysis
 
 ### Issue A: Hardcoded 15-Second Cloud HTTP Client Timeout
+
 - **Symptom**: Repeated log warnings of type:
   `[Task Planner Warning] Cloud planning failed: Post "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions": context deadline exceeded (Client.Timeout exceeded while awaiting headers).`
 - **Location**: `internal/inference/cloud_model.go#L92`
@@ -18,6 +19,7 @@ During the cooperative benchmark suite execution on `2026-05-25`, the suite expe
   - When the response exceeds 15 seconds, the HTTP client terminates the connection, raising a context timeout exception and forcing the task planner to trigger a heuristic fallback.
 
 ### Issue B: Heuristic Fallback Tool Pollution (Hardcoded Tool Injection)
+
 - **Symptom**: 15 test cases (30% of the entire benchmark suite) crashed with errors like:
   `tool 'salesforce_query' is not registered or discovered in the dynamic Tool Registry` or `tool 'slack_message' is not registered...`
 - **Location**: `internal/task/task.go#L197` (`buildHeuristicGraph`)
@@ -32,6 +34,7 @@ During the cooperative benchmark suite execution on `2026-05-25`, the suite expe
 ## 2. Statistical Impact Breakdown
 
 Out of 50 evaluated cases:
+
 - **Passed Cases**: 8 (16.0%)
 - **Failed Cases**: 42 (84.0%)
   - **Tool Registration Crashes**: 15 cases (30.0% of total) caused directly by Heuristic Fallback pollution injecting unregistered tools.
@@ -44,6 +47,7 @@ Out of 50 evaluated cases:
 ## 3. Resolution (Implemented on 2026-05-25)
 
 Both corrective actions have been fully implemented under TDD unit testing:
+
 1. **Extended Cloud Model Client Timeout**: The HTTP client timeout in `internal/inference/cloud_model.go` was extended to `60 * time.Second` to handle complex schema compilation under high network/API latencies safely.
 2. **Disabled Heuristic Fallback Planning**: We completely decoupled the static heuristic fallback from the plan generation pipeline in `internal/task/task.go`. If remote cloud planning fails or is unconfigured, the system immediately returns the original planner error, preventing any incorrect static tool injection crashes.
 3. **Unit Tests Adapted**: Created `TestPlan_NoHeuristicFallback` to verify direct failures, and adapted existing structural checks to verify `buildHeuristicGraph` directly.

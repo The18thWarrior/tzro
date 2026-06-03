@@ -48,42 +48,71 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 	// 3. Local or Cooperative mode
 	if cfg.ModelMode == "local" || (cfg.ModelMode == "cooperative" && !forceCloud) {
-		status, _, _, _, _ := m.GetStatusInfo()
+		status := "stopped"
+		if ActiveBackend != nil {
+			status = strings.ToLower(ActiveBackend.Status())
+		} else {
+			mStatus, _, _, _, _ := m.GetStatusInfo()
+			status = strings.ToLower(mStatus)
+		}
 
-		// If sidecar is stopped, attempt to start it synchronously
-		if status == "Stopped" {
-			fmt.Fprintln(os.Stderr, "[Llama Sidecar] Sidecar is stopped. Attempting auto-start...")
-			if err := m.Start(ctx); err == nil {
-				status, _, _, _, _ = m.GetStatusInfo()
+		// If backend is stopped, attempt to start it synchronously
+		if status == "stopped" {
+			if ActiveBackend != nil {
+				fmt.Fprintln(os.Stderr, "[Inference Backend] Backend is stopped. Attempting auto-start...")
+				if err := ActiveBackend.Start(ctx); err == nil {
+					status = strings.ToLower(ActiveBackend.Status())
+				} else {
+					fmt.Fprintf(os.Stderr, "[Inference Backend Error] Failed to auto-start: %v\n", err)
+				}
 			} else {
-				fmt.Fprintf(os.Stderr, "[Llama Sidecar Error] Failed to auto-start: %v\n", err)
+				fmt.Fprintln(os.Stderr, "[Llama Sidecar] Sidecar is stopped. Attempting auto-start...")
+				if err := m.Start(ctx); err == nil {
+					mStatus, _, _, _, _ := m.GetStatusInfo()
+					status = strings.ToLower(mStatus)
+				} else {
+					fmt.Fprintf(os.Stderr, "[Llama Sidecar Error] Failed to auto-start: %v\n", err)
+				}
 			}
 		}
 
-		// If sidecar is starting, block and wait for it to become active/adopted
-		if status == "Starting" {
-			fmt.Fprintln(os.Stderr, "[Llama Sidecar] Sidecar is currently starting. Waiting for it to become active...")
+		// If backend is starting, block and wait for it to become active/adopted
+		if status == "starting" {
+			fmt.Fprintln(os.Stderr, "[Inference Backend] Backend is currently starting. Waiting for it to become active...")
 			startWait := time.Now()
 			for time.Since(startWait) < 60*time.Second {
 				time.Sleep(500 * time.Millisecond)
-				status, _, _, _, _ = m.GetStatusInfo()
-				if status == "Active" || status == "Adopted" {
-					fmt.Fprintf(os.Stderr, "[Llama Sidecar] Sidecar became active after %v. Proceeding with local execution.\n", time.Since(startWait))
+				if ActiveBackend != nil {
+					status = strings.ToLower(ActiveBackend.Status())
+				} else {
+					mStatus, _, _, _, _ := m.GetStatusInfo()
+					status = strings.ToLower(mStatus)
+				}
+				if status == "active" || status == "adopted" {
+					fmt.Fprintf(os.Stderr, "[Inference Backend] Backend became active after %v. Proceeding with local execution.\n", time.Since(startWait))
 					break
 				}
 			}
 		}
 
-		isSidecarActive := (status == "Active" || status == "Adopted")
+		isActive := (status == "active" || status == "adopted")
 
-		if isSidecarActive {
+		if isActive {
 			var localRes *InferenceResult
 			var err error
 
-			if req.StreamMeta != nil {
-				localRes, err = m.CallLocalModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta)
+			if ActiveBackend != nil {
+				if req.StreamMeta != nil {
+					localRes, err = ActiveBackend.CallModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta)
+				} else {
+					localRes, err = ActiveBackend.CallModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+				}
 			} else {
-				localRes, err = m.CallLocalModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+				if req.StreamMeta != nil {
+					localRes, err = m.CallLocalModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta)
+				} else {
+					localRes, err = m.CallLocalModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+				}
 			}
 
 			if err == nil {

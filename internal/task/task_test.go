@@ -7,6 +7,7 @@ import (
 	"testing"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
+	"tzro/internal/inference"
 )
 
 func TestPlan_HeuristicFallback(t *testing.T) {
@@ -90,8 +91,8 @@ func TestPlan_NoHeuristicFallback(t *testing.T) {
 	_, err := Plan(ctx, "Do some work", ExecuteOptions{TaskID: "t_test"})
 	if err == nil {
 		t.Error("expected Plan to fail when Cloud API key is missing, but it succeeded")
-	} else if !strings.Contains(err.Error(), "cloud planning is unavailable") {
-		t.Errorf("expected error 'cloud planning is unavailable', got: %v", err)
+	} else if !strings.Contains(err.Error(), "no planning backend available") {
+		t.Errorf("expected error 'no planning backend available', got: %v", err)
 	}
 }
 
@@ -141,5 +142,69 @@ func TestKahnTopologicalSorting(t *testing.T) {
 
 	if len(levels[2]) != 1 || levels[2][0] != "D" {
 		t.Errorf("level 2 should contain only D, got %v", levels[2])
+	}
+}
+
+type mockBackend struct {
+	CalledCallModel bool
+	ResponseContent string
+	ResponseErr     error
+}
+
+func (m *mockBackend) CallModel(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (*inference.InferenceResult, error) {
+	m.CalledCallModel = true
+	if m.ResponseErr != nil {
+		return nil, m.ResponseErr
+	}
+	return &inference.InferenceResult{
+		Content: m.ResponseContent,
+	}, nil
+}
+
+func (m *mockBackend) CallModelStream(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, meta inference.StreamMeta) (*inference.InferenceResult, error) {
+	return nil, nil
+}
+
+func (m *mockBackend) Status() string {
+	return "active"
+}
+
+func (m *mockBackend) Start(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockBackend) Stop() error {
+	return nil
+}
+
+func TestPlan_BackendFallback(t *testing.T) {
+	ctx := context.Background()
+	oldConfig := config.Get()
+	defer config.Override(&oldConfig)
+
+	// Force empty API Key to trigger fallback
+	cfg := oldConfig
+	cfg.CloudAPIKey = ""
+	config.Override(&cfg)
+
+	// Set mock active backend
+	mock := &mockBackend{
+		ResponseContent: `{"taskId": "t_mock", "maxCycles": 5, "nodes": [{"id": "node_1", "type": "action", "action": "slack_message", "instructions": "alert", "allowedTools": ["slack_message"], "status": "pending"}], "edges": []}`,
+	}
+	oldBackend := inference.ActiveBackend
+	inference.ActiveBackend = mock
+	defer func() { inference.ActiveBackend = oldBackend }()
+
+	graph, err := Plan(ctx, "Send alert", ExecuteOptions{TaskID: "t_mock"})
+	if err != nil {
+		t.Fatalf("Plan failed: %v", err)
+	}
+
+	if !mock.CalledCallModel {
+		t.Error("expected CallModel to be called on active backend, but it was not")
+	}
+
+	if len(graph.Nodes) == 0 {
+		t.Error("expected graph to contain expanded nodes, but got 0")
 	}
 }

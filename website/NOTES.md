@@ -2,15 +2,15 @@
 
 This directory contains the final, high-fidelity, single-page interactive product website for **tzro**. It consolidates all three visual playgrounds into a unified user experience designed under the **Verdant-Synth (Bio-Synthetic)** aesthetic guidelines.
 
-## Bio-Synthetic Aesthetic Integration (*Verdant-Synth*)
+## Bio-Synthetic Aesthetic Integration (_Verdant-Synth_)
 
 Following the project's [DESIGN.md](file:///Users/jp/Desktop/Repos/tzro/DESIGN.md), the styling is tailored to feel organic, grounded, and clean, subverting traditional cyberpunk clichés:
 
-* **Colors:** Default backgrounds use a terrestrial Deep Moss canvas (`#0A110D`) with soft elevated Forest Shadow surfaces (`#131F18`) and division rules defined in Foliage Line (`#223329`). Primary text utilizes Off-Alabaster (`#F1F4F2`), and inactive meta captions use Muted Sage (`#5C6B62`).
-* **AI Spark Accent:** The Cyber Lime accent (`#B6FF00`) is used deliberately like a rare element, reserved strictly for intelligent actions, status dots, and active processing triggers. Buttons styled in Cyber Lime use high-contrast dark Deep Moss text for extreme readability.
-* **Organic Canvas Backdrops:** Substituted matrix retro grids with soft bioluminescent moss blurs (top-left and bottom-right glowing radial gradients blending into Deep Moss).
-* **Typography Hierarchy:** Core headers and page copy utilize clean geometric sans-serif typefaces (`Outfit` & `Inter`). Pairings are completed using monospace `JetBrains Mono` strictly inside raw terminal boxes, logging console areas, and SDK snippets to represent raw machine stream tokens.
-* **Horizon Pulse Processing:** A custom linear 2px Cyber Lime processor line sits directly above the simulator card layout and pulses dynamically (`@keyframes horizonPulse`) while topological goroutines compile.
+- **Colors:** Default backgrounds use a terrestrial Deep Moss canvas (`#0A110D`) with soft elevated Forest Shadow surfaces (`#131F18`) and division rules defined in Foliage Line (`#223329`). Primary text utilizes Off-Alabaster (`#F1F4F2`), and inactive meta captions use Muted Sage (`#5C6B62`).
+- **AI Spark Accent:** The Cyber Lime accent (`#B6FF00`) is used deliberately like a rare element, reserved strictly for intelligent actions, status dots, and active processing triggers. Buttons styled in Cyber Lime use high-contrast dark Deep Moss text for extreme readability.
+- **Organic Canvas Backdrops:** Substituted matrix retro grids with soft bioluminescent moss blurs (top-left and bottom-right glowing radial gradients blending into Deep Moss).
+- **Typography Hierarchy:** Core headers and page copy utilize clean geometric sans-serif typefaces (`Outfit` & `Inter`). Pairings are completed using monospace `JetBrains Mono` strictly inside raw terminal boxes, logging console areas, and SDK snippets to represent raw machine stream tokens.
+- **Horizon Pulse Processing:** A custom linear 2px Cyber Lime processor line sits directly above the simulator card layout and pulses dynamically (`@keyframes horizonPulse`) while topological goroutines compile.
 
 ---
 
@@ -34,7 +34,8 @@ Start the static web server directly using Go:
 ```bash
 go run website/main.go
 ```
-*Note: If your active working directory is already inside `website/`, simply run `go run main.go`.*
+
+_Note: If your active working directory is already inside `website/`, simply run `go run main.go`._
 
 Open your web browser to **`http://localhost:8080`** to interact with the playfields.
 
@@ -45,8 +46,8 @@ Open your web browser to **`http://localhost:8080`** to interact with the playfi
 The website is fully client-side and optimized for static hosting. A GitHub Actions workflow (`.github/workflows/deploy-pages.yml`) is provided to automate deployment to GitHub Pages.
 
 To enable automated deployment:
+
 1. Push the repository to GitHub.
 2. In the GitHub Repository settings, navigate to **Pages** (under the "Code and automation" section).
 3. Under **Build and deployment** -> **Source**, select **GitHub Actions** from the dropdown menu.
 4. The workflow will automatically deploy the site on pushes to `main` or `release/0.1` branches.
-
