@@ -52,6 +52,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [Disk-Backed JQ Cache Architecture](architecture/disk-backed-jq-cache.md) - Deep subsystem for context compaction, page-sliced pagination, and JQ process queries.
 - [Task-to-Workflow Promotion Engine](architecture/task-workflow-promotion.md) - Deep subsystem that dynamically elevates Single Task DAGs to persistent Multi-Task Workflows.
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
+- [Agentic Harness Integration](architecture/agentic-harness-integration.md) - Analysis of MCP Server, Native Plugin, and Sidecar paradigms for orchestrating client-side execution steps.
 
 ### Architecture Decision Records (ADRs)
 
@@ -71,6 +72,9 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0014: Stateful Graph-Aligned Multi-Turn Benchmarks](../adr/0014-stateful-graph-aligned-multi-turn-benchmarks.md) - Transitions multi-turn benchmarks to preserve original turns, utilize in-memory virtual filesystem observers, and execute multiset graph matching.
 - [ADR-0015: Pristal Architecture Alignment](../adr/0015-pristal-architecture-alignment.md) - Aligns database, compilation, memory cache, and execution pruning engines with Pristal v2 standards.
 - [ADR-0016: Pluggable Inference Backend](../adr/0016-pluggable-inference-backend.md) - Splits LocalModelManager into a pluggable Inference Backend interface and Sidecar Manager, enabling tzro to target LMStudio, Ollama, or harness-provided models.
+- [ADR-0017: MCP Resource Subscriptions](../adr/0017-mcp-resource-subscriptions.md) - Exposes hierarchical task and node outputs over stdio JSON-RPC via dynamically sourced pub/sub event subscriptions.
+- [ADR-0018: Native Plugin Local Inference Isolation](../adr/0018-native-plugin-local-inference-isolation.md) - Mandates local worker execution for native plugins unless an existing local API (Ollama, LM Studio) is provided by the user.
+
 
 ## Ingested Sources
 

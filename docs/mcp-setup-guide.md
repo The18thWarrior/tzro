@@ -65,6 +65,36 @@ To configure `tzro` in Cursor:
     - **Command:** `/absolute/path/to/tzro/bin/tzro-mcp`
 4.  Click **Save**. Cursor will start the server and list the registered tools under the active tool list.
 
+### Google Antigravity
+
+For Google Antigravity, MCP configurations can be registered either globally or at the workspace level. For details, refer to the [Antigravity MCP Documentation](https://antigravity.google/docs/mcp).
+
+#### Workspace/Project Configuration
+Create a file at `.agents/mcp_config.json` inside your workspace directory and add the `tzro` server definition:
+
+```json
+{
+  "mcpServers": {
+    "tzro": {
+      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
+      "args": [],
+      "env": {
+        "TZRO_DIR": "/absolute/path/to/tzro",
+        "ANTIGRAVITY_AGENT": "$ANTIGRAVITY_AGENT",
+        "ANTIGRAVITY_TRAJECTORY_ID": "$ANTIGRAVITY_TRAJECTORY_ID",
+        "ANTIGRAVITY_LS_ADDRESS": "$ANTIGRAVITY_LS_ADDRESS",
+        "ANTIGRAVITY_CSRF_TOKEN": "$ANTIGRAVITY_CSRF_TOKEN"
+      }
+    }
+  }
+}
+```
+
+#### Global Configuration
+Alternatively, add the same configuration block to your global Antigravity config file:
+
+*   **File Location:** `~/.gemini/config/mcp_config.json`
+
 ---
 
 ## 🛠️ 3. Offered MCP Tools
@@ -85,6 +115,18 @@ Once connected, `tzro-mcp` exposes a wide suite of capabilities:
 | **`tzro_skills_add`**         | Sync procedural micro-skills (SOPs) into the database.                     | `name` (string), `sopContent` (string)                  |
 | **`tzro_hook_approve`**       | Resume execution of a paused human-in-the-loop task node.                  | `taskId` (string), `nodeId` (string)                    |
 | **`tzro_client_tool_submit`** | Submit outputs of client-side executed tools and resume.                   | `taskId` (string), `nodeId` (string), `output` (string) |
+| **`tzro_model_list`**         | List available GGUF models with download status and active indicator.      | *(none)*                                                |
+| **`tzro_model_set`**          | Change the active local worker model by catalog ID, path, or download URL. | `modelId` or `ggufModelPath` or `downloadUrl`           |
+
+### 💡 Suggested Prompts for Agents to Leverage tzro
+
+When invoking `tzro_run` via an MCP client, formulate prompts that guide the **Strategic Planner** to balance tradeoffs (e.g., limiting `allowedTools`, defining clear dependencies, and utilizing proper variable binding).
+
+Here are prompt templates you can use:
+- **Complex Research and Ingestion:**
+  > *"Use web_search to find the latest changes and trends in the AI orchestration space, compile the findings, and save the final structured summary to memory using the save_memory tool."*
+- **Tool-Heavy Multi-System Automation:**
+  > *"Execute a workflow to query recent lead records using salesforce_query, run deduplication check with postgres_insert, and post the execution report to the slack_message tool."*
 
 ---
 

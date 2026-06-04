@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 )
@@ -37,6 +38,11 @@ type CacheStore interface {
 
 	// Query runs a standard JQ expression query (using the decoupled QueryEngine).
 	Query(ctx context.Context, cacheID, jqExpr string) string
+}
+
+// resolveTzroPath delegates to config.ResolvePath — canonical TZRO_DIR resolution.
+func resolveTzroPath(relPath string) string {
+	return config.ResolvePath(relPath)
 }
 
 type sqlCacheStore struct{}
@@ -213,7 +219,7 @@ func (s *sqlCacheStore) Store(ctx context.Context, rawPayload string) (string, s
 	}
 
 	// Backup file cache
-	cacheFileDir := filepath.Join(".tzro", "cache")
+	cacheFileDir := resolveTzroPath(filepath.Join(".tzro", "cache"))
 	if err := os.MkdirAll(cacheFileDir, 0755); err != nil {
 		return envelopeStr, cacheID, fmt.Errorf("failed to create cache backup directory: %w", err)
 	}
@@ -237,7 +243,7 @@ func (s *sqlCacheStore) Introspect(ctx context.Context, cacheID string) string {
 	}
 
 	// Fallback to reading file and recreating envelope
-	cacheFilePath := filepath.Join(".tzro", "cache", cacheID+".json")
+	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	bytes, err := os.ReadFile(cacheFilePath)
 	if err != nil {
 		return fmt.Sprintf("Error: cache with ID '%s' not found in database or disk", cacheID)
@@ -320,7 +326,7 @@ func (s *sqlCacheStore) getRawPayload(cacheID string) string {
 	}
 
 	// Fallback to disk file
-	cacheFilePath := filepath.Join(".tzro", "cache", cacheID+".json")
+	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	bytes, err := os.ReadFile(cacheFilePath)
 	if err != nil {
 		return fmt.Sprintf("Error: cache with ID '%s' not found on database or disk", cacheID)

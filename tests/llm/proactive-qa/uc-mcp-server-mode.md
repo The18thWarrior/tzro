@@ -19,7 +19,7 @@ A developer or AI agent host wants to run the `tzro-mcp` server to expose tzro's
 
 ## Success Criteria
 
-- [ ] MCP client connects successfully and lists the core tools: `tzro_run`, `tzro_status`, `tzro_list_tasks`, `tzro_configure_tools`.
+- [ ] MCP client connects successfully and lists all tools, including: `tzro_run`, `tzro_status`, `tzro_list_tasks`, `tzro_configure_tools`, `tzro_web_search`, `tzro_memory_query`, `tzro_memory_ingest`, `tzro_skills_add`, `tzro_hook_approve`, `tzro_model_list`, `tzro_model_set`, `tzro_completion`, `tzro_classification`.
 - [ ] Calling `tzro_run` triggers durable graph planning and execution.
 - [ ] If execution completes within the timeout, `tzro_run` returns the final task status and outputs.
 - [ ] If execution exceeds the timeout, `tzro_run` returns a taskId and continues execution asynchronously.
@@ -27,6 +27,10 @@ A developer or AI agent host wants to run the `tzro-mcp` server to expose tzro's
 - [ ] Calling `tzro_list_tasks` returns a list of all current and historical task execution records.
 - [ ] Calling `tzro_configure_tools` registers new tools dynamically or updates existing tool configurations.
 - [ ] Tool configurations registered via `tzro_configure_tools` persist in the SQLite database across server restarts.
+- [ ] Calling `tzro_web_search` returns ranked results from multiple search engines using tiered fallback logic.
+- [ ] Calling `tzro_completion` correctly runs a prompt against the local GGUF sidecar with optional GBNF JSON schema rules.
+- [ ] Calling `tzro_classification` uses the local model and GBNF schema to output exactly one of the requested class labels.
+- [ ] Calling `tzro_model_list` and `tzro_model_set` successfully queries and switches the active local GGUF models.
 - [ ] Standalone server stdout logs are successfully redirected to stderr or a log file, keeping the JSON-RPC pipe clean.
 
 ## Edge Cases to Probe
@@ -35,6 +39,9 @@ A developer or AI agent host wants to run the `tzro-mcp` server to expose tzro's
 - Calling `tzro_run` with an empty prompt or invalid tool schema arguments.
 - Running concurrent tool calls to verify SQLite WAL multi-connection stability.
 - Starting the server when the configured inference backend is unreachable.
+- Requesting a model set to an invalid download URL or a non-existent model ID.
+- Calling classification with empty categories list or malformed prompts.
+
 
 ## Anti-Patterns to Watch For
 

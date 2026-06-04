@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"tzro/internal/cache"
+	"tzro/internal/config"
 	"tzro/internal/mcp"
 	"tzro/internal/wasm"
 )
@@ -394,7 +395,7 @@ func Init(configPath string) error {
 // LoadWasmTools scans .tzro/wasm/ for compiled .wasm binaries alongside their json schemas,
 // registering each pair dynamically with the global registry.
 func LoadWasmTools() error {
-	wasmDir := filepath.Join(".tzro", "wasm")
+	wasmDir := config.ResolvePath(filepath.Join(".tzro", "wasm"))
 
 	// If wasm directory does not exist, create it or return nil (skip gracefully)
 	if _, err := os.Stat(wasmDir); os.IsNotExist(err) {

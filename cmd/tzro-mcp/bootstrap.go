@@ -53,7 +53,7 @@ func bootstrapEngine() {
 	}
 
 	// 4. Load MCP Host tools (if configured)
-	configPath := filepath.Join(".tzro", "mcp_config.json")
+	configPath := config.ResolvePath(filepath.Join(".tzro", "mcp_config.json"))
 	if _, err := os.Stat(configPath); err == nil {
 		if err := mcp.GlobalRegistry.LoadConfig(configPath); err != nil {
 			log.Printf("[Warning] Failed to load MCP hosts config from %s: %v", configPath, err)
@@ -61,7 +61,7 @@ func bootstrapEngine() {
 	}
 
 	// 5. Initialize Tool Registry
-	toolSchemasPath := filepath.Join(".tzro", "tool_schemas.json")
+	toolSchemasPath := config.ResolvePath(filepath.Join(".tzro", "tool_schemas.json"))
 	if err := tools.Init(toolSchemasPath); err != nil {
 		log.Printf("[Warning] Failed to initialize dynamic tool registry: %v", err)
 	}

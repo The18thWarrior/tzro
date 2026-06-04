@@ -47,7 +47,7 @@ func main() {
 	}
 
 	// 4. Load MCP server configuration setting stdio hosts
-	configPath := filepath.Join(".tzro", "mcp_config.json")
+	configPath := config.ResolvePath(filepath.Join(".tzro", "mcp_config.json"))
 	fmt.Printf("[Init] Loading MCP configuration setting from %s...\n", configPath)
 	err = mcp.GlobalRegistry.LoadConfig(configPath)
 	if err != nil {
@@ -55,7 +55,7 @@ func main() {
 	}
 
 	// 4.5. Initialize Dynamic Tool Registry
-	toolSchemasPath := filepath.Join(".tzro", "tool_schemas.json")
+	toolSchemasPath := config.ResolvePath(filepath.Join(".tzro", "tool_schemas.json"))
 	fmt.Printf("[Init] Initializing dynamic Tool Registry from %s...\n", toolSchemasPath)
 	if err := tools.Init(toolSchemasPath); err != nil {
 		fmt.Printf("[Init Warning] Failed to initialize Tool Registry: %v\n", err)

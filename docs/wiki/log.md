@@ -4,6 +4,68 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-04T18:55:00Z] grill-with-docs | Design Probe Node, Thought Chain, and Filesystem Tools
+
+- **Activity**: Grilling session resolved 12 design decisions spanning filesystem tool integration, a new DAG node type (Probe Node), and its internal execution pattern (Thought Chain), plus strengthened Offload Policy.
+- **Terminology Resolved**:
+  - **Probe Node** added to `CONTEXT.md`: A goal-directed DAG node that runs a bounded Thought Chain internally using the Local Model and a constrained tool set. Single opaque node from the parent DAG's perspective.
+  - **Thought Chain** added to `CONTEXT.md`: The internal execution pattern of a Probe Node — stateless bridge→exec steps with embedding-based thought retrieval via ONNX similarity, rolling compaction every 3 steps, and SQLite-persisted durability.
+- **Key Decisions**:
+  - **Filesystem tools**: Three separate built-in tools (`read_file`, `list_dir`, `search_files`) in `standalone_tools.go`, sharing a common path validation layer. Project root default with configurable allowlist in `mcp_config.json`.
+  - **File content handling**: 200-line cap with `startLine`/`endLine` parameters, bypassing the Compaction Pipeline entirely (source code injected raw).
+  - **Execution model**: Rejected Scatter Nodes (runtime DAG mutation), ReAct agent loop (identity drift + selection bias), and smart planning (untenable across arbitrary file structures). Chose Probe Node — a new DAG node type encapsulating bounded exploration.
+  - **Internal execution**: Thought Chain with stateless steps. Local Model sees only: goal + semantically retrieved prior thoughts + current thought + previous tool output. Fixed context window regardless of exploration depth.
+  - **Thought retrieval**: Embedding-based via existing ONNX pipeline (`all-MiniLM-L6-v2`) + SQLite hybrid vector search. Top-K relevant thoughts retrieved per step.
+  - **Compaction interval**: Every 3 steps (configurable). Rolling text summary as fallback.
+  - **Bounds**: 20-step budget (hard ceiling) + convergence via Local Model at ≥ 0.9 confidence.
+  - **Output contract**: Goal-directed terminal synthesis — final Local Model call takes rolling summary + original goal to produce structured output for parent DAG.
+  - **Dynamic LoRA**: Parked as "Procedural Adapter" concept for post-GA research. Rejected for in-probe use due to latency mismatch, KV cache invalidation, and GBNF interaction risks.
+  - **Offload Policy**: Added mandatory delegation categories (codebase exploration, web research, memory ingestion). Added explicit Wait Protocol (stop → timer → check status → consume terminal_synthesis). Tightened decision rule to require "frontier-model-exclusive reasoning." Added 5-call reassessment trigger. Narrowed local workspace exemption from blanket "file reads" to "targeted single-file reads for code edits."
+- **ADR Created**:
+  - [ADR-0019: Probe Node and Thought Chain Execution](../adr/0019-probe-node-and-thought-chain-execution.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Probe Node and Thought Chain glossary terms)
+  - [MODIFY] [AGENTS.md](../../AGENTS.md) (Strengthened Offload Policy with mandatory delegation, wait protocol, and tightened scope)
+  - [NEW] [0019-probe-node-and-thought-chain-execution.md](../adr/0019-probe-node-and-thought-chain-execution.md) (Probe Node and Thought Chain ADR)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-04T05:40:00Z] grill-with-docs | Design Agent Offload Policy for tzro Delegation
+
+- **Activity**: Grilling session resolved 7 design decisions governing how external agents (consuming tzro via MCP Server Mode) determine which phases of work to delegate as Tasks versus execute in their own context window.
+- **Terminology Resolved**:
+  - **Offload Policy** added to `CONTEXT.md`: The decision framework an external agent consuming tzro via **MCP Server Mode** applies to determine which phases of work to submit as **Tasks** versus execute directly in its own context window.
+- **Key Decisions**:
+  - **Naming**: New glossary term "Offload Policy" — distinct from "Delegation Mode" (internal cloud→local routing). Different actors, direction, and decision criteria.
+  - **Phase decomposition**: "Phase" is a general programming concept, not a domain term. Kept as procedural guidance in AGENTS.md.
+  - **Trigger**: 3+ sequential external tool calls → pause and evaluate.
+  - **Decision rule**: Single question — "Do I need to reason about intermediate outputs to decide the next step?" No → offload.
+  - **Scope**: External data-plane tool calls only. Local workspace operations (file reads, code edits) always in-context. Management-plane MCP calls (`tzro_list_tasks`, `tzro_status`, `tzro_model_list`, `tzro_skills_list`, `tzro_observer_events`) stay in-context — they have no DAG-level tool equivalents.
+  - **Consumption**: Only read `terminal_synthesis` output. Use `tzro_memory_query` or `tzro_rag_context` for targeted follow-ups.
+  - **No Template C**: System introspection tools are management-plane only, not present in the DAG tool registry (`internal/tools/tools.go` Init). A system introspection DAG template is not feasible.
+- **Code Verification**: Inspected `internal/tools/tools.go` Init() to confirm the DAG tool registry contains only data-plane tools (`web_search`, `save_memory`, `recall_memory`, `query_knowledge_graph`, `explore_entity`, CRUD tools, cache tools). Management-plane operations are exposed only via MCP Server Mode endpoints.
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Offload Policy glossary term)
+  - [MODIFY] [AGENTS.md](../../AGENTS.md) (Added Offload Policy section with trigger, decision rule, scope, and consumption guidance)
+  - [MODIFY] [SKILL.md](../../plugins/antigravity/ide/skills/tzro/SKILL.md) (Added Offload Policy section for newly onboarded users)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-03T19:02:00Z] analysis | Evaluate Agentic Harness Integration Paradigms
+
+- **Activity**: Evaluated MCP Server, Native Plugin (Hermes / Antigravity), and Sidecar paradigms for integration with external agent harnesses to eliminate cloud loop overhead.
+- **Terminology Resolved**:
+  - **Native Plugin Mode** added: An integration architecture where the tzro engine runs in-process as a module or plugin within an external agent harness, programmatically dispatching primitive tools directly to the host process.
+- **Key Outcomes**:
+  - **Bottleneck Diagnosis**: Identified that standard stdio MCP's client-driven request-response transport forces parent agents into a cloud-LLM polling/submission loop for client-side tool executions, wasting tokens and adding latency.
+  - **Plugin Architecture**: Proposed a native Python plugin architecture for frameworks like Hermes and Google Antigravity SDK to dispatch local tools programmatically in-process, bypassing the cloud LLM turns entirely.
+  - **Wiki Publication**: Created a dedicated architecture page detailing comparative analysis, schemas, and trade-offs.
+  - **ADR-0018 Created**: Documented [ADR-0018: Native Plugin Local Inference Isolation](../adr/0018-native-plugin-local-inference-isolation.md) mandating local worker execution by default unless an existing local API (Ollama, LM Studio) is provided.
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md)
+  - [NEW] [0018-native-plugin-local-inference-isolation.md](../adr/0018-native-plugin-local-inference-isolation.md)
+  - [NEW] [agentic-harness-integration.md](architecture/agentic-harness-integration.md)
+  - [MODIFY] [index.md](index.md)
+  - [MODIFY] [log.md](log.md)
+
 ## [2026-06-03T01:07:00Z] feature | Implement Dynamic Client Tool Dispatch & Create MCP Setup Guide
 
 - **Activity**: Implemented Phase 5 (Tool Auto-Registration & Client Dispatch) and created setup guides.
@@ -814,3 +876,20 @@ Chronological append-only record of wiki operations and major agent engineering 
 - **Key Files Created/Modified**:
   - [MODIFY] [README.md](../../README.md) (Comprehensive technical README overhaul)
   - [MODIFY] [log.md](log.md) (This log entry)
+
+---
+
+## [2026-06-02T21:57:00-07:00] design | Expose Task Outputs via MCP Resource Subscriptions
+
+- **Activity**: Conducted a `/grill-with-docs` session to design the dynamic Model Context Protocol (MCP) Resource Subscription architecture. Established hierarchical task/node URI schemes, in-memory transport-coupled subscription lifespans, dual-path event sourcing via coordinator daemon SSE multiplexing, and content-aware hybrid payload compaction.
+- **Key Design Decisions**:
+  - **Hierarchical URI Template**: Exposes aggregated task states at `tzro://tasks/{taskId}/output` and step-by-step intermediate node outputs at `tzro://tasks/{taskId}/nodes/{nodeId}/output`.
+  - **In-Memory Lifespans**: Ties active subscriptions directly to the lifespans of the transient stdio JSON-RPC server processes, avoiding database state contamination.
+  - **Dual-Path Event Sourcing**: Connects the MCP bridge to `localhost:8080/api/events` to ingest cross-process events, with fallback to the local in-process `stream.GlobalBus` if the daemon is offline.
+  - **Content-Aware Compaction**: Streams lightweight, token-efficient compacted summaries by default, but allows clients to request raw outputs via a `?format=raw` query parameter.
+- **Key Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Updated MCP Server Mode definition)
+  - [NEW] [0017-mcp-resource-subscriptions.md](../adr/0017-mcp-resource-subscriptions.md) (Detailed architectural decision record)
+  - [MODIFY] [index.md](index.md) (Local wiki index)
+  - [MODIFY] [log.md](log.md) (This log entry)
+

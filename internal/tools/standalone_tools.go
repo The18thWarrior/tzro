@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -178,6 +179,8 @@ func GetToolGBNFSchema(properties map[string]interface{}, required []string) str
 }
 
 // NewWebSearchTool instantiates the web_search tool structure.
+// Uses the multi-engine metasearch strategy: Startpage + Brave (parallel),
+// Bing (sequential fallback), DuckDuckGo (last resort).
 func NewWebSearchTool() *BaseAgentTool {
 	return &BaseAgentTool{
 		name:        "web_search",
@@ -198,25 +201,23 @@ func NewWebSearchTool() *BaseAgentTool {
 			if in.MaxResults != nil {
 				limit = *in.MaxResults
 			}
-			results := []map[string]string{
-				{
-					"title":   "Brave Search - Go TDD",
-					"url":     "https://brave.com/search?q=tdd",
-					"snippet": "Test-driven development (TDD) is a software development process relying on software requirements.",
-				},
-				{
-					"title":   "Google Search - Go TDD Guide",
-					"url":     "https://google.com/search?q=tdd",
-					"snippet": "This guide teaches you how to implement vertical slices using test-first development.",
-				},
+
+			results, source := WebSearchMetasearch(ctx, in.Query, limit)
+
+			// Convert SearchResult structs to generic maps for the ToolResult envelope
+			resultMaps := make([]map[string]string, 0, len(results))
+			for _, r := range results {
+				resultMaps = append(resultMaps, map[string]string{
+					"title":   r.Title,
+					"url":     r.URL,
+					"snippet": r.Snippet,
+				})
 			}
-			if limit < len(results) {
-				results = results[:limit]
-			}
+
 			return ToolSuccess(map[string]interface{}{
-				"results": results,
+				"results": resultMaps,
 				"query":   in.Query,
-				"source":  "adapter",
+				"source":  source,
 			}), nil
 		},
 	}
@@ -680,7 +681,25 @@ func NewCreateTaskTool() *BaseAgentTool {
 // Phase 6: Local Relational Tabular Database CRUD Tools
 // ==========================================
 
-func resolveDBPath(dbID int) (string, error) {
+func autoProvisionDB(db *sql.DB, name string, forceID int) (string, error) {
+	dbDir := config.ResolvePath(filepath.Join(".tzro", "local_dbs"))
+	_ = os.MkdirAll(dbDir, 0755)
+	path := filepath.Join(dbDir, name+".db")
+
+	var execErr error
+	if forceID > 0 {
+		_, execErr = db.Exec("INSERT OR REPLACE INTO local_databases (id, name, description, path) VALUES (?, ?, ?, ?)", forceID, name, "Automatically provisioned database", path)
+	} else {
+		_, execErr = db.Exec("INSERT OR REPLACE INTO local_databases (name, description, path) VALUES (?, ?, ?)", name, "Automatically provisioned database", path)
+	}
+	if execErr != nil {
+		return "", fmt.Errorf("failed to auto-create database registry for %s: %w", name, execErr)
+	}
+	_, _ = openLocalDB(path)
+	return path, nil
+}
+
+func resolveDBPath(dbID any) (string, error) {
 	db := memory.DB.RawDB()
 	if db == nil {
 		return "", fmt.Errorf("main database is not initialized")
@@ -696,9 +715,42 @@ func resolveDBPath(dbID int) (string, error) {
 	)`)
 
 	var path string
-	err := db.QueryRow("SELECT path FROM local_databases WHERE id = ?", dbID).Scan(&path)
+	var err error
+
+	switch v := dbID.(type) {
+	case int:
+		err = db.QueryRow("SELECT path FROM local_databases WHERE id = ?", v).Scan(&path)
+		if err != nil {
+			path, err = autoProvisionDB(db, fmt.Sprintf("db_%d", v), v)
+		}
+	case int64:
+		err = db.QueryRow("SELECT path FROM local_databases WHERE id = ?", v).Scan(&path)
+		if err != nil {
+			path, err = autoProvisionDB(db, fmt.Sprintf("db_%d", v), int(v))
+		}
+	case float64:
+		err = db.QueryRow("SELECT path FROM local_databases WHERE id = ?", int(v)).Scan(&path)
+		if err != nil {
+			path, err = autoProvisionDB(db, fmt.Sprintf("db_%d", int(v)), int(v))
+		}
+	case string:
+		if id, parseErr := strconv.Atoi(v); parseErr == nil {
+			err = db.QueryRow("SELECT path FROM local_databases WHERE id = ?", id).Scan(&path)
+			if err != nil {
+				path, err = autoProvisionDB(db, fmt.Sprintf("db_%d", id), id)
+			}
+		} else {
+			err = db.QueryRow("SELECT path FROM local_databases WHERE name = ?", v).Scan(&path)
+			if err != nil {
+				path, err = autoProvisionDB(db, v, 0)
+			}
+		}
+	default:
+		return "", fmt.Errorf("invalid database identifier type: %T", dbID)
+	}
+
 	if err != nil {
-		return "", fmt.Errorf("local database with ID %d not found", dbID)
+		return "", fmt.Errorf("local database with ID/Name '%v' not found", dbID)
 	}
 	return path, nil
 }
@@ -796,8 +848,9 @@ func NewCreateDatabaseTool() *BaseAgentTool {
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`)
 
-			_ = os.MkdirAll(".tzro/local_dbs", 0755)
-			path := filepath.Join(".tzro", "local_dbs", in.Name+".db")
+			dbDir := config.ResolvePath(filepath.Join(".tzro", "local_dbs"))
+			_ = os.MkdirAll(dbDir, 0755)
+			path := filepath.Join(dbDir, in.Name+".db")
 
 			res, err := db.Exec("INSERT OR REPLACE INTO local_databases (name, description, path) VALUES (?, ?, ?)", in.Name, in.Description, path)
 			if err != nil {
@@ -833,7 +886,7 @@ func NewCreateTableTool() *BaseAgentTool {
 		name:        "local_db_create_table",
 		description: "Add a table with typed columns to an existing local database workspace.",
 		schema: GetToolGBNFSchema(map[string]interface{}{
-			"dbId":      map[string]interface{}{"type": "integer"},
+			"dbId":      map[string]interface{}{"type": "string", "description": "Database ID (integer as string) or Database Name (string)"},
 			"tableName": map[string]interface{}{"type": "string"},
 			"columns": map[string]interface{}{
 				"type": "array",
@@ -853,7 +906,7 @@ func NewCreateTableTool() *BaseAgentTool {
 		}, []string{"dbId", "tableName", "columns"}),
 		executeFn: func(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
 			var in struct {
-				DbID      int         `json:"dbId"`
+				DbID      any         `json:"dbId"`
 				TableName string      `json:"tableName"`
 				Columns   []ColumnDef `json:"columns"`
 			}
@@ -910,19 +963,35 @@ func NewCreateTableTool() *BaseAgentTool {
 	}
 }
 
+func safeBindVal(val any) any {
+	if val == nil {
+		return nil
+	}
+	switch typedVal := val.(type) {
+	case string, int, int64, float64, bool:
+		return typedVal
+	default:
+		jsonBytes, err := json.Marshal(typedVal)
+		if err == nil {
+			return string(jsonBytes)
+		}
+		return val
+	}
+}
+
 // NewInsertTool instantiates local_db_insert tool structure
 func NewInsertTool() *BaseAgentTool {
 	return &BaseAgentTool{
 		name:        "local_db_insert",
 		description: "Insert a single row into an existing local table.",
 		schema: GetToolGBNFSchema(map[string]interface{}{
-			"dbId":      map[string]interface{}{"type": "integer"},
+			"dbId":      map[string]interface{}{"type": "string", "description": "Database ID (integer as string) or Database Name (string)"},
 			"tableName": map[string]interface{}{"type": "string"},
 			"data":      map[string]interface{}{"type": "object"},
 		}, []string{"dbId", "tableName", "data"}),
 		executeFn: func(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
 			var in struct {
-				DbID      int            `json:"dbId"`
+				DbID      any            `json:"dbId"`
 				TableName string         `json:"tableName"`
 				Data      map[string]any `json:"data"`
 			}
@@ -942,7 +1011,7 @@ func NewInsertTool() *BaseAgentTool {
 			for k, v := range in.Data {
 				cols = append(cols, k)
 				placeholders = append(placeholders, "?")
-				vals = append(vals, v)
+				vals = append(vals, safeBindVal(v))
 			}
 
 			insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", in.TableName, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
@@ -950,6 +1019,37 @@ func NewInsertTool() *BaseAgentTool {
 			localConn, err := openLocalDB(path)
 			if err != nil {
 				return ToolError("failed to open local database file: " + err.Error()), nil
+			}
+
+			// Proactively check if the table exists, and if not, auto-create it.
+			var tableExists bool
+			err = localConn.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", in.TableName).Scan(&tableExists)
+			if err != nil {
+				return ToolError("failed to check table existence: " + err.Error()), nil
+			}
+
+			if !tableExists {
+				sqlParts := []string{
+					"id INTEGER PRIMARY KEY AUTOINCREMENT",
+					"created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+					"updated_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+				}
+				for k, v := range in.Data {
+					colType := "TEXT"
+					switch v.(type) {
+					case int, int64:
+						colType = "INTEGER"
+					case float64:
+						colType = "REAL"
+					case bool:
+						colType = "INTEGER"
+					}
+					sqlParts = append(sqlParts, fmt.Sprintf("%s %s", k, colType))
+				}
+				createSQL := fmt.Sprintf("CREATE TABLE %s (%s)", in.TableName, strings.Join(sqlParts, ", "))
+				if _, err := localConn.Exec(createSQL); err != nil {
+					return ToolError("failed to auto-create table: " + err.Error()), nil
+				}
 			}
 
 			_, err = localConn.Exec(insertSQL, vals...)
@@ -971,14 +1071,14 @@ func NewUpdateTool() *BaseAgentTool {
 		name:        "local_db_update",
 		description: "Update rows matching an equality filter in local database.",
 		schema: GetToolGBNFSchema(map[string]interface{}{
-			"dbId":      map[string]interface{}{"type": "integer"},
+			"dbId":      map[string]interface{}{"type": "string", "description": "Database ID (integer as string) or Database Name (string)"},
 			"tableName": map[string]interface{}{"type": "string"},
 			"data":      map[string]interface{}{"type": "object"},
 			"where":     map[string]interface{}{"type": "object"},
 		}, []string{"dbId", "tableName", "data", "where"}),
 		executeFn: func(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
 			var in struct {
-				DbID      int            `json:"dbId"`
+				DbID      any            `json:"dbId"`
 				TableName string         `json:"tableName"`
 				Data      map[string]any `json:"data"`
 				Where     map[string]any `json:"where"`
@@ -1001,14 +1101,14 @@ func NewUpdateTool() *BaseAgentTool {
 
 			for k, v := range in.Data {
 				setParts = append(setParts, fmt.Sprintf("%s = ?", k))
-				vals = append(vals, v)
+				vals = append(vals, safeBindVal(v))
 			}
 			setParts = append(setParts, "updated_at = CURRENT_TIMESTAMP")
 
 			var whereParts []string
 			for k, v := range in.Where {
 				whereParts = append(whereParts, fmt.Sprintf("%s = ?", k))
-				vals = append(vals, v)
+				vals = append(vals, safeBindVal(v))
 			}
 
 			updateSQL := fmt.Sprintf("UPDATE %s SET %s WHERE %s", in.TableName, strings.Join(setParts, ", "), strings.Join(whereParts, " AND "))
@@ -1037,13 +1137,13 @@ func NewDeleteTool() *BaseAgentTool {
 		name:        "local_db_delete",
 		description: "Delete rows matching an equality filter in local database.",
 		schema: GetToolGBNFSchema(map[string]interface{}{
-			"dbId":      map[string]interface{}{"type": "integer"},
+			"dbId":      map[string]interface{}{"type": "string", "description": "Database ID (integer as string) or Database Name (string)"},
 			"tableName": map[string]interface{}{"type": "string"},
 			"where":     map[string]interface{}{"type": "object"},
 		}, []string{"dbId", "tableName", "where"}),
 		executeFn: func(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
 			var in struct {
-				DbID      int            `json:"dbId"`
+				DbID      any            `json:"dbId"`
 				TableName string         `json:"tableName"`
 				Where     map[string]any `json:"where"`
 			}
@@ -1065,7 +1165,7 @@ func NewDeleteTool() *BaseAgentTool {
 
 			for k, v := range in.Where {
 				whereParts = append(whereParts, fmt.Sprintf("%s = ?", k))
-				vals = append(vals, v)
+				vals = append(vals, safeBindVal(v))
 			}
 
 			deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE %s", in.TableName, strings.Join(whereParts, " AND "))
@@ -1094,12 +1194,12 @@ func NewQueryTool() *BaseAgentTool {
 		name:        "local_db_query",
 		description: "Execute a read-only SELECT statement in local database.",
 		schema: GetToolGBNFSchema(map[string]interface{}{
-			"dbId": map[string]interface{}{"type": "integer"},
+			"dbId": map[string]interface{}{"type": "string", "description": "Database ID (integer as string) or Database Name (string)"},
 			"sql":  map[string]interface{}{"type": "string"},
 		}, []string{"dbId", "sql"}),
 		executeFn: func(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
 			var in struct {
-				DbID int    `json:"dbId"`
+				DbID any    `json:"dbId"`
 				SQL  string `json:"sql"`
 			}
 			if err := json.Unmarshal(input, &in); err != nil {

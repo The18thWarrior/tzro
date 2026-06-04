@@ -26,6 +26,9 @@ A developer wants a beautiful, responsive visual interface to orchestrate, confi
 - [ ] User can trigger new agent tasks through the chat interface and receive streaming replies.
 - [ ] User can inspect the active tool catalog, loaded skills, and registered MCP Hosts.
 - [ ] User sees beautiful animations, clean dark-theme layout, and harmonious HSL tailored colors.
+- [ ] User can toggle the mobile menu and see the Mobile Navigation Drawer with navigation links.
+- [ ] User can switch between Raw Input and Compacted panels using the mobile tab switcher on screens smaller than 768px.
+- [ ] User can click Claude Desktop, Cursor Settings, and Antigravity Config tabs in the MCP Setup section and see the corresponding configuration format displayed in the code block.
 
 ## Edge Cases to Probe
 
@@ -33,6 +36,8 @@ A developer wants a beautiful, responsive visual interface to orchestrate, confi
 - Refreshing the web page while an active background task is executing to verify state persistence.
 - Starting the dashboard when the backend is offline, and verifying clean loading/retry behavior.
 - Operating the dashboard on mobile, tablet, and desktop viewports to ensure responsive container queries.
+- Resizing the window to mobile width (<768px) and toggling the hamburger menu, then checking if the mobile navigation drawer closes when a link is clicked or when clicking outside.
+- Running the compaction pipeline on mobile and verifying that the view automatically switches to the Compacted panel upon completion.
 
 ## Anti-Patterns to Watch For
 
@@ -41,3 +46,6 @@ A developer wants a beautiful, responsive visual interface to orchestrate, confi
 - [ ] Stale data indicators persisting when tasks have completed or failed.
 - [ ] Raw backend JSON errors or network stack traces displayed directly in the user interface.
 - [ ] Buttons or input forms becoming dead/unresponsive without visual loading/disabled cues.
+- [ ] Mobile navigation drawer or hamburger menu overlapping other UI elements or blocking interaction.
+- [ ] Mobile tab switcher displaying incorrect payload size metrics or failing to display the active panel.
+

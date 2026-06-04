@@ -7,6 +7,7 @@ tzro_engine
 *.dylib
 tzro_cli
 tzro_quickstart.db7
+tzro-mcp
 
 # Runtime data
 **/.tzro/
@@ -47,3 +48,7 @@ coverage/
 gorilla-main
 longbench
 *.zip
+
+.agents/*
+tzro_plugin/*
+tzro_plugin

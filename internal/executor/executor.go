@@ -638,10 +638,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 
 		systemPrompt := "You are the Local Tactician Node Executor. Summarize and compile all prior action outputs into a final cohesive response."
+		accumulatedCtx := buildAccumulatedContext(taskID, graph)
+		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
 		req := inference.StructuredInferenceRequest{
 			SystemPrompt: systemPrompt,
-			UserPrompt:   interpolatedPrompt,
+			UserPrompt:   userPrompt,
 			StreamMeta:   &meta,
 			TaskID:       taskID,
 		}

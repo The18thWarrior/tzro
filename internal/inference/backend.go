@@ -35,3 +35,21 @@ func NewBackend(cfg config.BackendConfig, publisher telemetry.EventPublisher) In
 		return NewLlamaServerBackend(GlobalLocalModel, publisher)
 	}
 }
+
+// StopActive gracefully stops whichever inference backend is currently active.
+// Prefers the pluggable ActiveBackend; falls back to the embedded GlobalLocalModel.
+func StopActive() error {
+	if ActiveBackend != nil {
+		return ActiveBackend.Stop()
+	}
+	return GlobalLocalModel.Stop()
+}
+
+// StartActive starts whichever inference backend is currently configured.
+// Prefers the pluggable ActiveBackend; falls back to the embedded GlobalLocalModel.
+func StartActive(ctx context.Context) error {
+	if ActiveBackend != nil {
+		return ActiveBackend.Start(ctx)
+	}
+	return GlobalLocalModel.Start(ctx)
+}

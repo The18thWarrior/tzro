@@ -60,6 +60,14 @@ _Avoid_: Dynamic prompt context, RAG document
 A compiled WebAssembly binary containing specialized logic executed safely on-device with strict, isolated resource limits.
 _Avoid_: WASM plugin, executable skill, CGO connector
 
+**Probe Node**:
+A goal-directed DAG node that runs a bounded **Thought Chain** internally using the **Local Model** and a constrained tool set. From the parent DAG's perspective, it is a single opaque node with a compacted summary output. Accepts a natural language goal and a set of allowed tools, executes up to a step budget (default 20), and produces a synthesized finding for downstream consumption.
+_Avoid_: Agent loop, ReAct node, explorer widget, specialist node
+
+**Thought Chain**:
+The internal execution pattern of a **Probe Node**: a sequence of stateless bridge→exec steps where each step sees only the current thought, the previous tool output, and semantically retrieved prior thoughts (via ONNX embedding similarity over the chain). Thoughts are committed to SQLite for durability. Every N steps, a rolling compaction merges recent thoughts into a compressed summary. The **Local Model** is stateless between steps — all state is externalized in the persisted chain.
+_Avoid_: ReAct loop, conversation history, session context, chain-of-thought prompting
+
 **Compaction Pipeline**:
 A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
 _Avoid_: Text parser, JSON clean filter
@@ -93,12 +101,16 @@ The inbound tool integration layer that spawns external integration child proces
 _Avoid_: Custom connector, API gateway, native integration
 
 **MCP Server Mode**:
-An alternative runtime personality where the tzro engine presents its capabilities (planning, execution, memory, knowledge graph, skills) as MCP tool schemas over stdio, allowing external agent frameworks to consume tzro as a tool server. Can operate simultaneously with the **MCP Host** role — a single tzro process may both serve tools outward and consume tools inward.
+An alternative runtime personality where the tzro engine presents its capabilities (planning, execution, memory, knowledge graph, skills) as MCP tool schemas and dynamic resources (such as `tzro://tasks/{taskId}/output` and `tzro://tasks/{taskId}/nodes/{nodeId}/output`) over stdio, allowing external agent frameworks to consume tzro as a tool server. Can operate simultaneously with the **MCP Host** role — a single tzro process may both serve tools outward and consume tools inward.
 _Avoid_: MCP Bridge, MCP Gateway, MCP Proxy
 
 **Containerized MCP Host**:
 An **MCP Host** that runs inside an isolated, resource-constrained container (e.g. Docker) rather than directly on the host OS, utilizing strict host environment variable declaration.
 _Avoid_: Docker host, containerized tool, virtualized daemon
+
+**Native Plugin Mode**:
+An integration architecture where the tzro engine runs in-process as a module or plugin within an external agent harness (such as Hermes Agent or Google Antigravity SDK). In this mode, the local step executor can programmatically dispatch primitive tools directly to the host process in-process, bypassing the parent LLM's request-response loops and eliminating round-trip cloud overhead.
+_Avoid_: In-process worker, direct connector, host module
 
 **Delegated Secret**:
 A sensitive runtime credential (e.g. API key, access token) that is referenced dynamically via an environment variable prefix (such as `$`) in configuration JSONs and resolved on-demand from the host environment, keeping configurations clean and credential-free.
@@ -115,6 +127,14 @@ _Avoid_: Raw SQL driver, custom DB connector
 **Database Manager**:
 The unified relational storage engine orchestrating persistence, schema migration, vector memory retrieval, and transaction checkpointing across both local and dynamic remote databases.
 _Avoid_: SqliteDatabase (too narrow), JSON DB, storage client
+
+**Delegation Mode**:
+The cost-optimization strategy controlling how aggressively the cloud/frontier model offloads sub-tasks to the **Local Model** via direct completion and classification MCP tools. Three tiers: **Conservative** (DAG workflows only), **Balanced** (classification + extraction + formatting), **Aggressive** (everything except frontier reasoning). The mode tunes tool descriptions at registration time to steer the cloud model's delegation behavior without protocol changes.
+_Avoid_: Cost mode, cheapness level, offload policy
+
+**Offload Policy**:
+The decision framework an external agent consuming tzro via **MCP Server Mode** applies to determine which phases of work to submit as **Tasks** versus execute directly in its own context window. Phases involving tool-heavy data collection, parallelizable operations, or large output consumption are offloaded; phases requiring frontier reasoning, code generation, or interactive user dialogue are retained.
+_Avoid_: Delegation Mode (internal cloud→local routing), routing policy, execution strategy
 
 ---
 

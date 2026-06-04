@@ -1,0 +1,7 @@
+{
+  "tzro": {
+    "command": "TZRO_MCP_PATH",
+    "args": [],
+    "env": {}
+  }
+}

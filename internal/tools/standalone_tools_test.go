@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"tzro/internal/db"
@@ -580,5 +581,224 @@ func TestLocalConnectionCachingAndSeeding(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected table fact_memories to exist, count was: %d", count)
+	}
+}
+
+func TestLocalDatabaseSelfHealing(t *testing.T) {
+	// Setup isolated test database
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_db_self_healing_test.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_db_self_healing_test.db")
+		os.RemoveAll(".tzro/local_dbs")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init DB: %v", err)
+	}
+
+	Register(NewCreateTableTool())
+	Register(NewInsertTool())
+	Register(NewQueryTool())
+
+	ctx := context.Background()
+
+	// 1. Directly attempt to create a table on a non-existent database named "self_healing_sandbox".
+	// Since "self_healing_sandbox" does not exist in registry, the resolveDBPath function
+	// should automatically provision and register it.
+	resStr, err := Call(ctx, "local_db_create_table", map[string]interface{}{
+		"dbId":      "self_healing_sandbox",
+		"tableName": "reports",
+		"columns": []interface{}{
+			map[string]interface{}{
+				"name": "title",
+				"type": "TEXT",
+			},
+			map[string]interface{}{
+				"name": "body",
+				"type": "TEXT",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("local_db_create_table failed: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(resStr), &res)
+	if !res.Success {
+		t.Fatalf("self-healing create table unsuccessful: %s", res.Error)
+	}
+
+	// 2. Insert record using database name
+	resStr, err = Call(ctx, "local_db_insert", map[string]interface{}{
+		"dbId":      "self_healing_sandbox",
+		"tableName": "reports",
+		"data": map[string]interface{}{
+			"title": "Lincoln Report",
+			"body":  "Abraham Lincoln was the 16th president of the United States.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("local_db_insert failed: %v", err)
+	}
+	json.Unmarshal([]byte(resStr), &res)
+	if !res.Success {
+		t.Fatalf("self-healing insert unsuccessful: %s", res.Error)
+	}
+
+	// 3. Query record using database name
+	resStr, err = Call(ctx, "local_db_query", map[string]interface{}{
+		"dbId": "self_healing_sandbox",
+		"sql":  "SELECT title, body FROM reports WHERE title = 'Lincoln Report'",
+	})
+	if err != nil {
+		t.Fatalf("local_db_query failed: %v", err)
+	}
+	json.Unmarshal([]byte(resStr), &res)
+	if !res.Success {
+		t.Fatalf("self-healing query unsuccessful: %s", res.Error)
+	}
+
+	rowsList, ok := res.Data.([]interface{})
+	if !ok || len(rowsList) != 1 {
+		t.Fatalf("expected 1 record, got: %v", res.Data)
+	}
+	firstRow := rowsList[0].(map[string]interface{})
+	if firstRow["title"].(string) != "Lincoln Report" {
+		t.Errorf("expected title 'Lincoln Report', got: %s", firstRow["title"])
+	}
+
+	// 4. Directly insert into a non-existent table to verify dynamic auto-creation of tables.
+	resStr, err = Call(ctx, "local_db_insert", map[string]interface{}{
+		"dbId":      "self_healing_sandbox",
+		"tableName": "dynamic_auto_table",
+		"data": map[string]interface{}{
+			"topic":   "Self Healing",
+			"score":   9.5,
+			"details": map[string]interface{}{"note": "dynamic creation"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("local_db_insert for dynamic table failed: %v", err)
+	}
+	json.Unmarshal([]byte(resStr), &res)
+	if !res.Success {
+		t.Fatalf("dynamic table auto-creation insertion unsuccessful: %s", res.Error)
+	}
+
+	// Query from the dynamically created table to ensure data was correctly persisted
+	resStr, err = Call(ctx, "local_db_query", map[string]interface{}{
+		"dbId": "self_healing_sandbox",
+		"sql":  "SELECT topic, score, details FROM dynamic_auto_table",
+	})
+	if err != nil {
+		t.Fatalf("query from dynamic table failed: %v", err)
+	}
+	json.Unmarshal([]byte(resStr), &res)
+	if !res.Success {
+		t.Fatalf("query from dynamic table unsuccessful: %s", res.Error)
+	}
+	rowsList, ok = res.Data.([]interface{})
+	if !ok || len(rowsList) != 1 {
+		t.Fatalf("expected 1 record in dynamic table, got: %v", res.Data)
+	}
+	row := rowsList[0].(map[string]interface{})
+	if row["topic"].(string) != "Self Healing" {
+		t.Errorf("expected topic 'Self Healing', got: %s", row["topic"])
+	}
+	if row["score"].(float64) != 9.5 {
+		t.Errorf("expected score 9.5, got: %v", row["score"])
+	}
+}
+
+func TestLocalDatabaseAutoSerialization(t *testing.T) {
+	// Setup isolated test database
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_db_serialization_test.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_db_serialization_test.db")
+		os.RemoveAll(".tzro/local_dbs")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init DB: %v", err)
+	}
+
+	Register(NewCreateTableTool())
+	Register(NewInsertTool())
+	Register(NewQueryTool())
+
+	ctx := context.Background()
+
+	// 1. Create table
+	_, err := Call(ctx, "local_db_create_table", map[string]interface{}{
+		"dbId":      "serialization_sandbox",
+		"tableName": "payloads",
+		"columns": []interface{}{
+			map[string]interface{}{
+				"name": "metadata",
+				"type": "TEXT",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("local_db_create_table failed: %v", err)
+	}
+
+	// 2. Insert record containing a map and a slice in columns
+	resStr, err := Call(ctx, "local_db_insert", map[string]interface{}{
+		"dbId":      "serialization_sandbox",
+		"tableName": "payloads",
+		"data": map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"tags": []interface{}{"Lincoln", "Presidents"},
+				"info": map[string]interface{}{
+					"born": 1809,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("local_db_insert failed: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(resStr), &res)
+	if !res.Success {
+		t.Fatalf("insert with map parameter failed: %s", res.Error)
+	}
+
+	// 3. Query and assert that it was successfully serialized to a JSON string
+	resStr, err = Call(ctx, "local_db_query", map[string]interface{}{
+		"dbId": "serialization_sandbox",
+		"sql":  "SELECT metadata FROM payloads",
+	})
+	if err != nil {
+		t.Fatalf("local_db_query failed: %v", err)
+	}
+	json.Unmarshal([]byte(resStr), &res)
+	if !res.Success {
+		t.Fatalf("query failed: %s", res.Error)
+	}
+
+	rowsList, ok := res.Data.([]interface{})
+	if !ok || len(rowsList) != 1 {
+		t.Fatalf("expected 1 record, got: %v", res.Data)
+	}
+
+	firstRow := rowsList[0].(map[string]interface{})
+	metadataStr, ok := firstRow["metadata"].(string)
+	if !ok {
+		t.Fatalf("expected metadata to be a serialized JSON string, got %T", firstRow["metadata"])
+	}
+
+	// Verify it contains our tags
+	if !strings.Contains(metadataStr, "Lincoln") || !strings.Contains(metadataStr, "born") {
+		t.Errorf("incorrect serialized JSON data: %s", metadataStr)
 	}
 }

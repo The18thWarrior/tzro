@@ -4,6 +4,43 @@
 
 document.addEventListener("DOMContentLoaded", () => {
   // =========================================================================
+  // Mobile Navigation Drawer Toggle
+  // =========================================================================
+  const mobileMenuToggle = document.getElementById("mobile-menu-toggle");
+  const mobileNavDrawer = document.getElementById("mobile-nav-drawer");
+  const mobileNavLinks = document.querySelectorAll(".mobile-nav-link");
+
+  if (mobileMenuToggle && mobileNavDrawer) {
+    mobileMenuToggle.addEventListener("click", () => {
+      const isOpen = mobileNavDrawer.classList.toggle("open");
+      mobileMenuToggle.classList.toggle("active", isOpen);
+      mobileMenuToggle.setAttribute("aria-expanded", isOpen);
+    });
+
+    // Close mobile menu when a link is clicked
+    mobileNavLinks.forEach((link) => {
+      link.addEventListener("click", () => {
+        mobileNavDrawer.classList.remove("open");
+        mobileMenuToggle.classList.remove("active");
+        mobileMenuToggle.setAttribute("aria-expanded", "false");
+      });
+    });
+
+    // Close when clicking outside of the drawer
+    document.addEventListener("click", (e) => {
+      if (
+        mobileNavDrawer.classList.contains("open") &&
+        !mobileNavDrawer.contains(e.target) &&
+        !mobileMenuToggle.contains(e.target)
+      ) {
+        mobileNavDrawer.classList.remove("open");
+        mobileMenuToggle.classList.remove("active");
+        mobileMenuToggle.setAttribute("aria-expanded", "false");
+      }
+    });
+  }
+
+  // =========================================================================
   // 1. INITIALIZE ALL PLAYGROUNDS
   // =========================================================================
   let vASimIntervals = [];
@@ -208,6 +245,32 @@ document.addEventListener("DOMContentLoaded", () => {
   const metricRatio = document.getElementById("metric-ratio");
   const rawSizeLabel = document.getElementById("raw-size");
   const compactedSizeLabel = document.getElementById("compacted-size");
+  const rawSizeTab = document.getElementById("raw-size-tab");
+  const compactedSizeTab = document.getElementById("compacted-size-tab");
+  const compactorTabBtns = document.querySelectorAll(".compactor-tab-btn");
+  const compactorRawPanel = document.getElementById("compactor-raw-panel");
+  const compactorCompactedPanel = document.getElementById(
+    "compactor-compacted-panel",
+  );
+
+  if (compactorTabBtns.length > 0) {
+    compactorTabBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        compactorTabBtns.forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const target = btn.getAttribute("data-target");
+        if (target === "raw") {
+          if (compactorRawPanel) compactorRawPanel.classList.add("active");
+          if (compactorCompactedPanel)
+            compactorCompactedPanel.classList.remove("active");
+        } else {
+          if (compactorRawPanel) compactorRawPanel.classList.remove("active");
+          if (compactorCompactedPanel)
+            compactorCompactedPanel.classList.add("active");
+        }
+      });
+    });
+  }
 
   const presetBtns = document.querySelectorAll(".preset-btn");
   const pipelineSteps = [
@@ -269,6 +332,23 @@ document.addEventListener("DOMContentLoaded", () => {
     rawSizeLabel.textContent = preset.size;
     compactedSizeLabel.textContent = "0.0";
     rawPayloadDisplay.value = preset.raw;
+
+    // Reset mobile tab elements
+    if (rawSizeTab) rawSizeTab.textContent = preset.size;
+    if (compactedSizeTab) compactedSizeTab.textContent = "0.0";
+
+    // Switch mobile back to raw panel on reset/preset selection
+    if (compactorRawPanel && compactorCompactedPanel) {
+      compactorRawPanel.classList.add("active");
+      compactorCompactedPanel.classList.remove("active");
+      compactorTabBtns.forEach((b) => {
+        if (b.getAttribute("data-target") === "raw") {
+          b.classList.add("active");
+        } else {
+          b.classList.remove("active");
+        }
+      });
+    }
 
     vBCompressBtn.disabled = false;
     vBCompressBtn.textContent = "Run Compaction Pipeline";
@@ -376,6 +456,20 @@ document.addEventListener("DOMContentLoaded", () => {
     vBSimIntervals.push(
       setTimeout(() => {
         compactedSizeLabel.textContent = preset.finalSize;
+        if (compactedSizeTab) compactedSizeTab.textContent = preset.finalSize;
+
+        // Auto switch to compacted tab on mobile when compaction finishes
+        if (compactorRawPanel && compactorCompactedPanel) {
+          compactorRawPanel.classList.remove("active");
+          compactorCompactedPanel.classList.add("active");
+          compactorTabBtns.forEach((b) => {
+            if (b.getAttribute("data-target") === "compacted") {
+              b.classList.add("active");
+            } else {
+              b.classList.remove("active");
+            }
+          });
+        }
 
         // Determine if SQLite disk cache fallback gets triggered (emulated threshold check)
         const exceedsThreshold = parseFloat(preset.size) > 30; // Let's emulate threshold for logs & scraped
@@ -827,6 +921,55 @@ func main() {
         hitlApprovalPromiseResolve(false);
         hitlApprovalPromiseResolve = null;
       }
+    });
+  }
+
+  // =========================================================================
+  // 5. MCP CLIENT CONFIGURATION TABS
+  // =========================================================================
+  const mcpTabBtns = document.querySelectorAll(".mcp-tab-btn");
+  const mcpConfigDisplay = document.getElementById("mcp-config-display");
+
+  const MCP_CONFIGS = {
+    claude: `{
+  "mcpServers": {
+    "tzro": {
+      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
+      "args": [],
+      "env": {
+        "PORT": "8080"
+      }
+    }
+  }
+}`,
+    cursor: `Name: tzro
+Type: command
+Command: /absolute/path/to/tzro/bin/tzro-mcp`,
+    agy: `{
+  "mcpServers": {
+    "tzro": {
+      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
+      "args": [],
+      "env": {
+        "TZRO_DIR": "/absolute/path/to/tzro",
+        "ANTIGRAVITY_AGENT": "$ANTIGRAVITY_AGENT",
+        "ANTIGRAVITY_TRAJECTORY_ID": "$ANTIGRAVITY_TRAJECTORY_ID",
+        "ANTIGRAVITY_LS_ADDRESS": "$ANTIGRAVITY_LS_ADDRESS",
+        "ANTIGRAVITY_CSRF_TOKEN": "$ANTIGRAVITY_CSRF_TOKEN"
+      }
+    }
+  }
+}`,
+  };
+
+  if (mcpTabBtns.length > 0 && mcpConfigDisplay) {
+    mcpTabBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        mcpTabBtns.forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const client = btn.getAttribute("data-client");
+        mcpConfigDisplay.textContent = MCP_CONFIGS[client];
+      });
     });
   }
 

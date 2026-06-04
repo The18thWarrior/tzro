@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"tzro/internal/config"
 	"tzro/internal/db"
 	"tzro/internal/embeddings"
 
@@ -89,6 +90,18 @@ func (sdb *SqliteDatabase) InitWithConnection(conn *sql.DB, dialect db.DialectAd
 func (sdb *SqliteDatabase) Init() error {
 	sdb.mutex.Lock()
 	defer sdb.mutex.Unlock()
+
+	// Resolve dbPath and jsonPath dynamically if env variables are set and the current paths are defaults
+	if sdb.dbPath == "tzro.db" {
+		if envPath := os.Getenv("TZRO_DB_PATH"); envPath != "" {
+			sdb.dbPath = envPath
+		} else {
+			sdb.dbPath = config.ResolvePath("tzro.db")
+		}
+	}
+	if sdb.jsonPath == "tzro_db.json" {
+		sdb.jsonPath = config.ResolvePath("tzro_db.json")
+	}
 
 	var err error
 	sdb.db, err = sql.Open("sqlite", sdb.dbPath)

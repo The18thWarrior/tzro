@@ -3,7 +3,10 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,24 +134,32 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 	}
 
 	expectedTools := map[string]bool{
-		"tzro_run":               false,
-		"tzro_status":            false,
-		"tzro_list_tasks":        false,
-		"tzro_configure_tools":   false,
-		"tzro_memory_query":      false,
-		"tzro_memory_ingest":     false,
-		"tzro_kg_neighborhood":   false,
-		"tzro_kg_add_entity":     false,
-		"tzro_rag_context":       false,
-		"tzro_skills_list":       false,
-		"tzro_skills_get":        false,
-		"tzro_skills_relevant":   false,
-		"tzro_skills_add":        false,
-		"tzro_hook_list":         false,
-		"tzro_hook_approve":      false,
-		"tzro_resume":            false,
-		"tzro_observer_events":   false,
-		"tzro_observer_memories": false,
+		"tzro_run":                   false,
+		"tzro_status":                false,
+		"tzro_list_tasks":            false,
+		"tzro_configure_tools":       false,
+		"tzro_web_search":            false,
+		"tzro_memory_query":          false,
+		"tzro_memory_ingest":         false,
+		"tzro_kg_neighborhood":       false,
+		"tzro_kg_add_entity":         false,
+		"tzro_rag_context":           false,
+		"tzro_skills_list":           false,
+		"tzro_skills_get":            false,
+		"tzro_skills_relevant":       false,
+		"tzro_skills_add":            false,
+		"tzro_hook_list":             false,
+		"tzro_hook_approve":          false,
+		"tzro_resume":                false,
+		"tzro_observer_events":       false,
+		"tzro_observer_memories":     false,
+		"tzro_register_client_tools": false,
+		"tzro_client_tool_list":      false,
+		"tzro_client_tool_submit":    false,
+		"tzro_model_list":            false,
+		"tzro_model_set":             false,
+		"tzro_completion":            false,
+		"tzro_classification":        false,
 	}
 
 	for _, toolItem := range tools {
@@ -676,5 +687,604 @@ func TestMCPServer_ClientToolDispatch(t *testing.T) {
 
 	if !strings.Contains(statusRespStr, "slack message sent successfully") {
 		t.Errorf("expected status output to contain submitted slack output, got: %s", statusRespStr)
+	}
+}
+
+func TestMCPServer_ResourceTemplatesList(t *testing.T) {
+	// 1. Build the binary first
+	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-templates-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binPath := filepath.Join(tmpDir, "tzro-mcp")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build tzro-mcp binary: %v", err)
+	}
+
+	// 2. Start the binary
+	cmd := exec.Command(binPath)
+	cmd.Dir = tmpDir
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdout pipe: %v", err)
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("failed to get stderr pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start tzro-mcp: %v", err)
+	}
+
+	go func() {
+		_, _ = io.Copy(os.Stderr, stderrPipe)
+	}()
+
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+	}()
+
+	reader := bufio.NewReader(stdout)
+
+	sendAndReceive := func(reqJSON string) string {
+		_, err := stdin.Write([]byte(reqJSON + "\n"))
+		if err != nil {
+			t.Fatalf("failed to write to stdin: %v", err)
+		}
+
+		lineChan := make(chan string, 1)
+		errChan := make(chan error, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errChan <- err
+				return
+			}
+			lineChan <- line
+		}()
+
+		select {
+		case line := <-lineChan:
+			return line
+		case err := <-errChan:
+			t.Fatalf("failed to read line from stdout: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for response to: %s", reqJSON)
+		}
+		return ""
+	}
+
+	// 3. Send initialize request
+	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	_ = sendAndReceive(initReq)
+
+	// 4. Send initialized notification
+	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+
+	// 5. Send resources/templates/list request
+	listReq := `{"jsonrpc":"2.0","id":2,"method":"resources/templates/list","params":{}}`
+	listRespStr := sendAndReceive(listReq)
+	t.Logf("templates list response: %s", listRespStr)
+
+	// Verify we got the template paths
+	if !strings.Contains(listRespStr, "tzro://tasks/{taskId}/output") {
+		t.Errorf("expected template 'tzro://tasks/{taskId}/output' not found in response: %s", listRespStr)
+	}
+	if !strings.Contains(listRespStr, "tzro://tasks/{taskId}/nodes/{nodeId}/output") {
+		t.Errorf("expected template 'tzro://tasks/{taskId}/nodes/{nodeId}/output' not found in response: %s", listRespStr)
+	}
+}
+
+func TestMCPServer_ResourceReadCompact(t *testing.T) {
+	// 1. Build the binary first
+	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-read-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binPath := filepath.Join(tmpDir, "tzro-mcp")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build tzro-mcp binary: %v", err)
+	}
+
+	// 2. Set up DB path in test process and initialize the database.
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	dbPath := filepath.Join(tmpDir, "tzro.db")
+	memory.DB.SetDBPathForTesting(dbPath)
+	defer func() {
+		memory.DB.Close()
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init DB in test: %v", err)
+	}
+
+	// 3. Pre-insert task and node state into SQLite
+	err = memory.DB.SetNodeState("task-test-read", "node-test-1", "completed", "[Local Tactician] compacted node output")
+	if err != nil {
+		t.Fatalf("failed to set node state: %v", err)
+	}
+	err = memory.DB.SetNodeRawOutput("task-test-read", "node-test-1", "raw node output here")
+	if err != nil {
+		t.Fatalf("failed to set node raw output: %v", err)
+	}
+
+	// 4. Start the binary
+	cmd := exec.Command(binPath)
+	cmd.Dir = tmpDir
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdout pipe: %v", err)
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("failed to get stderr pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start tzro-mcp: %v", err)
+	}
+
+	go func() {
+		_, _ = io.Copy(os.Stderr, stderrPipe)
+	}()
+
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+	}()
+
+	reader := bufio.NewReader(stdout)
+
+	sendAndReceive := func(reqJSON string) string {
+		_, err := stdin.Write([]byte(reqJSON + "\n"))
+		if err != nil {
+			t.Fatalf("failed to write to stdin: %v", err)
+		}
+
+		lineChan := make(chan string, 1)
+		errChan := make(chan error, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errChan <- err
+				return
+			}
+			lineChan <- line
+		}()
+
+		select {
+		case line := <-lineChan:
+			return line
+		case err := <-errChan:
+			t.Fatalf("failed to read line from stdout: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for response to: %s", reqJSON)
+		}
+		return ""
+	}
+
+	// 5. Send initialize request
+	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	_ = sendAndReceive(initReq)
+
+	// 6. Send initialized notification
+	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+
+	// 7. Read task output resource (compact by default)
+	readTaskReq := `{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"tzro://tasks/task-test-read/output"}}`
+	readTaskResp := sendAndReceive(readTaskReq)
+	t.Logf("readTaskResp: %s", readTaskResp)
+
+	if !strings.Contains(readTaskResp, "node-test-1") || !strings.Contains(readTaskResp, "compacted node output") {
+		t.Errorf("read task output response missing node-test-1 or compacted state details: %s", readTaskResp)
+	}
+
+	// 8. Read node output resource (compact by default)
+	readNodeReq := `{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"tzro://tasks/task-test-read/nodes/node-test-1/output"}}`
+	readNodeResp := sendAndReceive(readNodeReq)
+	t.Logf("readNodeResp: %s", readNodeResp)
+
+	if !strings.Contains(readNodeResp, "compacted node output") || strings.Contains(readNodeResp, "raw node output") {
+		t.Errorf("read node output response should contain compacted output and NOT contain raw output: %s", readNodeResp)
+	}
+}
+
+func TestMCPServer_ResourceReadRaw(t *testing.T) {
+	// 1. Build the binary first
+	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-read-raw-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binPath := filepath.Join(tmpDir, "tzro-mcp")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build tzro-mcp binary: %v", err)
+	}
+
+	// 2. Set up DB path in test process and initialize the database.
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	dbPath := filepath.Join(tmpDir, "tzro.db")
+	memory.DB.SetDBPathForTesting(dbPath)
+	defer func() {
+		memory.DB.Close()
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init DB in test: %v", err)
+	}
+
+	// 3. Pre-insert task and node state into SQLite
+	err = memory.DB.SetNodeState("task-test-raw", "node-test-1", "completed", "[Local Model] compacted node output")
+	if err != nil {
+		t.Fatalf("failed to set node state: %v", err)
+	}
+	err = memory.DB.SetNodeRawOutput("task-test-raw", "node-test-1", "raw node output here")
+	if err != nil {
+		t.Fatalf("failed to set node raw output: %v", err)
+	}
+
+	// 4. Start the binary
+	cmd := exec.Command(binPath)
+	cmd.Dir = tmpDir
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdout pipe: %v", err)
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("failed to get stderr pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start tzro-mcp: %v", err)
+	}
+
+	go func() {
+		_, _ = io.Copy(os.Stderr, stderrPipe)
+	}()
+
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+	}()
+
+	reader := bufio.NewReader(stdout)
+
+	sendAndReceive := func(reqJSON string) string {
+		_, err := stdin.Write([]byte(reqJSON + "\n"))
+		if err != nil {
+			t.Fatalf("failed to write to stdin: %v", err)
+		}
+
+		lineChan := make(chan string, 1)
+		errChan := make(chan error, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errChan <- err
+				return
+			}
+			lineChan <- line
+		}()
+
+		select {
+		case line := <-lineChan:
+			return line
+		case err := <-errChan:
+			t.Fatalf("failed to read line from stdout: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for response to: %s", reqJSON)
+		}
+		return ""
+	}
+
+	// 5. Send initialize request
+	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	_ = sendAndReceive(initReq)
+
+	// 6. Send initialized notification
+	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+
+	// 7. Read task output resource with format=raw
+	readTaskReq := `{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"tzro://tasks/task-test-raw/output?format=raw"}}`
+	readTaskResp := sendAndReceive(readTaskReq)
+	t.Logf("readTaskResp with raw: %s", readTaskResp)
+
+	if !strings.Contains(readTaskResp, "raw node output here") {
+		t.Errorf("read task output response with format=raw should contain raw output: %s", readTaskResp)
+	}
+
+	// 8. Read node output resource with format=raw
+	readNodeReq := `{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"tzro://tasks/task-test-raw/nodes/node-test-1/output?format=raw"}}`
+	readNodeResp := sendAndReceive(readNodeReq)
+	t.Logf("readNodeResp with raw: %s", readNodeResp)
+
+	if !strings.Contains(readNodeResp, "raw node output here") {
+		t.Errorf("read node output response with format=raw should contain raw output: %s", readNodeResp)
+	}
+}
+
+func TestMCPServer_ResourceSubscribe(t *testing.T) {
+	// 1. Build the binary first
+	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-sub-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binPath := filepath.Join(tmpDir, "tzro-mcp")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build tzro-mcp binary: %v", err)
+	}
+
+	// 2. Start the binary
+	cmd := exec.Command(binPath)
+	cmd.Dir = tmpDir
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdout pipe: %v", err)
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("failed to get stderr pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start tzro-mcp: %v", err)
+	}
+
+	go func() {
+		_, _ = io.Copy(os.Stderr, stderrPipe)
+	}()
+
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+	}()
+
+	reader := bufio.NewReader(stdout)
+
+	sendAndReceive := func(reqJSON string) string {
+		_, err := stdin.Write([]byte(reqJSON + "\n"))
+		if err != nil {
+			t.Fatalf("failed to write to stdin: %v", err)
+		}
+
+		lineChan := make(chan string, 1)
+		errChan := make(chan error, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errChan <- err
+				return
+			}
+			lineChan <- line
+		}()
+
+		select {
+		case line := <-lineChan:
+			return line
+		case err := <-errChan:
+			t.Fatalf("failed to read line from stdout: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for response to: %s", reqJSON)
+		}
+		return ""
+	}
+
+	// 3. Send initialize request
+	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	_ = sendAndReceive(initReq)
+
+	// 4. Send initialized notification
+	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+
+	// 5. Send resources/subscribe request
+	subReq := `{"jsonrpc":"2.0","id":2,"method":"resources/subscribe","params":{"uri":"tzro://tasks/task-test-sub/output"}}`
+	subResp := sendAndReceive(subReq)
+	t.Logf("subscribe response: %s", subResp)
+
+	if !strings.Contains(subResp, `"result":`) || strings.Contains(subResp, "error") {
+		t.Errorf("expected successful empty result for subscribe, got: %s", subResp)
+	}
+
+	// 6. Send resources/unsubscribe request
+	unsubReq := `{"jsonrpc":"2.0","id":3,"method":"resources/unsubscribe","params":{"uri":"tzro://tasks/task-test-sub/output"}}`
+	unsubResp := sendAndReceive(unsubReq)
+	t.Logf("unsubscribe response: %s", unsubResp)
+
+	if !strings.Contains(unsubResp, `"result":`) || strings.Contains(unsubResp, "error") {
+		t.Errorf("expected successful empty result for unsubscribe, got: %s", unsubResp)
+	}
+}
+
+func TestMCPServer_ResourceSubscribeEventBridge(t *testing.T) {
+	// Start a mock SSE server to stream daemon events
+	messageChan := make(chan string, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		flusher.Flush()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case msg := <-messageChan:
+				fmt.Fprintf(w, "data: %s\n\n", msg)
+				flusher.Flush()
+			}
+		}
+	}))
+	defer mockServer.Close()
+
+	// 1. Build the binary first
+	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-bridge-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binPath := filepath.Join(tmpDir, "tzro-mcp")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build tzro-mcp binary: %v", err)
+	}
+
+	// 2. Start the binary, passing TZRO_DAEMON_URL pointing to the mock server
+	cmd := exec.Command(binPath)
+	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DAEMON_URL="+mockServer.URL)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdout pipe: %v", err)
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("failed to get stderr pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start tzro-mcp: %v", err)
+	}
+
+	go func() {
+		_, _ = io.Copy(os.Stderr, stderrPipe)
+	}()
+
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+	}()
+
+	reader := bufio.NewReader(stdout)
+
+	sendAndReceive := func(reqJSON string) string {
+		_, err := stdin.Write([]byte(reqJSON + "\n"))
+		if err != nil {
+			t.Fatalf("failed to write to stdin: %v", err)
+		}
+
+		lineChan := make(chan string, 1)
+		errChan := make(chan error, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errChan <- err
+				return
+			}
+			lineChan <- line
+		}()
+
+		select {
+		case line := <-lineChan:
+			return line
+		case err := <-errChan:
+			t.Fatalf("failed to read line from stdout: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for response to: %s", reqJSON)
+		}
+		return ""
+	}
+
+	// 3. Send initialize request
+	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	_ = sendAndReceive(initReq)
+
+	// 4. Send initialized notification
+	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+
+	// 5. Send resources/subscribe request
+	subReq := `{"jsonrpc":"2.0","id":2,"method":"resources/subscribe","params":{"uri":"tzro://tasks/task-test-bridge/output"}}`
+	subResp := sendAndReceive(subReq)
+	t.Logf("subscribe response: %s", subResp)
+
+	// 6. Push a mock Event to mockServer via SSE stream channel
+	mockChunkJSON := `{"taskId":"task-test-bridge","source":"executor","type":"node_state","content":"mock node execution completed"}`
+	messageChan <- mockChunkJSON
+
+	// 7. Wait and read the notification from stdout (server subprocess output)
+	notificationChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+	go func() {
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if strings.Contains(line, "notifications/resources/updated") {
+				notificationChan <- line
+				return
+			}
+		}
+	}()
+
+	select {
+	case notifLine := <-notificationChan:
+		t.Logf("received notification line: %s", notifLine)
+		if !strings.Contains(notifLine, "tzro://tasks/task-test-bridge/output") {
+			t.Errorf("expected notification URI to match, got: %s", notifLine)
+		}
+	case err := <-errChan:
+		t.Fatalf("failed to read notification line: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timeout waiting for notification from event bridge")
 	}
 }

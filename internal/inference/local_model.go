@@ -56,6 +56,11 @@ func (m *LocalModelManager) getPublisher() telemetry.EventPublisher {
 	return telemetry.Default
 }
 
+// resolveTzroPath delegates to config.ResolvePath — canonical TZRO_DIR resolution.
+func resolveTzroPath(relPath string) string {
+	return config.ResolvePath(relPath)
+}
+
 var GlobalLocalModel = &LocalModelManager{
 	Status:           "Stopped",
 	ManifestProgress: 100, // Preloaded defaults
@@ -85,7 +90,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	m.Status = "Starting"
 
 	// 1. Attempt Server Process Adoption across reloads
-	portFile := filepath.Join(".tzro", ".llama-server.port")
+	portFile := resolveTzroPath(filepath.Join(".tzro", ".llama-server.port"))
 	if data, err := os.ReadFile(portFile); err == nil {
 		fields := strings.Split(strings.TrimSpace(string(data)), ":")
 		if len(fields) == 2 {
@@ -102,7 +107,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 					m.ActivePort = savedPort
 					m.ActivePID = savedPID
 					m.Status = "Adopted"
-					fmt.Printf("[Llama Sidecar] Adopted existing running process on Port %d (PID %d)\n", savedPort, savedPID)
+					fmt.Fprintf(os.Stderr, "[Llama Sidecar] Adopted existing running process on Port %d (PID %d)\n", savedPort, savedPID)
 					return nil
 				}
 			}
@@ -119,18 +124,18 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 
 	// 3. Thread scheduling: Pin threads strictly to Performance (P) cores count
 	pCores := m.getPerformanceCoresCount()
-	fmt.Printf("[Llama Sidecar] Thread scheduler count pinned to %d performance CPU cores.\n", pCores)
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] Thread scheduler count pinned to %d performance CPU cores.\n", pCores)
 
 	// 4. GPU layer offloading: platform-aware detection
 	gpuLayers := m.getGPULayerCount()
-	fmt.Printf("[Llama Sidecar] GPU offload layers: %d\n", gpuLayers)
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] GPU offload layers: %d\n", gpuLayers)
 
 	// 5. KV cache quantization: mode-dependent (q4_0 cooperative, q8_0 local)
 	kvCacheType := "q4_0"
 	if cfg.ModelMode == "local" {
 		kvCacheType = "q8_0"
 	}
-	fmt.Printf("[Llama Sidecar] KV cache quantization: %s (mode: %s)\n", kvCacheType, cfg.ModelMode)
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] KV cache quantization: %s (mode: %s)\n", kvCacheType, cfg.ModelMode)
 
 	// 6. Slot save path for KV cache preemption save/restore
 	slotSavePath := filepath.Join(config.GetModelsDir(), "kv-cache")
@@ -171,8 +176,9 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
 
 	// Create logs folder
-	_ = os.MkdirAll(filepath.Join(".tzro", "logs"), 0755)
-	logFile, err := os.Create(filepath.Join(".tzro", "logs", "llama-server.log"))
+	logsDir := resolveTzroPath(filepath.Join(".tzro", "logs"))
+	_ = os.MkdirAll(logsDir, 0755)
+	logFile, err := os.Create(filepath.Join(logsDir, "llama-server.log"))
 	if err == nil {
 		m.cmd.Stdout = logFile
 		m.cmd.Stderr = logFile
@@ -188,7 +194,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 
 	// Write Port/PID file
 	_ = os.WriteFile(portFile, []byte(fmt.Sprintf("%d:%d", m.ActivePort, m.ActivePID)), 0644)
-	fmt.Printf("[Llama Sidecar] Launched llama-server child process on Port %d (PID %d)\n", m.ActivePort, m.ActivePID)
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] Launched llama-server child process on Port %d (PID %d)\n", m.ActivePort, m.ActivePID)
 	return nil
 }
 
@@ -197,7 +203,7 @@ func (m *LocalModelManager) Stop() error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	portFile := filepath.Join(".tzro", ".llama-server.port")
+	portFile := resolveTzroPath(filepath.Join(".tzro", ".llama-server.port"))
 	_ = os.Remove(portFile)
 
 	if m.Status == "Stopped" {
@@ -217,7 +223,7 @@ func (m *LocalModelManager) Stop() error {
 		}
 	}
 
-	fmt.Println("[Llama Sidecar] Terminated persistent local server process.")
+	fmt.Fprintln(os.Stderr, "[Llama Sidecar] Terminated persistent local server process.")
 	return nil
 }
 
@@ -251,7 +257,7 @@ func (m *LocalModelManager) EraseSlot(ctx context.Context, slotID int) error {
 		return nil
 	}
 
-	fmt.Printf("[Llama Sidecar GC] Erasing slot %d context...\n", slotID)
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Erasing slot %d context...\n", slotID)
 	eraseURL := fmt.Sprintf("http://localhost:%d/slots/%d?action=erase", m.ActivePort, slotID)
 	req, err := http.NewRequestWithContext(ctx, "POST", eraseURL, nil)
 	if err != nil {
@@ -302,35 +308,33 @@ func (m *LocalModelManager) CheckAndTriggerTier2GC(ctx context.Context) {
 		return
 	}
 
-	rss, err := m.getProcessRSS(pid)
-	if err != nil {
-		fmt.Printf("[Llama Sidecar GC Warning] Failed to check RSS memory usage: %v\n", err)
-		return
-	}
+	if rss, err := m.getProcessRSS(pid); err == nil {
+		// 8GB threshold limit = 8 * 1024 * 1024 * 1024 bytes
+		const threshold = 8 * 1024 * 1024 * 1024
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 8192MB)\n", rss/(1024*1024))
 
-	// 8GB threshold limit = 8 * 1024 * 1024 * 1024 bytes
-	const threshold = 8 * 1024 * 1024 * 1024
-	fmt.Printf("[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 8192MB)\n", rss/(1024*1024))
+		if rss > threshold {
+			fmt.Fprintln(os.Stderr, "[Llama Sidecar GC] RSS threshold exceeded. Triggering Tier 2 Graceful Process Recycling...")
 
-	if rss > threshold {
-		fmt.Println("[Llama Sidecar GC] RSS threshold exceeded. Triggering Tier 2 Graceful Process Recycling...")
+			m.getPublisher().PublishEvent("sidecar_recycling", "system", strconv.Itoa(pid), fmt.Sprintf("RSS memory (%dMB) exceeded threshold; recycling sidecar process", rss/(1024*1024)))
 
-		m.getPublisher().PublishEvent("sidecar_recycling", "system", strconv.Itoa(pid), fmt.Sprintf("RSS memory (%dMB) exceeded threshold; recycling sidecar process", rss/(1024*1024)))
+			// Stop the server sidecar gracefully
+			_ = m.Stop()
 
-		// Stop the server sidecar gracefully
-		_ = m.Stop()
-
-		// Start a fresh one in the background asynchronously
-		go func() {
-			time.Sleep(1 * time.Second)
-			bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			if err := m.Start(bgCtx); err != nil {
-				fmt.Printf("[Llama Sidecar GC Error] Asynchronous process restart failed: %v\n", err)
-			} else {
-				fmt.Println("[Llama Sidecar GC] Successfully completed Tier 2 sidecar process recycling!")
-			}
-		}()
+			// Start a fresh one in the background asynchronously
+			go func() {
+				time.Sleep(1 * time.Second)
+				bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				if err := m.Start(bgCtx); err != nil {
+					fmt.Fprintf(os.Stderr, "[Llama Sidecar GC Error] Asynchronous process restart failed: %v\n", err)
+				} else {
+					fmt.Fprintln(os.Stderr, "[Llama Sidecar GC] Successfully completed Tier 2 sidecar process recycling!")
+				}
+			}()
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC Warning] Failed to check RSS memory usage: %v\n", err)
 	}
 }
 
@@ -346,7 +350,7 @@ func (m *LocalModelManager) PreemptForChat(ctx context.Context) error {
 
 	m.isPreempted = true
 
-	fmt.Println("[Llama Sidecar Preemption] POSTing save slot attention state...")
+	fmt.Fprintln(os.Stderr, "[Llama Sidecar Preemption] POSTing save slot attention state...")
 	m.getPublisher().PublishEvent("preemption_save", "system", "slot_0", "Saving background task slot attention buffers")
 
 	saveURL := fmt.Sprintf("http://localhost:%d/slots/0/save", m.ActivePort)
@@ -379,7 +383,7 @@ func (m *LocalModelManager) RestoreAfterChat(ctx context.Context) error {
 		return nil
 	}
 
-	fmt.Println("[Llama Sidecar Preemption] Restoring saved slot context state...")
+	fmt.Fprintln(os.Stderr, "[Llama Sidecar Preemption] Restoring saved slot context state...")
 	m.getPublisher().PublishEvent("preemption_restore", "system", "slot_0", "Restoring background task slot attention buffers")
 
 	restoreURL := fmt.Sprintf("http://localhost:%d/slots/0/restore", m.ActivePort)
@@ -544,7 +548,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, systemPrompt, us
 		if choice, ok := choices[0].(map[string]interface{}); ok {
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				if content, ok := msg["content"].(string); ok {
-					fmt.Printf("[Llama Sidecar Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
+					fmt.Fprintf(os.Stderr, "[Llama Sidecar Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
 					if tracker, ok := GetTokenTracker(ctx); ok {
 						tracker.Record(false, promptTokens, completionTokens)
 					}
@@ -736,7 +740,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, systemProm
 		},
 	})
 
-	fmt.Printf("[Llama Sidecar Stream Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar Stream Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
 
 	if tracker, ok := GetTokenTracker(ctx); ok {
 		tracker.Record(false, promptTokens, completionTokens)

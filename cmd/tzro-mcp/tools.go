@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"tzro/internal/cache"
 	"tzro/internal/compiler"
+	"tzro/internal/config"
 	"tzro/internal/executor"
+	"tzro/internal/inference"
 	internalmcp "tzro/internal/mcp"
 	"tzro/internal/memory"
-	"tzro/internal/stream"
 	"tzro/internal/task"
-	"tzro/internal/tools"
 )
 
 // tzro_run tool definition
@@ -138,6 +138,19 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 		taskStatus = "completed"
 	}
 
+	// Check if there are unread client-side tool requests for this task
+	if taskStatus == "pending" || taskStatus == "running" {
+		notifs, err := memory.DB.GetNotifications("unread")
+		if err == nil {
+			for _, n := range notifs {
+				if n.TaskID == args.TaskID && n.Source == "client_tool" && n.Type == "client_tool_request" {
+					taskStatus = "waiting_for_client"
+					break
+				}
+			}
+		}
+	}
+
 	respMap := map[string]interface{}{
 		"taskId":      args.TaskID,
 		"status":      taskStatus,
@@ -188,7 +201,7 @@ type TzroConfigureToolsArgs struct {
 }
 
 func handleTzroConfigureTools(ctx context.Context, req *mcp.CallToolRequest, args TzroConfigureToolsArgs) (*mcp.CallToolResult, any, error) {
-	configPath := filepath.Join(".tzro", "mcp_config.json")
+	configPath := config.ResolvePath(filepath.Join(".tzro", "mcp_config.json"))
 
 	// Read existing config or initialize empty
 	var mcpCfg internalmcp.MCPConfig
@@ -748,139 +761,55 @@ func handleTzroObserverMemories(ctx context.Context, req *mcp.CallToolRequest, a
 	}, nil, nil
 }
 
-// ClientToolInput defines one client tool registration
-type ClientToolInput struct {
-	Name        string                 `json:"name" jsonschema:"required,Name of the client tool"`
-	Description string                 `json:"description" jsonschema:"required,Description of the client-side tool"`
-	InputSchema map[string]interface{} `json:"inputSchema" jsonschema:"required,JSON Schema parameters of the tool"`
+// TzroCompletionArgs defines inputs for tzro_completion.
+type TzroCompletionArgs struct {
+	SystemPrompt string  `json:"systemPrompt" jsonschema:"required,System prompt to guide the local model behavior"`
+	UserPrompt   string  `json:"userPrompt" jsonschema:"required,The user-facing prompt or content to process"`
+	JsonSchema   string  `json:"jsonSchema,omitempty" jsonschema:"Optional JSON schema to constrain output via GBNF grammar. When provided the model output is guaranteed valid JSON matching this schema."`
+	MaxTokens    int     `json:"maxTokens,omitempty" jsonschema:"Maximum tokens to generate. Default 2048"`
+	Temperature  float64 `json:"temperature,omitempty" jsonschema:"Sampling temperature. Default 1.0"`
 }
 
-// TzroRegisterClientToolsArgs defines inputs for tzro_register_client_tools
-type TzroRegisterClientToolsArgs struct {
-	Tools []ClientToolInput `json:"tools" jsonschema:"required,List of client-side tools to register"`
-}
-
-func handleTzroRegisterClientTools(ctx context.Context, req *mcp.CallToolRequest, args TzroRegisterClientToolsArgs) (*mcp.CallToolResult, any, error) {
-	var registered []string
-	for _, t := range args.Tools {
-		gbnfSchema, err := internalmcp.GetGBNFSchema(t.InputSchema)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to wrap schema for tool %s: %w", t.Name, err)
-		}
-		adapter := &tools.ClientToolAdapter{
-			NameVal:        t.Name,
-			DescriptionVal: t.Description,
-			SchemaVal:      gbnfSchema,
-		}
-		tools.Register(adapter)
-		registered = append(registered, t.Name)
-	}
-
-	respMap := map[string]interface{}{
-		"status":          "success",
-		"registeredTools": registered,
-	}
-	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: string(respBytes)},
-		},
-	}, nil, nil
-}
-
-// TzroClientToolListArgs defines inputs for tzro_client_tool_list
-type TzroClientToolListArgs struct{}
-
-func handleTzroClientToolList(ctx context.Context, req *mcp.CallToolRequest, args TzroClientToolListArgs) (*mcp.CallToolResult, any, error) {
-	notifs, err := memory.DB.GetNotifications("unread")
-	if err != nil {
-		return nil, nil, err
-	}
-	var list []memory.DurableNotification
-	for _, n := range notifs {
-		if n.Source == "client_tool" && n.Type == "client_tool_request" {
-			list = append(list, n)
-		}
-	}
-	respBytes, _ := json.MarshalIndent(list, "", "  ")
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: string(respBytes)},
-		},
-	}, nil, nil
-}
-
-// TzroClientToolSubmitArgs defines inputs for tzro_client_tool_submit
-type TzroClientToolSubmitArgs struct {
-	TaskID string `json:"taskId" jsonschema:"required,The task ID to resume"`
-	NodeID string `json:"nodeId" jsonschema:"required,The node ID containing the client tool step"`
-	Output string `json:"output" jsonschema:"required,The output/result from client-side execution"`
-}
-
-func handleTzroClientToolSubmit(ctx context.Context, req *mcp.CallToolRequest, args TzroClientToolSubmitArgs) (*mcp.CallToolResult, any, error) {
-	notifs, err := memory.DB.GetNotifications("unread")
-	if err != nil {
-		return nil, nil, err
-	}
-	var target *memory.DurableNotification
-	for _, n := range notifs {
-		if n.TaskID == args.TaskID && n.TargetID == args.NodeID && n.Source == "client_tool" && n.Type == "client_tool_request" {
-			target = &n
-			break
-		}
-	}
-	if target == nil {
+func handleTzroCompletion(ctx context.Context, req *mcp.CallToolRequest, args TzroCompletionArgs) (*mcp.CallToolResult, any, error) {
+	// Resolve the active inference backend
+	backend := inference.ActiveBackend
+	if backend == nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "unread client tool request for task '%s' node '%s' not found"}`, args.TaskID, args.NodeID)},
+				&mcp.TextContent{Text: `{"error": "no inference backend configured"}`},
 			},
 			IsError: true,
 		}, nil, nil
 	}
 
-	// 1. Update notification status to approved
-	if err := memory.DB.UpdateNotificationStatus(target.ID, "approved"); err != nil {
-		return nil, nil, err
+	// Auto-start if stopped
+	if strings.ToLower(backend.Status()) == "stopped" {
+		if err := backend.Start(ctx); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "local model failed to start: %s"}`, err.Error())},
+				},
+				IsError: true,
+			}, nil, nil
+		}
 	}
 
-	// 2. Perform caching/compaction and write completed node state
-	displayOutput := args.Output
-	compactedOutput, cacheID, err := cache.Process(ctx, args.Output, "")
-	if err == nil && cacheID != "" {
-		displayOutput = compactedOutput
+	result, err := backend.CallModel(ctx, args.SystemPrompt, args.UserPrompt, args.JsonSchema)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "local model inference failed: %s"}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
 	}
-
-	nodeStatus := fmt.Sprintf("[Client Execution] %s", displayOutput)
-	_ = memory.DB.SetNodeState(args.TaskID, args.NodeID, "completed", nodeStatus)
-	_ = memory.DB.SetNodeRawOutput(args.TaskID, args.NodeID, args.Output)
-
-	// Publish node completed event & stream update to keep UI in sync
-	stream.GlobalBus.Publish(stream.StreamChunk{
-		Source:  "executor",
-		TaskID:  args.TaskID,
-		NodeID:  args.NodeID,
-		Type:    "event",
-		Content: fmt.Sprintf("Node %s completed client-side execution", args.NodeID),
-	})
-
-	if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-		stream.GlobalBus.Publish(stream.StreamChunk{
-			Source:  "executor",
-			TaskID:  args.TaskID,
-			NodeID:  args.NodeID,
-			Type:    "node_state",
-			Content: string(statePayload),
-		})
-	}
-
-	// 3. Trigger task resume in the background
-	go func() {
-		_ = runResumeTask(context.Background(), args.TaskID)
-	}()
 
 	respMap := map[string]interface{}{
-		"status":  "success",
-		"message": fmt.Sprintf("Client tool output submitted for node %s and task resume triggered.", args.NodeID),
+		"content":          result.Content,
+		"promptTokens":     result.PromptTokens,
+		"completionTokens": result.CompletionTokens,
+		"durationSeconds":  result.DurationSeconds,
+		"tokensPerSecond":  result.TokensPerSecond,
 	}
 	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 	return &mcp.CallToolResult{
@@ -888,13 +817,144 @@ func handleTzroClientToolSubmit(ctx context.Context, req *mcp.CallToolRequest, a
 			&mcp.TextContent{Text: string(respBytes)},
 		},
 	}, nil, nil
+}
+
+// TzroClassificationArgs defines inputs for tzro_classification.
+type TzroClassificationArgs struct {
+	Input      string   `json:"input" jsonschema:"required,The text content to classify"`
+	Categories []string `json:"categories" jsonschema:"required,The set of valid classification labels"`
+	Context    string   `json:"context,omitempty" jsonschema:"Optional context or instructions to guide classification"`
+}
+
+func handleTzroClassification(ctx context.Context, req *mcp.CallToolRequest, args TzroClassificationArgs) (*mcp.CallToolResult, any, error) {
+	if len(args.Categories) < 2 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "at least 2 categories are required"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Resolve the active inference backend
+	backend := inference.ActiveBackend
+	if backend == nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "no inference backend configured"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Auto-start if stopped
+	if strings.ToLower(backend.Status()) == "stopped" {
+		if err := backend.Start(ctx); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "local model failed to start: %s"}`, err.Error())},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+	}
+
+	// Build classification system prompt
+	systemPrompt := "You are a classification agent. Classify the input into exactly one of the provided categories. Respond with ONLY valid JSON matching the schema."
+	if args.Context != "" {
+		systemPrompt += "\n\nAdditional context: " + args.Context
+	}
+
+	// Build user prompt with categories listed
+	userPrompt := fmt.Sprintf("Classify this input:\n\n%s\n\nValid categories: %s", args.Input, strings.Join(args.Categories, ", "))
+
+	// Build JSON schema with enum constraint — GBNF guarantees the output is one of the valid labels
+	categoriesJSON, _ := json.Marshal(args.Categories)
+	jsonSchema := fmt.Sprintf(`{
+		"type": "object",
+		"properties": {
+			"category": {
+				"type": "string",
+				"enum": %s
+			},
+			"confidence": {
+				"type": "number",
+				"minimum": 0.0,
+				"maximum": 1.0
+			},
+			"reasoning": {
+				"type": "string"
+			}
+		},
+		"required": ["category", "confidence", "reasoning"]
+	}`, string(categoriesJSON))
+
+	result, err := backend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "classification inference failed: %s"}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Parse and re-envelope the result with metrics
+	var classResult map[string]interface{}
+	if json.Unmarshal([]byte(result.Content), &classResult) != nil {
+		// If parsing fails, return raw content
+		classResult = map[string]interface{}{"raw": result.Content}
+	}
+
+	respMap := map[string]interface{}{
+		"classification":   classResult,
+		"promptTokens":     result.PromptTokens,
+		"completionTokens": result.CompletionTokens,
+		"durationSeconds":  result.DurationSeconds,
+		"tokensPerSecond":  result.TokensPerSecond,
+	}
+	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// delegationHint returns a description suffix for completion/classification tools
+// based on the configured delegation mode.
+func delegationHint() string {
+	switch config.GetDelegationMode() {
+	case "conservative":
+		return " Use sparingly — prefer handling tasks directly unless the task is purely mechanical."
+	case "aggressive":
+		return " Prefer this tool over direct processing for ANY task that does not require cutting-edge reasoning, real-time data, or multi-modal understanding."
+	default: // balanced
+		return ""
+	}
+}
+
+// runDelegationHint returns a description suffix for the tzro_run tool
+// based on the configured delegation mode. In aggressive mode it steers
+// the cloud model to delegate multi-step work (research, exploration,
+// data gathering, automation) through DAG execution rather than
+// executing tool calls manually.
+func runDelegationHint() string {
+	switch config.GetDelegationMode() {
+	case "conservative":
+		return " Only use for explicitly requested multi-tool workflows."
+	case "aggressive":
+		return " STRONGLY PREFERRED: Delegate ANY multi-step task to this tool rather than executing steps manually. This includes research, codebase exploration, data gathering, environment inspection, and automation. If the task involves more than 2 sequential actions, use this tool."
+	default: // balanced
+		return ""
+	}
 }
 
 // registerTools registers all tools with the MCP server.
 func registerTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
-		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt.",
+		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt." + runDelegationHint(),
 	}, handleTzroRun)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -911,6 +971,11 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_configure_tools",
 		Description: "Configure and provision external MCP server hosts dynamically that tzro can use during DAG planning and execution.",
 	}, handleTzroConfigureTools)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_web_search",
+		Description: "Execute a multi-engine web search using tiered fallback (Startpage, Brave, Bing, DuckDuckGo). Returns ranked results with titles, URLs, and snippets.",
+	}, handleTzroWebSearch)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_memory_query",
@@ -996,4 +1061,33 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_client_tool_submit",
 		Description: "Submit execution outcomes for a client-side tool to resume the paused workflow.",
 	}, handleTzroClientToolSubmit)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_model_list",
+		Description: "List available GGUF models from the catalog with download status, active model indicator, and local file paths.",
+	}, handleTzroModelList)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_model_set",
+		Description: "Change the active local worker model. Accepts a catalog modelId, a direct ggufModelPath, or a downloadUrl. Stops the current sidecar, cleans up the old managed model file, updates config, and restarts with the new model.",
+	}, handleTzroModelSet)
+
+	// Local model delegation tools — enable cloud-to-local cost arbitrage
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_completion",
+		Description: "Run a prompt through the local on-device LLM for structured text generation. " +
+			"Use this for tasks that don't require frontier-model reasoning: " +
+			"summarization, extraction, reformatting, translation, boilerplate generation, " +
+			"and any task where output structure matters more than world knowledge. " +
+			"Supports optional JSON schema constraint (GBNF grammar) for guaranteed-valid structured output. " +
+			"Zero cost, zero latency to external APIs, fully private." + delegationHint(),
+	}, handleTzroCompletion)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_classification",
+		Description: "Classify arbitrary text into one of a fixed set of categories using the local on-device LLM " +
+			"with grammar-constrained output (GBNF). The model is forced to output exactly one of the provided labels — " +
+			"no hallucination possible. Use for sentiment analysis, intent routing, priority triage, " +
+			"content categorization, or any multi-class classification task. Zero cost, fully private." + delegationHint(),
+	}, handleTzroClassification)
 }

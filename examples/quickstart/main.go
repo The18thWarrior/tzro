@@ -40,7 +40,10 @@ func (c *CustomMathTool) Call(ctx context.Context, args map[string]interface{}) 
 	}
 
 	result := a + b
-	fmt.Printf("[CustomMathTool] Calculating: %g + %g = %g\n", a, b, result)
+	// NOTE: Always write runtime logs and debug information to os.Stderr.
+	// If these tools are executed within an MCP server, printing to os.Stdout
+	// will corrupt the JSON-RPC communication channel.
+	fmt.Fprintf(os.Stderr, "[CustomMathTool] Calculating: %g + %g = %g\n", a, b, result)
 
 	resp := map[string]interface{}{
 		"result": result,
@@ -72,7 +75,8 @@ func (c *CustomSlackTool) Call(ctx context.Context, args map[string]interface{})
 	channel, _ := args["channel"].(string)
 	text, _ := args["text"].(string)
 
-	fmt.Printf("[CustomSlackTool] Posting message to channel #%s: %s\n", channel, text)
+	// NOTE: Direct tool output logs to os.Stderr to safeguard the MCP stdio stream.
+	fmt.Fprintf(os.Stderr, "[CustomSlackTool] Posting message to channel #%s: %s\n", channel, text)
 
 	resp := map[string]interface{}{
 		"status":    "delivered",

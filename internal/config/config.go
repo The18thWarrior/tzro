@@ -22,6 +22,13 @@ type EngineConfig struct {
 	// Inference Backend (ADR-0016)
 	InferenceBackend BackendConfig `json:"inferenceBackend,omitempty"`
 
+	// Delegation Mode controls how aggressively the cloud model delegates
+	// sub-tasks to the local model via tzro_completion/tzro_classification.
+	//   "conservative" — only use tzro for DAG workflows (current behavior)
+	//   "balanced"     — cloud delegates classification, extraction, formatting
+	//   "aggressive"   — cloud delegates everything except frontier reasoning
+	DelegationMode string `json:"delegationMode,omitempty"`
+
 	// Observer Agent
 	ObserverEnabled *bool `json:"observerEnabled,omitempty"` // nil = auto (on for llama-server, off otherwise)
 }
@@ -33,7 +40,66 @@ type BackendConfig struct {
 	APIKey string `json:"apiKey"` // Optional, supports $VAR
 }
 
+func detectTzroDir() string {
+	if envDir := os.Getenv("TZRO_DIR"); envDir != "" {
+		return envDir
+	}
+	if execPath, err := os.Executable(); err == nil {
+		dir := filepath.Dir(execPath)
+		for i := 0; i < 4; i++ {
+			if _, err := os.Stat(filepath.Join(dir, ".tzro")); err == nil {
+				os.Setenv("TZRO_DIR", dir)
+				return dir
+			}
+			if _, err := os.Stat(filepath.Join(dir, "tzro.db")); err == nil {
+				os.Setenv("TZRO_DIR", dir)
+				return dir
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return ""
+}
+
+// ResolvePath resolves a relative path against TZRO_DIR (if set).
+// If TZRO_DIR is not set, returns the path unchanged. Use this instead of
+// inlining os.Getenv("TZRO_DIR") checks at every callsite.
+func ResolvePath(relPath string) string {
+	if envDir := os.Getenv("TZRO_DIR"); envDir != "" {
+		return filepath.Join(envDir, relPath)
+	}
+	return relPath
+}
+
+// FindBinary locates a managed binary by name using the standard tzro
+// resolution order: TZRO_DIR/bin, sibling of current executable, ./bin.
+// Returns empty string if not found.
+func FindBinary(name string) string {
+	if envDir := os.Getenv("TZRO_DIR"); envDir != "" {
+		path := filepath.Join(envDir, "bin", name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	if execPath, err := os.Executable(); err == nil {
+		path := filepath.Join(filepath.Dir(execPath), name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	path := filepath.Join(".", "bin", name)
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	return ""
+}
+
 var (
+	detectedDir  = detectTzroDir()
 	GlobalConfig = &EngineConfig{
 		ModelMode:      "cooperative",
 		CloudProvider:  "google",
@@ -48,15 +114,23 @@ var (
 	configPath  = filepath.Join(".tzro", "config.json")
 )
 
+func getConfigPath() string {
+	if configPath != filepath.Join(".tzro", "config.json") {
+		return configPath
+	}
+	return ResolvePath(filepath.Join(".tzro", "config.json"))
+}
+
 // Load reads config settings from disk or sets defaults
 func Load() error {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
+	cPath := getConfigPath()
 	// Ensure .tzro dir exists
-	_ = os.MkdirAll(".tzro", 0755)
+	_ = os.MkdirAll(filepath.Dir(cPath), 0755)
 
-	file, err := os.Open(configPath)
+	file, err := os.Open(cPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Save default configurations
@@ -83,6 +157,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
 	GlobalConfig.InferenceBackend = cfg.InferenceBackend
 	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
+	GlobalConfig.DelegationMode = cfg.DelegationMode
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -104,6 +179,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
 	GlobalConfig.InferenceBackend = cfg.InferenceBackend
 	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
+	GlobalConfig.DelegationMode = cfg.DelegationMode
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -124,7 +200,7 @@ func saveLocked(cfg *EngineConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, bytes, 0644)
+	return os.WriteFile(getConfigPath(), bytes, 0644)
 }
 
 func Get() EngineConfig {
@@ -135,6 +211,10 @@ func Get() EngineConfig {
 
 // defaultModelsDir returns the default models directory path (~/.tzro/models/).
 func defaultModelsDir() string {
+	resolved := ResolvePath(filepath.Join(".tzro", "models"))
+	if resolved != filepath.Join(".tzro", "models") {
+		return resolved
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return filepath.Join(".", ".tzro", "models")
@@ -214,4 +294,19 @@ func GetMaxRAGContextChars() int {
 		return 2000
 	}
 	return limit
+}
+
+// GetDelegationMode returns the configured delegation mode.
+// Defaults to "balanced" if not explicitly configured.
+func GetDelegationMode() string {
+	configMutex.RLock()
+	mode := GlobalConfig.DelegationMode
+	configMutex.RUnlock()
+
+	switch mode {
+	case "conservative", "balanced", "aggressive":
+		return mode
+	default:
+		return "balanced"
+	}
 }

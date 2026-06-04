@@ -95,8 +95,53 @@
             <span>GitHub</span>
           </a>
         </nav>
+        <button
+          class="hamburger-btn"
+          id="mobile-menu-toggle"
+          aria-label="Toggle Navigation"
+          aria-expanded="false"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <line x1="4" y1="6" x2="20" y2="6" class="line-top"></line>
+            <line x1="4" y1="12" x2="20" y2="12" class="line-mid"></line>
+            <line x1="4" y1="18" x2="20" y2="18" class="line-bot"></line>
+          </svg>
+        </button>
       </div>
     </header>
+
+    <!-- Mobile Navigation Drawer -->
+    <div class="mobile-nav-drawer" id="mobile-nav-drawer">
+      <nav class="mobile-nav-content">
+        <a href="#approach" class="mobile-nav-link">Approach</a>
+        <a href="#kahn-executor" class="mobile-nav-link">Kahn Sorter</a>
+        <a href="#compactor" class="mobile-nav-link">Compaction</a>
+        <a href="#sdk-hub" class="mobile-nav-link">Developer SDK</a>
+        <a
+          href="https://github.com/The18thWarrior/tzro"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="github-btn mobile-github-btn"
+        >
+          <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              fill-rule="evenodd"
+              clip-rule="evenodd"
+              d="M12 2C6.477 2 2 6.477 2 12C2 16.42 4.87 20.17 8.85 21.5C9.35 21.58 9.53 21.28 9.53 21.02C9.53 20.78 9.52 19.98 9.52 19.14C7 19.58 6.35 18.52 6.15 17.96C6.04 17.68 5.56 16.8 5.14 16.56C4.79 16.37 4.29 15.91 5.13 15.9C5.92 15.89 6.48 16.63 6.67 16.93C7.57 18.45 9.02 18.02 9.59 17.76C9.68 17.11 9.94 16.67 10.23 16.42C7.97 16.16 5.6 15.28 5.6 11.39C5.6 10.28 5.99 9.37 6.64 8.66C6.54 8.4 6.19 7.37 6.74 5.98C6.74 5.98 7.59 5.71 9.52 7.02C10.33 6.79 11.19 6.68 12.05 6.68C12.91 6.68 13.77 6.79 14.58 7.02C16.51 5.7 17.36 5.98 17.36 5.98C17.91 7.37 17.56 8.4 17.46 8.66C18.11 9.37 18.5 10.27 18.5 11.39C18.5 15.29 16.12 16.16 13.86 16.41C14.23 16.73 14.55 17.35 14.55 18.31C14.55 19.69 14.54 20.8 14.54 21.02C14.54 21.28 14.72 21.59 15.23 21.49C19.21 20.16 22 16.42 22 12C22 6.477 17.52 2 12 2Z"
+            />
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </div>
 
     <!-- Grounded Bio-Synthetic Backdrops -->
     <div class="cyber-grid"></div>
@@ -400,9 +445,27 @@
                 </button>
               </div>
 
+              <!-- Mobile Tab Switcher (Visible only on screens < 768px) -->
+              <div class="compactor-mobile-tabs" id="compactor-mobile-tabs">
+                <button
+                  class="compactor-tab-btn active"
+                  data-target="raw"
+                  type="button"
+                >
+                  Raw Input (<span id="raw-size-tab">22.4</span> KB)
+                </button>
+                <button
+                  class="compactor-tab-btn"
+                  data-target="compacted"
+                  type="button"
+                >
+                  Compacted (<span id="compacted-size-tab">0.0</span> KB)
+                </button>
+              </div>
+
               <!-- Side-by-side Payload Views -->
               <div class="payload-visuals">
-                <div class="payload-box">
+                <div class="payload-box active" id="compactor-raw-panel">
                   <div class="box-tag">
                     Raw Data Input (<span id="raw-size">22.4</span> KB)
                   </div>
@@ -413,7 +476,7 @@
                   ></textarea>
                 </div>
 
-                <div class="payload-box">
+                <div class="payload-box" id="compactor-compacted-panel">
                   <div class="box-tag">
                     Compacted Context Output (<span id="compacted-size"
                       >0.0</span
@@ -605,6 +668,113 @@
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MODEL CONTEXT PROTOCOL (MCP) SETUP SECTION -->
+      <section class="playground-section" id="mcp-setup">
+        <div class="hero-container">
+          <span class="glass-badge">Protocol Integration</span>
+          <h2 class="section-title">Model Context Protocol (MCP) Setup</h2>
+          <p class="section-desc">
+            Expose tzro's durable execution runtime, hybrid memory database, and
+            topological sorters directly to any Model Context Protocol (MCP)
+            compliant client (such as Claude Desktop, Cursor, or Google
+            Antigravity).
+          </p>
+
+          <div class="mcp-setup-grid premium-border">
+            <div class="mcp-steps-panel">
+              <div class="mcp-step">
+                <div class="step-num">1</div>
+                <div class="step-text">
+                  <h3>Build the MCP Server Binary</h3>
+                  <p>
+                    Compile the server binary target from the root repository
+                    directory:
+                  </p>
+                  <pre
+                    class="monospace"
+                  ><code>go build -o bin/tzro-mcp ./cmd/tzro-mcp</code></pre>
+                </div>
+              </div>
+
+              <div class="mcp-step">
+                <div class="step-num">2</div>
+                <div class="step-text">
+                  <h3>Register in Client Configuration</h3>
+                  <p>
+                    Select your workspace or client configuration interface to
+                    insert the server definition:
+                  </p>
+
+                  <div class="mcp-tab-bar">
+                    <button
+                      class="mcp-tab-btn active"
+                      data-client="claude"
+                      type="button"
+                    >
+                      Claude Desktop
+                    </button>
+                    <button
+                      class="mcp-tab-btn"
+                      data-client="cursor"
+                      type="button"
+                    >
+                      Cursor Settings
+                    </button>
+                    <button class="mcp-tab-btn" data-client="agy" type="button">
+                      Antigravity Config
+                    </button>
+                  </div>
+
+                  <div class="mcp-config-box">
+                    <pre class="monospace"><code id="mcp-config-display">{
+  "mcpServers": {
+    "tzro": {
+      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
+      "args": [],
+      "env": {
+        "PORT": "8080"
+      }
+    }
+  }
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mcp-tools-panel">
+              <h3>Exposed Protocol Tools</h3>
+              <p>
+                Once registered, tzro exposes a wide developer capability suite
+                to client agents:
+              </p>
+              <ul class="mcp-tools-list monospace">
+                <li><strong>tzro_run</strong>: Run durable DAG workflows</li>
+                <li>
+                  <strong>tzro_status</strong>: Inspect status of active tasks
+                </li>
+                <li>
+                  <strong>tzro_memory_query</strong>: Query memory graphs
+                  semantically
+                </li>
+                <li>
+                  <strong>tzro_memory_ingest</strong>: Store memories in SQLite
+                  vector store
+                </li>
+                <li>
+                  <strong>tzro_skills_add</strong>: Sync custom procedural
+                  micro-skills
+                </li>
+                <li>
+                  <strong>tzro_hook_approve</strong>: Approve blocked
+                  human-in-the-loop steps
+                </li>
+              </ul>
             </div>
           </div>
         </div>

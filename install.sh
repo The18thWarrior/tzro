@@ -14,6 +14,7 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # Print banner
@@ -85,6 +86,10 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
 
     echo "mock model content" > "${INSTALL_DIR}/models/grm-2.5-q4.gguf"
     
+    echo "#!/bin/sh" > "${INSTALL_DIR}/bin/tzro-mcp"
+    echo "echo 'mock tzro-mcp'" >> "${INSTALL_DIR}/bin/tzro-mcp"
+    chmod +x "${INSTALL_DIR}/bin/tzro-mcp"
+    
     if [ -n "${TZRO_SOURCE_BIN:-}" ] && [ -f "${TZRO_SOURCE_BIN}" ]; then
         cp "${TZRO_SOURCE_BIN}" "${INSTALL_DIR}/bin/tzro"
         chmod +x "${INSTALL_DIR}/bin/tzro"
@@ -94,22 +99,45 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
         chmod +x "${INSTALL_DIR}/bin/tzro"
     fi
 else
-    # Compile tzro locally if Go is available, otherwise download pre-compiled binary
+    # Compile tzro and tzro-mcp locally if Go is available, otherwise download pre-compiled binaries
     if command -v go &>/dev/null; then
-        echo -e "  ${GREEN}✔ Go compiler detected. Building tzro binary from source locally...${NC}"
+        echo -e "  ${GREEN}✔ Go compiler detected. Building tzro binaries from source locally...${NC}"
+        rm -f "${INSTALL_DIR}/bin/tzro" "${INSTALL_DIR}/bin/tzro-mcp"
         go build -o "${INSTALL_DIR}/bin/tzro" ./cmd/tzro
+        echo -e "  ${GREEN}✔ Built tzro CLI${NC}"
+        go build -o "${INSTALL_DIR}/bin/tzro-mcp" ./cmd/tzro-mcp
+        echo -e "  ${GREEN}✔ Built tzro-mcp server${NC}"
     else
-        echo -e "  ${YELLOW}⚠ Go compiler not found. Fetching pre-compiled release binary...${NC}"
-        # Fetching release from pre-compiled source
-        # For demonstration purposes, we copy standard build if available or fallback
+        echo -e "  ${YELLOW}⚠ Go compiler not found. Fetching pre-compiled release binaries...${NC}"
+
+        # Determine release download URL base
+        RELEASE_BASE="https://github.com/The18thWarrior/tzro/releases/latest/download"
+
+        # Download tzro CLI
         if [ -f "./tzro_engine" ]; then
             cp "./tzro_engine" "${INSTALL_DIR}/bin/tzro"
         else
-            echo -e "${RED}Error: Go compiler is required to build tzro locally on your machine.${NC}"
-            exit 1
+            TZRO_CLI_URL="${RELEASE_BASE}/tzro-${PLATFORM}-${ARCH_TYPE}"
+            echo -e "  Downloading tzro CLI from ${TZRO_CLI_URL}..."
+            if curl -fSL -o "${INSTALL_DIR}/bin/tzro" "${TZRO_CLI_URL}" 2>/dev/null; then
+                echo -e "  ${GREEN}✔ Downloaded tzro CLI${NC}"
+            else
+                echo -e "${RED}Error: Failed to download tzro CLI. Go compiler or a release binary is required.${NC}"
+                exit 1
+            fi
+        fi
+
+        # Download tzro-mcp
+        TZRO_MCP_URL="${RELEASE_BASE}/tzro-mcp-${PLATFORM}-${ARCH_TYPE}"
+        echo -e "  Downloading tzro-mcp from ${TZRO_MCP_URL}..."
+        if curl -fSL -o "${INSTALL_DIR}/bin/tzro-mcp" "${TZRO_MCP_URL}" 2>/dev/null; then
+            echo -e "  ${GREEN}✔ Downloaded tzro-mcp server${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ Could not download tzro-mcp. MCP server mode will be unavailable until built from source.${NC}"
         fi
     fi
-    chmod +x "${INSTALL_DIR}/bin/tzro"
+    chmod +x "${INSTALL_DIR}/bin/tzro" 2>/dev/null || true
+    chmod +x "${INSTALL_DIR}/bin/tzro-mcp" 2>/dev/null || true
 
     # Downloading static precompiled llama-server
     # Real downloads target static platform binaries hosted on tzro CDN / GitHub Releases
@@ -183,6 +211,7 @@ echo -e "=========================================================="
 echo -e "  ${BOLD}Workspace Boundary:${NC}  ${INSTALL_DIR}"
 echo -e "  ${BOLD}Database Booted:${NC}     ${DB_PATH}"
 echo -e "  ${BOLD}Llama Sidecar:${NC}       ${INSTALL_DIR}/bin/llama-server"
+echo -e "  ${BOLD}MCP Server:${NC}          ${INSTALL_DIR}/bin/tzro-mcp"
 echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/grm-2.5-q4.gguf"
 echo -e "=========================================================="
 
@@ -198,3 +227,19 @@ else
 fi
 echo -e "=========================================================="
 echo
+
+# Optional: Configure agentic interfaces
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MCP_INSTALLER="${SCRIPT_DIR}/plugins/install_mcp.sh"
+
+if [ -f "${MCP_INSTALLER}" ] && [ -t 0 ]; then
+    echo -e "${CYAN}${BOLD}Want to configure tzro for your AI editors?${NC}"
+    echo -e "${DIM}  This will auto-detect Claude Code, Cursor, Windsurf, Copilot, etc.${NC}"
+    echo -e "${DIM}  and wire up MCP tools + agent instructions.${NC}"
+    echo ""
+    read -p "  Run the MCP installer? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        bash "${MCP_INSTALLER}"
+    fi
+fi
