@@ -1110,3 +1110,150 @@ func TestSqliteDatabase_SearchMemoriesAndNodes(t *testing.T) {
 		}
 	})
 }
+
+func TestThoughtChain_StepPersistence(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_thought_chain.db")
+	jsonPath := filepath.Join(tempDir, "test_thought_chain_db.json")
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	// Add three steps to a probe
+	probeID := "probe_001"
+	taskID := "task_abc"
+
+	for i := 1; i <= 3; i++ {
+		step := ThoughtStep{
+			ID:         fmt.Sprintf("step_%d", i),
+			ProbeID:    probeID,
+			TaskID:     taskID,
+			StepIndex:  i,
+			Thought:    fmt.Sprintf("Investigating component %d", i),
+			ToolName:   "read_file",
+			ToolArgs:   fmt.Sprintf(`{"path": "file_%d.go"}`, i),
+			ToolOutput: fmt.Sprintf("contents of file %d", i),
+			CreatedAt:  time.Now().Unix(),
+		}
+		if err := db.AddThoughtStep(step); err != nil {
+			t.Fatalf("AddThoughtStep %d failed: %v", i, err)
+		}
+	}
+
+	// Retrieve all steps
+	steps, err := db.GetThoughtSteps(probeID)
+	if err != nil {
+		t.Fatalf("GetThoughtSteps failed: %v", err)
+	}
+
+	if len(steps) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(steps))
+	}
+
+	// Verify ordering by step_index
+	for i, s := range steps {
+		expectedIdx := i + 1
+		if s.StepIndex != expectedIdx {
+			t.Errorf("step %d: expected StepIndex=%d, got %d", i, expectedIdx, s.StepIndex)
+		}
+		if s.ProbeID != probeID || s.TaskID != taskID {
+			t.Errorf("step %d: unexpected ProbeID=%s TaskID=%s", i, s.ProbeID, s.TaskID)
+		}
+	}
+
+	// Verify field content
+	if steps[0].Thought != "Investigating component 1" {
+		t.Errorf("unexpected thought: %s", steps[0].Thought)
+	}
+	if steps[1].ToolName != "read_file" {
+		t.Errorf("unexpected tool_name: %s", steps[1].ToolName)
+	}
+	if steps[2].ToolOutput != "contents of file 3" {
+		t.Errorf("unexpected tool_output: %s", steps[2].ToolOutput)
+	}
+}
+
+func TestThoughtChain_SummaryPersistence(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_thought_summary.db")
+	jsonPath := filepath.Join(tempDir, "test_thought_summary_db.json")
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	probeID := "probe_002"
+
+	// Add two summaries with different timestamps
+	s1 := ThoughtSummary{
+		ID:        "summary_1",
+		ProbeID:   probeID,
+		TaskID:    "task_xyz",
+		StepRange: "1-3",
+		Summary:   "First three steps explored the compiler package.",
+		CreatedAt: 1000,
+	}
+	s2 := ThoughtSummary{
+		ID:        "summary_2",
+		ProbeID:   probeID,
+		TaskID:    "task_xyz",
+		StepRange: "4-6",
+		Summary:   "Steps 4-6 explored the executor and found the dispatch point.",
+		CreatedAt: 2000,
+	}
+
+	if err := db.AddThoughtSummary(s1); err != nil {
+		t.Fatalf("AddThoughtSummary 1 failed: %v", err)
+	}
+	if err := db.AddThoughtSummary(s2); err != nil {
+		t.Fatalf("AddThoughtSummary 2 failed: %v", err)
+	}
+
+	// GetLatestSummary should return s2 (highest created_at)
+	latest, err := db.GetLatestSummary(probeID)
+	if err != nil {
+		t.Fatalf("GetLatestSummary failed: %v", err)
+	}
+
+	if latest.ID != "summary_2" {
+		t.Errorf("expected latest summary to be summary_2, got %s", latest.ID)
+	}
+	if latest.StepRange != "4-6" {
+		t.Errorf("expected step range '4-6', got '%s'", latest.StepRange)
+	}
+	if latest.Summary != "Steps 4-6 explored the executor and found the dispatch point." {
+		t.Errorf("unexpected summary content: %s", latest.Summary)
+	}
+}
+
+func TestThoughtChain_EmptyProbeReturnsEmpty(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_thought_empty.db")
+	jsonPath := filepath.Join(tempDir, "test_thought_empty_db.json")
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	// No steps added — should return empty slice
+	steps, err := db.GetThoughtSteps("nonexistent_probe")
+	if err != nil {
+		t.Fatalf("GetThoughtSteps for empty probe failed: %v", err)
+	}
+	if len(steps) != 0 {
+		t.Errorf("expected 0 steps, got %d", len(steps))
+	}
+
+	// No summaries added — should return error
+	_, err = db.GetLatestSummary("nonexistent_probe")
+	if err == nil {
+		t.Error("expected error for GetLatestSummary on nonexistent probe, got nil")
+	}
+}

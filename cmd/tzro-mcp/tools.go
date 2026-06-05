@@ -29,6 +29,15 @@ type TzroRunArgs struct {
 }
 
 func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Prompt) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "prompt cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	taskID := uuid.New().String()
 	timeoutSec := args.Timeout
 	if timeoutSec <= 0 {
@@ -100,6 +109,15 @@ type TzroStatusArgs struct {
 }
 
 func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroStatusArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.TaskID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "taskId cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	nodes := memory.DB.GetAllNodeStates(args.TaskID)
 	if len(nodes) == 0 {
 		return &mcp.CallToolResult{
@@ -266,6 +284,15 @@ type TzroMemoryQueryArgs struct {
 }
 
 func handleTzroMemoryQuery(ctx context.Context, req *mcp.CallToolRequest, args TzroMemoryQueryArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Query) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "query cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	limit := args.Limit
 	if limit <= 0 {
 		limit = 10
@@ -296,6 +323,31 @@ type TzroMemoryIngestArgs struct {
 }
 
 func handleTzroMemoryIngest(ctx context.Context, req *mcp.CallToolRequest, args TzroMemoryIngestArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Content) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "content cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+	validTypes := map[string]bool{
+		"fact":         true,
+		"preference":   true,
+		"insight":      true,
+		"correction":   true,
+		"anti_pattern": true,
+		"strategy":     true,
+	}
+	if !validTypes[args.Type] {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "invalid memory type: must be one of fact, preference, insight, correction, anti_pattern, strategy"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	var embedding []float32
 	if memory.DB.EmbeddingEngine != nil {
 		vec, err := memory.DB.EmbeddingEngine.Embed(ctx, args.Content)
@@ -405,10 +457,10 @@ func handleTzroKgAddEntity(ctx context.Context, req *mcp.CallToolRequest, args T
 	}
 
 	if args.Node != nil {
-		if args.Node.ID == "" || args.Node.NodeType == "" || args.Node.Name == "" {
+		if strings.TrimSpace(args.Node.ID) == "" || strings.TrimSpace(args.Node.NodeType) == "" || strings.TrimSpace(args.Node.Name) == "" {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: `{"error": "node requires id, nodeType, and name"}`},
+					&mcp.TextContent{Text: `{"error": "node requires non-empty id, nodeType, and name"}`},
 				},
 				IsError: true,
 			}, nil, nil
@@ -439,10 +491,10 @@ func handleTzroKgAddEntity(ctx context.Context, req *mcp.CallToolRequest, args T
 	}
 
 	if args.Edge != nil {
-		if args.Edge.ID == "" || args.Edge.EdgeType == "" || args.Edge.SourceID == "" || args.Edge.TargetID == "" {
+		if strings.TrimSpace(args.Edge.ID) == "" || strings.TrimSpace(args.Edge.EdgeType) == "" || strings.TrimSpace(args.Edge.SourceID) == "" || strings.TrimSpace(args.Edge.TargetID) == "" {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					&mcp.TextContent{Text: `{"error": "edge requires id, edgeType, sourceId, and targetId"}`},
+					&mcp.TextContent{Text: `{"error": "edge requires non-empty id, edgeType, sourceId, and targetId"}`},
 				},
 				IsError: true,
 			}, nil, nil
@@ -518,6 +570,15 @@ type TzroSkillsGetArgs struct {
 }
 
 func handleTzroSkillsGet(ctx context.Context, req *mcp.CallToolRequest, args TzroSkillsGetArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.ID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "id cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	s, err := memory.DB.GetSkill(args.ID)
 	if err != nil {
 		return &mcp.CallToolResult{
@@ -542,6 +603,15 @@ type TzroSkillsRelevantArgs struct {
 }
 
 func handleTzroSkillsRelevant(ctx context.Context, req *mcp.CallToolRequest, args TzroSkillsRelevantArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Prompt) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "prompt cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	limit := args.Limit
 	if limit <= 0 {
 		limit = 5
@@ -563,6 +633,15 @@ type TzroSkillsAddArgs struct {
 }
 
 func handleTzroSkillsAdd(ctx context.Context, req *mcp.CallToolRequest, args TzroSkillsAddArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Name) == "" || strings.TrimSpace(args.TriggerDescription) == "" || strings.TrimSpace(args.SOPContent) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "name, triggerDescription, and sopContent are required and cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	s := &memory.Skill{
 		Name:               args.Name,
 		TriggerDescription: args.TriggerDescription,
@@ -612,6 +691,15 @@ type TzroHookApproveArgs struct {
 }
 
 func handleTzroHookApprove(ctx context.Context, req *mcp.CallToolRequest, args TzroHookApproveArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.TaskID) == "" || strings.TrimSpace(args.NodeID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "taskId and nodeId are required"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	notifs, err := memory.DB.GetNotifications("unread")
 	if err != nil {
 		return nil, nil, err
@@ -660,6 +748,15 @@ type TzroResumeArgs struct {
 }
 
 func handleTzroResume(ctx context.Context, req *mcp.CallToolRequest, args TzroResumeArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.TaskID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "taskId cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	go func() {
 		_ = runResumeTask(context.Background(), args.TaskID)
 	}()
@@ -771,6 +868,15 @@ type TzroCompletionArgs struct {
 }
 
 func handleTzroCompletion(ctx context.Context, req *mcp.CallToolRequest, args TzroCompletionArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.UserPrompt) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "userPrompt cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	// Resolve the active inference backend
 	backend := inference.ActiveBackend
 	if backend == nil {
@@ -827,6 +933,15 @@ type TzroClassificationArgs struct {
 }
 
 func handleTzroClassification(ctx context.Context, req *mcp.CallToolRequest, args TzroClassificationArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Input) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "input cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	if len(args.Categories) < 2 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{

@@ -75,7 +75,8 @@
         </a>
         <nav class="header-nav">
           <a href="#approach" class="nav-link">Approach</a>
-          <a href="#kahn-executor" class="nav-link">Kahn Sorter</a>
+          <a href="#mcp-setup" class="nav-link">MCP Setup</a>
+          <a href="#kahn-executor" class="nav-link">Offload Simulator</a>
           <a href="#compactor" class="nav-link">Compaction</a>
           <a href="#sdk-hub" class="nav-link">Developer SDK</a>
           <a
@@ -122,7 +123,8 @@
     <div class="mobile-nav-drawer" id="mobile-nav-drawer">
       <nav class="mobile-nav-content">
         <a href="#approach" class="mobile-nav-link">Approach</a>
-        <a href="#kahn-executor" class="mobile-nav-link">Kahn Sorter</a>
+        <a href="#mcp-setup" class="mobile-nav-link">MCP Setup</a>
+        <a href="#kahn-executor" class="mobile-nav-link">Offload Simulator</a>
         <a href="#compactor" class="mobile-nav-link">Compaction</a>
         <a href="#sdk-hub" class="mobile-nav-link">Developer SDK</a>
         <a
@@ -152,15 +154,16 @@
       <!-- HERO SECTION -->
       <section class="hero-section">
         <div class="hero-container">
-          <div class="hero-badge">OPERATIONAL MODE: DECENTRALIZED</div>
+          <div class="hero-badge">COMPLEMENTARY AGENTIC COMPANION</div>
           <h1 class="hero-title text-balance">
-            <span class="glow-text">tzro</span> — Durable Local-First Agentic
-            Engine
+            <span class="glow-text">tzro</span> — Local Offload Engine for AI
+            Agents
           </h1>
           <p class="hero-desc text-pretty">
-            Deterministic topological task compilation, hybrid relational
-            memory, and sandboxed WASM/stdio execution coordinated securely on
-            resource-constrained offline hardware.
+            A background engine that pairs with your primary AI agent hosts.
+            Offload long-running codebase searches, multi-source web research,
+            and bulk tool executions to local models—saving cloud costs and
+            keeping your main context clean.
           </p>
         </div>
       </section>
@@ -170,13 +173,14 @@
         <div class="hero-container">
           <span class="glass-badge">Architectural Shift</span>
           <h2 class="section-title text-balance">
-            Surgically Separate Strategy &amp; Tactics
+            Delegate Heavy Tool-Use Sequences Locally
           </h2>
           <p class="section-desc text-pretty">
-            Traditional AI loops throttle inside expensive, high-latency cloud
-            cycles. tzro resolves this by surgically separating cognitive loads:
-            a frontier cloud planner constructs abstract blueprints ONCE,
-            delegating physical execution to local, GBNF-constrained tacticians.
+            Traditional AI agents waste expensive cloud tokens and context slots
+            running loops of standard tools (reading files, listing directories,
+            scraping pages). tzro is built to run alongside your favorite agent
+            client, delegating complex tool sequences to local, offline models
+            that execute them cheaply, safely, and durably.
           </p>
 
           <!-- Columns Split Showcase -->
@@ -185,7 +189,7 @@
               <div class="card-icon red-g">☁️</div>
               <h2>The Strategist</h2>
               <div class="subtitle">
-                Cloud Frontier LLM (e.g. Gemini 3.5 Flash)
+                Cloud Frontier Agent (e.g. Gemini 3.5 Flash)
               </div>
               <ul class="benefit-list">
                 <li>
@@ -193,19 +197,19 @@
                   <strong>once</strong> at task startup.
                 </li>
                 <li>
-                  <strong>SOP &amp; Skill Indexing:</strong> Ingests compressed
-                  procedural skill signatures using Hybrid Vector keyword and
-                  cosine similarity rankings.
+                  <strong>Abstract Graph Blueprint:</strong> Translates your
+                  high-level goal into a coarse, dependency-mapped JSON
+                  blueprint defining tool-use constraints.
                 </li>
                 <li>
-                  <strong>Abstract Graph Declaration:</strong> Compiles a coarse
-                  cycle-free JSON blueprint defining dependency edges and tool
-                  white-lists.
+                  <strong>Minimal System Overhead:</strong> Only processes
+                  compressed skill metadata, completely avoiding cloud timeouts
+                  or context-window slot thrashing.
                 </li>
                 <li>
-                  <strong>Cost Efficiency:</strong> Yields up to **80% prompt
-                  reduction**, completely avoiding expensive cloud context
-                  window slot thrashing.
+                  <strong>Cost Efficiency:</strong> Yields up to
+                  <strong>80% prompt reduction</strong> by offloading execution
+                  steps and raw outputs to local models.
                 </li>
               </ul>
             </div>
@@ -216,8 +220,8 @@
               <div class="subtitle">Local GGUF llama-server (4B/8B Model)</div>
               <ul class="benefit-list">
                 <li>
-                  <strong>Execution Frequency:</strong> Runs sequentially per
-                  active compiled topological action node.
+                  <strong>Execution Frequency:</strong> Runs local tool-use
+                  loops in the background per compiled action node.
                 </li>
                 <li>
                   <strong>GBNF-Constrained Completion:</strong> Backus-Naur
@@ -225,15 +229,331 @@
                   arguments.
                 </li>
                 <li>
-                  <strong>5-Layer Compaction Pipeline:</strong> Hoists
-                  homogeneous tabular CRM tables into TSV format to save 85% of
-                  attention context space.
+                  <strong>5-Layer Compaction:</strong> Compresses large tool
+                  responses (up to 85% reduction) on-device before summarizing
+                  results.
                 </li>
                 <li>
-                  <strong>Priority Cache Preemption:</strong> Wipes background
-                  task context slots instantly to serve sub-450ms human chats.
+                  <strong>Priority Preemption:</strong> Wipes background task
+                  context slots instantly to serve sub-450ms interactive human
+                  chats.
                 </li>
               </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MODEL CONTEXT PROTOCOL (MCP) SETUP SECTION -->
+      <section class="playground-section" id="mcp-setup">
+        <div class="hero-container">
+          <span class="glass-badge">Protocol Integration</span>
+          <h2 class="section-title">Model Context Protocol (MCP) Setup</h2>
+          <p class="section-desc">
+            Connect tzro directly to your daily AI assistant. By running as an
+            MCP server, your coding agent (Claude Desktop, Cursor, Antigravity)
+            can instantly offload long-running workflows, search memory
+            databases, and run local commands in the background.
+          </p>
+
+          <div class="mcp-setup-grid premium-border">
+            <div class="mcp-steps-panel">
+              <div class="mcp-step">
+                <div class="step-num">1</div>
+                <div class="step-text">
+                  <h3>Build the MCP Server Binary</h3>
+                  <p>
+                    Compile the server binary target from the root repository
+                    directory:
+                  </p>
+                  <pre
+                    class="monospace"
+                  ><code>go build -o bin/tzro-mcp ./cmd/tzro-mcp</code></pre>
+                </div>
+              </div>
+
+              <div class="mcp-step">
+                <div class="step-num">2</div>
+                <div class="step-text">
+                  <h3>Register in Client Configuration</h3>
+                  <p>
+                    Select your workspace or client configuration interface to
+                    insert the server definition:
+                  </p>
+
+                  <div class="mcp-tab-bar">
+                    <button
+                      class="mcp-tab-btn active"
+                      data-client="claude"
+                      type="button"
+                    >
+                      Claude Desktop
+                    </button>
+                    <button
+                      class="mcp-tab-btn"
+                      data-client="cursor"
+                      type="button"
+                    >
+                      Cursor Settings
+                    </button>
+                    <button class="mcp-tab-btn" data-client="agy" type="button">
+                      Antigravity Config
+                    </button>
+                  </div>
+
+                  <div class="mcp-config-box">
+                    <pre class="monospace"><code id="mcp-config-display">{
+  "mcpServers": {
+    "tzro": {
+      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
+      "args": [],
+      "env": {
+        "PORT": "8080"
+      }
+    }
+  }
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mcp-step">
+                <div class="step-num">3</div>
+                <div class="step-text">
+                  <h3>Run the Handshake Verification Test</h3>
+                  <p>
+                    Test the server manually from the terminal to verify
+                    standard input/output JSON-RPC message framing. Launch the
+                    compiled binary:
+                  </p>
+                  <pre class="monospace"><code>./bin/tzro-mcp</code></pre>
+                  <p class="step-subtext">
+                    Paste this initialization JSON block and press
+                    <code>Enter</code>. The server should respond with its
+                    protocol capabilities metadata:
+                  </p>
+                  <pre class="monospace"><code>{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {},
+    "clientInfo": { "name": "test-client", "version": "1.0.0" }
+  }
+}</code></pre>
+                </div>
+              </div>
+
+              <div class="mcp-step">
+                <div class="step-num">4</div>
+                <div class="step-text">
+                  <h3>Safeguard the Stdio Pipe</h3>
+                  <p>
+                    Standard input and output are strictly reserved for JSON-RPC
+                    serialization framing. Any debug logs or print statements
+                    written to <code>stdout</code> will corrupt the protocol
+                    stream and drop client connections.
+                  </p>
+                  <div class="warning-banner">
+                    <strong>CRITICAL WARNING:</strong> All internal logging,
+                    telemetry events, and initialization warnings in tzro are
+                    redirected to <code>stderr</code>. When writing custom
+                    middleware, tools, or extensions, always use
+                    <code>fmt.Fprintf(os.Stderr, ...)</code>.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mcp-tools-panel">
+              <h3>Exposed Protocol Tools</h3>
+              <p>
+                Once registered, tzro exposes its entire execution, memory, and
+                model control capability suite:
+              </p>
+              <ul class="mcp-tools-list monospace">
+                <li>
+                  <strong>tzro_run</strong>: Run durable DAG workflows from
+                  natural language
+                </li>
+                <li>
+                  <strong>tzro_status</strong>: Inspect status and outcomes of a
+                  specific task
+                </li>
+                <li>
+                  <strong>tzro_list_tasks</strong>: List recent planning and
+                  execution tasks
+                </li>
+                <li>
+                  <strong>tzro_configure_tools</strong>: Dynamically register
+                  third-party stdio MCP daemons
+                </li>
+                <li>
+                  <strong>tzro_memory_query</strong>: Query memory graphs and
+                  facts semantically
+                </li>
+                <li>
+                  <strong>tzro_memory_ingest</strong>: Store memories in the
+                  SQLite vector database
+                </li>
+                <li>
+                  <strong>tzro_kg_neighborhood</strong>: Multi-hop graph
+                  traversal starting from an entity
+                </li>
+                <li>
+                  <strong>tzro_kg_add_entity</strong>: Create/update nodes and
+                  edge relationships
+                </li>
+                <li>
+                  <strong>tzro_rag_context</strong>: Retrieve graph-RAG context
+                  for prompting
+                </li>
+                <li>
+                  <strong>tzro_skills_add</strong>: Sync custom procedural
+                  micro-skills (SOPs)
+                </li>
+                <li>
+                  <strong>tzro_hook_approve</strong>: Resume paused
+                  human-in-the-loop task steps
+                </li>
+                <li>
+                  <strong>tzro_client_tool_submit</strong>: Submit outputs of
+                  client-side executed tools
+                </li>
+                <li>
+                  <strong>tzro_model_list</strong>: List downloaded & active
+                  local GGUF models
+                </li>
+                <li>
+                  <strong>tzro_model_set</strong>: Change active local tactician
+                  worker models
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- AGENT DELEGATION & OFFLOAD POLICY -->
+          <div class="agent-policy-grid premium-border">
+            <div class="policy-header">
+              <span class="glass-badge">AI Agent Integration</span>
+              <h2>Autonomous Agent Offload &amp; Wait Protocol</h2>
+              <p>
+                To avoid high-latency cloud context slot thrashing, client-side
+                agents must delegate non-reasoning tasks to the local durable
+                tzro engine.
+              </p>
+            </div>
+
+            <div class="policy-columns">
+              <!-- Left Column: Offload decision policy -->
+              <div class="policy-card">
+                <h3>The Offload Decision Rule</h3>
+                <div class="decision-box">
+                  <div class="question">
+                    "Do I need frontier-model-exclusive reasoning (code
+                    generation, complex architectural judgment, interactive
+                    human dialog) about intermediate outputs to decide the next
+                    step?"
+                  </div>
+                  <div class="branches">
+                    <div class="branch yes">
+                      <strong>YES</strong>
+                      <span
+                        >Keep execution in-context (Frontier cloud
+                        reasoning)</span
+                      >
+                    </div>
+                    <div class="branch no">
+                      <strong>NO</strong>
+                      <span
+                        >Offload to <code>tzro_run</code> (Local durable DAG
+                        executor)</span
+                      >
+                    </div>
+                  </div>
+                </div>
+
+                <div class="policy-rules">
+                  <h4>Mandatory Delegation Areas</h4>
+                  <ul>
+                    <li>
+                      <strong>Codebase Exploration &amp; Analysis:</strong>
+                      Codebase navigation or file pattern searching must run via
+                      a local <strong>Probe Node</strong> utilizing reactive
+                      Thought Chains.
+                    </li>
+                    <li>
+                      <strong>Multi-Source Web Research:</strong> Batching web
+                      searches, scraping, and compiling findings.
+                    </li>
+                    <li>
+                      <strong>Memory Ingestion Pipelines:</strong> Bulk storing
+                      memories and vector representations.
+                    </li>
+                  </ul>
+
+                  <h4>Delegation Triggers</h4>
+                  <p>
+                    Evaluate DAG offloading if about to make
+                    <strong>3 or more sequential external tool calls</strong>,
+                    or has made <strong>5 or more in-context calls</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Right Column: Wait protocol & prompts -->
+              <div class="policy-card">
+                <h3>Wait Protocol &amp; Prompts</h3>
+                <div class="wait-protocol">
+                  <h4>The Wait Protocol</h4>
+                  <ol>
+                    <li>
+                      <strong>Stop In-Context Execution:</strong> Do not call
+                      tools or execute parallel steps in the client session.
+                    </li>
+                    <li>
+                      <strong>Set One-Shot Timer:</strong> Schedule a wakeup
+                      reminder using the client's timer tool.
+                    </li>
+                    <li>
+                      <strong>Verify Complete:</strong> Check task status via
+                      <code>tzro_status</code>; resume when status returns
+                      <code>completed</code>.
+                    </li>
+                    <li>
+                      <strong>Consume Synthesized State:</strong> Read only the
+                      <code>terminal_synthesis</code> outcome. Avoid reading raw
+                      node output properties.
+                    </li>
+                  </ol>
+                </div>
+
+                <div class="prompt-templates">
+                  <h4>Suggested Prompt Templates</h4>
+
+                  <div class="template-item">
+                    <h5>A. Research &amp; Ingestion</h5>
+                    <pre
+                      class="monospace"
+                    ><code>"Use web_search to find the latest changes and trends in the AI orchestration space, compile the findings, and save the final structured summary to memory using the save_memory tool."</code></pre>
+                  </div>
+
+                  <div class="template-item">
+                    <h5>B. Multi-System Automation</h5>
+                    <pre
+                      class="monospace"
+                    ><code>"Execute a workflow to query recent lead records using salesforce_query, run deduplication check with postgres_insert, and post the execution report to the slack_message tool."</code></pre>
+                  </div>
+
+                  <div class="template-item">
+                    <h5>C. Codebase Exploration (Probe Node)</h5>
+                    <pre
+                      class="monospace"
+                    ><code>"Explore the project at /path/to/repo using a Probe Node. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary covering purpose, major components, key packages, and design patterns. Use read_file, list_dir, and search_files."</code></pre>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -243,12 +563,12 @@
       <section class="playground-section" id="kahn-executor">
         <div class="hero-container">
           <span class="glass-badge">Engine Core</span>
-          <h2 class="section-title">1. Kahn Parallel Execution Simulator</h2>
+          <h2 class="section-title">1. Background Tool Execution Simulator</h2>
           <p class="section-desc">
-            Observe the Go runtime compiler topological Kahn sort sequencer.
-            Independent nodes at the same topological level run in parallel
-            goroutines, satisfying dependency edges before unblocking downstream
-            nodes.
+            Watch how tzro processes offloaded agent tasks. Under the hood, tzro
+            compiles instructions into a Directed Acyclic Graph (DAG) and runs
+            independent steps in parallel, satisfying dependencies dynamically
+            while keeping your agent responsive.
           </p>
 
           <div class="dashboard-grid">
@@ -319,19 +639,19 @@
             <!-- Right: Kahn Compiler Simulator Card -->
             <div class="simulator-card">
               <div class="card-header-vA">
-                <h3>Kahn Parallel Execution Simulator</h3>
+                <h3>Background Execution Pipeline</h3>
                 <p>
-                  Watch goroutines compile abstract strategic nodes and execute
-                  them concurrently based on dependency limits.
+                  Watch how offloaded tasks compile into dependency levels and
+                  execute concurrently on local threads.
                 </p>
               </div>
 
               <div class="sim-controls">
                 <button id="vA-start-btn" class="sim-btn glow-btn">
-                  Compile &amp; Run DAG
+                  Compile &amp; Run Task
                 </button>
                 <button id="vA-reset-btn" class="sim-btn secondary-btn">
-                  Reset Graph
+                  Reset Pipeline
                 </button>
               </div>
 
@@ -373,7 +693,7 @@
               <!-- Terminal Output Log -->
               <div class="sim-log-console monospace" id="vA-console">
                 <div class="log-line text-muted">
-                  Awaiting topological compilation triggers...
+                  Awaiting offloaded task triggers...
                 </div>
               </div>
             </div>
@@ -385,20 +705,22 @@
       <section class="playground-section" id="compactor">
         <div class="hero-container">
           <span class="glass-badge">Optimization</span>
-          <h2 class="section-title">2. 5-Layer Context Compaction Pipeline</h2>
+          <h2 class="section-title">
+            2. Context Compaction &amp; SQLite Caching
+          </h2>
           <p class="section-desc">
-            Prevent context window slot thrashing. Select homogeneous CRM
-            tables, diagnostic stack traces, or scraped HTML scrapings, and
-            watch the executor compress key structures natively before prompting
-            local LLMs.
+            Keep your agent's context pristine. When tools produce large
+            outputs, tzro compresses them on-device (saving up to 85% of
+            attention space) or offloads massive datasets to a local SQLite
+            cache.
           </p>
 
           <div class="compactor-container premium-border">
             <div class="compactor-header">
               <h2>Context Compaction &amp; SQLite Cache Playground</h2>
               <p>
-                Select structured raw data inputs and watch the Go system
-                compile them into compressed, attention-friendly layers.
+                Select raw tool data outputs and watch how tzro compresses them
+                into clean, structured layers before returning them.
               </p>
             </div>
 
@@ -547,13 +869,13 @@
         <div class="hero-container">
           <span class="glass-badge">Developer SDK</span>
           <h2 class="section-title">
-            3. Go SDK &amp; Synchronous Middleware Hooks
+            3. Go SDK &amp; Synchronous Guardrail Hooks
           </h2>
           <p class="section-desc">
-            Fully typed Go SDK packages handle configuration loading, custom
-            native tool registrations, Kahn sorted runs, and async telemetry
-            streams. Inject blocking middleware hooks to scrub PII, enforce
-            safety guardrails, or trigger HITL gates.
+            Extend tzro's capabilities with a clean Go SDK. Register custom
+            native tools, subscribe to real-time telemetry, and inject blocking
+            middleware hooks to redact PII, enforce safety guardrails, or pause
+            executions for supervisor checks.
           </p>
 
           <div class="dx-showcase-grid">
@@ -668,113 +990,6 @@
                   </button>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- MODEL CONTEXT PROTOCOL (MCP) SETUP SECTION -->
-      <section class="playground-section" id="mcp-setup">
-        <div class="hero-container">
-          <span class="glass-badge">Protocol Integration</span>
-          <h2 class="section-title">Model Context Protocol (MCP) Setup</h2>
-          <p class="section-desc">
-            Expose tzro's durable execution runtime, hybrid memory database, and
-            topological sorters directly to any Model Context Protocol (MCP)
-            compliant client (such as Claude Desktop, Cursor, or Google
-            Antigravity).
-          </p>
-
-          <div class="mcp-setup-grid premium-border">
-            <div class="mcp-steps-panel">
-              <div class="mcp-step">
-                <div class="step-num">1</div>
-                <div class="step-text">
-                  <h3>Build the MCP Server Binary</h3>
-                  <p>
-                    Compile the server binary target from the root repository
-                    directory:
-                  </p>
-                  <pre
-                    class="monospace"
-                  ><code>go build -o bin/tzro-mcp ./cmd/tzro-mcp</code></pre>
-                </div>
-              </div>
-
-              <div class="mcp-step">
-                <div class="step-num">2</div>
-                <div class="step-text">
-                  <h3>Register in Client Configuration</h3>
-                  <p>
-                    Select your workspace or client configuration interface to
-                    insert the server definition:
-                  </p>
-
-                  <div class="mcp-tab-bar">
-                    <button
-                      class="mcp-tab-btn active"
-                      data-client="claude"
-                      type="button"
-                    >
-                      Claude Desktop
-                    </button>
-                    <button
-                      class="mcp-tab-btn"
-                      data-client="cursor"
-                      type="button"
-                    >
-                      Cursor Settings
-                    </button>
-                    <button class="mcp-tab-btn" data-client="agy" type="button">
-                      Antigravity Config
-                    </button>
-                  </div>
-
-                  <div class="mcp-config-box">
-                    <pre class="monospace"><code id="mcp-config-display">{
-  "mcpServers": {
-    "tzro": {
-      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
-      "args": [],
-      "env": {
-        "PORT": "8080"
-      }
-    }
-  }
-}</code></pre>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="mcp-tools-panel">
-              <h3>Exposed Protocol Tools</h3>
-              <p>
-                Once registered, tzro exposes a wide developer capability suite
-                to client agents:
-              </p>
-              <ul class="mcp-tools-list monospace">
-                <li><strong>tzro_run</strong>: Run durable DAG workflows</li>
-                <li>
-                  <strong>tzro_status</strong>: Inspect status of active tasks
-                </li>
-                <li>
-                  <strong>tzro_memory_query</strong>: Query memory graphs
-                  semantically
-                </li>
-                <li>
-                  <strong>tzro_memory_ingest</strong>: Store memories in SQLite
-                  vector store
-                </li>
-                <li>
-                  <strong>tzro_skills_add</strong>: Sync custom procedural
-                  micro-skills
-                </li>
-                <li>
-                  <strong>tzro_hook_approve</strong>: Approve blocked
-                  human-in-the-loop steps
-                </li>
-              </ul>
             </div>
           </div>
         </div>

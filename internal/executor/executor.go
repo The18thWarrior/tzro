@@ -621,7 +621,77 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		return nil
 	}
 
-	// 1.3 Synthesis node: final summary compilation ONLY
+	// 1.3 Probe node: autonomous Thought Chain exploration (ADR-0019)
+	if node.Type == "probe" {
+		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Probe: "+node.Instructions)
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+
+		probeConfig := compiler.ProbeConfig{
+			Goal:         node.Instructions,
+			AllowedTools: node.AllowedTools,
+			StepBudget:   10,
+			CompactEvery: 3,
+		}
+		if node.ProbeConfig != nil {
+			probeConfig = *node.ProbeConfig
+		}
+
+		probeEngine := &DefaultProbeInference{}
+		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine)
+		if err != nil {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
+			return fmt.Errorf("probe node %s execution failed: %w", node.ID, err)
+		}
+
+		// Run AfterNode hooks
+		var nodeAfterAction HookAction = ActionContinue
+		for _, h := range activeHooks {
+			action, err := h.AfterNode(ctx, taskID, node, &synthesis)
+			if err != nil {
+				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
+			}
+			if action == ActionAbort {
+				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
+			}
+			if action == ActionPause {
+				nodeAfterAction = ActionPause
+			}
+		}
+
+		if nodeAfterAction == ActionPause {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
+			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
+			return ErrTaskPaused
+		}
+
+		nodeStatus := fmt.Sprintf("[Probe] %s", synthesis)
+		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
+		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+		return nil
+	}
+
+	// 1.4 Synthesis node: final summary compilation ONLY
 	if node.Type == "synthesis" {
 		// Update node state to running
 		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")

@@ -129,3 +129,31 @@ type SessionTurnLog struct {
 	UserMessage   string   `json:"userMessage"`
 	ExecutedTools []string `json:"executedTools"`
 }
+
+// ThoughtStep represents a single step in a Probe Node's Thought Chain.
+// Each step is a stateless Local Model inference call that produces either
+// a tool call or a synthesis decision.
+type ThoughtStep struct {
+	ID         string `json:"id"`
+	ProbeID    string `json:"probeId"`
+	TaskID     string `json:"taskId"`
+	StepIndex  int    `json:"stepIndex"`
+	Thought    string `json:"thought"`
+	ToolName   string `json:"toolName,omitempty"`
+	ToolArgs   string `json:"toolArgs,omitempty"`
+	ToolOutput string `json:"toolOutput,omitempty"`
+	Embedding  []byte `json:"embedding,omitempty"`
+	CreatedAt  int64  `json:"createdAt"`
+}
+
+// ThoughtSummary represents a rolling compaction summary of a Thought Chain.
+// Every N steps, recent thoughts are compressed into a summary for context efficiency.
+type ThoughtSummary struct {
+	ID        string `json:"id"`
+	ProbeID   string `json:"probeId"`
+	TaskID    string `json:"taskId"`
+	StepRange string `json:"stepRange"` // e.g., "1-3", "4-6"
+	Summary   string `json:"summary"`
+	Embedding []byte `json:"embedding,omitempty"`
+	CreatedAt int64  `json:"createdAt"`
+}

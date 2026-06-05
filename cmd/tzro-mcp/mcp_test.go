@@ -1288,3 +1288,118 @@ func TestMCPServer_ResourceSubscribeEventBridge(t *testing.T) {
 		t.Fatalf("timeout waiting for notification from event bridge")
 	}
 }
+
+func TestMCPServer_EdgeCases(t *testing.T) {
+	// 1. Build the binary first
+	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-edges-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binPath := filepath.Join(tmpDir, "tzro-mcp")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build tzro-mcp binary: %v", err)
+	}
+
+	// 2. Start the binary
+	cmd := exec.Command(binPath)
+	cmd.Dir = tmpDir
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdout pipe: %v", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("failed to get stderr pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start tzro-mcp: %v", err)
+	}
+
+	go func() {
+		_, _ = io.Copy(os.Stderr, stderrPipe)
+	}()
+
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+	}()
+
+	reader := bufio.NewReader(stdout)
+
+	sendAndReceive := func(reqJSON string) string {
+		_, err := stdin.Write([]byte(reqJSON + "\n"))
+		if err != nil {
+			t.Fatalf("failed to write to stdin: %v", err)
+		}
+
+		lineChan := make(chan string, 1)
+		errChan := make(chan error, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				errChan <- err
+				return
+			}
+			lineChan <- line
+		}()
+
+		select {
+		case line := <-lineChan:
+			return line
+		case err := <-errChan:
+			t.Fatalf("failed to read line from stdout: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timeout waiting for response to: %s", reqJSON)
+		}
+		return ""
+	}
+
+	// 3. Send initialize request
+	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0.0"}}}`
+	_ = sendAndReceive(initReq)
+
+	// 4. Send initialized notification
+	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+
+	// Helper to assert validation failure
+	assertValidationFail := func(id int, toolName string, argsJSON string, expectedError string) {
+		req := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"%s","arguments":%s}}`, id, toolName, argsJSON)
+		resp := sendAndReceive(req)
+		if !strings.Contains(resp, `"isError":true`) {
+			t.Errorf("Expected isError true for %s with args %s, got: %s", toolName, argsJSON, resp)
+		}
+		if !strings.Contains(resp, expectedError) {
+			t.Errorf("Expected error message '%s' for %s, got: %s", expectedError, toolName, resp)
+		}
+	}
+
+	// 5. Test validation cases
+	assertValidationFail(2, "tzro_run", `{"prompt": ""}`, "prompt cannot be empty")
+	assertValidationFail(3, "tzro_run", `{"prompt": "   "}`, "prompt cannot be empty")
+	assertValidationFail(4, "tzro_status", `{"taskId": ""}`, "taskId cannot be empty")
+	assertValidationFail(5, "tzro_memory_query", `{"query": ""}`, "query cannot be empty")
+	assertValidationFail(6, "tzro_memory_ingest", `{"type": "fact", "content": ""}`, "content cannot be empty")
+	assertValidationFail(7, "tzro_memory_ingest", `{"type": "invalid_type", "content": "hello"}`, "invalid memory type")
+	assertValidationFail(8, "tzro_kg_add_entity", `{"node": {"id": "", "nodeType": "account", "name": "Acme"}}`, "node requires non-empty id, nodeType, and name")
+	assertValidationFail(9, "tzro_kg_add_entity", `{"edge": {"id": "edge1", "edgeType": "", "sourceId": "n1", "targetId": "n2"}}`, "edge requires non-empty id, edgeType, sourceId, and targetId")
+	assertValidationFail(10, "tzro_skills_add", `{"name": "", "triggerDescription": "desc", "sopContent": "sop"}`, "name, triggerDescription, and sopContent are required")
+	assertValidationFail(11, "tzro_skills_get", `{"id": ""}`, "id cannot be empty")
+	assertValidationFail(12, "tzro_skills_relevant", `{"prompt": ""}`, "prompt cannot be empty")
+	assertValidationFail(13, "tzro_hook_approve", `{"taskId": "", "nodeId": "node1"}`, "taskId and nodeId are required")
+	assertValidationFail(14, "tzro_resume", `{"taskId": ""}`, "taskId cannot be empty")
+	assertValidationFail(15, "tzro_completion", `{"systemPrompt": "sys", "userPrompt": ""}`, "userPrompt cannot be empty")
+	assertValidationFail(16, "tzro_classification", `{"input": "", "categories": ["A", "B"]}`, "input cannot be empty")
+	assertValidationFail(17, "tzro_classification", `{"input": "text", "categories": ["A"]}`, "at least 2 categories are required")
+	assertValidationFail(18, "tzro_client_tool_submit", `{"taskId": "", "nodeId": ""}`, "must provide either requestId or both taskId and nodeId")
+	assertValidationFail(19, "tzro_web_search", `{"query": ""}`, "query cannot be empty")
+}

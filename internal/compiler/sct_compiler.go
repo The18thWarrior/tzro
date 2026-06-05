@@ -61,7 +61,9 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			execNodeMap[node.ID] = execID
 			bridgeNodeMap[node.ID] = bridgeID
 		} else {
-			// Keep other structural nodes (like branch, merge) as is
+			// Keep other structural nodes (branch, merge, probe) as is.
+			// Probe nodes run their own internal Thought Chain loop and
+			// do not need bridge/exec decomposition.
 			sctNodes = append(sctNodes, node)
 			execNodeMap[node.ID] = node.ID
 		}
@@ -109,7 +111,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 
 	for _, node := range sctNodes {
-		if (node.Type == "deterministic" || node.Type == "action") && !isSourceMap[node.ID] {
+		if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe") && !isSourceMap[node.ID] {
 			sctEdges = append(sctEdges, GraphEdge{
 				SourceID: node.ID,
 				TargetID: synthID,

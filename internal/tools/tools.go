@@ -260,6 +260,12 @@ func Init(configPath string) error {
 	Register(NewDeleteTool())
 	Register(NewQueryTool())
 
+	// Register filesystem tools with path validation security boundary
+	fsValidator := NewPathValidator(GetAllowedPaths())
+	Register(NewReadFileTool(fsValidator))
+	Register(NewListDirTool(fsValidator))
+	Register(NewSearchFilesTool(fsValidator))
+
 	// 1. Register cache tools statically
 	Register(&FunctionTool{
 		name: "introspect_cache",

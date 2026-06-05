@@ -266,6 +266,27 @@ func (sdb *SqliteDatabase) createTables() error {
 			action_payload TEXT,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS thought_chain (
+			id           TEXT PRIMARY KEY,
+			probe_id     TEXT NOT NULL,
+			task_id      TEXT NOT NULL,
+			step_index   INTEGER NOT NULL,
+			thought      TEXT NOT NULL,
+			tool_name    TEXT,
+			tool_args    TEXT,
+			tool_output  TEXT,
+			embedding    BLOB,
+			created_at   INTEGER NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS thought_chain_summaries (
+			id           TEXT PRIMARY KEY,
+			probe_id     TEXT NOT NULL,
+			task_id      TEXT NOT NULL,
+			step_range   TEXT NOT NULL,
+			summary      TEXT NOT NULL,
+			embedding    BLOB,
+			created_at   INTEGER NOT NULL
+		);`,
 	}
 
 	for _, query := range queries {
@@ -1116,4 +1137,93 @@ func (sdb *SqliteDatabase) SearchMemoriesAndNodes(query string, limit int) ([]Fa
 	}
 
 	return matchedMems, matchedNodes, nil
+}
+
+// AddThoughtStep persists a single Thought Chain step to SQLite.
+// Each step is committed immediately for durability — if the process crashes,
+// execution can resume from the last committed step.
+func (sdb *SqliteDatabase) AddThoughtStep(step ThoughtStep) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	if sdb.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	_, err := sdb.db.Exec(
+		`INSERT INTO thought_chain (id, probe_id, task_id, step_index, thought, tool_name, tool_args, tool_output, embedding, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		step.ID, step.ProbeID, step.TaskID, step.StepIndex, step.Thought,
+		step.ToolName, step.ToolArgs, step.ToolOutput, step.Embedding, step.CreatedAt,
+	)
+	return err
+}
+
+// GetThoughtSteps retrieves all thought chain steps for a given probe, ordered by step_index ascending.
+func (sdb *SqliteDatabase) GetThoughtSteps(probeID string) ([]ThoughtStep, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	rows, err := sdb.db.Query(
+		`SELECT id, probe_id, task_id, step_index, thought, COALESCE(tool_name,''), COALESCE(tool_args,''), COALESCE(tool_output,''), embedding, created_at
+		FROM thought_chain WHERE probe_id = ? ORDER BY step_index ASC`, probeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var steps []ThoughtStep
+	for rows.Next() {
+		var s ThoughtStep
+		if err := rows.Scan(&s.ID, &s.ProbeID, &s.TaskID, &s.StepIndex, &s.Thought,
+			&s.ToolName, &s.ToolArgs, &s.ToolOutput, &s.Embedding, &s.CreatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan thought step: %w", err)
+		}
+		steps = append(steps, s)
+	}
+	return steps, nil
+}
+
+// AddThoughtSummary persists a rolling compaction summary of a Thought Chain.
+func (sdb *SqliteDatabase) AddThoughtSummary(summary ThoughtSummary) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	if sdb.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	_, err := sdb.db.Exec(
+		`INSERT INTO thought_chain_summaries (id, probe_id, task_id, step_range, summary, embedding, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		summary.ID, summary.ProbeID, summary.TaskID, summary.StepRange,
+		summary.Summary, summary.Embedding, summary.CreatedAt,
+	)
+	return err
+}
+
+// GetLatestSummary retrieves the most recent compaction summary for a probe.
+func (sdb *SqliteDatabase) GetLatestSummary(probeID string) (ThoughtSummary, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return ThoughtSummary{}, fmt.Errorf("database not initialized")
+	}
+
+	var s ThoughtSummary
+	err := sdb.db.QueryRow(
+		`SELECT id, probe_id, task_id, step_range, summary, embedding, created_at
+		FROM thought_chain_summaries WHERE probe_id = ? ORDER BY created_at DESC LIMIT 1`, probeID,
+	).Scan(&s.ID, &s.ProbeID, &s.TaskID, &s.StepRange, &s.Summary, &s.Embedding, &s.CreatedAt)
+
+	if err != nil {
+		return ThoughtSummary{}, err
+	}
+	return s, nil
 }

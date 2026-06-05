@@ -16,8 +16,15 @@ description: >
 
 tzro compiles natural language prompts into topologically-sorted DAG workflows, executes them durably with checkpointing, and provides relational memory, knowledge graph, and micro-skill extraction. Use it to offload complex, multi-step work from the agent's main context.
 
+### Why Delegation Matters — A Cautionary Example
+
+This policy exists because of a concrete failure: an agent asked to "explore the codebase and explain its architecture" kept everything in its own context window. It made **30+ sequential cloud tool calls** (`list_dir`, `view_file`, `grep`) — consuming frontier model tokens for work the Local Model handles natively. When challenged, the agent rationalized that exploration *"requires frontier reasoning about intermediate outputs."* It doesn't. Directory listing, file reading, and pattern searching are **routing decisions**, not frontier reasoning. A 4B Local Model routes just fine.
+
+**Probe Nodes** (ADR-0019) were built specifically to prevent this. They run a bounded Thought Chain on the Local Model with `read_file`, `list_dir`, and `search_files` — zero cloud tokens. Your only job: delegate with a goal, consume the compacted synthesis.
+
 **When to delegate to tzro:**
 - Multi-step workflows requiring 2+ tool calls with data dependencies
+- **Codebase exploration and directory analysis** — always delegate; Probe Nodes handle these locally
 - Tool-heavy automations (CRM syncs, data pipelines, bulk operations)
 - High-latency data consumption that would thrash the context window
 - Any request the user explicitly asks to delegate to tzro
@@ -26,8 +33,10 @@ tzro compiles natural language prompts into topologically-sorted DAG workflows, 
 - Simple one-shot tool calls
 - Conversational Q&A
 - File edits or code generation that you can do directly
-- Local workspace operations (file reads, directory listings, code edits)
+- **Targeted** local file operations (reading a single known file to make a code edit, viewing a specific function) — these feed frontier reasoning directly
 - Management-plane MCP calls (`tzro_list_tasks`, `tzro_status`, `tzro_model_list`, `tzro_skills_list`, `tzro_observer_events`) — call these directly
+
+> ⚠️ **Key distinction**: Reading *one known file* to make a code edit → keep in-context. Exploring *a directory or project structure* to understand architecture → **delegate to tzro**. If you catch yourself chaining 3+ `list_dir`/`view_file` calls, stop and delegate.
 
 ## Offload Policy
 
@@ -60,7 +69,7 @@ Before using tzro, verify the engine is running:
 
 ## MCP Tool Taxonomy
 
-The 21 tzro MCP tools are organized into functional groups. Read `references/mcp-tools.md` for full parameter details.
+The 26 tzro MCP tools are organized into functional groups. Read `references/mcp-tools.md` for full parameter details.
 
 ### Execution (Core)
 | Tool | Purpose |
@@ -69,6 +78,12 @@ The 21 tzro MCP tools are organized into functional groups. Read `references/mcp
 | `tzro_status` | Check execution status, node states, and outcomes of a task |
 | `tzro_resume` | Resume a paused/interrupted task |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status |
+
+### Local Inference & Cost Arbitrage
+| Tool | Purpose |
+|------|---------|
+| `tzro_completion` | Structured text generation using local on-device LLM with optional JSON schema constraints |
+| `tzro_classification` | Force-classify text into one of a set of categories using GBNF grammar constraints |
 
 ### Memory & Retrieval
 | Tool | Purpose |
@@ -104,6 +119,9 @@ The 21 tzro MCP tools are organized into functional groups. Read `references/mcp
 | Tool | Purpose |
 |------|---------|
 | `tzro_configure_tools` | Provision external MCP server hosts dynamically |
+| `tzro_web_search` | Execute multi-engine web search with tiered fallback |
+| `tzro_model_list` | List available GGUF models in the catalog with download status |
+| `tzro_model_set` | Change the active local LLM model (downloads and swaps sidecars) |
 | `tzro_observer_events` | Retrieve observer verification/audit telemetry |
 | `tzro_observer_memories` | List memories synthesized by the background Observer Agent |
 

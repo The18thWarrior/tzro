@@ -1,13 +1,19 @@
 # Compiled binaries
 bin/
-tzro_engine
+/tzro
+/tzro-mcp
+/tzrod
+/tzro_engine
+/tzro_cli
+cmd/tzro/tzro
+cmd/tzro-mcp/tzro-mcp
+cmd/tzrod/tzrod
+*.test
 *.exe
 *.dll
 *.so
 *.dylib
-tzro_cli
 tzro_quickstart.db7
-tzro-mcp
 
 # Runtime data
 **/.tzro/
@@ -16,6 +22,9 @@ tzro.db
 *.db-wal
 *.db-shm
 *.bak
+__pycache__/
+*.py[cod]
+*$py.class
 
 # Local runtime config (ephemeral)
 .tzro/logs/

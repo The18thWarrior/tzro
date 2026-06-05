@@ -5,20 +5,31 @@ import (
 )
 
 type GraphNode struct {
-	ID              string   `json:"id"`
-	Type            string   `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "gbnf_bridge" | "synthesis" | "hypothesis"
-	Action          string   `json:"action"`              // Target tool name
-	Instructions    string   `json:"instructions"`        // Core step instruction
-	AllowedTools    []string `json:"allowedTools"`        // Whitelist of permitted tools
-	Condition       string   `json:"condition,omitempty"` // For logical branch nodes
-	DefaultTarget   string   `json:"defaultTarget,omitempty"`
-	SuggestedSkills []string `json:"suggestedSkillIds,omitempty"` // Injected micro-skills
-	Status          string   `json:"status"`                      // "pending" | "running" | "completed" | "failed" | "skipped"
-	Output          string   `json:"output,omitempty"`
-	OutputSchema    string   `json:"outputSchema,omitempty"` // Added for bridge nodes (GBNF grammar)
-	StaticArgs      string   `json:"staticArgs,omitempty"`   // Added for pre-known arguments
-	Error           string   `json:"error,omitempty"`
-	RequireApproval bool     `json:"requireApproval,omitempty"` // Pause and wait for approval
+	ID              string       `json:"id"`
+	Type            string       `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "gbnf_bridge" | "synthesis" | "hypothesis" | "probe"
+	Action          string       `json:"action"`              // Target tool name
+	Instructions    string       `json:"instructions"`        // Core step instruction
+	AllowedTools    []string     `json:"allowedTools"`        // Whitelist of permitted tools
+	Condition       string       `json:"condition,omitempty"` // For logical branch nodes
+	DefaultTarget   string       `json:"defaultTarget,omitempty"`
+	SuggestedSkills []string     `json:"suggestedSkillIds,omitempty"` // Injected micro-skills
+	Status          string       `json:"status"`                      // "pending" | "running" | "completed" | "failed" | "skipped"
+	Output          string       `json:"output,omitempty"`
+	OutputSchema    string       `json:"outputSchema,omitempty"` // Added for bridge nodes (GBNF grammar)
+	StaticArgs      string       `json:"staticArgs,omitempty"`   // Added for pre-known arguments
+	Error           string       `json:"error,omitempty"`
+	RequireApproval bool         `json:"requireApproval,omitempty"` // Pause and wait for approval
+	ProbeConfig     *ProbeConfig `json:"probeConfig,omitempty"`     // Configuration for probe nodes (ADR-0019)
+}
+
+// ProbeConfig configures a Probe Node's Thought Chain execution loop.
+// The probe autonomously explores a codebase or data source using filesystem tools,
+// persisting each reasoning step to SQLite for durability and compaction.
+type ProbeConfig struct {
+	Goal         string   `json:"goal"`         // The exploration objective
+	AllowedTools []string `json:"allowedTools"` // Tools the probe may use (e.g., ["read_file", "list_dir", "search_files"])
+	StepBudget   int      `json:"stepBudget"`   // Maximum number of Thought Chain steps before forced synthesis
+	CompactEvery int      `json:"compactEvery"` // Rolling compaction frequency (every N steps)
 }
 
 type GraphEdge struct {

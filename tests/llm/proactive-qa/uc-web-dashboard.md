@@ -29,6 +29,9 @@ A developer wants a beautiful, responsive visual interface to orchestrate, confi
 - [ ] User can toggle the mobile menu and see the Mobile Navigation Drawer with navigation links.
 - [ ] User can switch between Raw Input and Compacted panels using the mobile tab switcher on screens smaller than 768px.
 - [ ] User can click Claude Desktop, Cursor Settings, and Antigravity Config tabs in the MCP Setup section and see the corresponding configuration format displayed in the code block.
+- [ ] User can view the "Autonomous Agent Offload & Wait Protocol" detailing the Offload Decision Rule.
+- [ ] User can see suggested prompt templates for Research, Multi-System Automation, and Codebase Exploration (Probe Node) on the onboarding page.
+- [ ] User sees the newly documented Handshake Verification test using a JSON-RPC initialize command and the critical warnings about standard input/output redirection.
 
 ## Edge Cases to Probe
 
@@ -38,6 +41,8 @@ A developer wants a beautiful, responsive visual interface to orchestrate, confi
 - Operating the dashboard on mobile, tablet, and desktop viewports to ensure responsive container queries.
 - Resizing the window to mobile width (<768px) and toggling the hamburger menu, then checking if the mobile navigation drawer closes when a link is clicked or when clicking outside.
 - Running the compaction pipeline on mobile and verifying that the view automatically switches to the Compacted panel upon completion.
+- Accessing the Handshake Verification section and copying the initialization JSON payload.
+- Reviewing the offload decision rule and verifying layout responsiveness of the policy grid on narrow viewports.
 
 ## Anti-Patterns to Watch For
 
@@ -48,4 +53,4 @@ A developer wants a beautiful, responsive visual interface to orchestrate, confi
 - [ ] Buttons or input forms becoming dead/unresponsive without visual loading/disabled cues.
 - [ ] Mobile navigation drawer or hamburger menu overlapping other UI elements or blocking interaction.
 - [ ] Mobile tab switcher displaying incorrect payload size metrics or failing to display the active panel.
-
+- [ ] The "Autonomous Agent Offload & Wait Protocol" section breaks layout or overlaps on mobile screen widths.

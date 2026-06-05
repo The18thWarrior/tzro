@@ -143,7 +143,47 @@ The Web Dashboard will be live at `http://localhost:8000`.
 
 ### 🎛️ Model Context Protocol (MCP) Server Integration
 
-To run `tzro` in server mode and integrate it as an MCP server with Claude Desktop, Cursor, or other LLM client environments, please refer to the step-by-step **[MCP Setup Guide](docs/mcp-setup-guide.md)**.
+To run `tzro` in server mode and integrate it as an MCP server with Claude Desktop, Cursor, or Google Antigravity, follow these steps:
+
+1. **Build the Binary:**
+   ```bash
+   go build -o bin/tzro-mcp ./cmd/tzro-mcp
+   ```
+2. **Register in Client Configuration:**
+   - **Claude Desktop (Mac/Windows JSON Config):**
+     ```json
+     {
+       "mcpServers": {
+         "tzro": {
+           "command": "/absolute/path/to/tzro/bin/tzro-mcp",
+           "args": [],
+           "env": {
+             "PORT": "8080"
+           }
+         }
+       }
+     }
+     ```
+   - **Cursor Settings:** Add a new `command` type MCP server pointing to the absolute path `/absolute/path/to/tzro/bin/tzro-mcp`.
+   - **Google Antigravity:** Add the server configuration to `.agents/mcp_config.json` inside your active workspace, defining necessary environment parameters like `TZRO_DIR`.
+3. **Verify via Handshake Test:**
+   Run `./bin/tzro-mcp` manually from your shell and paste this initialization JSON-RPC block:
+   ```json
+   {
+     "jsonrpc": "2.0",
+     "id": 1,
+     "method": "initialize",
+     "params": {
+       "protocolVersion": "2024-11-05",
+       "capabilities": {},
+       "clientInfo": { "name": "test-client", "version": "1.0.0" }
+     }
+   }
+   ```
+4. **Safeguard the Stdio Pipe:**
+   Standard input and output are strictly reserved for JSON-RPC message framing. All debug logging and runtime warnings in `tzro` are redirected to `stderr`. Never print to `stdout` inside custom tools, middleware, or extensions.
+
+For more details, refer to the full **[MCP Setup Guide](docs/mcp-setup-guide.md)**.
 
 ---
 
@@ -680,6 +720,19 @@ Always use standard terminology in code comments, schemas, and UI components. Ne
   ```bash
   go fmt ./...
   ```
+
+### 4. Durable Execution Delegation (Offload Policy)
+
+When executing any task that does not explicitly require frontier model reasoning (such as code generation, complex architectural design judgment, or interactive human dialogue), coding agents **must** delegate execution to the local `tzro` engine via `tzro_run` or `tzro` CLI.
+
+- **The Offload Decision Rule:** Ask: *"Do I need frontier-model-exclusive reasoning about intermediate outputs to decide the next step?"*
+  - **Yes** → Keep execution in-context (run cloud tool calls).
+  - **No** → Offload to `tzro_run` as a background task.
+- **Mandatory Delegation Patterns:**
+  - Codebase exploration and directory analysis (using a local **Probe Node** with reactive Thought Chains instead of rigid DAGs).
+  - Multi-source web research and memory ingestion pipelines.
+- **Trigger:** Evaluate DAG offloading if you are about to make **3 or more sequential external tool calls**, or have made **5 or more in-context calls**.
+- **Wait Protocol:** Stop calling other tools, schedule a one-shot wakeup timer via the client, check task status via `tzro_status` until `completed`, and consume **only** the compiled `terminal_synthesis` outcome.
 
 ---
 

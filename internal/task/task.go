@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -156,6 +157,20 @@ Target JSON Structure:
       "allowedTools": ["target_tool_name_from_inventory"],
       "suggestedSkillIds": ["suggested_skill_id_from_sop_index"],
       "status": "pending"
+    },
+    {
+      "id": "probe_unique_id",
+      "type": "probe",
+      "action": "",
+      "instructions": "Detailed exploration objective describing what to discover and what output to produce",
+      "allowedTools": ["read_file", "list_dir", "search_files"],
+      "status": "pending",
+      "probeConfig": {
+        "goal": "Detailed exploration objective describing what to discover and what output to produce",
+        "allowedTools": ["read_file", "list_dir", "search_files"],
+        "stepBudget": 20,
+        "compactEvery": 3
+      }
     }
   ],
   "edges": [
@@ -163,11 +178,21 @@ Target JSON Structure:
   ]
 }
 
+### Schema Details:
+1. "type": Must be one of "action", "conditional", "loop", or "probe".
+2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
+3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
+4. "instructions": Provide natural language goals or variables to read/write.
+
+### Probe Node Guidance:
+When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
+
 ## Design Rules:
 1. Strategy only: You NEVER execute tools yourself. Plan the steps logically.
 2. Variable binding: Use the double-braces syntax '{{nodes.node_id.output.property}}' (e.g. '{{nodes.node_01.output.records}}') or '{{nodes.node_id.output}}' to pass variables forward between nodes.
 3. allowedTools limit: Restrict the local worker's action space at each node. Only include the 1-2 tools absolutely necessary.
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
+5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from upstream variable bindings.
 `, toolsListStr, skillsListStr, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")
@@ -307,6 +332,20 @@ Target JSON Structure:
       "allowedTools": ["target_tool_name_from_inventory"],
       "suggestedSkillIds": ["suggested_skill_id_from_sop_index"],
       "status": "pending"
+    },
+    {
+      "id": "probe_unique_id",
+      "type": "probe",
+      "action": "",
+      "instructions": "Detailed exploration objective describing what to discover and what output to produce",
+      "allowedTools": ["read_file", "list_dir", "search_files"],
+      "status": "pending",
+      "probeConfig": {
+        "goal": "Detailed exploration objective describing what to discover and what output to produce",
+        "allowedTools": ["read_file", "list_dir", "search_files"],
+        "stepBudget": 20,
+        "compactEvery": 3
+      }
     }
   ],
   "edges": [
@@ -314,11 +353,21 @@ Target JSON Structure:
   ]
 }
 
+### Schema Details:
+1. "type": Must be one of "action", "conditional", "loop", or "probe".
+2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
+3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
+4. "instructions": Provide natural language goals or variables to read/write.
+
+### Probe Node Guidance:
+When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
+
 ## Design Rules:
 1. Strategy only: You NEVER execute tools yourself. Plan the steps logically.
 2. Variable binding: Use the double-braces syntax '{{nodes.node_id.output.property}}' (e.g. '{{nodes.node_01.output.records}}') or '{{nodes.node_id.output}}' to pass variables forward between nodes.
 3. allowedTools limit: Restrict the local worker's action space at each node. Only include the 1-2 tools absolutely necessary.
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
+5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from upstream variable bindings.
 `, toolsListStr, skillsListStr, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")
@@ -368,6 +417,7 @@ To satisfy evaluation matching:
 	}
 
 	graphStr = cleanJSONString(graphStr)
+	fmt.Fprintf(os.Stderr, "[Planner Raw Output] %s\n", graphStr)
 
 	var graph compiler.ExecutionGraph
 	if err := json.Unmarshal([]byte(graphStr), &graph); err != nil {
