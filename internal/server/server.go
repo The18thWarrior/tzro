@@ -21,6 +21,7 @@ import (
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/notification"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 	"tzro/internal/task"
 	"tzro/internal/tools"
@@ -173,6 +174,9 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 		// Run graph in background asynchronously to prevent HTTP blocking (using Background context)
 		go func() {
+			proactivity.RegisterActiveUserTask(graph.TaskID)
+			defer proactivity.DeregisterActiveUserTask(graph.TaskID)
+
 			err := executor.GlobalEngine.ExecuteGraph(context.Background(), graph, levels)
 			if err != nil {
 				fmt.Printf("[Server Executor Error] %v\n", err)
@@ -220,12 +224,20 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 			var finalReply string
 			if useLocal {
-				res, err := inference.GlobalLocalModel.CallLocalModelStream(ctx, systemPrompt, userMessage, "", meta)
+				msgs := []inference.InferenceMessage{
+					{Role: "system", Content: systemPrompt},
+					{Role: "user", Content: userMessage},
+				}
+				res, err := inference.GlobalLocalModel.CallLocalModelStream(ctx, msgs, "", meta)
 				if err == nil && res != nil {
 					finalReply = res.Content
 				}
 			} else {
-				reply, err := inference.CallCloudModelStream(ctx, systemPrompt, userMessage, "", meta, nil)
+				msgs := []inference.InferenceMessage{
+					{Role: "system", Content: systemPrompt},
+					{Role: "user", Content: userMessage},
+				}
+				reply, err := inference.CallCloudModelStream(ctx, msgs, "", meta, nil)
 				if err == nil {
 					finalReply = reply
 				}

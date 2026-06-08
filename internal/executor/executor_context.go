@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"tzro/internal/compiler"
+	"tzro/internal/inference"
 	"tzro/internal/memory"
 )
 
@@ -178,4 +179,65 @@ func buildContextAwareUserPrompt(accumulatedContext string, ragContext string, i
 	sb.WriteString(interpolatedInstruction)
 
 	return sb.String()
+}
+
+// buildStaticBaseInstruction returns the shared, invariant system prompt used by all
+// GBNF bridge/exec nodes in a task. This text is identical across every node execution,
+// enabling llama-server's --cache-reuse to share the KV cache segment for this prefix.
+func buildStaticBaseInstruction() string {
+	return "You are the Local Tactician Node Executor for the tzro durable execution engine. " +
+		"Your role is to extract structured tool parameters from the accumulated context of prior workflow steps. " +
+		"You MUST return ONLY a valid JSON object matching the provided schema. " +
+		"Do NOT hallucinate or generate placeholder values — use EXACT values from the context. " +
+		"If the instruction contains {{nodes.X.output.Y}} references, match them to corresponding values in the accumulated context blocks."
+}
+
+// buildSegmentedMessages constructs a 4-message conversation structure designed to maximize
+// KV cache prefix sharing across nodes in the same task. The layout is:
+//
+//  1. {system, staticBase}           — invariant across all nodes; cached
+//  2. {user, accumulatedCtx}         — shared across nodes at the same topological level
+//  3. {assistant, ack}               — synthetic turn boundary (omitted if no accumulated ctx)
+//  4. {user, schema + instruction}   — per-node volatile content
+//
+// This segmentation ensures the first 1-2 messages' KV entries are reusable from the
+// --cache-reuse 2048 window, avoiding redundant computation on repeated prompt prefixes.
+func buildSegmentedMessages(staticBase string, accumulatedCtx string, schema string, instruction string) []inference.InferenceMessage {
+	var msgs []inference.InferenceMessage
+
+	// Segment 1: Static invariant system prompt (cacheable)
+	msgs = append(msgs, inference.InferenceMessage{
+		Role:    "system",
+		Content: staticBase,
+	})
+
+	// Segment 2-3: Accumulated context as a user→assistant exchange (cacheable per-level)
+	if accumulatedCtx != "" {
+		msgs = append(msgs, inference.InferenceMessage{
+			Role:    "user",
+			Content: "## Accumulated Context from Prior Steps\n\n" + accumulatedCtx,
+		})
+		msgs = append(msgs, inference.InferenceMessage{
+			Role:    "assistant",
+			Content: "I have reviewed the accumulated context. Ready to extract parameters.",
+		})
+	}
+
+	// Segment 4: Per-node volatile content (schema + instruction)
+	var sb strings.Builder
+	if schema != "" {
+		sb.WriteString("OUTPUT SCHEMA:\n")
+		sb.WriteString(schema)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("INSTRUCTION:\n")
+	sb.WriteString(instruction)
+	sb.WriteString("\n\nReturn ONLY a valid JSON object matching the schema.")
+
+	msgs = append(msgs, inference.InferenceMessage{
+		Role:    "user",
+		Content: sb.String(),
+	})
+
+	return msgs
 }

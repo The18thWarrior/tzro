@@ -21,13 +21,13 @@ func NewLlamaServerBackend(manager *LocalModelManager, publisher telemetry.Event
 }
 
 // CallModel performs a structured inference call using the local manager.
-func (b *LlamaServerBackend) CallModel(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (*InferenceResult, error) {
-	return b.manager.CallLocalModel(ctx, systemPrompt, userPrompt, jsonSchema)
+func (b *LlamaServerBackend) CallModel(ctx context.Context, messages []InferenceMessage, jsonSchema string) (*InferenceResult, error) {
+	return b.manager.CallLocalModel(ctx, messages, jsonSchema)
 }
 
 // CallModelStream performs a streaming inference call using the local manager.
-func (b *LlamaServerBackend) CallModelStream(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, meta StreamMeta) (*InferenceResult, error) {
-	return b.manager.CallLocalModelStream(ctx, systemPrompt, userPrompt, jsonSchema, meta)
+func (b *LlamaServerBackend) CallModelStream(ctx context.Context, messages []InferenceMessage, jsonSchema string, meta StreamMeta) (*InferenceResult, error) {
+	return b.manager.CallLocalModelStream(ctx, messages, jsonSchema, meta)
 }
 
 // Status returns the backend's current readiness.

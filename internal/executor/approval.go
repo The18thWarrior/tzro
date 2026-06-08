@@ -59,3 +59,7 @@ func (h *McpApprovalHook) BeforeNode(ctx context.Context, taskID string, node *c
 func (h *McpApprovalHook) AfterNode(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (HookAction, error) {
 	return ActionContinue, nil
 }
+
+func (h *McpApprovalHook) OnEdgeTraversal(ctx context.Context, taskID string, sourceNode, targetNode *compiler.GraphNode, edgeThought *memory.EdgeThought) (HookAction, error) {
+	return ActionContinue, nil
+}

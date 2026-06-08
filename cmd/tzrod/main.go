@@ -12,6 +12,8 @@ import (
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/observer"
+	"tzro/internal/proactivity"
+	"tzro/internal/sentinel"
 	"tzro/internal/server"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
@@ -74,6 +76,19 @@ func main() {
 		fmt.Println("[Init] Observer Agent is disabled per configuration settings.")
 	}
 
+	// 5.1. Spawn background Sentinel Agent (if enabled, ADR-0023)
+	if cfg.IsSentinelEnabled() {
+		fmt.Println("[Init] Injecting LLM client adapter into Sentinel Agent...")
+		sentinel.SetLLMClient(&TelemetryLLMAdapter{
+			manager: inference.GlobalLocalModel,
+		})
+
+		fmt.Println("[Init] Spawning background Sentinel heartbeat...")
+		sentinel.Start()
+	} else {
+		fmt.Println("[Init] Sentinel Agent is disabled per configuration settings.")
+	}
+
 	// 5.25. Register Hooks Globally
 	fmt.Println("[Init] Registering global hooks...")
 	executor.GlobalEngine.RegisterHook(&executor.McpApprovalHook{})
@@ -83,6 +98,14 @@ func main() {
 	fmt.Println("[Init] Starting background cron scheduler & recovering interrupted workflows...")
 	workflow.Scheduler.Start(context.Background())
 	workflow.RecoverInterruptedWorkflows(context.Background())
+
+	// 5.75. Start AttentionScheduler (Proactivity subsystem)
+	fmt.Println("[Init] Starting Proactivity AttentionScheduler...")
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewObserverDaemon())
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewCompactorDaemon())
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewReconcilerDaemon())
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewPrefetcherDaemon())
+	_ = proactivity.GlobalScheduler.Start(context.Background())
 
 	// 6. Start Unified REST Endpoint API & serve GUI Dashboard static assets
 	port := ":8080"
@@ -104,15 +127,11 @@ type TelemetryLLMAdapter struct {
 
 func (a *TelemetryLLMAdapter) CallModel(ctx context.Context, systemPrompt, userPrompt string, jsonSchema string) (string, error) {
 	if inference.ActiveBackend != nil {
-		res, err := inference.ActiveBackend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+		res, err := inference.ActiveBackend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 		if err != nil {
 			return "", err
 		}
 		return res.Content, nil
 	}
-	return a.manager.ExecuteStructured(ctx, inference.StructuredInferenceRequest{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		JSONSchema:   jsonSchema,
-	})
+	return a.manager.ExecuteStructured(ctx, inference.NewSimpleRequest(systemPrompt, userPrompt, jsonSchema))
 }

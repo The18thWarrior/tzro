@@ -17,12 +17,14 @@ import (
 )
 
 // CallCloudModel executes standard remote API calls for cloud planning and fallback
-func CallCloudModel(ctx context.Context, systemPrompt, userPrompt string, schemaStr string) (string, error) {
-	return callCloudModel(ctx, systemPrompt, userPrompt, schemaStr)
+func CallCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr string) (string, error) {
+	return callCloudModel(ctx, messages, schemaStr)
 }
 
-func callCloudModel(ctx context.Context, systemPrompt, userPrompt string, schemaStr string) (string, error) {
+func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr string) (string, error) {
+	systemPrompt := GetSystemPrompt(messages)
 	if schemaStr != "" {
+		// Inject schema instruction into the system prompt for cloud models
 		systemPrompt = fmt.Sprintf("%s\n\nYou MUST return a JSON object that strictly adheres to the following JSON schema:\n%s", systemPrompt, schemaStr)
 	}
 
@@ -59,12 +61,19 @@ func callCloudModel(ctx context.Context, systemPrompt, userPrompt string, schema
 		ResponseFormat *ResponseFormatStruct `json:"response_format,omitempty"`
 	}
 
+	// Rebuild messages with the potentially-modified system prompt
+	var cloudMessages []Message
+	for _, m := range messages {
+		if m.Role == "system" {
+			cloudMessages = append(cloudMessages, Message{Role: "system", Content: systemPrompt})
+		} else {
+			cloudMessages = append(cloudMessages, Message{Role: m.Role, Content: m.Content})
+		}
+	}
+
 	reqBody := CompletionRequest{
-		Model: modelName,
-		Messages: []Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
+		Model:       modelName,
+		Messages:    cloudMessages,
 		Temperature: 0.1,
 	}
 
@@ -128,10 +137,11 @@ func callCloudModel(ctx context.Context, systemPrompt, userPrompt string, schema
 }
 
 // CallCloudModelStream executes standard remote API calls with SSE streaming for cloud planning and fallback
-func CallCloudModelStream(ctx context.Context, systemPrompt, userPrompt string, schemaStr string, meta StreamMeta, pub telemetry.EventPublisher) (string, error) {
+func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, schemaStr string, meta StreamMeta, pub telemetry.EventPublisher) (string, error) {
 	if pub == nil {
 		pub = telemetry.Default
 	}
+	systemPrompt := GetSystemPrompt(messages)
 	if schemaStr != "" {
 		systemPrompt = fmt.Sprintf("%s\n\nYou MUST return a JSON object that strictly adheres to the following JSON schema:\n%s", systemPrompt, schemaStr)
 	}
@@ -177,12 +187,19 @@ func CallCloudModelStream(ctx context.Context, systemPrompt, userPrompt string, 
 		ResponseFormat *ResponseFormatStruct `json:"response_format,omitempty"`
 	}
 
+	// Rebuild messages with the potentially-modified system prompt
+	var cloudMessages []Message
+	for _, m := range messages {
+		if m.Role == "system" {
+			cloudMessages = append(cloudMessages, Message{Role: "system", Content: systemPrompt})
+		} else {
+			cloudMessages = append(cloudMessages, Message{Role: m.Role, Content: m.Content})
+		}
+	}
+
 	reqBody := CompletionRequest{
-		Model: modelName,
-		Messages: []Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
-		},
+		Model:       modelName,
+		Messages:    cloudMessages,
 		Temperature: 0.1,
 		Stream:      true,
 		StreamOptions: &StreamOptionsStruct{

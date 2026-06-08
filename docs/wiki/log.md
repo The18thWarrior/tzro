@@ -4,6 +4,145 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-08T01:25:00-07:00] grill-with-docs | Attention and Proactivity Scheduler
+
+- **Activity**: Grilling session resolved 8 design decisions for the Attention and Proactivity Scheduler subsystem in tzro. Outlined core structures, safety policies, execution flow, budgeting model, and event/telemetry integration.
+- **Terminology Resolved**:
+  - **Attention Scheduler** added to `CONTEXT.md`: The background daemon coordinator that schedules, executes, and filters low-priority event-driven background daemons.
+  - **Proactivity Ladder** added to `CONTEXT.md`: The 5-tier safety/visibility classification (L0-L4) governing proposed actions.
+  - **Proposed Action** added to `CONTEXT.md`: Structured proposals returned by daemons to the scheduler.
+  - **Attention Queue** added to `CONTEXT.md`: User-visible interface holding suggestions/actions.
+- **Key Decisions**:
+  - **Durable Notification Re-use (Option A)**: The Attention Queue is backed by the existing `durable_notifications` SQLite table and uses statuses like `unread` (pending), `approved`, `rejected` to simplify persistence and dashboard UI integration.
+  - **Memory-based Active Registry (Option B)**: Foreground activity is tracked using an in-memory thread-safe registry of active user-initiated task IDs.
+  - **Register via ExecuteOptions**: `ExecuteOptions` is extended with `IsForeground bool`. Foreground runners set it to true, which automatically registers/deregisters tasks in the active registry.
+  - **Preemption & Cancellation**: Background actions run inside a cancellable context. When a foreground task starts, all running background actions are immediately cancelled.
+  - **Execution & Accumulated Budgets (Option B+C)**: Enforces limits per-execution (CPU time, tokens, tools) and accumulated consumption per-interval (e.g. hourly accumulators).
+  - **Event/Telemetry Ingestion**: The scheduler subscribes to the global `telemetry.TelemetryManager` stream, translating relevant stream chunks (e.g., node/task failure events) into scheduler events.
+  - **Policy Safety Gates**: Background daemons cannot run tools directly; they return a proposed action callback executed only post-approval. LLM/tool access requires explicit capability permissions and is gated/budgeted.
+
+## [2026-06-07T12:45:00-07:00] implementation | ADR-0024 Neural Edge Traversal — TDD Implementation
+
+- **Activity**: Full TDD (red-green-refactor) implementation of ADR-0024 Neural Edge Traversal across 6 layers. 14 new tests, all passing. Full project builds cleanly. All existing tests pass.
+- **Layers Implemented**:
+  1. **Compiler Data Structures**: `ActivationThreshold` on `GraphNode`, `MutationBudget` on `ExecutionGraph`, `IncrementalSort` method.
+  2. **Memory — Edge Thought Persistence**: `edge_thoughts` SQLite table, `EdgeThought` model, `AddEdgeThought`/`GetEdgeThoughtsForNode`/`GetLatestEdgeThought` CRUD methods.
+  3. **Mutation Engine**: `ApplySpawn` with edge re-wiring, budget enforcement (max spawns), consecutive failure dampening (3-failure threshold).
+  4. **Ready Queue Execution Loop**: `ExecuteGraphReactive` — batch-wait-enqueue pattern replacing level-based iteration. True parallel execution for independent nodes. Crash-resume from checkpointed state.
+  5. **Edge Thought Evaluation**: `evaluateActivationThreshold` sufficiency gate (spawn/continue/halt). `shouldGenerateEdgeThought` zero-overhead gate (threshold 0.0 = disabled).
+  6. **Hook System Evolution**: `OnEdgeTraversal` added to `ExecutionHook` interface. `BeforeLevel`/`AfterLevel` retained for backward compatibility with existing `ExecuteGraph`.
+- **Files Created**:
+  - [NEW] `internal/executor/mutation.go` — ApplySpawn + budget/dampening logic
+  - [NEW] `internal/executor/ready_queue.go` — ExecuteGraphReactive + dependency satisfaction
+  - [NEW] `internal/executor/edge_thought.go` — ActivationAction, evaluateActivationThreshold, EdgeThoughtInference
+  - [NEW] `internal/executor/mutation_test.go` — 5 tests
+  - [NEW] `internal/executor/ready_queue_test.go` — 4 tests
+  - [NEW] `internal/executor/edge_thought_test.go` — 6 tests
+  - [NEW] `internal/executor/hook_edge_traversal_test.go` — 2 tests
+  - [NEW] `internal/memory/edge_thought_test.go` — 1 test
+  - [NEW] `internal/compiler/compiler_edge_thought_test.go` — 2 tests (Layer 0, prior session)
+- **Files Modified**:
+  - [MODIFY] `internal/compiler/compiler.go` — ActivationThreshold, MutationBudget, IncrementalSort
+  - [MODIFY] `internal/memory/models.go` — EdgeThought struct
+  - [MODIFY] `internal/memory/memory.go` — edge_thoughts table + CRUD methods
+  - [MODIFY] `internal/executor/executor.go` — OnEdgeTraversal on ExecutionHook interface
+  - [MODIFY] `internal/executor/approval.go` — OnEdgeTraversal no-op
+  - [MODIFY] `internal/executor/client_tool.go` — OnEdgeTraversal no-op
+  - [MODIFY] `internal/executor/executor_hooks_test.go` — mockHook OnEdgeTraversal
+
+## [2026-06-07T12:25:00-07:00] grill-with-docs | Neural Edge Traversal — Edge Thought and Activation Threshold
+
+- **Activity**: Grilling session resolved 14 design decisions spanning a new neural-inspired execution model that treats DAG edges as synaptic connections carrying reasoning state, with dynamic graph mutation via activation thresholds. Deprecates the Probe Node (ADR-0019) and Thought Chain as distinct concepts.
+- **Terminology Resolved**:
+  - **Edge Thought** added to `CONTEXT.md`: A compact reasoning state generated on a DAG edge traversal, summarizing what execution has learned and its goal confidence. Target-gated, edge-generated.
+  - **Activation Threshold** added to `CONTEXT.md`: A per-node sufficiency gate (0.0–1.0) that triggers dynamic node spawning when Edge Thought confidence falls below threshold.
+  - **Probe Node** deprecated in `CONTEXT.md`: Superseded by Edge Thought + Activation Threshold generalization.
+  - **Thought Chain** deprecated in `CONTEXT.md`: Superseded by Edge Thought with checkpointed node spawning.
+- **Key Decisions**:
+  - **Edge Thought replaces STM and Thought Chain**: The Thought Chain's internal loop becomes dynamic node spawning — each tool call is a real, checkpointed DAG node.
+  - **Full durability over hidden loops**: Every spawned tool call is persisted in `graph_node_states` for crash-resume at any step. Rejected hiding tool calls inside opaque Probe nodes.
+  - **Incremental Kahn sort**: Only pending/new nodes are re-sorted after mutations. Completed nodes are frozen.
+  - **Event-driven ready queue**: Replaces pre-computed topological level iteration. Nodes fire when dependencies are satisfied, not by level membership.
+  - **Local Model single-step spawn**: The Local Model decides immediate next steps (like the Probe's ThoughtChainStep). No Cloud Planner involvement in runtime mutations.
+  - **Sufficiency gate semantics**: Low confidence = fire (need more work). High confidence = continue (downstream has what it needs).
+  - **Per-task mutation budget + consecutive failure dampening**: Global spawn cap prevents runaway expansion; failure dampening inhibits cascading retries.
+  - **Hybrid planner schema**: Cloud Planner can optionally emit `activationThreshold` and `mutationBudget`; Kahn Compiler fills defaults by node type.
+  - **Layered context**: Edge Thoughts as primary reasoning context; raw accumulated data included on-demand for GBNF parameter extraction.
+  - **Hook system evolution**: `BeforeLevel`/`AfterLevel` removed (no levels in ready-queue model). `OnEdgeTraversal` added. `BeforeNode`/`AfterNode` survive unchanged.
+  - **Spawn-only mutation**: Halt is a flag on Edge Thought. Redirect dropped (equivalent to spawn + skip).
+  - **Target-gated Edge Thoughts**: The target node's threshold determines whether an Edge Thought is generated on incoming edges. Threshold 0.0 = disabled (zero overhead for deterministic nodes).
+- **ADRs Created**:
+  - [ADR-0024: Edge Thought and Activation Threshold](../adr/0024-edge-thought-and-activation-threshold.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Edge Thought, Activation Threshold; deprecated Probe Node, Thought Chain)
+  - [NEW] [0024-edge-thought-and-activation-threshold.md](../adr/0024-edge-thought-and-activation-threshold.md)
+  - [MODIFY] [index.md](index.md) (Added ADR-0024 link)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
+
+- **Activity**: Grilling session resolved 12 design decisions spanning a new agent hosting abstraction, the Sentinel Agent as a proactive intelligence agent, workspace scanning, activity reporting, and dual-path alert delivery. Originated from analysis of external feedback on tzro's local↔cloud relationship.
+- **Terminology Resolved**:
+  - **Agent** added to `CONTEXT.md`: Minimal contract for any autonomous process hosted by the tzro engine.
+  - **Background Agent** added to `CONTEXT.md`: Agent subtype running continuously inside the daemon on its own trigger schedule with shared infrastructure.
+  - **Observer Agent** sharpened in `CONTEXT.md`: Now explicitly a Background Agent firing reactively on debounced telemetry events.
+  - **Sentinel Agent** added to `CONTEXT.md`: Background Agent firing proactively on heartbeat timer. Intelligence agent (Jarvis-like), not operational.
+- **Key Decisions**:
+  - **Agent hierarchy**: Agent → BackgroundAgent → Observer/Sentinel as peers. Rejected Observer extension and duplication.
+  - **Minimal Agent interface**: `Name()`, `Start(ctx)`, `Stop()`. BackgroundAgent adds shared infra. Interactive Agent deferred.
+  - **Observer refactor now (Option A)**: Two implementation patterns for the same abstraction is unacceptable.
+  - **Observer scope expansion**: Deterministic operational checks added to Observer as part of this work.
+  - **Sentinel = intelligence agent**: Retrieval-grounded synthesis for emergent insights, not operational health.
+  - **Sentinel pipeline**: Embed → semantic search → threshold → synthesize from matched context → confidence gate.
+  - **Activity report = opt-in enrichment**: Heartbeat-first, activity-enriched. Not a core dependency.
+  - **Workspace scanning**: Git default, mtime fallback with deterministic ignores + sensitive filename regex.
+  - **Dual-path alert delivery**: MCP resource notifications + `tzro_sentinel_alerts` tool.
+  - **Alert deduplication (Option C)**: Acknowledgment loop via notification status + TargetID fingerprint.
+  - **Two ADRs**: ADR-0022 (Agent abstraction) and ADR-0023 (Sentinel).
+- **ADRs Created**:
+  - [ADR-0022: Background Agent Abstraction and Observer Refactor](../adr/0022-background-agent-abstraction-and-observer-refactor.md)
+  - [ADR-0023: Sentinel Agent and Proactive Activity Channel](../adr/0023-sentinel-agent-and-proactive-activity-channel.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Agent, Background Agent, Sentinel Agent; sharpened Observer Agent)
+  - [NEW] [0022-background-agent-abstraction-and-observer-refactor.md](../adr/0022-background-agent-abstraction-and-observer-refactor.md)
+  - [NEW] [0023-sentinel-agent-and-proactive-activity-channel.md](../adr/0023-sentinel-agent-and-proactive-activity-channel.md)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-05T10:25:00-07:00] grill-with-docs | Self-Assessing Local Routing & KV Cache Segment Sharing
+
+- **Activity**: Grilling session resolved 13 design decisions across two architectural evolution paths for the tzro execution engine, informed by the "Bleeding-Edge Architectures for Edge-Cloud LLM Task Offloading" research.
+- **Terminology Resolved**:
+  - **Confidence Tier** added to `CONTEXT.md`: Per-node pre-flight self-assessment where the Local Model evaluates parameter extraction capability before committing to full inference. Returns `sufficient` or `insufficient`.
+  - **Corrective Micro-Skill** added to `CONTEXT.md`: Anti-pattern SOP auto-extracted from the diff between a failed Local Model extraction and a successful Cloud Model re-execution. Injected via existing skill pipeline for in-context reinforcement without weight updates.
+- **Key Decisions (Self-Assessing Local Routing)**:
+  - **Pre-flight classification** over mid-generation abort — preserves llama-server as opaque HTTP endpoint.
+  - **Schema Confidence Classification** — single cheap GBNF-constrained call returning `sufficient`/`insufficient` with reason.
+  - **Sticky escalation with decay** — threshold = 3 consecutive `insufficient` results (configurable via `EngineConfig.ConfidenceThreshold`), resets on success.
+  - **Scoped to GBNF bridge/exec nodes only** — branch, synthesis, and probe nodes excluded.
+  - **Dual retry policy** — schema validation gate (pre-tool-call) + tool execution failure (post-tool-call) as retry triggers.
+  - **Corrective Micro-Skills** for calibration learning (Option 2) over historical success rates (Option 1) — surgical per-pattern correction vs. blunt per-tool penalization. Prevents over-routing high-frequency tools with isolated failure patterns.
+  - **Inline cloud extraction** — Cloud Model extracts corrective skill immediately after successful re-execution. Marginal cost argument: already paid for escalation call.
+- **Key Decisions (KV Cache Segment Sharing)**:
+  - **Static system prompt restructuring** — push per-node variables (schema, instruction) to user prompt; static prefix shared across all nodes.
+  - **Multi-turn 4-message segmented prompt** — Turn 1 (system: static base), Turn 2 (user: accumulated context), Turn 3 (assistant: synthetic ACK), Turn 4 (user: per-node schema + instruction). Prefix matching via `--cache-reuse` reuses KV through turns 1-3 for parallel nodes.
+  - **`--cache-reuse` raised to 2048** from 256 — captures full accumulated context sharing between parallel nodes at same Kahn level. ~12MB memory cost per cached prefix, negligible on modern hardware.
+  - **`StructuredInferenceRequest` refactored to `Messages []InferenceMessage`** (Option A) — breaking change for full flexibility, supporting arbitrary n-message conversations for future execution modes. `NewSimpleRequest` helper for backwards-compatible 2-message callers. 8 callsites to migrate.
+  - **Confidence Tier primes KV cache** — classification uses same 4-message structure; prefix match ensures extraction call reuses cached KV, making the pre-flight check effectively free.
+  - **Same prompt structure sent to cloud on escalation** — consistency for Corrective Micro-Skill diff extraction outweighs trivial extra token cost.
+- **ADRs Created**:
+  - [ADR-0020: Confidence Tier and Corrective Micro-Skills](../adr/0020-confidence-tier-and-corrective-micro-skills.md)
+  - [ADR-0021: Segmented Multi-Turn Prompt for KV Cache Sharing](../adr/0021-segmented-multi-turn-prompt-kv-cache-sharing.md)
+- **Handoff Created**:
+  - [Dynamic LoRA Adapter Switching](/tmp/handoff-dynamic-lora-adapter-switching.md) — handoff for a future session exploring LoRA-Switch, LoRAX, and Temporal LoRA integration with the Pluggable Inference Backend.
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Confidence Tier and Corrective Micro-Skill glossary terms)
+  - [NEW] [0020-confidence-tier-and-corrective-micro-skills.md](../adr/0020-confidence-tier-and-corrective-micro-skills.md)
+  - [NEW] [0021-segmented-multi-turn-prompt-kv-cache-sharing.md](../adr/0021-segmented-multi-turn-prompt-kv-cache-sharing.md)
+  - [MODIFY] [index.md](index.md) (Added ADR-0019, ADR-0020, ADR-0021 links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
+
 ## [2026-06-04T18:55:00Z] grill-with-docs | Design Probe Node, Thought Chain, and Filesystem Tools
 
 - **Activity**: Grilling session resolved 12 design decisions spanning filesystem tool integration, a new DAG node type (Probe Node), and its internal execution pattern (Thought Chain), plus strengthened Offload Policy.
@@ -892,4 +1031,41 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [NEW] [0017-mcp-resource-subscriptions.md](../adr/0017-mcp-resource-subscriptions.md) (Detailed architectural decision record)
   - [MODIFY] [index.md](index.md) (Local wiki index)
   - [MODIFY] [log.md](log.md) (This log entry)
+
+---
+
+## [2026-06-05T08:36:00-07:00] ingest | Edge-Cloud LLM Task Offloading Research
+
+- **Activity**: Ingested bleeding-edge research on task offloading architectures for edge-cloud LLM co-orchestration beyond Directed Acyclic Graphs. Mapped findings to the `tzro` context and performed an architectural gap analysis.
+- **Key Deliverables**:
+  - **Source Ingestion**: Summarized event-driven runtimes, blackboard systems, GAPG RL routing, speculative decoding (PicoSpec), segment-level KV sharing (CrossKV), token-wise adapter switching (LoRA-Switch), and decentralized topologies (Exo).
+  - **Gap Analysis**: Detailed how `tzro`'s Strategy-vs-Tactics (SCT) pattern and Kahn-based executor compare to these advanced dynamic coordination models, identifying routes for future optimization (local self-assessment routing, KV cache segment reuse, dynamic LoRA swapping).
+- **Key Files Created/Modified**:
+  - [NEW] [edge-cloud-task-offloading.md](sources/edge-cloud-task-offloading.md) (Research summary file)
+  - [NEW] [edge-cloud-co-orchestration.md](architecture/edge-cloud-co-orchestration.md) (Co-orchestration architecture concept file)
+  - [MODIFY] [index.md](index.md) (Updated local wiki index links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+---
+
+## [2026-06-08T19:15:00-07:00] document | PRD Creation for Agentic OS Transition Dimensions
+
+- **Activity**: Formulated product requirements documents (PRDs) and local wiki feature summary pages for the four key transition dimensions required to promote the `tzro` durable local execution engine to a full Agentic Operating System (AgentOS).
+- **Key Deliverables**:
+  - **Dynamic Local Planning & Routing PRD**: Enables cost, latency, complexity, and privacy-guided planning routes with fail-safe local validation and cloud fallback templates.
+  - **Reactive Agent Daemons PRD**: Extends background schedulers and observer agents to support autonomous model loops and sandboxed tool executions under preemption and resource budgets.
+  - **Agent Inter-Process Communication (IPC) PRD**: Details an addressable Agent Message Bus (AMB) with RPC-style bidirectional request-response matches, correlation ID checks, and context yields.
+  - **Agent App Packaging Standard PRD**: Introduces `.tzroapp` zip archives and unified manifest schemas mapping prompts, migrations, tools, and permissions.
+- **Key Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/local-planning-routing/PRD.md)
+  - [NEW] [local-planning-routing.md](features/local-planning-routing.md)
+  - [NEW] [PRD.md](../../.scratch/reactive-daemons/PRD.md)
+  - [NEW] [reactive-daemons.md](features/reactive-daemons.md)
+  - [NEW] [PRD.md](../../.scratch/agent-ipc/PRD.md)
+  - [NEW] [agent-ipc.md](features/agent-ipc.md)
+  - [NEW] [PRD.md](../../.scratch/agent-app-packaging/PRD.md)
+  - [NEW] [agent-app-packaging.md](features/agent-app-packaging.md)
+  - [MODIFY] [index.md](index.md) (Updated local wiki index links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 

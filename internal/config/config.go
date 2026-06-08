@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type EngineConfig struct {
@@ -31,6 +32,17 @@ type EngineConfig struct {
 
 	// Observer Agent
 	ObserverEnabled *bool `json:"observerEnabled,omitempty"` // nil = auto (on for llama-server, off otherwise)
+
+	// Sentinel Agent (ADR-0023)
+	SentinelEnabled  *bool `json:"sentinelEnabled,omitempty"`  // nil = auto (same logic as Observer)
+	SentinelInterval int   `json:"sentinelInterval,omitempty"` // heartbeat interval in seconds (default 300 = 5 min)
+
+	// Confidence Tier (ADR-0020): consecutive insufficient results before sticky cloud fallback
+	ConfidenceThreshold int `json:"confidenceThreshold,omitempty"`
+
+	// Visual dashboard pacing delays in milliseconds
+	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
+	ExecutorLevelDelayMs int `json:"executorLevelDelayMs,omitempty"`
 }
 
 type BackendConfig struct {
@@ -101,14 +113,17 @@ func FindBinary(name string) string {
 var (
 	detectedDir  = detectTzroDir()
 	GlobalConfig = &EngineConfig{
-		ModelMode:      "cooperative",
-		CloudProvider:  "google",
-		CloudAPIKey:    "",
-		CloudModel:     "gemini-flash-latest",
-		SpeedFloor:     5.0,
-		SidecarEnabled: true,
-		GGUFModelPath:  "models/grm-2.5-q4.gguf",
-		ModelsDir:      defaultModelsDir(),
+		ModelMode:           "cooperative",
+		CloudProvider:       "google",
+		CloudAPIKey:         "",
+		CloudModel:          "gemini-flash-latest",
+		SpeedFloor:          5.0,
+		SidecarEnabled:      true,
+		GGUFModelPath:       "models/gemma-4-12b-it-qat-q4_0.gguf",
+		ModelsDir:           defaultModelsDir(),
+		ConfidenceThreshold: 3,
+		ExecutorNodeDelayMs:  800,
+		ExecutorLevelDelayMs: 500,
 	}
 	configMutex sync.RWMutex
 	configPath  = filepath.Join(".tzro", "config.json")
@@ -157,7 +172,12 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
 	GlobalConfig.InferenceBackend = cfg.InferenceBackend
 	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
+	GlobalConfig.SentinelEnabled = cfg.SentinelEnabled
+	GlobalConfig.SentinelInterval = cfg.SentinelInterval
 	GlobalConfig.DelegationMode = cfg.DelegationMode
+	GlobalConfig.ConfidenceThreshold = cfg.ConfidenceThreshold
+	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
+	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -179,7 +199,12 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
 	GlobalConfig.InferenceBackend = cfg.InferenceBackend
 	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
+	GlobalConfig.SentinelEnabled = cfg.SentinelEnabled
+	GlobalConfig.SentinelInterval = cfg.SentinelInterval
 	GlobalConfig.DelegationMode = cfg.DelegationMode
+	GlobalConfig.ConfidenceThreshold = cfg.ConfidenceThreshold
+	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
+	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -193,6 +218,28 @@ func (c EngineConfig) IsObserverEnabled() bool {
 		return *c.ObserverEnabled
 	}
 	return c.InferenceBackend.Type == "" || c.InferenceBackend.Type == "llama-server"
+}
+
+// IsSentinelEnabled returns true if the sentinel agent is enabled.
+// If not explicitly set, follows the same auto-detection logic as the Observer.
+func (c EngineConfig) IsSentinelEnabled() bool {
+	if c.SentinelEnabled != nil {
+		return *c.SentinelEnabled
+	}
+	return c.InferenceBackend.Type == "" || c.InferenceBackend.Type == "llama-server"
+}
+
+// GetSentinelInterval returns the configured sentinel heartbeat interval.
+// Defaults to 5 minutes (300 seconds) if not explicitly configured.
+func GetSentinelInterval() time.Duration {
+	configMutex.RLock()
+	interval := GlobalConfig.SentinelInterval
+	configMutex.RUnlock()
+
+	if interval <= 0 {
+		return 5 * time.Minute
+	}
+	return time.Duration(interval) * time.Second
 }
 
 func saveLocked(cfg *EngineConfig) error {
@@ -309,4 +356,18 @@ func GetDelegationMode() string {
 	default:
 		return "balanced"
 	}
+}
+
+// GetConfidenceThreshold returns the configured number of consecutive insufficient
+// confidence assessments before sticky cloud fallback activates for a task.
+// Defaults to 3 if not explicitly configured or set to a non-positive value.
+func GetConfidenceThreshold() int {
+	configMutex.RLock()
+	t := GlobalConfig.ConfidenceThreshold
+	configMutex.RUnlock()
+
+	if t <= 0 {
+		return 3
+	}
+	return t
 }

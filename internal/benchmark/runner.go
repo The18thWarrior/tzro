@@ -877,13 +877,9 @@ Please evaluate if this run is a Spirit Match.`, tc.ID, fullPromptGoal, string(e
 			TaskID:   tc.ID,
 		}
 
-		evalReq := inference.StructuredInferenceRequest{
-			SystemPrompt: evalSystemPrompt,
-			UserPrompt:   evalUserPrompt,
-			JSONSchema:   evalSchema,
-			StreamMeta:   &meta,
-			TaskID:       tc.ID,
-		}
+		evalReq := inference.NewSimpleRequest(evalSystemPrompt, evalUserPrompt, evalSchema)
+		evalReq.StreamMeta = &meta
+		evalReq.TaskID = tc.ID
 
 		fmt.Fprintf(os.Stderr, "[Evaluator] Running final semantic Spirit Match analysis for %s...\n", tc.ID)
 		evalResult, evalErr := inference.GlobalLocalModel.ExecuteStructured(ctx, evalReq)

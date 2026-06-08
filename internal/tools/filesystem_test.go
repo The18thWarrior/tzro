@@ -48,7 +48,7 @@ func goodbye() {
 		t.Fatalf("failed to create searchable.go: %v", err)
 	}
 
-	v := NewPathValidator([]string{root})
+	v := NewStaticPathValidator([]string{root})
 	return root, v
 }
 

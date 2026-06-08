@@ -84,7 +84,7 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
     echo "echo 'mock llama-server'" >> "${INSTALL_DIR}/bin/llama-server"
     chmod +x "${INSTALL_DIR}/bin/llama-server"
 
-    echo "mock model content" > "${INSTALL_DIR}/models/grm-2.5-q4.gguf"
+    echo "mock model content" > "${INSTALL_DIR}/models/gemma-4-12b-it-qat-q4_0.gguf"
     
     echo "#!/bin/sh" > "${INSTALL_DIR}/bin/tzro-mcp"
     echo "echo 'mock tzro-mcp'" >> "${INSTALL_DIR}/bin/tzro-mcp"
@@ -174,7 +174,7 @@ EOF
     fi
 
     # Provision Tactician Model GGUF
-    GGUF_PATH="${INSTALL_DIR}/models/grm-2.5-q4.gguf"
+    GGUF_PATH="${INSTALL_DIR}/models/gemma-4-12b-it-qat-q4_0.gguf"
     if [ ! -f "${GGUF_PATH}" ]; then
         echo -e "  Creating lightweight GGUF tactician model placeholder..."
         # In a real install we'd download the model (~1.5GB) from HuggingFace
@@ -212,7 +212,7 @@ echo -e "  ${BOLD}Workspace Boundary:${NC}  ${INSTALL_DIR}"
 echo -e "  ${BOLD}Database Booted:${NC}     ${DB_PATH}"
 echo -e "  ${BOLD}Llama Sidecar:${NC}       ${INSTALL_DIR}/bin/llama-server"
 echo -e "  ${BOLD}MCP Server:${NC}          ${INSTALL_DIR}/bin/tzro-mcp"
-echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/grm-2.5-q4.gguf"
+echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/gemma-4-12b-it-qat-q4_0.gguf"
 echo -e "=========================================================="
 
 if [ "$PATH_OK" = "true" ]; then

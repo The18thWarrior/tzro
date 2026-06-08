@@ -61,7 +61,7 @@ func TestCallLocalModel(t *testing.T) {
 	defer sub.Unsubscribe()
 
 	ctx := context.Background()
-	res, err := mgr.CallLocalModel(ctx, "sys", "usr", "")
+	res, err := mgr.CallLocalModel(ctx, []InferenceMessage{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}}, "")
 	if err != nil {
 		t.Fatalf("CallLocalModel failed: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestCallLocalModelStream(t *testing.T) {
 	defer sub.Unsubscribe()
 
 	ctx := context.Background()
-	res, err := mgr.CallLocalModelStream(ctx, "sys", "usr", "", meta)
+	res, err := mgr.CallLocalModelStream(ctx, []InferenceMessage{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}}, "", meta)
 	if err != nil {
 		t.Fatalf("CallLocalModelStream failed: %v", err)
 	}
@@ -209,11 +209,7 @@ func TestExecuteStructuredHeuristic(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Test Intent heuristic
-	reqIntent := StructuredInferenceRequest{
-		SystemPrompt: "sys",
-		UserPrompt:   "run every 5 minutes: check logs",
-		JSONSchema:   `"confidence"`, // contains "confidence" to trigger intent heuristic
-	}
+	reqIntent := NewSimpleRequest("sys", "run every 5 minutes: check logs", `"confidence"`)
 	resIntent, err := mgr.ExecuteStructured(ctx, reqIntent)
 	if err != nil {
 		t.Fatalf("ExecuteStructured failed: %v", err)
@@ -229,11 +225,7 @@ func TestExecuteStructuredHeuristic(t *testing.T) {
 	}
 
 	// 2. Test Complexity heuristic
-	reqComplexity := StructuredInferenceRequest{
-		SystemPrompt: "sys",
-		UserPrompt:   "hello there",
-		JSONSchema:   `"complexity"`, // contains "complexity" to trigger complexity heuristic
-	}
+	reqComplexity := NewSimpleRequest("sys", "hello there", `"complexity"`)
 	resComplexity, err := mgr.ExecuteStructured(ctx, reqComplexity)
 	if err != nil {
 		t.Fatalf("ExecuteStructured failed: %v", err)

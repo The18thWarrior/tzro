@@ -57,7 +57,7 @@ func NewRemoteOpenAIBackend(cfg config.BackendConfig, publisher telemetry.EventP
 }
 
 // CallModel performs a structured JSON inference call.
-func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (*InferenceResult, error) {
+func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []InferenceMessage, jsonSchema string) (*InferenceResult, error) {
 	type CompletionRequest struct {
 		Model          string                 `json:"model"`
 		Messages       []map[string]string    `json:"messages"`
@@ -66,11 +66,8 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, systemPrompt, userP
 	}
 
 	reqBody := CompletionRequest{
-		Model: b.model,
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
+		Model:       b.model,
+		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0,
 	}
 
@@ -165,7 +162,7 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, systemPrompt, userP
 }
 
 // CallModelStream performs a streaming inference call.
-func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, meta StreamMeta) (*InferenceResult, error) {
+func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []InferenceMessage, jsonSchema string, meta StreamMeta) (*InferenceResult, error) {
 	type StreamOptionsStruct struct {
 		IncludeUsage bool `json:"include_usage"`
 	}
@@ -180,11 +177,8 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, systemPrompt,
 	}
 
 	reqBody := CompletionRequest{
-		Model: b.model,
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
+		Model:       b.model,
+		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0,
 		Stream:      true,
 		StreamOptions: &StreamOptionsStruct{

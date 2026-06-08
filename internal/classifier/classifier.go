@@ -112,11 +112,7 @@ func Classify(ctx context.Context, prompt string, localModel *inference.LocalMod
 		}
 	}
 
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: IntentSystemPrompt,
-		UserPrompt:   prompt,
-		JSONSchema:   IntentResultSchema,
-	}
+	req := inference.NewSimpleRequest(IntentSystemPrompt, prompt, IntentResultSchema)
 
 	resContent, err := localModel.ExecuteStructured(ctx, req)
 	if err == nil {
@@ -149,12 +145,8 @@ func ClassifyComplexity(ctx context.Context, prompt string, toolNames []string, 
 		return "T2"
 	}
 
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: ComplexitySystemPrompt,
-		UserPrompt:   prompt,
-		JSONSchema:   ComplexitySchema,
-		ToolNames:    toolNames,
-	}
+	req := inference.NewSimpleRequest(ComplexitySystemPrompt, prompt, ComplexitySchema)
+	req.ToolNames = toolNames
 
 	resContent, err := localModel.ExecuteStructured(ctx, req)
 	if err == nil {

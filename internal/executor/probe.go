@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"tzro/internal/compiler"
@@ -28,7 +29,7 @@ func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPro
 	if backend == nil {
 		return "", fmt.Errorf("no active inference backend")
 	}
-	result, err := backend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 	if err != nil {
 		return "", err
 	}
@@ -88,7 +89,7 @@ const ThoughtChainStepSchema = `{
 			"enum": ["tool_call", "synthesize"]
 		},
 		"tool": { "type": "string" },
-		"arguments": { "type": "object" },
+		"arguments": { "type": "string" },
 		"nextThought": { "type": "string" },
 		"confidence": { "type": "number" },
 		"synthesis": { "type": "string" }
@@ -117,11 +118,11 @@ func RunProbe(
 	// Defaults
 	stepBudget := config.StepBudget
 	if stepBudget <= 0 {
-		stepBudget = 10
+		stepBudget = 30
 	}
 	compactEvery := config.CompactEvery
 	if compactEvery <= 0 {
-		compactEvery = 3
+		compactEvery = 5
 	}
 
 	// Build allowed tools set for validation
@@ -150,7 +151,7 @@ func RunProbe(
 				"enum": ["tool_call", "synthesize"]
 			},
 			"tool": { %s },
-			"arguments": { "type": "object" },
+			"arguments": { "type": "string" },
 			"nextThought": { "type": "string" },
 			"confidence": { "type": "number" },
 			"synthesis": { "type": "string" }
@@ -159,6 +160,14 @@ func RunProbe(
 	}`, toolEnum)
 
 	var lastToolOutput string
+
+	// Loop detection: track recent tool calls to detect degenerate retries
+	type recentCall struct {
+		tool string
+		args string
+	}
+	var recentCalls []recentCall
+	const maxConsecutiveRepeats = 3
 
 	for step := 1; step <= stepBudget; step++ {
 		// 1. Build the prompt context
@@ -184,6 +193,18 @@ func RunProbe(
 		toolOutput := ""
 		var toolArgsStr string
 		if chainStep.Action == "tool_call" && chainStep.Tool != "" {
+			// Sanitize tool name: the 4B model sometimes concatenates reasoning
+			// into the tool field (e.g. "list_dir_dir_contents_path_or_file...").
+			// Try to recover by prefix-matching against allowed tools.
+			if !allowedToolSet[chainStep.Tool] {
+				sanitized := sanitizeToolName(chainStep.Tool, allowedToolSet)
+				if sanitized != "" {
+					fmt.Fprintf(os.Stderr, "[Probe] Sanitized tool name: '%s' -> '%s'\n",
+						truncate(chainStep.Tool, 50), sanitized)
+					chainStep.Tool = sanitized
+				}
+			}
+
 			// Validate tool is in allowed set
 			if !allowedToolSet[chainStep.Tool] {
 				toolOutput = fmt.Sprintf("Error: tool '%s' is not in the allowed tools set", chainStep.Tool)
@@ -193,6 +214,12 @@ func RunProbe(
 				if args == nil {
 					args = map[string]interface{}{}
 				}
+				// Normalize arguments: remap fallback "query" key to the
+				// tool's actual required parameter (e.g. "path" for filesystem tools)
+				args = normalizeToolArguments(chainStep.Tool, args)
+				// Rescue empty path for filesystem tools by extracting from nextThought
+				args = rescueEmptyPathFromThought(chainStep.Tool, args, chainStep.NextThought)
+
 				result, err := tools.Call(ctx, chainStep.Tool, args)
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
@@ -203,7 +230,30 @@ func RunProbe(
 					toolArgsStr = string(bytes)
 				}
 			}
-			lastToolOutput = toolOutput
+
+			// Loop detection: check for consecutive identical tool calls
+			currentCall := recentCall{tool: chainStep.Tool, args: toolArgsStr}
+			repeats := 0
+			for i := len(recentCalls) - 1; i >= 0; i-- {
+				if recentCalls[i] == currentCall {
+					repeats++
+				} else {
+					break
+				}
+			}
+			recentCalls = append(recentCalls, currentCall)
+
+			if repeats >= maxConsecutiveRepeats {
+				fmt.Fprintf(os.Stderr, "[Probe] Loop detected: %s called %d times with identical args. Injecting hint.\n", chainStep.Tool, repeats+1)
+				lastToolOutput = fmt.Sprintf(
+					"LOOP DETECTED: You have called '%s' with identical arguments %d times in a row and it keeps failing or returning the same result. "+
+						"You MUST try something DIFFERENT: use a different tool, use different arguments (e.g. an absolute path instead of relative, or a different directory), "+
+						"or if you have gathered enough information, set action to 'synthesize' with confidence >= 0.9 to produce your final answer.",
+					chainStep.Tool, repeats+1,
+				)
+			} else {
+				lastToolOutput = toolOutput
+			}
 		}
 
 		// 5. Persist the thought step
@@ -242,6 +292,8 @@ func RunProbe(
 }
 
 // buildProbeSystemPrompt constructs the system prompt for the probe's Local Model call.
+// Includes per-tool parameter schemas so the local model knows exactly what arguments
+// each tool requires (fixes empty-arguments bug where model omitted required params).
 func buildProbeSystemPrompt(goal string, allowedTools []string) string {
 	toolList := ""
 	for i, t := range allowedTools {
@@ -251,20 +303,90 @@ func buildProbeSystemPrompt(goal string, allowedTools []string) string {
 		toolList += t
 	}
 
+	// Build per-tool parameter reference by extracting inner schemas
+	toolSchemas := buildToolSchemaReference(allowedTools)
+
 	return fmt.Sprintf(`You are a Probe Node — an autonomous code exploration agent.
 Your goal: %s
 
 You have access to these tools: [%s]
 
+## Tool Parameter Reference
+%s
 On each step, produce a JSON object with:
 - "action": either "tool_call" (to use a tool) or "synthesize" (to produce a final answer)
 - "tool": the tool name (when action is "tool_call")
-- "arguments": JSON-encoded tool arguments (when action is "tool_call")
+- "arguments": a JSON object with the tool's required parameters (when action is "tool_call"). ALWAYS include required parameters.
 - "nextThought": your reasoning about what to explore next
 - "confidence": 0.0-1.0 indicating how confident you are that you have enough information to answer
 - "synthesis": your final answer (when action is "synthesize" and confidence >= 0.9)
 
-Be systematic. Build understanding incrementally. Only synthesize when confident.`, goal, toolList)
+IMPORTANT: When using "tool_call", you MUST include the "arguments" field with all required parameters as a JSON object. For example, list_dir requires: {"path": "/some/path"}
+
+Be systematic. Build understanding incrementally. Only synthesize when confident.`, goal, toolList, toolSchemas)
+}
+
+// buildToolSchemaReference generates a compact reference block describing each tool's
+// parameters. Extracts the inner properties from the GBNF schema envelope.
+func buildToolSchemaReference(allowedTools []string) string {
+	var sb strings.Builder
+	for _, toolName := range allowedTools {
+		t := tools.GetTool(toolName)
+		if t == nil {
+			continue
+		}
+		schemaStr, err := t.GetSchema()
+		if err != nil || schemaStr == "" {
+			continue
+		}
+
+		// Parse the GBNF schema to extract inner properties
+		var schema map[string]interface{}
+		if json.Unmarshal([]byte(schemaStr), &schema) != nil {
+			continue
+		}
+
+		// Navigate: properties -> tool_arguments -> properties
+		props, _ := schema["properties"].(map[string]interface{})
+		if props == nil {
+			continue
+		}
+		toolArgs, _ := props["tool_arguments"].(map[string]interface{})
+		if toolArgs == nil {
+			continue
+		}
+		innerProps, _ := toolArgs["properties"].(map[string]interface{})
+		if innerProps == nil {
+			continue
+		}
+		requiredList, _ := toolArgs["required"].([]interface{})
+
+		// Build compact parameter listing
+		requiredSet := make(map[string]bool)
+		for _, r := range requiredList {
+			if s, ok := r.(string); ok {
+				requiredSet[s] = true
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("### %s\n", toolName))
+		for paramName, paramVal := range innerProps {
+			paramMap, _ := paramVal.(map[string]interface{})
+			paramType := "string"
+			if paramMap != nil {
+				if t, ok := paramMap["type"].(string); ok {
+					paramType = t
+				}
+			}
+			reqMarker := ""
+			if requiredSet[paramName] {
+				reqMarker = " (REQUIRED)"
+			}
+			sb.WriteString(fmt.Sprintf("- %s: %s%s\n", paramName, paramType, reqMarker))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // buildProbeUserPrompt builds the user prompt from persisted thought chain state.
@@ -385,10 +507,146 @@ func forceSynthesis(ctx context.Context, probeID, taskID string, engine ProbeInf
 	return result, nil
 }
 
+// sanitizeToolName attempts to recover a valid tool name from garbled model output.
+// The 4B model sometimes concatenates reasoning into the tool field, producing names
+// like "list_dir_dir_contents_path_or_file_name_and_path_if_file_is_specified".
+// This function finds the longest allowed tool name that appears as a prefix.
+func sanitizeToolName(garbled string, allowedTools map[string]bool) string {
+	bestMatch := ""
+	for toolName := range allowedTools {
+		if strings.HasPrefix(garbled, toolName) && len(toolName) > len(bestMatch) {
+			bestMatch = toolName
+		}
+	}
+	return bestMatch
+}
+
 // truncate shortens a string to maxLen characters.
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// normalizeToolArguments remaps miskeyed arguments based on the tool's schema.
+// When the local model emits a bare string as arguments (e.g. "CONTEXT.md"),
+// UnmarshalJSON wraps it as {"query": "CONTEXT.md"}. But filesystem tools
+// expect {"path": "CONTEXT.md"}. This function detects the mismatch by
+// inspecting the tool's schema and remaps the value to the correct key.
+func normalizeToolArguments(toolName string, args map[string]interface{}) map[string]interface{} {
+	// Only normalize if there's a "query" key that might be a fallback
+	queryVal, hasQuery := args["query"]
+	if !hasQuery {
+		return args
+	}
+
+	// Get the tool's schema to find required parameter names
+	t := tools.GetTool(toolName)
+	if t == nil {
+		return args
+	}
+	schemaStr, err := t.GetSchema()
+	if err != nil || schemaStr == "" {
+		return args
+	}
+
+	var schema map[string]interface{}
+	if json.Unmarshal([]byte(schemaStr), &schema) != nil {
+		return args
+	}
+
+	// Navigate: properties -> tool_arguments -> required
+	props, _ := schema["properties"].(map[string]interface{})
+	if props == nil {
+		return args
+	}
+	toolArgs, _ := props["tool_arguments"].(map[string]interface{})
+	if toolArgs == nil {
+		return args
+	}
+	requiredList, _ := toolArgs["required"].([]interface{})
+	if len(requiredList) == 0 {
+		return args
+	}
+
+	// Find the first required parameter that isn't "query"
+	for _, r := range requiredList {
+		reqKey, ok := r.(string)
+		if !ok || reqKey == "query" {
+			continue
+		}
+		// If the required key is missing from args, remap "query" to it
+		if _, exists := args[reqKey]; !exists {
+			args[reqKey] = queryVal
+			delete(args, "query")
+			fmt.Fprintf(os.Stderr, "[Probe] Normalized argument: remapped 'query' -> '%s' for tool '%s'\n", reqKey, toolName)
+			break
+		}
+	}
+
+	return args
+}
+
+// rescueEmptyPathFromThought attempts to extract a file/directory path from the
+// model's nextThought text when filesystem tool arguments are missing or empty.
+// The 4B local model frequently describes what it wants to read in its reasoning
+// (e.g., "Read CONTEXT.md", "explore internal/compiler") but fails to populate
+// the arguments JSON correctly. This function recovers those paths.
+func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, thought string) map[string]interface{} {
+	// Only rescue for filesystem tools
+	fsTools := map[string]bool{"read_file": true, "list_dir": true, "search_files": true}
+	if !fsTools[toolName] {
+		return args
+	}
+
+	// Check if path is already populated
+	if pathVal, exists := args["path"]; exists {
+		if pathStr, ok := pathVal.(string); ok && pathStr != "" {
+			return args
+		}
+	}
+
+	// Try to extract a path from the thought text
+	extracted := extractPathFromText(thought)
+	if extracted != "" {
+		args["path"] = extracted
+		fmt.Fprintf(os.Stderr, "[Probe] Rescued empty path from thought: '%s' for tool '%s'\n", extracted, toolName)
+	}
+
+	return args
+}
+
+// extractPathFromText uses heuristics to find file/directory paths in free text.
+// Looks for: absolute paths, relative paths with extensions, known directory names.
+func extractPathFromText(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	// Priority 1: Absolute paths (e.g., /Users/jp/Desktop/Repos/tzro/CONTEXT.md)
+	absPathRe := regexp.MustCompile(`(/[a-zA-Z0-9._\-]+(?:/[a-zA-Z0-9._\-]+)+)`)
+	if matches := absPathRe.FindStringSubmatch(text); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// Priority 2: Filenames with extensions (e.g., CONTEXT.md, go.mod, main.go)
+	fileRe := regexp.MustCompile(`\b([a-zA-Z0-9_\-]+\.[a-zA-Z]{1,10})\b`)
+	if matches := fileRe.FindStringSubmatch(text); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// Priority 3: Known directory patterns (e.g., internal/compiler, cmd/tzro)
+	dirRe := regexp.MustCompile(`\b((?:internal|cmd|pkg|plugins|tests|docs)/[a-zA-Z0-9_\-/]+)\b`)
+	if matches := dirRe.FindStringSubmatch(text); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// Priority 4: Bare known directory names
+	bareDirRe := regexp.MustCompile(`\b(internal|cmd|pkg|plugins|tests|docs|bin)\b`)
+	if matches := bareDirRe.FindStringSubmatch(text); len(matches) > 1 {
+		return matches[1]
+	}
+
+	return ""
 }

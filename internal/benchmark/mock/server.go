@@ -101,13 +101,17 @@ func (r *Runner) StartMockServer(tcJSON []byte, mode string) {
 		_ = json.Unmarshal(bodyBytes, &compReq)
 
 		var systemPrompt, userPrompt string
+		var allContent strings.Builder // ADR-0021: segmented prompts spread content across multiple messages
 		for _, m := range compReq.Messages {
+			allContent.WriteString(m.Content)
+			allContent.WriteString(" ")
 			if m.Role == "system" {
 				systemPrompt = m.Content
 			} else if m.Role == "user" {
 				userPrompt = m.Content
 			}
 		}
+		allMessages := allContent.String()
 
 		// Protocol Envelope Handlers
 		writeSSE := func(content string) {
@@ -242,7 +246,7 @@ func (r *Runner) StartMockServer(tcJSON []byte, mode string) {
 				foundTurn := false
 				for idx, turn := range tc.Turns {
 					expectedSuffix := fmt.Sprintf("%s_t%d", tc.ID, idx)
-					if strings.Contains(systemPrompt, expectedSuffix) {
+					if strings.Contains(allMessages, expectedSuffix) {
 						activeTurn = turn
 						foundTurn = true
 						break
@@ -288,16 +292,20 @@ func (r *Runner) StartMockServer(tcJSON []byte, mode string) {
 		}
 
 		// 2. Is this a Local Tactician Node Executor parameter mapping request?
-		if strings.Contains(systemPrompt, "Local Tactician") {
+		// ADR-0021: With segmented prompts, "Local Tactician" is in the static system prompt,
+		// but tool names appear in the last user message (instruction segment with schema).
+		// We use userPrompt (the last user message) for tool matching to avoid false matches
+		// against tool names that appear in accumulated context from prior nodes.
+		if strings.Contains(allMessages, "Local Tactician") {
 			// Determine expected tool call parameters
 			var expectedArgs map[string]interface{}
 			found := false
 
-			// Match based on tool Action whitelist contained in systemPrompt
+			// Match based on tool Action name in the instruction segment (last user message)
 			for _, turn := range tc.Turns {
 				if len(turn.ExpectedCalls) > 0 {
 					for _, ec := range turn.ExpectedCalls {
-						if strings.Contains(systemPrompt, ec.ToolName) {
+						if strings.Contains(userPrompt, ec.ToolName) {
 							expectedArgs = ec.Args
 							found = true
 							break
@@ -306,7 +314,7 @@ func (r *Runner) StartMockServer(tcJSON []byte, mode string) {
 					if found {
 						break
 					}
-				} else if turn.ExpectedToolCall != "" && strings.Contains(systemPrompt, turn.ExpectedToolCall) {
+				} else if turn.ExpectedToolCall != "" && strings.Contains(userPrompt, turn.ExpectedToolCall) {
 					expectedArgs = turn.ExpectedArgs
 					found = true
 					break

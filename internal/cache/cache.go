@@ -84,11 +84,7 @@ Respond with ONLY valid JSON matching the schema below. No markdown fences.`
   "required": ["columns"]
 }`
 
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: PruneSystemPrompt,
-		UserPrompt:   userPrompt,
-		JSONSchema:   PruneSchema,
-	}
+	req := inference.NewSimpleRequest(PruneSystemPrompt, userPrompt, PruneSchema)
 
 	resContent, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
 	if err != nil {

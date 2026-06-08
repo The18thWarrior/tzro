@@ -20,6 +20,9 @@ type GraphNode struct {
 	Error           string       `json:"error,omitempty"`
 	RequireApproval bool         `json:"requireApproval,omitempty"` // Pause and wait for approval
 	ProbeConfig     *ProbeConfig `json:"probeConfig,omitempty"`     // Configuration for probe nodes (ADR-0019)
+
+	// Neural traversal fields (ADR-0024)
+	ActivationThreshold float64 `json:"activationThreshold,omitempty"` // Sufficiency gate (0.0-1.0). 0.0 = disabled.
 }
 
 // ProbeConfig configures a Probe Node's Thought Chain execution loop.
@@ -38,11 +41,20 @@ type GraphEdge struct {
 }
 
 type ExecutionGraph struct {
-	TaskID    string      `json:"taskId"`
-	Nodes     []GraphNode `json:"nodes"`
-	Edges     []GraphEdge `json:"edges"`
-	MaxCycles int         `json:"maxCycles"`
-	CreatedAt int64       `json:"createdAt"`
+	TaskID         string          `json:"taskId"`
+	Nodes          []GraphNode     `json:"nodes"`
+	Edges          []GraphEdge     `json:"edges"`
+	MaxCycles      int             `json:"maxCycles"`
+	CreatedAt      int64           `json:"createdAt"`
+	MutationBudget *MutationBudget `json:"mutationBudget,omitempty"` // ADR-0024: per-task spawn budget
+}
+
+// MutationBudget bounds dynamic graph expansion at runtime (ADR-0024).
+// Enforced per-task to prevent runaway node spawning.
+type MutationBudget struct {
+	MaxSpawns           int `json:"maxSpawns"`
+	RemainingSpawns     int `json:"remainingSpawns"`
+	ConsecutiveFailures int `json:"consecutiveFailures"` // Dampening counter
 }
 
 // CompileAndSort sorts the execution graph into sequential parallel levels.
@@ -105,6 +117,100 @@ func CompileAndSort(graph *ExecutionGraph) ([][]string, error) {
 	// Cycle detection
 	if len(topoOrder) != len(graph.Nodes) {
 		return nil, fmt.Errorf("compile error: graph contains cyclic dependencies")
+	}
+
+	return executionLevels, nil
+}
+
+// IncrementalSort runs Kahn's topological sort on the subgraph of non-completed
+// nodes. Completed nodes are excluded entirely — their outgoing edges are treated
+// as satisfied dependencies (in-degree contribution removed). This enables
+// efficient re-sorting after runtime graph mutations (ADR-0024) without
+// reprocessing already-executed nodes.
+func IncrementalSort(graph *ExecutionGraph, completedNodes map[string]bool) ([][]string, error) {
+	if completedNodes == nil {
+		completedNodes = map[string]bool{}
+	}
+
+	inDegree := make(map[string]int)
+	adjList := make(map[string][]string)
+
+	// Initialize only non-completed nodes
+	for _, node := range graph.Nodes {
+		if completedNodes[node.ID] {
+			continue
+		}
+		inDegree[node.ID] = 0
+		adjList[node.ID] = []string{}
+	}
+
+	// Build dependency relationships, skipping edges from/to completed nodes
+	for _, edge := range graph.Edges {
+		sourceCompleted := completedNodes[edge.SourceID]
+		targetCompleted := completedNodes[edge.TargetID]
+
+		// Skip edges where the target is completed (nothing to schedule)
+		if targetCompleted {
+			continue
+		}
+
+		// If source is completed, the dependency is already satisfied — don't count it
+		if sourceCompleted {
+			continue
+		}
+
+		// Both source and target are pending — normal edge
+		if _, exists := inDegree[edge.SourceID]; !exists {
+			return nil, fmt.Errorf("compile error: source node %s does not exist", edge.SourceID)
+		}
+		if _, exists := inDegree[edge.TargetID]; !exists {
+			return nil, fmt.Errorf("compile error: target node %s does not exist", edge.TargetID)
+		}
+		adjList[edge.SourceID] = append(adjList[edge.SourceID], edge.TargetID)
+		inDegree[edge.TargetID]++
+	}
+
+	// Kahn's algorithm on the pending subgraph
+	var queue []string
+	for id, deg := range inDegree {
+		if deg == 0 {
+			queue = append(queue, id)
+		}
+	}
+
+	var topoOrder []string
+	var executionLevels [][]string
+
+	for len(queue) > 0 {
+		levelSize := len(queue)
+		var currentLevel []string
+
+		for i := 0; i < levelSize; i++ {
+			u := queue[0]
+			queue = queue[1:]
+
+			currentLevel = append(currentLevel, u)
+			topoOrder = append(topoOrder, u)
+
+			for _, v := range adjList[u] {
+				inDegree[v]--
+				if inDegree[v] == 0 {
+					queue = append(queue, v)
+				}
+			}
+		}
+		executionLevels = append(executionLevels, currentLevel)
+	}
+
+	// Cycle detection: count pending nodes
+	pendingCount := 0
+	for _, node := range graph.Nodes {
+		if !completedNodes[node.ID] {
+			pendingCount++
+		}
+	}
+	if len(topoOrder) != pendingCount {
+		return nil, fmt.Errorf("compile error: graph contains cyclic dependencies among pending nodes")
 	}
 
 	return executionLevels, nil

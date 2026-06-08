@@ -12,13 +12,61 @@ import (
 	"tzro/internal/telemetry"
 )
 
+// InferenceMessage represents a single message in a multi-turn conversation.
+type InferenceMessage struct {
+	Role    string `json:"role"`    // "system" | "user" | "assistant"
+	Content string `json:"content"`
+}
+
 type StructuredInferenceRequest struct {
-	SystemPrompt string
-	UserPrompt   string
-	JSONSchema   string
-	StreamMeta   *StreamMeta
-	ToolNames    []string
-	TaskID       string
+	Messages   []InferenceMessage
+	JSONSchema string
+	StreamMeta *StreamMeta
+	ToolNames  []string
+	TaskID     string
+}
+
+// NewSimpleRequest creates a 2-message request for classification, chat, and other
+// simple callers that don't need segmented multi-turn prompts.
+func NewSimpleRequest(system, user, schema string) StructuredInferenceRequest {
+	return StructuredInferenceRequest{
+		Messages: []InferenceMessage{
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
+		},
+		JSONSchema: schema,
+	}
+}
+
+// MessagesToMaps converts InferenceMessages to []map[string]string for HTTP request bodies.
+func MessagesToMaps(msgs []InferenceMessage) []map[string]string {
+	result := make([]map[string]string, len(msgs))
+	for i, m := range msgs {
+		result[i] = map[string]string{"role": m.Role, "content": m.Content}
+	}
+	return result
+}
+
+// GetSystemPrompt extracts the first system message content from a Messages slice.
+// Returns empty string if no system message is found.
+func GetSystemPrompt(msgs []InferenceMessage) string {
+	for _, m := range msgs {
+		if m.Role == "system" {
+			return m.Content
+		}
+	}
+	return ""
+}
+
+// GetUserPrompt extracts the last user message content from a Messages slice.
+// Returns empty string if no user message is found.
+func GetUserPrompt(msgs []InferenceMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	return ""
 }
 
 type HeuristicIntentResult struct {
@@ -41,9 +89,9 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 	// 2. Cloud-only mode
 	if cfg.ModelMode == "cloud" {
 		if req.StreamMeta != nil {
-			return CallCloudModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta, m.getPublisher())
+			return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
 		}
-		return CallCloudModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+		return CallCloudModel(ctx, req.Messages, req.JSONSchema)
 	}
 
 	// 3. Local or Cooperative mode
@@ -103,15 +151,15 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 			if ActiveBackend != nil {
 				if req.StreamMeta != nil {
-					localRes, err = ActiveBackend.CallModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta)
+					localRes, err = ActiveBackend.CallModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta)
 				} else {
-					localRes, err = ActiveBackend.CallModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+					localRes, err = ActiveBackend.CallModel(ctx, req.Messages, req.JSONSchema)
 				}
 			} else {
 				if req.StreamMeta != nil {
-					localRes, err = m.CallLocalModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta)
+					localRes, err = m.CallLocalModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta)
 				} else {
-					localRes, err = m.CallLocalModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+					localRes, err = m.CallLocalModel(ctx, req.Messages, req.JSONSchema)
 				}
 			}
 
@@ -154,9 +202,9 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 				}
 				telemetry.Default.PublishEvent("cloud_escalation", req.TaskID, nodeID, fmt.Sprintf("Local model execution failed: %v. Escalating to cloud fallback.", err))
 				if req.StreamMeta != nil {
-					return CallCloudModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta, m.getPublisher())
+					return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
 				}
-				return CallCloudModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+				return CallCloudModel(ctx, req.Messages, req.JSONSchema)
 			}
 			return "", fmt.Errorf("local execution failed: %w", err)
 		}
@@ -170,9 +218,9 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			var cloudRes string
 			var err error
 			if req.StreamMeta != nil {
-				cloudRes, err = CallCloudModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta, m.getPublisher())
+				cloudRes, err = CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
 			} else {
-				cloudRes, err = CallCloudModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+				cloudRes, err = CallCloudModel(ctx, req.Messages, req.JSONSchema)
 			}
 			if err == nil {
 				return cloudRes, nil
@@ -184,9 +232,9 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 	// No heuristic, attempt cloud if configured
 	if cloudKey != "" {
 		if req.StreamMeta != nil {
-			return CallCloudModelStream(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema, *req.StreamMeta, m.getPublisher())
+			return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
 		}
-		return CallCloudModel(ctx, req.SystemPrompt, req.UserPrompt, req.JSONSchema)
+		return CallCloudModel(ctx, req.Messages, req.JSONSchema)
 	}
 
 	return "", fmt.Errorf("local sidecar is inactive and cloud fallback is unavailable")
@@ -213,17 +261,18 @@ func (m *LocalModelManager) initMaps() {
 }
 
 func (m *LocalModelManager) runHeuristics(req StructuredInferenceRequest) (string, bool) {
+	userPrompt := GetUserPrompt(req.Messages)
 	if strings.Contains(req.JSONSchema, "confidence") {
-		res := classifyHeuristic(req.UserPrompt)
+		res := classifyHeuristic(userPrompt)
 		b, _ := json.Marshal(res)
 		return string(b), true
 	}
 	if strings.Contains(req.JSONSchema, "complexity") {
-		tier := heuristicClassify(req.UserPrompt, req.ToolNames)
+		tier := heuristicClassify(userPrompt, req.ToolNames)
 		if tier != "" {
 			return fmt.Sprintf(`{"complexity":"%s"}`, tier), true
 		}
-		fallbackTier := heuristicClassifyFallback(req.UserPrompt, req.ToolNames)
+		fallbackTier := heuristicClassifyFallback(userPrompt, req.ToolNames)
 		return fmt.Sprintf(`{"complexity":"%s"}`, fallbackTier), true
 	}
 	return "", false

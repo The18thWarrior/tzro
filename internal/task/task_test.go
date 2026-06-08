@@ -151,7 +151,7 @@ type mockBackend struct {
 	ResponseErr     error
 }
 
-func (m *mockBackend) CallModel(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (*inference.InferenceResult, error) {
+func (m *mockBackend) CallModel(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (*inference.InferenceResult, error) {
 	m.CalledCallModel = true
 	if m.ResponseErr != nil {
 		return nil, m.ResponseErr
@@ -161,7 +161,7 @@ func (m *mockBackend) CallModel(ctx context.Context, systemPrompt, userPrompt, j
 	}, nil
 }
 
-func (m *mockBackend) CallModelStream(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, meta inference.StreamMeta) (*inference.InferenceResult, error) {
+func (m *mockBackend) CallModelStream(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, meta inference.StreamMeta) (*inference.InferenceResult, error) {
 	return nil, nil
 }
 

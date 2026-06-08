@@ -100,7 +100,7 @@ func TestRemoteOpenAIBackend_CallModel(t *testing.T) {
 	}
 
 	backend := NewRemoteOpenAIBackend(cfg, telemetry.Default)
-	res, err := backend.CallModel(context.Background(), "System prompt", "User prompt", "")
+	res, err := backend.CallModel(context.Background(), []InferenceMessage{{Role: "system", Content: "System prompt"}, {Role: "user", Content: "User prompt"}}, "")
 	if err != nil {
 		t.Fatalf("CallModel failed: %v", err)
 	}

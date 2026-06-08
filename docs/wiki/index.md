@@ -13,6 +13,10 @@ _Map of system features, product requirements, and specs._
 - [Durable DAG Benchmarking Suite](features/benchmarking-suite.md) - Evaluate model planning and parameter execution against BFCL and ComplexFuncBench datasets. (Sources: 2 | Last Updated: 2026-05-24)
 - [Code Quality & Architectural Refactoring](features/code-quality-refactors.md) - Decompose monolithic runner.go and memory.go files into highly cohesive sub-modules and clean up hardcoded edge cases. (Sources: 1 | Last Updated: 2026-05-28)
 - [Synchronous DAG Execution Hooks](features/dag-execution-hooks.md) - Middleware layer for synchronous task intercepting, validation, output mutation, and durable pausing. (Sources: 1 | Last Updated: 2026-05-31)
+- [Dynamic Local Planning and Routing](features/local-planning-routing.md) - Enable hybrid planning using local and cloud routers guided by privacy and complexity policies. (Sources: 1 | Last Updated: 2026-06-08)
+- [Reactive Agent Daemons](features/reactive-daemons.md) - Expand background scheduler daemons to run autonomous local LLM tool execution loops. (Sources: 1 | Last Updated: 2026-06-08)
+- [Agent Inter-Process Communication (IPC)](features/agent-ipc.md) - Bidirectional agent messaging bus enabling sub-task delegation and resource context yielding. (Sources: 1 | Last Updated: 2026-06-08)
+- [Agent App Packaging Standard](features/agent-app-packaging.md) - Unified .tzroapp zip package format containing prompts, WASM/MCP tools, SQL migrations, and permission requests. (Sources: 1 | Last Updated: 2026-06-08)
 
 ## Bugs & Post-Mortems
 
@@ -53,6 +57,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [Task-to-Workflow Promotion Engine](architecture/task-workflow-promotion.md) - Deep subsystem that dynamically elevates Single Task DAGs to persistent Multi-Task Workflows.
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
 - [Agentic Harness Integration](architecture/agentic-harness-integration.md) - Analysis of MCP Server, Native Plugin, and Sidecar paradigms for orchestrating client-side execution steps.
+- [Edge-Cloud Co-Orchestration Beyond DAGs](architecture/edge-cloud-co-orchestration.md) - Multi-agent blackboard systems, speculative decoding, GAPG routing, and distributed state reuse.
 
 ### Architecture Decision Records (ADRs)
 
@@ -74,6 +79,13 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0016: Pluggable Inference Backend](../adr/0016-pluggable-inference-backend.md) - Splits LocalModelManager into a pluggable Inference Backend interface and Sidecar Manager, enabling tzro to target LMStudio, Ollama, or harness-provided models.
 - [ADR-0017: MCP Resource Subscriptions](../adr/0017-mcp-resource-subscriptions.md) - Exposes hierarchical task and node outputs over stdio JSON-RPC via dynamically sourced pub/sub event subscriptions.
 - [ADR-0018: Native Plugin Local Inference Isolation](../adr/0018-native-plugin-local-inference-isolation.md) - Mandates local worker execution for native plugins unless an existing local API (Ollama, LM Studio) is provided by the user.
+- [ADR-0019: Probe Node and Thought Chain Execution](../adr/0019-probe-node-and-thought-chain-execution.md) - Goal-directed DAG nodes with bounded internal Thought Chains for reactive exploration.
+- [ADR-0020: Confidence Tier and Corrective Micro-Skills](../adr/0020-confidence-tier-and-corrective-micro-skills.md) - Per-node pre-flight self-assessment with failure-derived anti-pattern SOP extraction.
+- [ADR-0021: Segmented Multi-Turn Prompt for KV Cache Sharing](../adr/0021-segmented-multi-turn-prompt-kv-cache-sharing.md) - 4-message prompt structure and Messages interface for cross-node KV prefix reuse.
+- [ADR-0022: Background Agent Abstraction and Observer Refactor](../adr/0022-background-agent-abstraction-and-observer-refactor.md) - Agent interface, BackgroundAgent base struct, and Observer refactored to embed it.
+- [ADR-0023: Sentinel Agent and Proactive Activity Channel](../adr/0023-sentinel-agent-and-proactive-activity-channel.md) - Proactive intelligence agent with retrieval-grounded synthesis, workspace scanning, activity reports, and dual-path alert delivery.
+- [ADR-0024: Edge Thought and Activation Threshold](../adr/0024-edge-thought-and-activation-threshold.md) - Neural edge traversal with dynamic graph mutation. Deprecates Probe Node and Thought Chain.
+- [ADR-0025: Attention and Proactivity Scheduler](../adr/0025-attention-and-proactivity-scheduler.md) - Background daemon coordinator with proactivity ladder, foreground preemption, resource budgets, and approval-gated actions.
 
 
 ## Ingested Sources
@@ -81,3 +93,4 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 _Immutable third-party references, notes, and raw inputs._
 
 - [LLM Wiki Reference (Karpathy)](../agents/wiki.md) - Design guidelines and templates for local wiki maintenance.
+- [Edge-Cloud LLM Task Offloading Research](sources/edge-cloud-task-offloading.md) - Bleeding-edge architectures for edge-cloud LLM task offloading beyond Directed Acyclic Graphs.

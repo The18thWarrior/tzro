@@ -20,6 +20,10 @@ _Avoid_: Pipeline, campaign, automation track
 The execution strategy rating (**T0 Direct**, **T1 Planned**, **T2 Supervised**) assigned to a prompt to determine planning and oversight resources.
 _Avoid_: Performance score, cost group
 
+**Confidence Tier**:
+A per-node pre-flight self-assessment where the **Local Model** evaluates whether it can extract the required parameters from the accumulated context and tool schema before committing to a full inference call. Returns `sufficient` (proceed locally) or `insufficient` (escalate to **Cloud Model**). Operates at execution time on individual DAG nodes, unlike **Complexity Tier** which classifies user intent at task intake.
+_Avoid_: Complexity Tier (intake-level routing), Speed Floor (hardware throughput), difficulty score
+
 **Abstract Graph**:
 A non-executed JSON schema blueprint generated during planning that maps step nodes and sequential dependencies.
 _Avoid_: Execution sequence, flowchart JSON
@@ -48,25 +52,49 @@ _Avoid_: Cloud API, remote agent, fallback model
 Logit-level grammar constraints forced onto local worker models to guarantee 100% syntactically valid JSON tool parameters.
 _Avoid_: Output parser, regex validator
 
+**Agent**:
+The minimal contract for any autonomous process hosted by the tzro engine. Has a name, a lifecycle (`Start`/`Stop`), and runs within the daemon process. Concrete agent types specialize the trigger mechanism and capabilities.
+_Avoid_: Model, executor, tool, Probe Node (bounded DAG node, not a long-lived process)
+
+**Background Agent**:
+An **Agent** subtype that runs continuously inside the daemon on its own trigger schedule (event-driven, periodic, or both). Has access to the **Local Model** via an LLMClient interface, the TelemetryManager event stream, the memory store, and the **Durable Notification** output channel. The **Observer Agent** and **Sentinel Agent** are the first two **Background Agents**.
+_Avoid_: Agent (too broad), daemon thread, cron job
+
 **Observer Agent**:
-A non-blocking background auditor that monitors event channels, evaluates task health, and performs lifecycle deactivations.
-_Avoid_: Cron manager, heartbeat daemon
+A **Background Agent** that fires reactively on debounced telemetry events (event count threshold or inactivity window). Performs post-execution reflection — memory synthesis and knowledge graph extraction from completed task trajectories.
+_Avoid_: Sentinel Agent (proactive), cron manager, heartbeat daemon
+
+**Sentinel Agent**:
+A **Background Agent** that fires proactively on a periodic heartbeat timer and ingested activity reports. Evaluates ambient system state, correlates user activity patterns against memory and the knowledge graph, and produces structured alerts via **Durable Notifications** communicated upstream to the harness through MCP resource change notifications.
+_Avoid_: Observer Agent (reactive), cron job, monitoring service
 
 **Procedural Micro-Skill**:
 A highly structured Markdown SOP extracted from successful trajectories and injected to prevent zero-shot API hallucinations.
 _Avoid_: Dynamic prompt context, RAG document
 
+**Corrective Micro-Skill**:
+An anti-pattern SOP auto-extracted from the diff between a failed **Local Model** extraction and a successful **Cloud Model** re-execution of the same node. Injected into the **Local Model**'s context pipeline via the existing skill index to teach the Tactician to self-correct on specific failure patterns (e.g., quoting conventions, ID format expectations) without weight updates. Complements **Procedural Micro-Skill** (success-derived) with failure-derived corrections.
+_Avoid_: Procedural Micro-Skill (success-derived), historical success rate, retraining
+
 **Sandboxed Micro-Skill**:
 A compiled WebAssembly binary containing specialized logic executed safely on-device with strict, isolated resource limits.
 _Avoid_: WASM plugin, executable skill, CGO connector
 
-**Probe Node**:
-A goal-directed DAG node that runs a bounded **Thought Chain** internally using the **Local Model** and a constrained tool set. From the parent DAG's perspective, it is a single opaque node with a compacted summary output. Accepts a natural language goal and a set of allowed tools, executes up to a step budget (default 20), and produces a synthesized finding for downstream consumption.
-_Avoid_: Agent loop, ReAct node, explorer widget, specialist node
+**Edge Thought**:
+A compact reasoning state generated on a DAG edge traversal by the **Local Model**, summarizing what execution has learned so far and how confident it is that the task goal can be achieved. Generated when the executor traverses an edge whose target node has a non-zero **Activation Threshold**. Persisted to SQLite for durability. Serves as the primary reasoning context for downstream nodes, with raw upstream data included on-demand for structured parameter extraction.
+_Avoid_: Short-term memory, session context, accumulated context (raw data, not reasoning)
 
-**Thought Chain**:
-The internal execution pattern of a **Probe Node**: a sequence of stateless bridge→exec steps where each step sees only the current thought, the previous tool output, and semantically retrieved prior thoughts (via ONNX embedding similarity over the chain). Thoughts are committed to SQLite for durability. Every N steps, a rolling compaction merges recent thoughts into a compressed summary. The **Local Model** is stateless between steps — all state is externalized in the persisted chain.
-_Avoid_: ReAct loop, conversation history, session context, chain-of-thought prompting
+**Activation Threshold**:
+A per-node sufficiency gate (0.0–1.0) that determines whether an **Edge Thought**'s goal confidence warrants dynamic graph mutation. When the incoming Edge Thought's confidence falls below the target node's Activation Threshold, the **Local Model** spawns a new node to perform additional work before the target executes. A threshold of 0.0 disables Edge Thought generation and spawn evaluation entirely. Set by the **Cloud Model** at planning time or defaulted by the **Kahn Compiler** based on node type.
+_Avoid_: New Thought Threshold, firing threshold, trigger condition
+
+**Probe Node** _(deprecated)_:
+Superseded by **Edge Thought** and **Activation Threshold**, which generalize the Probe's reactive behavior to all DAG nodes. Existing DAGs emitting `type: "probe"` are silently treated as action nodes with a high Activation Threshold and allocated mutation budget.
+_Avoid_: Use Edge Thought and Activation Threshold instead
+
+**Thought Chain** _(deprecated)_:
+Superseded by **Edge Thought**. The Thought Chain's internal step loop is replaced by dynamic node spawning via the Activation Threshold, where each tool call becomes a checkpointed DAG node rather than a hidden internal step.
+_Avoid_: Use Edge Thought instead
 
 **Compaction Pipeline**:
 A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
@@ -135,6 +163,22 @@ _Avoid_: Cost mode, cheapness level, offload policy
 **Offload Policy**:
 The decision framework an external agent consuming tzro via **MCP Server Mode** applies to determine which phases of work to submit as **Tasks** versus execute directly in its own context window. Phases involving tool-heavy data collection, parallelizable operations, or large output consumption are offloaded; phases requiring frontier reasoning, code generation, or interactive user dialogue are retained.
 _Avoid_: Delegation Mode (internal cloud→local routing), routing policy, execution strategy
+
+**Attention Scheduler**:
+The background daemon coordinator that schedules, executes, and filters low-priority event-driven background daemons under preemption, budget, and safety constraints.
+_Avoid_: Proactivity Scheduler, background loop agent
+
+**Proactivity Ladder**:
+The five-tier safety and visibility classification (L0 Observe, L1 Prepare, L2 Suggest, L3 Reversible Action, L4 External Side Effect) governing the permissions and approval gates of background proposed actions.
+_Avoid_: Action tier, proactivity score, complexity tier
+
+**Proposed Action**:
+A structured proposal returned by a background daemon to the Attention Scheduler representing a recommended mutation, observation, or user alert, containing metadata for policy checks.
+_Avoid_: Execution command, task, step
+
+**Attention Queue**:
+The user-visible interface (backed by persistent notifications) holding pending L2 suggestions and L3/L4 actions awaiting explicit user approval.
+_Avoid_: Alert queue, message panel
 
 ---
 

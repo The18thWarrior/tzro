@@ -14,18 +14,25 @@ import (
 	"tzro/internal/inference"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
+	"tzro/internal/proactivity"
 	"tzro/internal/tools"
 )
 
 // ExecuteOptions represents configuration settings for a specific task execution run.
 type ExecuteOptions struct {
-	TaskID     string
-	IntentType string // Optional: e.g., "workflow", "heartbeat", "research"
+	TaskID       string
+	IntentType   string // Optional: e.g., "workflow", "heartbeat", "research"
+	IsForeground bool   // Set to true for user-initiated tasks
 }
 
 // Execute is the deep Task Engine interface seam.
 // It plans, compiles (topological sort), and runs the execution graph.
 func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.ExecutionGraph, [][]string, error) {
+	if opts.IsForeground {
+		proactivity.RegisterActiveUserTask(opts.TaskID)
+		defer proactivity.DeregisterActiveUserTask(opts.TaskID)
+	}
+
 	// 1. LLM planning or Heuristic fallback -> graph
 	graph, err := Plan(ctx, prompt, opts)
 	if err != nil {
@@ -236,7 +243,7 @@ To satisfy evaluation matching:
 
 	userPrompt := fmt.Sprintf("Create an automation workflow execution graph for: '%s'", prompt)
 
-	res, err := inference.ActiveBackend.CallModel(ctx, systemPrompt, userPrompt, "")
+	res, err := inference.ActiveBackend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, "")
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +418,7 @@ To satisfy evaluation matching:
 
 	userPrompt := fmt.Sprintf("Create an automation workflow execution graph for: '%s'", prompt)
 
-	graphStr, err := inference.CallCloudModel(ctx, systemPrompt, userPrompt, "")
+	graphStr, err := inference.CallCloudModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, "")
 	if err != nil {
 		return nil, err
 	}

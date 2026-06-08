@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"tzro/internal/config"
 	"tzro/internal/stream"
@@ -89,7 +90,18 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	m.GGUFModelPath = cfg.GGUFModelPath
 	m.Status = "Starting"
 
-	// 1. Attempt Server Process Adoption across reloads
+	// Acquire exclusive filesystem lock to prevent concurrent llama-server spawning
+	// across processes (tzro-mcp and tzrod race on simultaneous IDE restart).
+	lockPath := resolveTzroPath(filepath.Join(".tzro", ".llama-server.lock"))
+	lockFile, lockErr := acquireFileLock(lockPath)
+	if lockErr != nil {
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Warning: could not acquire startup lock: %v\n", lockErr)
+	}
+	defer releaseFileLock(lockFile)
+
+	// 1. Attempt Server Process Adoption across reloads.
+	// After acquiring the flock, another process may have started the server
+	// while we waited. The retry loop handles server boot time.
 	portFile := resolveTzroPath(filepath.Join(".tzro", ".llama-server.port"))
 	if data, err := os.ReadFile(portFile); err == nil {
 		fields := strings.Split(strings.TrimSpace(string(data)), ":")
@@ -97,20 +109,39 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			savedPort, _ := strconv.Atoi(fields[0])
 			savedPID, _ := strconv.Atoi(fields[1])
 
-			// Health probe endpoint check
-			healthURL := fmt.Sprintf("http://localhost:%d/health", savedPort)
-			req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
-			if err == nil {
-				resp, err := m.getHealthClient().Do(req)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					resp.Body.Close()
-					m.ActivePort = savedPort
-					m.ActivePID = savedPID
-					m.Status = "Adopted"
-					fmt.Fprintf(os.Stderr, "[Llama Sidecar] Adopted existing running process on Port %d (PID %d)\n", savedPort, savedPID)
-					return nil
+			// Verify the process is still alive before retrying health probes
+			processAlive := false
+			if proc, err := os.FindProcess(savedPID); err == nil {
+				if err := proc.Signal(syscall.Signal(0)); err == nil {
+					processAlive = true
 				}
 			}
+
+			if processAlive {
+				// Health probe with retries — server may still be booting
+				for attempt := range 6 {
+					healthURL := fmt.Sprintf("http://localhost:%d/health", savedPort)
+					req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
+					if err != nil {
+						break
+					}
+					resp, err := m.getHealthClient().Do(req)
+					if err == nil && resp.StatusCode == http.StatusOK {
+						resp.Body.Close()
+						m.ActivePort = savedPort
+						m.ActivePID = savedPID
+						m.Status = "Adopted"
+						fmt.Fprintf(os.Stderr, "[Llama Sidecar] Adopted existing running process on Port %d (PID %d)\n", savedPort, savedPID)
+						return nil
+					}
+					if attempt < 5 {
+						fmt.Fprintf(os.Stderr, "[Llama Sidecar] Port file found (port %d) but server not healthy yet, retrying (%d/5)...\n", savedPort, attempt+1)
+						time.Sleep(500 * time.Millisecond)
+					}
+				}
+			}
+			// Process dead or health never passed — stale port file
+			_ = os.Remove(portFile)
 		}
 	}
 
@@ -168,9 +199,10 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"-fa", "auto", // Q4: flash attention (auto-detect)
 		"--spec-type", "ngram-simple", // Q5: n-gram speculative decoding
 		"--spec-draft-n-max", "48", // Q5: raised from default 16 for JSON verbatim matches
-		"--cache-reuse", "256", // Q6: reuse KV cache for matching prompt prefixes
+		"--cache-reuse", "2048", // ADR-0021: segmented prompt structure shares static prefix across nodes
 		"--n-predict", "16384", // Q9: max tokens per generation
 		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
+		"--cache-ram", "2048", // Limit maximum prompt cache host memory to 2GB to resolve memory pressure
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
@@ -297,21 +329,21 @@ func (m *LocalModelManager) getProcessRSS(pid int) (int64, error) {
 }
 
 // CheckAndTriggerTier2GC evaluates Resident Set Size (RSS) memory after a task completes,
-// and gracefully recycles the local inference sidecar if memory limits are exceeded (e.g., 2GB).
+// and gracefully recycles the local inference sidecar if memory limits are exceeded (e.g., 12GB).
 func (m *LocalModelManager) CheckAndTriggerTier2GC(ctx context.Context) {
 	m.mutex.Lock()
 	pid := m.ActivePID
 	status := m.Status
 	m.mutex.Unlock()
 
-	if status != "Active" || pid <= 0 {
+	if (status != "Active" && status != "Adopted") || pid <= 0 {
 		return
 	}
 
 	if rss, err := m.getProcessRSS(pid); err == nil {
-		// 8GB threshold limit = 8 * 1024 * 1024 * 1024 bytes
-		const threshold = 8 * 1024 * 1024 * 1024
-		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 8192MB)\n", rss/(1024*1024))
+		// 12GB threshold limit = 12 * 1024 * 1024 * 1024 bytes (adjusted for 12B model + 2GB cache)
+		const threshold = 12 * 1024 * 1024 * 1024
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 12288MB)\n", rss/(1024*1024))
 
 		if rss > threshold {
 			fmt.Fprintln(os.Stderr, "[Llama Sidecar GC] RSS threshold exceeded. Triggering Tier 2 Graceful Process Recycling...")
@@ -454,10 +486,34 @@ func allocateRandomPort() (int, error) {
 	return port, nil
 }
 
+// acquireFileLock acquires an exclusive flock on the given path.
+// Returns the open file (caller must defer releaseFileLock) or nil on error.
+func acquireFileLock(path string) (*os.File, error) {
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open lock file: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("flock: %w", err)
+	}
+	return f, nil
+}
+
+// releaseFileLock releases the flock and closes the file. Nil-safe.
+func releaseFileLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
+}
+
 // CallLocalModel handles the local structured JSON inference call.
 // It intercepts prompts, suppresses reasoning tags for Qwen3.5 family, and returns structured tool completions.
 // Returns an InferenceResult with content and accurate token-level metrics from the server's usage object.
-func (m *LocalModelManager) CallLocalModel(ctx context.Context, systemPrompt, userPrompt string, gbnfSchema string) (*InferenceResult, error) {
+func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []InferenceMessage, gbnfSchema string) (*InferenceResult, error) {
 	// Build the completion request with optimized sampling parameters
 	type CompletionRequest struct {
 		Model              string                 `json:"model"`
@@ -469,11 +525,8 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, systemPrompt, us
 	}
 
 	reqBody := CompletionRequest{
-		Model: "grm-2.5",
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
+		Model:       "gemma-4-12b-it-qat",
+		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0, // Q7: required for min_p to function; GBNF constrains output safety
 		MinP:        0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
 		ChatTemplateKwargs: map[string]interface{}{
@@ -512,6 +565,9 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, systemPrompt, us
 	// Q10: Use inferenceClient (no fixed timeout) instead of healthClient (3s timeout)
 	resp, err := m.getInferenceClient().Do(req)
 	if err != nil {
+		m.mutex.Lock()
+		m.Status = "Stopped"
+		m.mutex.Unlock()
 		return nil, fmt.Errorf("local model HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -585,7 +641,7 @@ type StreamMeta struct {
 	NodeID   string
 }
 
-func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, systemPrompt, userPrompt string, gbnfSchema string, meta StreamMeta) (*InferenceResult, error) {
+func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages []InferenceMessage, gbnfSchema string, meta StreamMeta) (*InferenceResult, error) {
 	if meta.Source == "chat" {
 		_ = m.PreemptForChat(ctx)
 		defer func() {
@@ -610,11 +666,8 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, systemProm
 	}
 
 	reqBody := CompletionRequest{
-		Model: "grm-2.5",
-		Messages: []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
+		Model:       "gemma-4-12b-it-qat",
+		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0,
 		MinP:        0.1,
 		Stream:      true,
@@ -649,6 +702,9 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, systemProm
 	startTime := time.Now()
 	resp, err := m.getInferenceClient().Do(req)
 	if err != nil {
+		m.mutex.Lock()
+		m.Status = "Stopped"
+		m.mutex.Unlock()
 		return nil, fmt.Errorf("local model stream HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()

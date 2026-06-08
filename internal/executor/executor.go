@@ -38,14 +38,19 @@ type ExecutionHook interface {
 	AfterLevel(ctx context.Context, taskID string, levelNodes []*compiler.GraphNode) (HookAction, error)
 	BeforeNode(ctx context.Context, taskID string, node *compiler.GraphNode) (HookAction, error)
 	AfterNode(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (HookAction, error)
+	// OnEdgeTraversal fires when an edge is traversed in the ready-queue execution model (ADR-0024).
+	// Called after a source node completes and before the target node begins execution.
+	// The edgeThought may be nil if the target has ActivationThreshold 0.0.
+	OnEdgeTraversal(ctx context.Context, taskID string, sourceNode, targetNode *compiler.GraphNode, edgeThought *memory.EdgeThought) (HookAction, error)
 }
 
 var ErrTaskPaused = fmt.Errorf("task execution paused by hook")
 
 type ExecutionEngine struct {
-	Publisher telemetry.EventPublisher
-	hooks     []ExecutionHook
-	mutex     sync.Mutex
+	Publisher      telemetry.EventPublisher
+	EdgeThoughtGen EdgeThoughtInference // optional: enables neural edge traversal (ADR-0024)
+	hooks          []ExecutionHook
+	mutex          sync.Mutex
 }
 
 func (e *ExecutionEngine) RegisterHook(h ExecutionHook) {
@@ -99,6 +104,8 @@ If you need to analyze, filter, paginate, or count records from the cache, you M
 func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.ExecutionGraph, levels [][]string) error {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
+
+	_, levelDelay := getDelays(ctx)
 
 	fmt.Fprintf(os.Stderr, "[Executor] Starting execution for Task %s with %d topological levels...\n", graph.TaskID, len(levels))
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task execution initiated")
@@ -275,8 +282,10 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 			}
 		}
 
-		// Brief delay between levels for visual representation in GUI (500ms)
-		time.Sleep(500 * time.Millisecond)
+		// Brief delay between levels for visual representation in GUI (500ms default)
+		if levelDelay > 0 {
+			time.Sleep(levelDelay)
+		}
 	}
 
 	// Synthesis SOP skill on successful completion
@@ -306,6 +315,7 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 
 func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler.ExecutionGraph, node *compiler.GraphNode, activeHooks []ExecutionHook) error {
 	taskID := graph.TaskID
+	nodeDelay, _ := getDelays(ctx)
 
 	// 0. Pre-flight Check: Is node already completed or skipped?
 	if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
@@ -438,22 +448,40 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			schemaStr = ""
 		}
 
-		// P0 Fix (13:00): Use accumulated context architecture instead of flat interpolated prompt.
-		// Upstream node outputs are passed as labeled structured blocks, enabling the bridge
-		// to extract values by key name rather than re-parsing them from prose.
+		// Use segmented 4-message structure for KV cache prefix sharing (ADR-0021).
+		// The static base instruction is invariant across all nodes, enabling --cache-reuse.
 		accumulatedCtx := buildAccumulatedContext(taskID, graph)
-		systemPrompt := buildContextAwareSystemPrompt(node.Action, node.Instructions, schemaStr)
-		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
+		staticBase := buildStaticBaseInstruction()
+		instruction := fmt.Sprintf("Extract structured tool parameters for '%s'.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
+		msgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, instruction)
 
 		req := inference.StructuredInferenceRequest{
-			SystemPrompt: systemPrompt,
-			UserPrompt:   userPrompt,
-			JSONSchema:   schemaStr,
-			StreamMeta:   &meta,
-			TaskID:       taskID,
+			Messages:   msgs,
+			JSONSchema: schemaStr,
+			StreamMeta: &meta,
+			TaskID:     taskID,
 		}
 
-		inferenceResult, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+		// Confidence Tier pre-flight gate (ADR-0020)
+		// Skip in benchmark mode — the extra inference call interferes with mock server routing
+		isBenchmark := ctx.Value("is_benchmark") != nil
+		useCloud := IsForceCloud(taskID)
+		if !useCloud && !isBenchmark {
+			sufficient, _ := assessConfidenceTier(ctx, msgs, schemaStr, taskID)
+			checkAndUpdateConfidence(taskID, sufficient)
+			if !sufficient {
+				useCloud = true
+				e.getPublisher().PublishEvent("confidence_insufficient", taskID, node.ID, "Escalating to cloud")
+			}
+		}
+
+		var inferenceResult string
+		var err error
+		if useCloud {
+			inferenceResult, err = retryWithCloud(ctx, msgs, schemaStr, taskID)
+		} else {
+			inferenceResult, err = inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+		}
 		if err != nil {
 			return fmt.Errorf("gbnf_bridge execution failed: %w", err)
 		}
@@ -479,7 +507,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			return ErrTaskPaused
 		}
 
-		time.Sleep(800 * time.Millisecond)
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
@@ -526,16 +556,16 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		var toolArguments map[string]interface{}
 
 		if accumulatedCtx != "" && schemaStr != "" {
-			// Use inference-based parameter extraction with accumulated context
-			detSystemPrompt := buildContextAwareSystemPrompt(node.Action, node.Instructions, schemaStr)
-			detUserPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
+			// Use segmented 4-message structure for KV cache prefix sharing (ADR-0021)
+			staticBase := buildStaticBaseInstruction()
+			detInstruction := fmt.Sprintf("Extract structured tool parameters for '%s'.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
+			detMsgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, detInstruction)
 
 			detReq := inference.StructuredInferenceRequest{
-				SystemPrompt: detSystemPrompt,
-				UserPrompt:   detUserPrompt,
-				JSONSchema:   schemaStr,
-				StreamMeta:   &meta,
-				TaskID:       taskID,
+				Messages:   detMsgs,
+				JSONSchema: schemaStr,
+				StreamMeta: &meta,
+				TaskID:     taskID,
 			}
 
 			detResult, detErr := inference.GlobalLocalModel.ExecuteStructured(ctx, detReq)
@@ -599,7 +629,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
 		}
 
-		time.Sleep(800 * time.Millisecond)
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
@@ -711,12 +743,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		accumulatedCtx := buildAccumulatedContext(taskID, graph)
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
-		req := inference.StructuredInferenceRequest{
-			SystemPrompt: systemPrompt,
-			UserPrompt:   userPrompt,
-			StreamMeta:   &meta,
-			TaskID:       taskID,
-		}
+		req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
+		req.StreamMeta = &meta
+		req.TaskID = taskID
 
 		inferenceResult, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
 		if err != nil {
@@ -744,7 +773,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			return ErrTaskPaused
 		}
 
-		time.Sleep(800 * time.Millisecond)
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
@@ -809,14 +840,26 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		systemPrompt = buildContextAwareSystemPrompt(node.Action, node.Instructions, schemaStr)
 	}
 
-	userPrompt := buildContextAwareUserPrompt(accumulatedCtx, ragCtx, interpolatedPrompt)
-
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		JSONSchema:   schemaStr,
-		StreamMeta:   &meta,
-		TaskID:       taskID,
+	var req inference.StructuredInferenceRequest
+	if !isCacheExploration && accumulatedCtx != "" {
+		// Use segmented 4-message structure for KV cache prefix sharing (ADR-0021)
+		staticBase := buildStaticBaseInstruction()
+		instruction := fmt.Sprintf("Extract structured tool parameters for '%s'.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
+		if ragCtx != "" {
+			instruction = "## Additional Context\n\n" + ragCtx + "\n\n" + instruction
+		}
+		msgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, instruction)
+		req = inference.StructuredInferenceRequest{
+			Messages:   msgs,
+			JSONSchema: schemaStr,
+			StreamMeta: &meta,
+			TaskID:     taskID,
+		}
+	} else {
+		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, ragCtx, interpolatedPrompt)
+		req = inference.NewSimpleRequest(systemPrompt, userPrompt, schemaStr)
+		req.StreamMeta = &meta
+		req.TaskID = taskID
 	}
 
 	inferenceResult, err = inference.GlobalLocalModel.ExecuteStructured(ctx, req)
@@ -840,11 +883,65 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 	fmt.Fprintf(os.Stderr, "[Executor] Tool arguments extracted: %v\n", toolCall.ToolArguments)
 
+	// Schema validation gate (ADR-0020): validate before calling tool
+	// Skip in benchmark mode — mock server provides correct args and retry would interfere
+	isBenchmark := ctx.Value("is_benchmark") != nil
+	if !isBenchmark {
+		if validationErr := validateAgainstSchema(node.Action, toolCall.ToolArguments); validationErr != nil {
+			fmt.Fprintf(os.Stderr, "[RetryPolicy] Schema validation failed for %s: %v — retrying with cloud\n", node.Action, validationErr)
+			e.getPublisher().PublishEvent("schema_validation_failed", taskID, node.ID, validationErr.Error())
+
+			// Retry with cloud
+			cloudResult, cloudErr := retryWithCloud(ctx, req.Messages, schemaStr, taskID)
+			if cloudErr == nil {
+				// Cloud succeeded — extract corrective skill from the diff
+				go func() {
+					_, _ = skills.ExtractCorrectiveSkill(context.Background(), node.Action, inferenceResult, cloudResult, node.Instructions)
+				}()
+				// Re-parse cloud result
+				var cloudToolCall struct {
+					ToolArguments map[string]interface{} `json:"tool_arguments"`
+				}
+				if json.Unmarshal([]byte(cloudResult), &cloudToolCall) == nil && len(cloudToolCall.ToolArguments) > 0 {
+					toolCall.ToolArguments = cloudToolCall.ToolArguments
+				}
+			}
+		}
+	}
+
 	// 5. Execute tool via the dynamic Tool Registry seam
 	var output string
 	output, err = tools.Call(ctx, node.Action, toolCall.ToolArguments)
 	if err != nil {
-		return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
+		if isBenchmark {
+			return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
+		}
+		// Tool execution failure retry (ADR-0020)
+		fmt.Fprintf(os.Stderr, "[RetryPolicy] Tool '%s' execution failed: %v — retrying with cloud\n", node.Action, err)
+		e.getPublisher().PublishEvent("tool_execution_failed", taskID, node.ID, err.Error())
+
+		cloudResult, cloudErr := retryWithCloud(ctx, req.Messages, schemaStr, taskID)
+		if cloudErr == nil {
+			// Cloud succeeded — extract corrective skill
+			go func() {
+				_, _ = skills.ExtractCorrectiveSkill(context.Background(), node.Action, inferenceResult, cloudResult, node.Instructions)
+			}()
+			// Re-parse and re-execute with cloud parameters
+			var cloudToolCall struct {
+				ToolArguments map[string]interface{} `json:"tool_arguments"`
+			}
+			if json.Unmarshal([]byte(cloudResult), &cloudToolCall) == nil && len(cloudToolCall.ToolArguments) > 0 {
+				output, err = tools.Call(ctx, node.Action, cloudToolCall.ToolArguments)
+				if err != nil {
+					return fmt.Errorf("tool '%s' execution failed after cloud retry: %w", node.Action, err)
+				}
+			} else {
+				// Use cloud raw result as output
+				output = cloudResult
+			}
+		} else {
+			return fmt.Errorf("tool '%s' execution failed (cloud retry also failed): %w", node.Action, err)
+		}
 	}
 
 	// Run AfterNode hooks
@@ -882,7 +979,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
 	}
 
-	time.Sleep(800 * time.Millisecond)
+	if nodeDelay > 0 {
+		time.Sleep(nodeDelay)
+	}
 
 	// Save finished state checkpoint including execution tier metadata
 	nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
@@ -1620,12 +1719,8 @@ func (e *ExecutionEngine) evaluateBranchCondition(ctx context.Context, graph *co
 		"required": ["satisfied"]
 	}`
 
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: "You are the Branch Condition Evaluator. Your job is to evaluate if a given condition is satisfied based on the provided execution history and context. Respond strictly with JSON.",
-		UserPrompt:   userPrompt,
-		JSONSchema:   schema,
-		TaskID:       graph.TaskID,
-	}
+	req := inference.NewSimpleRequest("You are the Branch Condition Evaluator. Your job is to evaluate if a given condition is satisfied based on the provided execution history and context. Respond strictly with JSON.", userPrompt, schema)
+	req.TaskID = graph.TaskID
 
 	resStr, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
 	if err != nil {
@@ -1737,4 +1832,40 @@ func evaluateDeterministicCondition(cond string) (bool, bool) {
 	}
 
 	return false, false
+}
+
+func isTestingOrBenchmark(ctx context.Context) bool {
+	if ctx.Value("is_benchmark") != nil {
+		return true
+	}
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "-test.") || strings.Contains(arg, "test") {
+			return true
+		}
+	}
+	if os.Getenv("TZRO_HEADLESS") == "true" {
+		return true
+	}
+	return false
+}
+
+func getDelays(ctx context.Context) (time.Duration, time.Duration) {
+	cfg := config.Get()
+	nodeDelay := time.Duration(cfg.ExecutorNodeDelayMs) * time.Millisecond
+	levelDelay := time.Duration(cfg.ExecutorLevelDelayMs) * time.Millisecond
+
+	// Assign historical visual pacing defaults if unset (0)
+	if cfg.ExecutorNodeDelayMs == 0 {
+		nodeDelay = 800 * time.Millisecond
+	}
+	if cfg.ExecutorLevelDelayMs == 0 {
+		levelDelay = 500 * time.Millisecond
+	}
+
+	// Bypass delays for testing and benchmarking
+	if isTestingOrBenchmark(ctx) {
+		return 0, 0
+	}
+
+	return nodeDelay, levelDelay
 }

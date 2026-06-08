@@ -2,7 +2,7 @@
 
 ![tzro App Icon](static/icon.png)
 
-> **tzro** is a durable, local-first agentic execution engine designed to coordinate complex multi-system automations securely on resource-constrained hardware. It combines topological task compilation, hybrid relational memory, dynamic Model Context Protocol (MCP) integrations, and sandboxed WebAssembly (WASM) execution, packaged with a fullscreen Bubble Tea terminal console (TUI) and a real-time Server-Sent Events (SSE) web control center.
+> **tzro** is a durable, local-first agentic execution engine designed to coordinate complex multi-system automations securely on resource-constrained hardware. It combines topological task compilation, hybrid relational memory, dynamic Model Context Protocol (MCP) integrations, neural edge traversal with Edge Thoughts and Activation Thresholds, pluggable inference backends, and sandboxed WebAssembly (WASM) execution, packaged with a fullscreen Bubble Tea terminal console (TUI) and a real-time Server-Sent Events (SSE) web control center.
 
 ---
 
@@ -20,26 +20,37 @@ Traditional agent loops suffer from brittle, high-latency, and expensive infinit
                                      │
                                      ▼ [Task / Workflow]
                 ┌──────────────────────────────────────────┐
-                │   Cloud Planner (The Strategist - Eino)  │ [Invoked ONCE]
+                │   Cloud Planner (The Strategist)         │ [Invoked ONCE]
                 │   - Frontier Cloud Model (e.g. Gemini)   │ - Builds Abstract Graph JSON
+                │   - Sets Activation Thresholds per node  │ - Allocates Mutation Budget
                 └────────────────────┬─────────────────────┘
                                      │
                                      ▼
                 ┌──────────────────────────────────────────┐
                 │      Go Graph Compiler & Kahn Sorter     │ [Deterministic]
-                │   - Performs cycle & edge validation     │ - Establishes parallel levels
+                │   - Performs cycle & edge validation     │ - Event-driven ready queue
+                │   - Incremental re-sort after mutations  │ - Defaults thresholds by type
                 └────────────────────┬─────────────────────┘
                                      │
                      ┌───────────────┴───────────────┐
                      ▼                               ▼
-               ┌───────────┐                   ┌───────────┐
-               │  Level 0  │                   │  Level 1  │
-               └─────┬─────┘                   └─────┬─────┘
-                     │ (Goroutines)                  │
+              ┌─────────────┐                 ┌─────────────┐
+              │   Node A    │                 │   Node B    │
+              └──────┬──────┘                 └──────┬──────┘
+                     │ Edge Traversal                │
                      ▼                               ▼
+              ┌─────────────────────────────────────────────┐
+              │           Edge Thought Generator            │
+              │  - Local Model evaluates goal confidence    │
+              │  - confidence ≥ threshold → continue        │
+              │  - confidence < threshold → spawn new node  │
+              │  - goalAchieved → halt downstream           │
+              └──────────────────────┬──────────────────────┘
+                                     │
+                                     ▼
   ┌────────────────────────────────────────────────────────────────────────┐
-  │              Local Step Executor (The Tactician - llama-server)        │
-  │  - Hardware-tuned local GGUF model pinned to Performance CPU Cores      │
+  │       Local Step Executor (The Tactician - Pluggable Backend)          │
+  │  - Pluggable Inference Backend (llama-server, LMStudio, Ollama, vLLM)  │
   │  - Constrained by rigid Backus-Naur Form (GBNF) grammar schemas        │
   │  - Dispatches local static tools & dynamic stdio-based MCP servers     │
   │  - Applies 5-layer context compaction or SQLite Disk-Backed JQ cache   │
@@ -55,26 +66,31 @@ Traditional agent loops suffer from brittle, high-latency, and expensive infinit
   - **SOP & Tool Discovery:** Ingests dynamic standard operating procedures (SOPs) from the synthesized skill index via **Hybrid Vector Search** (combining SQLite FTS5 keyword indexing and local ONNX cosine similarity ranking) to find relevant **Procedural Micro-Skills**.
   - **Abstract Graph Generation:** Compiles a cycle-free JSON schema blueprint (**Abstract Graph**) defining dependency edges, action nodes, and allowed tool white-lists for downstream execution.
   - **Variable Binding Declaration:** Declares double-braced variable mappings (`{{nodes.node_id.output.property}}`) to map variables forward through multi-step dependencies.
+  - **Activation Threshold Assignment:** Sets per-node **Activation Thresholds** (0.0–1.0) to control dynamic graph expansion at runtime. Exploration-oriented nodes receive high thresholds (0.7–0.9), while deterministic nodes default to 0.0.
+  - **Mutation Budget Allocation:** Declares a per-task **Mutation Budget** capping total runtime node spawns to prevent runaway expansion.
 - **Token Efficiency:** Offloads physical tool executions and heavy data outputs entirely to the local Tactician. The Strategist only reviews procedural index metadata rather than raw data payloads, achieving an **80% prompt reduction** and avoiding cloud timeouts or context-window slot thrashing.
 
 ### 2. The Compiler & Executor (Go Systems Core)
 
 - **Underlying Core:** Deterministic Go runtime inside `internal/compiler/` and `internal/executor/`.
 - **Responsibilities:**
-  - **Kahn Topological Sorting:** Detects graph cycles and topologically sorts nodes into concurrent Level groups utilizing Kahn's algorithm for parallel execution.
+  - **Kahn Topological Sorting:** Detects graph cycles and topologically sorts nodes into concurrent groups utilizing Kahn's algorithm. Uses an **event-driven ready queue** (ADR-0024) where nodes fire as soon as their dependencies are satisfied.
+  - **Incremental Re-Sort:** After runtime graph mutations (node spawns via Activation Thresholds), only pending/new nodes are re-sorted. Completed nodes are frozen, enabling efficient dynamic expansion.
   - **Deterministic SCT Graph Expansion:** Dynamically compiles the coarse strategic **Abstract Graph** generated by the Cloud Planner into a fine-grained Strategist-Compiler-Translator (SCT) execution graph before execution:
     - **GBNF Grammar Bridges (`gbnf_bridge`):** For each strategic step, the compiler injects a logit-level Backus-Naur Form (GBNF) grammar constraint node. The local model completes this step using GBNF to guarantee syntactically valid JSON tool parameters matching the exact registered tool schema, eliminating argument hallucinations.
     - **Deterministic Tool Executions (`deterministic`):** Wires a child execution node dependent on the bridge. This node executes the target tool (native Go, WASM micro-skill, or stdio MCP) using the interpolated arguments extracted by the bridge (`{{nodes.node_id_bridge.output}}`) without LLM intervention, ensuring secure, sandboxed execution.
     - **Terminal Synthesis Node (`synthesis`):** Injects a final terminal synthesis node (`terminal_synthesis`) connected to all leaf endpoints. It is responsible for reading the complete execution history and compiling all outputs into a cohesive natural-language summary.
+  - **Edge Thought Generation:** On edge traversal, generates compact reasoning states (**Edge Thoughts**) via the Local Model when the target node has a non-zero Activation Threshold. See [Neural Edge Traversal](#6-neural-edge-traversal--activation-thresholds) below.
   - **Dynamic Interpolation & Conditionals:** Performs regex-based variable interpolation at level-start borders and evaluates branch conditional expressions natively without LLM calls.
 
 ### 3. The Tactician (Local Step Executor)
 
-- **Underlying Model:** Local `llama-server` process running a lightweight GGUF model (e.g., Qwen-3.5-Instruct 4B / GRM-2.5) pinned to system performance cores.
-- **Execution Count:** Invoked once per active action node step (such as `gbnf_bridge` and `synthesis` nodes).
+- **Underlying Model:** Backed by a **pluggable Inference Backend** — the embedded `llama-server` sidecar running a lightweight GGUF model (e.g., Qwen-3.5-Instruct 4B), a remote OpenAI-compatible server (LMStudio, Ollama, vLLM), or a harness callback routing inference through an external agent framework.
+- **Execution Count:** Invoked once per active action node step (such as `gbnf_bridge`, `synthesis`, and Edge Thought generation nodes).
 - **Responsibilities:**
   - **GBNF-Constrained Completion:** Executes single-turn completions strictly constrained by Backus-Naur Form (GBNF) schemas, guaranteeing that tool arguments exactly match the JSON schema of the target tool to prevent syntax errors.
   - **Context-Aware Structured Extraction:** Performs structured parameter extraction using an accumulated execution context block, enabling the bridge to extract values by key name directly from labeled upstream output segments rather than re-parsing prose.
+  - **Confidence Tier Pre-Flight Gate:** Before committing to a full inference call, the Local Model self-assesses whether it can extract the required parameters from the accumulated context. Returns `sufficient` (proceed locally) or `insufficient` (escalate to Cloud Model).
   - **Deterministic Coercion Pipeline:** Passes extracted parameters through Go-native coercion layers (handling numeric literals, string values, and double-braced reference interpolation). This corrects negative numbers or empty string extractions when explicit literals are present in the instruction text, eliminating parameter hallucinations.
   - **5-Layer Context Compaction:** Processes tool outputs through a series of compression layers (binary pruning, HTML-to-Markdown, TSV tabular hoisting, flat KV compacting, and tree flattening) before feeding them back to the model, preventing KV slot thrashing.
   - **Disk-Backed SQLite JQ Cache:** Saves raw JSON outputs exceeding **12KB** to a local SQLite table, returning a Cache Envelope to the model along with standard `jq` query tools (`jq_cached_data`) to query the data natively on-disk, keeping the context window pristine.
@@ -85,10 +101,18 @@ Traditional agent loops suffer from brittle, high-latency, and expensive infinit
 ## 🚀 Key Subsystems
 
 1. **Durable Execution Engine:** Coordinates long-running Tasks and Workflows by checkpointing operational states and execution edges to SQLite. If the daemon restarts or crashes, tasks resume safely from their last completed node.
-2. **Kahn Graph Compiler:** Translates simplified Abstract Graph JSONs into executable levels. Independent nodes at the same topological level execute concurrently in parallel goroutines.
-3. **Relational Knowledge Graph Memory:** Stores enterprise entities, facts, and links in a local relational network. Uses **Hybrid Vector Search** (combining SQLite FTS5 keyword indexing and local ONNX cosine similarity ranking) for Neighborhood Multi-Hop context retrieval.
-4. **Sandboxed WebAssembly Micro-Skills:** Compiles specialized procedural logic into isolated WASM binaries, executing them safely on-device with strict resource and filesystem limitations.
-5. **Stdio MCP Host Gateway:** Spawns external third-party tool servers dynamically over standard I/O (stdio) with thread-safe process self-healing, automatic recovery, and env-delegated credentials.
+2. **Kahn Graph Compiler:** Translates simplified Abstract Graph JSONs into an event-driven ready queue. Independent nodes fire concurrently as soon as dependencies are satisfied. Supports **Incremental Re-Sort** after runtime graph mutations.
+3. **Neural Edge Traversal:** Generates **Edge Thoughts** on edge traversal via the Local Model. Evaluates **Activation Thresholds** to dynamically spawn new nodes when goal confidence is insufficient — creating a quasi-neural network where the DAG responds to runtime discoveries.
+4. **Pluggable Inference Backend:** Decouples structured LLM inference from the hosting process. Supports the embedded `llama-server` sidecar, remote OpenAI-compatible servers (LMStudio, Ollama, vLLM), or harness callback routing through an external agent framework.
+5. **Relational Knowledge Graph Memory:** Stores enterprise entities, facts, and links in a local relational network. Uses **Hybrid Vector Search** (combining SQLite FTS5 keyword indexing and local ONNX cosine similarity ranking) for Neighborhood Multi-Hop context retrieval.
+6. **Background Agents:** Long-lived autonomous processes running inside the daemon:
+   - **Observer Agent:** Fires reactively on debounced telemetry events. Performs post-execution reflection — memory synthesis and knowledge graph extraction from completed task trajectories.
+   - **Sentinel Agent:** Fires proactively on a periodic heartbeat timer. Correlates user activity patterns against memory and the knowledge graph, producing structured alerts (critical / suggestion / ambient) via Durable Notifications.
+7. **Filesystem Exploration Tools:** Built-in `read_file`, `list_dir`, and `search_files` tools with safe path validation, enabling autonomous codebase exploration within configured workspace boundaries.
+8. **Sandboxed WebAssembly Micro-Skills:** Compiles specialized procedural logic into isolated WASM binaries, executing them safely on-device with strict resource and filesystem limitations.
+9. **Stdio MCP Host Gateway:** Spawns external third-party tool servers dynamically over standard I/O (stdio) with thread-safe process self-healing, automatic recovery, and env-delegated credentials.
+10. **MCP Server Mode:** Presents tzro's capabilities (planning, execution, memory, knowledge graph, skills) as MCP tool schemas and dynamic resources over stdio, allowing external agent frameworks to consume tzro as a tool server. Operates simultaneously with the MCP Host role.
+11. **Native Plugin Mode:** Runs in-process as a module within external agent harnesses (Hermes Agent, Google Antigravity SDK), dispatching primitive tools directly to the host process without cloud round-trips.
 
 ---
 
@@ -543,6 +567,15 @@ The Cloud Planner plans workflows conforming to the following structure:
       "default": 5,
       "description": "Maximum cyclic iterations allowed"
     },
+    "mutationBudget": {
+      "type": "object",
+      "description": "Per-task cap on dynamic node spawning (ADR-0024)",
+      "properties": {
+        "maxSpawns": { "type": "integer", "description": "Maximum total spawned nodes" },
+        "remainingSpawns": { "type": "integer" },
+        "consecutiveFailures": { "type": "integer", "description": "Failure dampening counter" }
+      }
+    },
     "nodes": {
       "type": "array",
       "items": {
@@ -554,7 +587,7 @@ The Cloud Planner plans workflows conforming to the following structure:
           },
           "type": {
             "type": "string",
-            "enum": ["action", "conditional", "loop"]
+            "enum": ["action", "conditional", "loop", "probe"]
           },
           "action": {
             "type": "string",
@@ -569,9 +602,16 @@ The Cloud Planner plans workflows conforming to the following structure:
             "type": "array",
             "items": { "type": "string" }
           },
+          "activationThreshold": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 1.0,
+            "default": 0.0,
+            "description": "Sufficiency gate for Edge Thought generation. 0.0 disables. Kahn Compiler defaults: 0.0 for deterministic/synthesis, 0.7 for action nodes."
+          },
           "status": {
             "type": "string",
-            "enum": ["pending", "running", "completed", "failed"]
+            "enum": ["pending", "running", "completed", "failed", "skipped"]
           }
         },
         "required": ["id", "type", "action", "instructions"]
@@ -684,6 +724,30 @@ To protect against local execution throttling (thermal slowdowns or memory deple
 - If speed drops below **5 tokens/second** for **3 consecutive steps**, the engine sets `ForceCloudFallback = true` for the session.
 - The Eino dynamic schema adapter automatically translates GBNF grammars into strict system-prompt JSON instructions, routing **only** that specific throttled step to Eino's cloud interface.
 
+### 6. Neural Edge Traversal & Activation Thresholds
+
+When a node has a non-zero **Activation Threshold** (0.0–1.0), the system generates an **Edge Thought** on each incoming edge after the source node completes. The Edge Thought is a compact reasoning state produced by the Local Model, containing:
+
+- **Goal Confidence** (0.0–1.0): How sufficient the accumulated context is for the target node
+- **Goal Achieved** (bool): Halt flag — the task's objective has already been met
+
+The **sufficiency gate** then evaluates:
+
+```
+A completes → Edge A→B traversed → Edge Thought generated
+  ├─ confidence ≥ threshold → B executes normally
+  ├─ confidence < threshold → spawn new node between A and B
+  └─ goalAchieved = true   → skip B and all downstream
+```
+
+Every spawned node is a **real, checkpointed DAG node** persisted to SQLite — not a hidden internal step. This creates a quasi-neural network where the DAG responds dynamically to runtime discoveries.
+
+#### Safety Model
+- **Mutation Budget**: Per-task cap on total spawns (prevents runaway expansion)
+- **Failure Dampening**: 3 consecutive spawned-node failures suppress further spawning
+- **Incremental Kahn Sort**: Only pending/new nodes are re-sorted after mutations; completed nodes are frozen
+- **Zero overhead**: Nodes with `activationThreshold: 0.0` skip Edge Thought generation entirely
+
 ---
 
 ## 🤖 Guidelines for AI Coding Agents
@@ -729,7 +793,7 @@ When executing any task that does not explicitly require frontier model reasonin
   - **Yes** → Keep execution in-context (run cloud tool calls).
   - **No** → Offload to `tzro_run` as a background task.
 - **Mandatory Delegation Patterns:**
-  - Codebase exploration and directory analysis (using a local **Probe Node** with reactive Thought Chains instead of rigid DAGs).
+  - Codebase exploration and directory analysis — delegate with a goal and let the system dynamically spawn exploration nodes via **Activation Thresholds** (e.g., `activationThreshold: 0.8, mutationBudget: 15`).
   - Multi-source web research and memory ingestion pipelines.
 - **Trigger:** Evaluate DAG offloading if you are about to make **3 or more sequential external tool calls**, or have made **5 or more in-context calls**.
 - **Wait Protocol:** Stop calling other tools, schedule a one-shot wakeup timer via the client, check task status via `tzro_status` until `completed`, and consume **only** the compiled `terminal_synthesis` outcome.

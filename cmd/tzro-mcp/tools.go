@@ -17,6 +17,7 @@ import (
 	"tzro/internal/inference"
 	internalmcp "tzro/internal/mcp"
 	"tzro/internal/memory"
+	"tzro/internal/sentinel"
 	"tzro/internal/task"
 )
 
@@ -54,8 +55,9 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 	// Execute task in a background goroutine to allow fallback to async mode if it times out
 	go func() {
 		_, _, err := task.Execute(context.Background(), args.Prompt, task.ExecuteOptions{
-			TaskID:     taskID,
-			IntentType: "workflow",
+			TaskID:       taskID,
+			IntentType:   "workflow",
+			IsForeground: true,
 		})
 		nodes := memory.DB.GetAllNodeStates(taskID)
 		doneChan <- execResult{nodes: nodes, err: err}
@@ -900,7 +902,7 @@ func handleTzroCompletion(ctx context.Context, req *mcp.CallToolRequest, args Tz
 		}
 	}
 
-	result, err := backend.CallModel(ctx, args.SystemPrompt, args.UserPrompt, args.JsonSchema)
+	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: args.SystemPrompt}, {Role: "user", Content: args.UserPrompt}}, args.JsonSchema)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -1004,7 +1006,7 @@ func handleTzroClassification(ctx context.Context, req *mcp.CallToolRequest, arg
 		"required": ["category", "confidence", "reasoning"]
 	}`, string(categoriesJSON))
 
-	result, err := backend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -1066,6 +1068,129 @@ func runDelegationHint() string {
 }
 
 // registerTools registers all tools with the MCP server.
+// tzro_activity_report tool definition
+
+// TzroActivityReportArgs defines the inputs for reporting agent activity to the Sentinel.
+type TzroActivityReportArgs struct {
+	Activity     string   `json:"activity" jsonschema:"required,Brief description of current work"`
+	FilesTouched []string `json:"filesTouched,omitempty" jsonschema:"File paths read or modified"`
+	ToolsUsed    []string `json:"toolsUsed,omitempty" jsonschema:"Tools called since last report"`
+}
+
+func handleTzroActivityReport(ctx context.Context, req *mcp.CallToolRequest, args TzroActivityReportArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Activity) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "activity cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	report := sentinel.ActivityReport{
+		Activity:     args.Activity,
+		FilesTouched: args.FilesTouched,
+		ToolsUsed:    args.ToolsUsed,
+		Timestamp:    time.Now().Unix(),
+	}
+
+	sentinel.DefaultAgent.IngestActivityReport(report)
+
+	result, _ := json.Marshal(map[string]string{"status": "acknowledged"})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(result)},
+		},
+	}, nil, nil
+}
+
+// tzro_sentinel_alerts tool definition
+
+// TzroSentinelAlertsArgs defines the inputs for querying Sentinel alerts.
+type TzroSentinelAlertsArgs struct {
+	Status string `json:"status,omitempty" jsonschema:"Filter by status: unread, read, dismissed. Default unread"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Max alerts to return. Default 10"`
+}
+
+func handleTzroSentinelAlerts(ctx context.Context, req *mcp.CallToolRequest, args TzroSentinelAlertsArgs) (*mcp.CallToolResult, any, error) {
+	status := args.Status
+	if status == "" {
+		status = "unread"
+	}
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	notifs, err := memory.DB.GetNotifications(status)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to query alerts: %s"}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Filter to sentinel-sourced notifications only
+	var sentinelAlerts []memory.DurableNotification
+	for _, n := range notifs {
+		if n.Source == "sentinel" {
+			sentinelAlerts = append(sentinelAlerts, n)
+			if len(sentinelAlerts) >= limit {
+				break
+			}
+		}
+	}
+
+	// Mark returned unread alerts as read
+	if status == "unread" {
+		for _, n := range sentinelAlerts {
+			_ = memory.DB.UpdateNotificationStatus(n.ID, "read")
+		}
+	}
+
+	if sentinelAlerts == nil {
+		sentinelAlerts = []memory.DurableNotification{}
+	}
+
+	result, _ := json.Marshal(map[string]interface{}{
+		"alerts": sentinelAlerts,
+		"count":  len(sentinelAlerts),
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(result)},
+		},
+	}, nil, nil
+}
+
+// tzro_sentinel_wake tool definition
+
+// TzroSentinelWakeArgs defines the inputs for manually waking the Sentinel Agent.
+type TzroSentinelWakeArgs struct {
+	ContextHint string `json:"contextHint,omitempty" jsonschema:"Optional hint to bias Sentinel analysis toward a specific topic, e.g. 'check for security issues in auth module'"`
+}
+
+func handleTzroSentinelWake(ctx context.Context, req *mcp.CallToolRequest, args TzroSentinelWakeArgs) (*mcp.CallToolResult, any, error) {
+	alerted := sentinel.DefaultAgent.Wake(ctx, args.ContextHint)
+
+	respMap := map[string]interface{}{
+		"status":        "completed",
+		"alertProduced": alerted,
+	}
+	if args.ContextHint != "" {
+		respMap["contextHint"] = args.ContextHint
+	}
+
+	result, _ := json.Marshal(respMap)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(result)},
+		},
+	}, nil, nil
+}
+
 func registerTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
@@ -1205,4 +1330,20 @@ func registerTools(server *mcp.Server) {
 			"no hallucination possible. Use for sentiment analysis, intent routing, priority triage, " +
 			"content categorization, or any multi-class classification task. Zero cost, fully private." + delegationHint(),
 	}, handleTzroClassification)
+
+	// Sentinel Agent tools (ADR-0023)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_activity_report",
+		Description: "Report current agent activity to the Sentinel for proactive context analysis. Called periodically by the cloud agent to enable richer proactive assistance.",
+	}, handleTzroActivityReport)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_sentinel_alerts",
+		Description: "Retrieve proactive insight alerts generated by the Sentinel Agent. Returns alerts filtered by status (default: unread). Marks returned unread alerts as read.",
+	}, handleTzroSentinelAlerts)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_sentinel_wake",
+		Description: "Manually trigger the Sentinel Agent's retrieval-grounded synthesis pipeline outside its normal heartbeat cadence. Use when you want an immediate proactive analysis — e.g., after completing a major code change, before a commit, or when the user explicitly asks for a Sentinel check. Accepts an optional contextHint to bias the analysis toward a specific topic.",
+	}, handleTzroSentinelWake)
 }

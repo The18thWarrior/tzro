@@ -287,6 +287,17 @@ func (sdb *SqliteDatabase) createTables() error {
 			embedding    BLOB,
 			created_at   INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS edge_thoughts (
+			id              TEXT PRIMARY KEY,
+			task_id         TEXT NOT NULL,
+			source_node     TEXT NOT NULL,
+			target_node     TEXT NOT NULL,
+			thought         TEXT NOT NULL,
+			goal_confidence REAL NOT NULL,
+			goal_achieved   INTEGER NOT NULL DEFAULT 0,
+			step_index      INTEGER NOT NULL,
+			created_at      INTEGER NOT NULL
+		);`,
 	}
 
 	for _, query := range queries {
@@ -1227,3 +1238,78 @@ func (sdb *SqliteDatabase) GetLatestSummary(probeID string) (ThoughtSummary, err
 	}
 	return s, nil
 }
+
+// --- Edge Thought persistence (ADR-0024) ---
+
+// AddEdgeThought persists an EdgeThought to the edge_thoughts table.
+func (sdb *SqliteDatabase) AddEdgeThought(et EdgeThought) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	goalAchievedInt := 0
+	if et.GoalAchieved {
+		goalAchievedInt = 1
+	}
+
+	_, err := sdb.db.Exec(
+		`INSERT OR REPLACE INTO edge_thoughts (id, task_id, source_node, target_node, thought, goal_confidence, goal_achieved, step_index, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		et.ID, et.TaskID, et.SourceNode, et.TargetNode, et.Thought,
+		et.GoalConfidence, goalAchievedInt, et.StepIndex, et.CreatedAt,
+	)
+	return err
+}
+
+// GetEdgeThoughtsForNode returns all edge thoughts targeting a specific node in a task.
+func (sdb *SqliteDatabase) GetEdgeThoughtsForNode(taskID, targetNode string) ([]EdgeThought, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	rows, err := sdb.db.Query(
+		`SELECT id, task_id, source_node, target_node, thought, goal_confidence, goal_achieved, step_index, created_at
+		FROM edge_thoughts WHERE task_id = ? AND target_node = ? ORDER BY step_index ASC`,
+		taskID, targetNode,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var thoughts []EdgeThought
+	for rows.Next() {
+		var et EdgeThought
+		var goalAchievedInt int
+		if err := rows.Scan(&et.ID, &et.TaskID, &et.SourceNode, &et.TargetNode, &et.Thought,
+			&et.GoalConfidence, &goalAchievedInt, &et.StepIndex, &et.CreatedAt); err != nil {
+			return nil, err
+		}
+		et.GoalAchieved = goalAchievedInt != 0
+		thoughts = append(thoughts, et)
+	}
+	return thoughts, nil
+}
+
+// GetLatestEdgeThought returns the most recent edge thought for a task (by step_index).
+func (sdb *SqliteDatabase) GetLatestEdgeThought(taskID string) (*EdgeThought, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	var et EdgeThought
+	var goalAchievedInt int
+	err := sdb.db.QueryRow(
+		`SELECT id, task_id, source_node, target_node, thought, goal_confidence, goal_achieved, step_index, created_at
+		FROM edge_thoughts WHERE task_id = ? ORDER BY step_index DESC LIMIT 1`,
+		taskID,
+	).Scan(&et.ID, &et.TaskID, &et.SourceNode, &et.TargetNode, &et.Thought,
+		&et.GoalConfidence, &goalAchievedInt, &et.StepIndex, &et.CreatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	et.GoalAchieved = goalAchievedInt != 0
+	return &et, nil
+}
+
