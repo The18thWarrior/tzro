@@ -91,8 +91,8 @@ func TestPlan_NoHeuristicFallback(t *testing.T) {
 	_, err := Plan(ctx, "Do some work", ExecuteOptions{TaskID: "t_test"})
 	if err == nil {
 		t.Error("expected Plan to fail when Cloud API key is missing, but it succeeded")
-	} else if !strings.Contains(err.Error(), "no planning backend available") {
-		t.Errorf("expected error 'no planning backend available', got: %v", err)
+	} else if !strings.Contains(err.Error(), "no local backend available") {
+		t.Errorf("expected error containing 'no local backend available', got: %v", err)
 	}
 }
 

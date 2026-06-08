@@ -40,6 +40,12 @@ type EngineConfig struct {
 	// Confidence Tier (ADR-0020): consecutive insufficient results before sticky cloud fallback
 	ConfidenceThreshold int `json:"confidenceThreshold,omitempty"`
 
+	// Dynamic Local Planning & Routing
+	PrivacyLevel          string   `json:"privacyLevel,omitempty"`          // "strict-local" | "hybrid" | "cloud-preferred" (default: "hybrid")
+	RestrictedDirectories []string `json:"restrictedDirectories,omitempty"` // Paths locked to local-only planning
+	ComplexityThreshold   string   `json:"complexityThreshold,omitempty"`   // "T0" | "T1" | "T2" (default: "T1")
+	SensitiveKeywords     []string `json:"sensitiveKeywords,omitempty"`     // Custom keywords; empty = built-in defaults
+
 	// Visual dashboard pacing delays in milliseconds
 	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
 	ExecutorLevelDelayMs int `json:"executorLevelDelayMs,omitempty"`
@@ -176,6 +182,10 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.SentinelInterval = cfg.SentinelInterval
 	GlobalConfig.DelegationMode = cfg.DelegationMode
 	GlobalConfig.ConfidenceThreshold = cfg.ConfidenceThreshold
+	GlobalConfig.PrivacyLevel = cfg.PrivacyLevel
+	GlobalConfig.RestrictedDirectories = cfg.RestrictedDirectories
+	GlobalConfig.ComplexityThreshold = cfg.ComplexityThreshold
+	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
@@ -203,6 +213,10 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.SentinelInterval = cfg.SentinelInterval
 	GlobalConfig.DelegationMode = cfg.DelegationMode
 	GlobalConfig.ConfidenceThreshold = cfg.ConfidenceThreshold
+	GlobalConfig.PrivacyLevel = cfg.PrivacyLevel
+	GlobalConfig.RestrictedDirectories = cfg.RestrictedDirectories
+	GlobalConfig.ComplexityThreshold = cfg.ComplexityThreshold
+	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
@@ -371,3 +385,58 @@ func GetConfidenceThreshold() int {
 	}
 	return t
 }
+
+// GetPrivacyLevel returns the configured privacy routing level.
+// Defaults to "hybrid" if not explicitly configured or set to an invalid value.
+func GetPrivacyLevel() string {
+	configMutex.RLock()
+	level := GlobalConfig.PrivacyLevel
+	configMutex.RUnlock()
+
+	switch level {
+	case "strict-local", "hybrid", "cloud-preferred":
+		return level
+	default:
+		return "hybrid"
+	}
+}
+
+// GetPlanningComplexityThreshold returns the configured complexity tier threshold
+// for routing planning to cloud vs. local. Tasks at or below this tier plan locally.
+// Defaults to "T1" if not explicitly configured or set to an invalid value.
+func GetPlanningComplexityThreshold() string {
+	configMutex.RLock()
+	t := GlobalConfig.ComplexityThreshold
+	configMutex.RUnlock()
+
+	switch t {
+	case "T0", "T1", "T2":
+		return t
+	default:
+		return "T1"
+	}
+}
+
+// GetSensitiveKeywords returns the configured sensitive keywords list for privacy quarantine.
+// If not configured, returns a built-in default list of common sensitive terms.
+func GetSensitiveKeywords() []string {
+	configMutex.RLock()
+	keywords := GlobalConfig.SensitiveKeywords
+	configMutex.RUnlock()
+
+	if len(keywords) > 0 {
+		return keywords
+	}
+	return []string{"password", "secret", "private_key", "api_key", "token", "credential", "db_url", "ssh_key"}
+}
+
+// GetRestrictedDirectories returns the configured list of directory paths
+// that are locked to local-only planning for privacy quarantine.
+func GetRestrictedDirectories() []string {
+	configMutex.RLock()
+	dirs := GlobalConfig.RestrictedDirectories
+	configMutex.RUnlock()
+
+	return dirs
+}
+

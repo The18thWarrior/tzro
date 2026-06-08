@@ -1,0 +1,217 @@
+package routing
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"tzro/internal/compiler"
+)
+
+func TestValidateGraph_NilGraph(t *testing.T) {
+	err := ValidateGraph(nil, func(string) bool { return true })
+	if err == nil {
+		t.Error("expected error for nil graph")
+	}
+}
+
+func TestValidateGraph_EmptyNodes(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "test",
+		Nodes:  []compiler.GraphNode{},
+	}
+	err := ValidateGraph(graph, func(string) bool { return true })
+	if err == nil {
+		t.Error("expected error for empty nodes")
+	}
+}
+
+func TestValidateGraph_CyclicGraph(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "test_cycle",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "tool_a"},
+			{ID: "B", Type: "action", Action: "tool_b"},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "A", TargetID: "B"},
+			{SourceID: "B", TargetID: "A"},
+		},
+	}
+	err := ValidateGraph(graph, func(string) bool { return true })
+	if err == nil {
+		t.Error("expected error for cyclic graph")
+	}
+}
+
+func TestValidateGraph_UnknownTool(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "test_unknown",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "nonexistent_tool"},
+		},
+	}
+	toolExists := func(name string) bool {
+		return name == "known_tool"
+	}
+	err := ValidateGraph(graph, toolExists)
+	if err == nil {
+		t.Error("expected error for unknown tool")
+	}
+}
+
+func TestValidateGraph_ValidGraph(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "test_valid",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "tool_a"},
+			{ID: "B", Type: "action", Action: "tool_b"},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "A", TargetID: "B"},
+		},
+	}
+	toolExists := func(name string) bool {
+		return name == "tool_a" || name == "tool_b"
+	}
+	err := ValidateGraph(graph, toolExists)
+	if err != nil {
+		t.Errorf("expected no error for valid graph, got: %v", err)
+	}
+}
+
+func TestValidateGraph_ProbeNodeSkipped(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "test_probe",
+		Nodes: []compiler.GraphNode{
+			{ID: "probe_1", Type: "probe", Action: ""},
+		},
+	}
+	// toolExists would reject empty action, but probe nodes should be exempt
+	toolExists := func(name string) bool {
+		return false
+	}
+	err := ValidateGraph(graph, toolExists)
+	if err != nil {
+		t.Errorf("expected no error for probe node, got: %v", err)
+	}
+}
+
+func TestValidateGraph_SynthesisNodeSkipped(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "test_synthesis",
+		Nodes: []compiler.GraphNode{
+			{ID: "synth_1", Type: "synthesis", Action: ""},
+		},
+	}
+	err := ValidateGraph(graph, func(string) bool { return false })
+	if err != nil {
+		t.Errorf("expected no error for synthesis node, got: %v", err)
+	}
+}
+
+func TestPlanWithEscalation_LocalSucceeds(t *testing.T) {
+	validGraph := &compiler.ExecutionGraph{
+		TaskID: "test_local_ok",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "known_tool"},
+		},
+	}
+
+	localPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return validGraph, nil
+	}
+	cloudCalled := false
+	cloudPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		cloudCalled = true
+		return nil, fmt.Errorf("should not be called")
+	}
+	decision := RoutingDecision{Backend: "local", AllowCloudFallback: true}
+	toolExists := func(name string) bool { return name == "known_tool" }
+
+	result, err := PlanWithEscalation(context.Background(), localPlan, cloudPlan, decision, toolExists)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if result.TaskID != "test_local_ok" {
+		t.Errorf("expected local graph returned, got taskID: %s", result.TaskID)
+	}
+	if cloudCalled {
+		t.Error("expected cloud plan NOT to be called when local succeeds")
+	}
+}
+
+func TestPlanWithEscalation_LocalFailsCloudAllowed(t *testing.T) {
+	cloudGraph := &compiler.ExecutionGraph{
+		TaskID: "test_cloud_fallback",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "known_tool"},
+		},
+	}
+
+	localPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return nil, fmt.Errorf("local model crashed")
+	}
+	cloudPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return cloudGraph, nil
+	}
+	decision := RoutingDecision{Backend: "local", AllowCloudFallback: true}
+	toolExists := func(name string) bool { return true }
+
+	result, err := PlanWithEscalation(context.Background(), localPlan, cloudPlan, decision, toolExists)
+	if err != nil {
+		t.Fatalf("expected cloud fallback to succeed, got: %v", err)
+	}
+	if result.TaskID != "test_cloud_fallback" {
+		t.Errorf("expected cloud graph returned, got taskID: %s", result.TaskID)
+	}
+}
+
+func TestPlanWithEscalation_LocalFailsCloudBlocked(t *testing.T) {
+	localPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return nil, fmt.Errorf("local model crashed")
+	}
+	cloudPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return nil, fmt.Errorf("should not be called")
+	}
+	decision := RoutingDecision{Backend: "local", AllowCloudFallback: false, PrivacyQuarantined: true}
+	toolExists := func(name string) bool { return true }
+
+	_, err := PlanWithEscalation(context.Background(), localPlan, cloudPlan, decision, toolExists)
+	if err == nil {
+		t.Error("expected error when local fails and cloud is blocked")
+	}
+}
+
+func TestPlanWithEscalation_ValidationFailsCloudAllowed(t *testing.T) {
+	// Local returns a graph with an unknown tool → validation fails
+	invalidGraph := &compiler.ExecutionGraph{
+		TaskID: "test_invalid",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "nonexistent_tool"},
+		},
+	}
+	cloudGraph := &compiler.ExecutionGraph{
+		TaskID: "test_cloud_rescue",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "known_tool"},
+		},
+	}
+
+	localPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return invalidGraph, nil
+	}
+	cloudPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return cloudGraph, nil
+	}
+	decision := RoutingDecision{Backend: "local", AllowCloudFallback: true}
+	toolExists := func(name string) bool { return name == "known_tool" }
+
+	result, err := PlanWithEscalation(context.Background(), localPlan, cloudPlan, decision, toolExists)
+	if err != nil {
+		t.Fatalf("expected cloud rescue to succeed, got: %v", err)
+	}
+	if result.TaskID != "test_cloud_rescue" {
+		t.Errorf("expected cloud graph returned, got taskID: %s", result.TaskID)
+	}
+}

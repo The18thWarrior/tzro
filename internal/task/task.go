@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"tzro/internal/classifier"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/executor"
@@ -15,14 +16,17 @@ import (
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/proactivity"
+	"tzro/internal/routing"
+	"tzro/internal/telemetry"
 	"tzro/internal/tools"
 )
 
 // ExecuteOptions represents configuration settings for a specific task execution run.
 type ExecuteOptions struct {
 	TaskID       string
-	IntentType   string // Optional: e.g., "workflow", "heartbeat", "research"
-	IsForeground bool   // Set to true for user-initiated tasks
+	IntentType   string   // Optional: e.g., "workflow", "heartbeat", "research"
+	IsForeground bool     // Set to true for user-initiated tasks
+	ActivePaths  []string // File/directory paths from active workspace context
 }
 
 // Execute is the deep Task Engine interface seam.
@@ -50,26 +54,73 @@ func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler
 	return graph, levels, err
 }
 
-// Plan consolidates LLM DAG planning (with cloud) and heuristic fallbacks.
+// Plan consolidates LLM DAG planning with dynamic local/cloud routing.
+// Uses the Dynamic Router to evaluate privacy, complexity, and model mode
+// before dispatching to the appropriate planning backend.
 func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.ExecutionGraph, error) {
+	cfg := config.Get()
+
+	// 1. Classify complexity for routing decision
+	toolNames := collectToolNames()
+	complexityTier := classifier.ClassifyComplexity(ctx, prompt, toolNames, inference.GlobalLocalModel)
+
+	// 2. Assemble routing context
+	routingCtx := routing.RoutingContext{
+		Prompt:              prompt,
+		ActivePaths:         opts.ActivePaths,
+		ComplexityTier:      complexityTier,
+		PrivacyLevel:        config.GetPrivacyLevel(),
+		ComplexityThreshold: config.GetPlanningComplexityThreshold(),
+		RestrictedDirs:      config.GetRestrictedDirectories(),
+		SensitiveKeywords:   config.GetSensitiveKeywords(),
+		ModelMode:           cfg.ModelMode,
+		CloudKeyAvailable:   config.GetCloudAPIKey() != "",
+		LocalBackendActive:  inference.ActiveBackend != nil || isLocalSidecarActive(),
+	}
+
+	// 3. Get routing decision
+	decision := routing.Route(routingCtx)
+	fmt.Fprintf(os.Stderr, "[Plan Router] %s → %s\n", decision.Backend, decision.Reason)
+	telemetry.Default.PublishEvent("plan_routing", opts.TaskID, "",
+		fmt.Sprintf("Route: %s (%s)", decision.Backend, decision.Reason))
+
+	// 4. Build plan function closures
+	localPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		if inference.ActiveBackend != nil {
+			return planWithBackend(ctx, opts.TaskID, prompt, opts.IntentType)
+		}
+		return nil, fmt.Errorf("no local backend available for local planning")
+	}
+	cloudPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return planWithCloud(ctx, opts.TaskID, prompt, opts.IntentType)
+	}
+	toolExists := func(name string) bool {
+		_, err := tools.GetSchema(name)
+		return err == nil
+	}
+
+	// 5. Dispatch based on routing decision
 	var graph *compiler.ExecutionGraph
 	var err error
 
-	if config.GetCloudAPIKey() != "" {
-		graph, err = planWithCloud(ctx, opts.TaskID, prompt, opts.IntentType)
-		if err != nil {
-			return nil, fmt.Errorf("cloud planning failed: %w", err)
-		}
-	} else if inference.ActiveBackend != nil {
-		graph, err = planWithBackend(ctx, opts.TaskID, prompt, opts.IntentType)
-		if err != nil {
-			return nil, fmt.Errorf("backend planning failed: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("no planning backend available (neither cloud API key nor inference backend configured)")
+	switch decision.Backend {
+	case "local":
+		graph, err = routing.PlanWithEscalation(ctx, localPlan, cloudPlan, decision, toolExists)
+	case "cloud":
+		graph, err = cloudPlan(ctx)
+	default:
+		return nil, fmt.Errorf("unknown routing backend: %s", decision.Backend)
 	}
 
-	// Compile strategic planner graph into fine-grained SCT execution graph
+	if err != nil {
+		if decision.PrivacyQuarantined {
+			telemetry.Default.PublishEvent("plan_privacy_blocked", opts.TaskID, "",
+				fmt.Sprintf("Planning failed and cloud escalation blocked by privacy policy: %v", err))
+		}
+		return nil, err
+	}
+
+	// 6. Compile strategic planner graph into fine-grained SCT execution graph
 	expanded, err := compiler.ExpandToSCTGraph(graph, tools.GetSchema)
 	if err != nil {
 		return nil, fmt.Errorf("SCT expansion failed: %w", err)
@@ -77,6 +128,26 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 
 	return expanded, nil
 }
+
+// collectToolNames gathers all registered tool names from MCP daemons and the global tool registry.
+func collectToolNames() []string {
+	daemons := mcp.GlobalRegistry.GetList()
+	var names []string
+	for k := range daemons {
+		names = append(names, k)
+	}
+	for _, t := range tools.GetList() {
+		names = append(names, t.Name())
+	}
+	return names
+}
+
+// isLocalSidecarActive checks if the embedded llama sidecar is running.
+func isLocalSidecarActive() bool {
+	status, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
+	return status == "Active" || status == "Adopted"
+}
+
 
 func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*compiler.ExecutionGraph, error) {
 	if inference.ActiveBackend == nil {
