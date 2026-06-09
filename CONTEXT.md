@@ -13,7 +13,7 @@ A compiled sequence of execution steps and dependency edges representing a singl
 _Avoid_: Process, operation, batch job
 
 **Workflow**:
-A persistent orchestrator that schedules, triggers, and coordinates multiple dependent **Tasks** over days or weeks to achieve high-level business goals.
+A persistent, goal-oriented orchestrator that coordinates multiple dependent **Tasks** to achieve an objective. May be user-spawned (long-running business goals) or system-spawned (short-lived diagnostics triggered by a **Background Agent**). Supports both static orchestration (pre-defined task graph) and dynamic orchestration (LLM-driven, where the **Local Model** decides the next **Task** after each completion).
 _Avoid_: Pipeline, campaign, automation track
 
 **Complexity Tier**:
@@ -179,6 +179,10 @@ _Avoid_: Execution command, task, step
 **Attention Queue**:
 The user-visible interface (backed by persistent notifications) holding pending L2 suggestions and L3/L4 actions awaiting explicit user approval.
 _Avoid_: Alert queue, message panel
+
+**Tool Proactivity Level**:
+A **Proactivity Ladder** tier annotation declared per tool at registration time, enabling the execution harness to deterministically gate tool dispatch against a **Workflow**'s approved ceiling. Built-in tools are hardcoded per tool. **MCP Host** tools default to L3 (unknown side effects). Harness-forwarded tools default to L1 (explicitly trusted by the external framework). Overridable in tool or server configuration.
+_Avoid_: Tool permission, tool safety rating, capability flag
 
 ---
 

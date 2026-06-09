@@ -13,6 +13,7 @@ import (
 	"tzro/internal/agent"
 	"tzro/internal/config"
 	"tzro/internal/memory"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 )
 
@@ -32,11 +33,12 @@ type ActivityReport struct {
 type SentinelAgent struct {
 	agent.BackgroundAgent
 
-	mu              sync.RWMutex
-	activityBuffer  []ActivityReport // ring buffer, max 10
-	scanner         WorkspaceScanner
-	confidenceGate  float64
-	similarityFloor float64
+	mu                sync.RWMutex
+	activityBuffer    []ActivityReport // ring buffer, max 10
+	scanner           WorkspaceScanner
+	confidenceGate    float64
+	similarityFloor   float64
+	deferredHeartbeat bool // true if a heartbeat was skipped during foreground activity
 }
 
 // Verify interface compliance at compile time.
@@ -79,7 +81,8 @@ func (s *SentinelAgent) IngestActivityReport(report ActivityReport) {
 	}
 }
 
-// getRecentActivity returns a copy of the activity buffer and clears it.
+// getRecentActivity returns a copy of the activity buffer.
+// The buffer is intentionally not cleared so deferred heartbeats can re-read it.
 func (s *SentinelAgent) getRecentActivity() []ActivityReport {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -114,6 +117,11 @@ func (s *SentinelAgent) Start(ctx context.Context) {
 
 	interval := config.GetSentinelInterval()
 	s.mu.Unlock()
+
+	// Register resume callback to trigger deferred heartbeat when foreground clears
+	proactivity.RegisterResumeCallback(func() {
+		s.flushDeferredHeartbeat()
+	})
 
 	fmt.Fprintf(os.Stderr, "[Sentinel] Started with %s heartbeat interval\n", interval)
 
@@ -191,8 +199,33 @@ func (s *SentinelAgent) evaluateHeartbeat(ctx context.Context) {
 		return
 	}
 
-	// 3. Synthesize: LLM call with grounded prompt
+	// 3. Foreground guard: defer LLM synthesis if a user task is running
+	if proactivity.IsForegroundActive() {
+		s.mu.Lock()
+		s.deferredHeartbeat = true
+		s.mu.Unlock()
+		fmt.Fprintf(os.Stderr, "[Sentinel] Foreground active — deferring synthesis\n")
+		return
+	}
+
+	// 4. Synthesize: LLM call with grounded prompt
 	s.synthesizeAndAlert(ctx, contextText, candidates)
+}
+
+// flushDeferredHeartbeat runs a heartbeat evaluation that was skipped during foreground activity.
+// Called by the proactivity resume callback when the foreground registry empties.
+func (s *SentinelAgent) flushDeferredHeartbeat() {
+	s.mu.Lock()
+	deferred := s.deferredHeartbeat
+	s.deferredHeartbeat = false
+	s.mu.Unlock()
+
+	if !deferred {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[Sentinel] Foreground cleared — running deferred heartbeat\n")
+	s.evaluateHeartbeat(context.Background())
 }
 
 // gatherContext assembles the current context snapshot from workspace changes and activity reports.

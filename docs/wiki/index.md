@@ -17,6 +17,7 @@ _Map of system features, product requirements, and specs._
 - [Reactive Agent Daemons](features/reactive-daemons.md) - Expand background scheduler daemons to run autonomous local LLM tool execution loops. (Sources: 1 | Last Updated: 2026-06-08)
 - [Agent Inter-Process Communication (IPC)](features/agent-ipc.md) - Bidirectional agent messaging bus enabling sub-task delegation and resource context yielding. (Sources: 1 | Last Updated: 2026-06-08)
 - [Agent App Packaging Standard](features/agent-app-packaging.md) - Unified .tzroapp zip package format containing prompts, WASM/MCP tools, SQL migrations, and permission requests. (Sources: 1 | Last Updated: 2026-06-08)
+- [MCP Singleton Guard](features/mcp-singleton-guard.md) - PID lockfile preventing duplicate tzro-mcp instances when multiple IDE language servers spawn MCP children. (Sources: 1 | Last Updated: 2026-06-09)
 
 ## Bugs & Post-Mortems
 
@@ -86,6 +87,8 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0023: Sentinel Agent and Proactive Activity Channel](../adr/0023-sentinel-agent-and-proactive-activity-channel.md) - Proactive intelligence agent with retrieval-grounded synthesis, workspace scanning, activity reports, and dual-path alert delivery.
 - [ADR-0024: Edge Thought and Activation Threshold](../adr/0024-edge-thought-and-activation-threshold.md) - Neural edge traversal with dynamic graph mutation. Deprecates Probe Node and Thought Chain.
 - [ADR-0025: Attention and Proactivity Scheduler](../adr/0025-attention-and-proactivity-scheduler.md) - Background daemon coordinator with proactivity ladder, foreground preemption, resource budgets, and approval-gated actions.
+- [ADR-0026: No Agent IPC Bus](../adr/0026-no-agent-ipc-bus.md) - Deliberate rejection of ReAct-style inter-agent messaging; DAG edges, MCP Host, and shared state cover all coordination needs.
+- [ADR-0027: Dynamic Workflow Orchestration Over Reactive Daemons](../adr/0027-dynamic-workflow-orchestration-over-reactive-daemons.md) - Collapsed "Reactive Agent Daemons" into LLM-driven extension of existing Workflow orchestrator. No new abstraction.
 
 
 ## Ingested Sources

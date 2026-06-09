@@ -14,8 +14,10 @@ type EngineConfig struct {
 	CloudProvider      string  `json:"cloudProvider"` // "google" | "openai"
 	CloudAPIKey        string  `json:"cloudApiKey"`
 	CloudModel         string  `json:"cloudModel"`                   // the cloud model name to use (e.g. gemini-flash-latest)
-	SpeedFloor         float64 `json:"speedFloor"`                   // default 5.0 t/s
-	SidecarEnabled     bool    `json:"sidecarEnabled"`               // default true
+	SpeedFloor                 float64 `json:"speedFloor"`                         // default 5.0 t/s
+	SidecarEnabled             bool    `json:"sidecarEnabled"`                     // default true
+	ThermalCooldownSeconds     int     `json:"thermalCooldownSeconds,omitempty"`   // default 30
+	ThermalCloudCooldownMinutes int    `json:"thermalCloudCooldownMinutes,omitempty"` // default 5
 	GGUFModelPath      string  `json:"ggufModelPath"`                // path to local gguf model file
 	ModelsDir          string  `json:"modelsDir"`                    // directory for downloaded models
 	MaxRAGContextChars int     `json:"maxRagContextChars,omitempty"` // max chars for Graph-RAG context injection (0 = use default 2000)
@@ -438,5 +440,33 @@ func GetRestrictedDirectories() []string {
 	configMutex.RUnlock()
 
 	return dirs
+}
+
+// GetThermalCooldownSeconds returns the configured cooldown pause duration
+// between thermal re-samples when pressure is "serious".
+// Defaults to 30 seconds if not explicitly configured.
+func GetThermalCooldownSeconds() int {
+	configMutex.RLock()
+	v := GlobalConfig.ThermalCooldownSeconds
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 30
+	}
+	return v
+}
+
+// GetThermalCloudCooldownMinutes returns the configured duration a task stays
+// on cloud after thermal escalation before retrying local inference.
+// Defaults to 5 minutes if not explicitly configured.
+func GetThermalCloudCooldownMinutes() int {
+	configMutex.RLock()
+	v := GlobalConfig.ThermalCloudCooldownMinutes
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 5
+	}
+	return v
 }
 

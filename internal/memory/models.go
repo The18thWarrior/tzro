@@ -64,15 +64,21 @@ type EntityType struct {
 }
 
 type WorkflowDefinition struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	TriggerType   string `json:"triggerType"`   // "cron" | "manual"
-	TriggerConfig string `json:"triggerConfig"` // cron expression
-	Status        string `json:"status"`        // "active" | "paused"
-	NextRunAt     int64  `json:"nextRunAt"`     // unix timestamp
-	CreatedAt     int64  `json:"createdAt"`
-	UpdatedAt     int64  `json:"updatedAt"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	TriggerType       string `json:"triggerType"`       // "cron" | "manual" | "background"
+	TriggerConfig     string `json:"triggerConfig"`     // cron expression
+	Status            string `json:"status"`            // "active" | "paused"
+	NextRunAt         int64  `json:"nextRunAt"`         // unix timestamp
+	CreatedAt         int64  `json:"createdAt"`
+	UpdatedAt         int64  `json:"updatedAt"`
+	OrchestrationMode string `json:"orchestrationMode"` // "static" | "dynamic"
+	Goal              string `json:"goal"`              // natural language objective (dynamic mode)
+	ApprovedLevel     int    `json:"approvedLevel"`     // Proactivity Ladder ceiling (0-4)
+	MaxTokens         int    `json:"maxTokens"`         // token budget for dynamic workflows
+	MaxToolCalls      int    `json:"maxToolCalls"`      // tool call budget for dynamic workflows
+	SpawnedBy         string `json:"spawnedBy"`         // BackgroundAgent name, empty for user-spawned
 }
 
 type WorkflowTask struct {
@@ -84,18 +90,20 @@ type WorkflowTask struct {
 }
 
 type WorkflowExecution struct {
-	ID          string `json:"id"`
-	WorkflowID  string `json:"workflowId"`
-	Status      string `json:"status"` // "running" | "completed" | "failed" | "cancelled"
-	StartedAt   int64  `json:"startedAt"`
-	CompletedAt int64  `json:"completedAt,omitempty"`
+	ID                string `json:"id"`
+	WorkflowID        string `json:"workflowId"`
+	Status            string `json:"status"` // "running" | "completed" | "failed" | "cancelled"
+	StartedAt         int64  `json:"startedAt"`
+	CompletedAt       int64  `json:"completedAt,omitempty"`
+	TokensConsumed    int    `json:"tokensConsumed"`
+	ToolCallsConsumed int    `json:"toolCallsConsumed"`
 }
 
 type WorkflowTaskExecution struct {
 	WorkflowExecutionID string `json:"workflowExecutionId"`
 	TaskTemplateID      string `json:"taskTemplateId"`
 	TaskExecutionID     string `json:"taskExecutionId"` // tzro taskId
-	Status              string `json:"status"`          // "pending" | "running" | "completed" | "failed"
+	Status              string `json:"status"`          // "pending" | "running" | "completed" | "failed" | "interrupted"
 	StartedAt           int64  `json:"startedAt"`
 	CompletedAt         int64  `json:"completedAt,omitempty"`
 }

@@ -45,9 +45,10 @@ type LocalModelManager struct {
 	mutex                sync.Mutex
 	healthClient         *http.Client // Short timeout for /health, /slots control-plane calls
 	inferenceClient      *http.Client // No fixed timeout — relies on ctx deadline for inference calls
-	forceCloudFallback   map[string]bool
-	consecutiveSpeedFail map[string]int
-	fallbackMutex        sync.RWMutex
+	forceCloudFallback         map[string]bool
+	consecutiveSpeedFail       map[string]int
+	thermalCloudEscalationTime map[string]time.Time // taskID → when thermal cloud escalation was triggered
+	fallbackMutex              sync.RWMutex
 }
 
 func (m *LocalModelManager) getPublisher() telemetry.EventPublisher {
@@ -75,6 +76,7 @@ var GlobalLocalModel = &LocalModelManager{
 	},
 	forceCloudFallback:   make(map[string]bool),
 	consecutiveSpeedFail: make(map[string]int),
+	thermalCloudEscalationTime: make(map[string]time.Time),
 }
 
 // Start launches the llama-server child process or adopts an existing running server socket
@@ -606,7 +608,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 				if content, ok := msg["content"].(string); ok {
 					fmt.Fprintf(os.Stderr, "[Llama Sidecar Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
 					if tracker, ok := GetTokenTracker(ctx); ok {
-						tracker.Record(false, promptTokens, completionTokens)
+						tracker.Record(false, promptTokens, completionTokens, duration, speed)
 					}
 					res := &InferenceResult{
 						Content:          content,
@@ -799,7 +801,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	fmt.Fprintf(os.Stderr, "[Llama Sidecar Stream Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
 
 	if tracker, ok := GetTokenTracker(ctx); ok {
-		tracker.Record(false, promptTokens, completionTokens)
+		tracker.Record(false, promptTokens, completionTokens, duration, speed)
 	}
 
 	return &InferenceResult{

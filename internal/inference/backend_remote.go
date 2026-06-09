@@ -134,7 +134,7 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				if content, ok := msg["content"].(string); ok {
 					if tracker, ok := GetTokenTracker(ctx); ok {
-						tracker.Record(false, promptTokens, completionTokens)
+						tracker.Record(false, promptTokens, completionTokens, duration, speed)
 					}
 					res := &InferenceResult{
 						Content:          content,
@@ -306,7 +306,7 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 	})
 
 	if tracker, ok := GetTokenTracker(ctx); ok {
-		tracker.Record(false, promptTokens, completionTokens)
+		tracker.Record(false, promptTokens, completionTokens, duration, speed)
 	}
 
 	return &InferenceResult{

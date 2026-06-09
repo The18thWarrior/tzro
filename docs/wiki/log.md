@@ -4,6 +4,112 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-09T10:32:00-07:00] implementation | Thermal Pressure Gating — TDD Implementation
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the Thermal Pressure Gating feature from the [design spec](../../docs/superpowers/specs/2026-06-09-thermal-pressure-gating-design.md). 9 red-green cycles covering 3 platform parsers + 6 behavioral tests. 15/15 tests pass in `internal/inference/`, 3/3 in `internal/config/`. `go vet` clean. `go build ./...` clean.
+- **Feature Summary**: Proactive hardware stewardship — detects elevated thermal pressure from the OS and gates inference execution before the machine reaches damaging temperatures. Cross-platform (macOS via `pmset`, Linux via sysfs, Windows via WMI). CGO-free. On-demand pre-flight check before each local inference call. Tiered response: cooldown pause for `serious` pressure, cloud escalation for `critical`.
+- **Design Decisions**:
+  - **Injectable function vars**: `thermalCommandRunner`, `thermalStateReader`, `thermalSleepFunc` for testing at system boundaries without interfaces.
+  - **Separate `thermalCloudEscalationTime` map**: Thermal escalation is transient (machine cools down). Speed-floor escalation is permanent per-task. Cannot share `forceCloudFallback`.
+  - **`temperatureCelsiusToState()` shared helper**: Linux/Windows both map to °C with identical thresholds. Darwin uses CPU_Speed_Limit (percentage).
+  - **Graceful degradation**: If thermal reading fails, returns `nominal` and logs once. Speed floor remains as secondary safety net.
+- **Files Created/Modified**:
+  - [NEW] [thermal.go](../../internal/inference/thermal.go) (ThermalState enum, 3 platform parsers, ReadThermalState, CheckThermalPressure)
+  - [NEW] [thermal_test.go](../../internal/inference/thermal_test.go) (9 test functions, 19+ sub-tests)
+  - [MODIFY] [config.go](../../internal/config/config.go) (ThermalCooldownSeconds, ThermalCloudCooldownMinutes fields + getters)
+  - [MODIFY] [local_model.go](../../internal/inference/local_model.go) (thermalCloudEscalationTime map)
+  - [MODIFY] [routing.go](../../internal/inference/routing.go) (Pre-flight thermal check in ExecuteStructured, initMaps update)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-09T08:40:00-07:00] implementation | MCP Singleton Guard — TDD Implementation
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the MCP Singleton Guard across 2 modules. 7 unit tests + 1 integration test, all passing. Full project builds cleanly. All existing tests pass.
+- **Modules Implemented**:
+  1. **`internal/pidlock`**: Deep module with 2-function public interface (`Acquire`, `IsHeld`). Uses `flock(2)` for kernel-managed exclusive locking with automatic release on crash/SIGKILL. PID written for diagnostics. `ErrAlreadyRunning` error type carries holder PID. Unlock closure with idempotency guard.
+  2. **`cmd/tzro-mcp/main.go`**: Lock acquired pre-bootstrap between log redirect and daemon check. `ErrAlreadyRunning` logs diagnostic and exits code 0. `defer unlock()` ensures cleanup.
+- **Testing**:
+  - 7 unit tests in `internal/pidlock`: fresh acquisition + PID content, concurrent rejection + error type, stale lockfile reclaim, unlock idempotency, IsHeld accuracy (held/not-held/after-unlock).
+  - 1 integration test in `cmd/tzro-mcp`: builds binary, spawns two instances against same workspace, verifies second exits code 0 while first stays alive, confirms lockfile contains first instance's PID.
+- **Files Created/Modified**:
+  - [NEW] [pidlock.go](../../internal/pidlock/pidlock.go) (PID lockfile module)
+  - [NEW] [pidlock_test.go](../../internal/pidlock/pidlock_test.go) (7 unit tests)
+  - [MODIFY] [main.go](../../cmd/tzro-mcp/main.go) (Singleton guard in startup path)
+  - [MODIFY] [mcp_test.go](../../cmd/tzro-mcp/mcp_test.go) (Dual-spawn integration test)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-09T00:22:00-07:00] document | PRD: MCP Singleton Guard
+
+- **Activity**: Published PRD for MCP Singleton Guard. Diagnosed duplicate `tzro-mcp` processes caused by Antigravity IDE spawning two language server instances (standard + LSP-enabled), each independently launching a child `tzro-mcp` process. Designed a `flock(2)`-based PID lockfile at `<workspace>/.tzro/mcp.lock` to ensure only one instance runs per workspace.
+- **Key Decisions**:
+  - `flock(2)` (kernel-released on crash/SIGKILL) over advisory `fcntl` or TCP port binding.
+  - Second instance exits code 0 to prevent IDE retry loops.
+  - Workspace-scoped lockfile via `config.ResolvePath`.
+  - Deep module `internal/pidlock` with `Acquire`/`IsHeld` interface.
+  - Tests: unit tests for pidlock + integration test spawning two MCP processes.
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/mcp-singleton-guard/PRD.md) (MCP Singleton Guard PRD)
+  - [NEW] [mcp-singleton-guard.md](features/mcp-singleton-guard.md) (Wiki feature page)
+  - [MODIFY] [index.md](index.md) (Added feature link)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-08T20:25:00-07:00] document | PRD: Dynamic Workflow Orchestration
+
+- **Activity**: Published PRD for Dynamic Workflow Orchestration, synthesizing all design decisions from the grill-with-docs session into a ready-for-agent implementation spec. Covers 6 modules: dynamic orchestrator, Tool Proactivity Level registry, escalation gate, BackgroundAgent spawning, preemption lifecycle, and data model extension. Tests specified for all 6 modules.
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/dynamic-workflow-orchestration/PRD.md) (Dynamic Workflow Orchestration PRD)
+  - [MODIFY] [reactive-daemons.md](features/reactive-daemons.md) (Updated references to new PRD)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-08T19:56:00-07:00] grill-with-docs | Reactive Agent Daemons → Dynamic Workflow Orchestration
+
+- **Activity**: Grilling session walked down 11 branches of the "Reactive Agent Daemons" design tree. The session revealed that the proposed `ReactiveDaemon` abstraction is functionally a Workflow — a goal-oriented parent process that spawns and monitors child Tasks. The feature was collapsed into an LLM-driven extension of the existing Workflow orchestrator. No new abstraction needed.
+- **Terminology Resolved**:
+  - **Workflow** broadened in `CONTEXT.md`: Removed "days or weeks" and "business goals" qualifiers. Now covers both user-spawned and system-spawned orchestrations of any duration, with static or dynamic (LLM-driven) orchestration modes.
+  - **Tool Proactivity Level** added to `CONTEXT.md`: Per-tool Proactivity Ladder annotation at registration time for deterministic escalation gating. Defaults: built-in hardcoded, MCP Host L3, harness-forwarded L1.
+  - **ReactiveDaemon** rejected as a term — collapses into Workflow.
+  - **Spawned Agent** rejected as a term — a background Task/Workflow, not an Agent.
+- **Key Decisions**:
+  - **No new abstraction (Q1-Q4)**: "ReactiveDaemon" collapsed into Workflow after walking through three candidate abstractions: Daemon extension (rejected — Daemon is stateless), BackgroundAgent subtype (rejected — Agent has Start/Stop lifecycle, not Submit/Complete), novel ReAct loop (rejected — DAG executor already provides checkpointed iterative execution).
+  - **DAG executor for child Tasks (Q3)**: Single-node Tasks with Activation Thresholds initially, potentially full DAGs later.
+  - **Self-terminating completion (Q3)**: Goal-met (LLM decides) or budget-exhausted (runtime enforces). Owned by Workflow runtime, not AttentionScheduler.
+  - **Auto-resume after preemption (Q6)**: Foreground preemption cancels active child Task context; Workflow stays "running" in SQLite and resumes from last checkpoint when foreground clears.
+  - **Gate-and-escalate safety model (Q7)**: Background Workflows run at their approved Proactivity Ladder level. If a tool dispatch exceeds the ceiling, the harness deterministically suspends the Workflow and enqueues an escalation request. The LLM does not decide safety policy.
+  - **Per-tool Proactivity Level annotations (Q8)**: Each tool declares its level at registration. Defaults by source: built-in hardcoded, MCP Host L3, harness-forwarded L1. Rejected allowlist-at-spawn (circular: Sentinel pre-authorizing levels above its own Workflow). Rejected category heuristic (fragile).
+  - **BackgroundAgent LLMClient for orchestrator (Q9)**: Between-Task LLM reasoning calls use the BackgroundAgent's LLMClient, not the task executor's inference path.
+  - **Broadened Workflow definition (Q10)**: Single concept regardless of trigger source, duration, or orchestration mode.
+  - **WASM scripting dropped (Q11)**: Served by existing Sandboxed Micro-Skills as tools within Workflow Tasks.
+- **ADRs Created**:
+  - [ADR-0027: Dynamic Workflow Orchestration Over Reactive Daemons](../../docs/adr/0027-dynamic-workflow-orchestration-over-reactive-daemons.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Broadened Workflow, added Tool Proactivity Level)
+  - [NEW] [0027-dynamic-workflow-orchestration-over-reactive-daemons.md](../../docs/adr/0027-dynamic-workflow-orchestration-over-reactive-daemons.md)
+  - [MODIFY] [reactive-daemons.md](features/reactive-daemons.md) (Rewritten as Dynamic Workflow Orchestration)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-08T15:16:00-07:00] grill-with-docs | Agent Inter-Process Communication — Shelved
+
+- **Activity**: Grilling session walked down 9 branches of the Agent IPC design tree. The session revealed a fundamental paradigm mismatch: the PRD's motivating scenario (named agents delegating work via IPC) is an artifact of the ReAct/monolithic-agent-loop model, which contradicts tzro's DAG-first architecture. Feature shelved.
+- **Terminology Resolved**:
+  - **Participant** and **Agent Message Bus** were provisionally added to `CONTEXT.md` during the session, then reverted when the feature was shelved.
+- **Key Decisions**:
+  - **Identity split (Q1)**: Resolved that IPC-addressable entities should be called "Participants" (both in-process Agents and external socket processes). Moot after shelving.
+  - **Separate package (Q2)**: AMB would live in `internal/ipc/`, not extend `internal/stream/`. StreamBus stays telemetry-only. Moot after shelving.
+  - **Bounded block with timeout (Q3)**: Send-side delivery uses context-driven bounded block, matching Go idioms.
+  - **Three-value MessageType (Q4)**: `request`/`response`/`notify` — AMB routes on type but stays payload-opaque.
+  - **KV cache yielding deferred (Q5)**: Resource yielding couples IPC to inference scheduling; deferred to Phase 2.
+  - **Socket path and lifecycle (Q6)**: `$TZRO_DIR/run/ipc.sock`, config-gated (`ipc.enabled`, default `false`).
+  - **AMB ≠ DAG replacement (Q7)**: AMB handles within-node queries and between-daemon coordination, not step orchestration. Kahn Compiler owns step-level flow.
+  - **Unified observability (Q8)**: IPC traffic publishes routing-metadata summary chunks to StreamBus.
+  - **Feature shelved (Q9)**: No concrete use case survived scrutiny. DAG edges handle inter-step flow, MCP Host handles external tools, shared persistent state handles daemon coordination. The "Coding Agent talks to Web Research Agent" scenario is already solved by DAG nodes with dependency edges.
+- **ADRs Created**:
+  - [ADR-0026: No Agent IPC Bus](../../docs/adr/0026-no-agent-ipc-bus.md) — Documents why the DAG-first architecture makes ReAct-style IPC unnecessary.
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Participant and AMB terms added then reverted)
+  - [NEW] [0026-no-agent-ipc-bus.md](../../docs/adr/0026-no-agent-ipc-bus.md) (No-IPC ADR)
+  - [MODIFY] [agent-ipc.md](features/agent-ipc.md) (Updated to shelved status with rationale)
+  - [MODIFY] [PRD.md](../../.scratch/agent-ipc/PRD.md) (Status changed to shelved)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 ## [2026-06-08T01:25:00-07:00] grill-with-docs | Attention and Proactivity Scheduler
 
 - **Activity**: Grilling session resolved 8 design decisions for the Attention and Proactivity Scheduler subsystem in tzro. Outlined core structures, safety policies, execution flow, budgeting model, and event/telemetry integration.

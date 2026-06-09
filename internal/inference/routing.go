@@ -146,6 +146,24 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 		isActive := (status == "active" || status == "adopted")
 
 		if isActive {
+			// PRE-FLIGHT: Thermal pressure gating
+			nodeID := ""
+			if req.StreamMeta != nil {
+				nodeID = req.StreamMeta.NodeID
+			}
+			proceed, escalateToCloud := CheckThermalPressure(req.TaskID, nodeID, m)
+			if !proceed {
+				if escalateToCloud && cfg.ModelMode == "cooperative" {
+					// Thermal cloud escalation — route to cloud for this call
+					if req.StreamMeta != nil {
+						return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
+					}
+					return CallCloudModel(ctx, req.Messages, req.JSONSchema)
+				}
+				// In local-only mode with thermal pressure, we have no alternative.
+				// Fall through to attempt local inference anyway (speed floor is the backup).
+			}
+
 			var localRes *InferenceResult
 			var err error
 
@@ -257,6 +275,9 @@ func (m *LocalModelManager) initMaps() {
 	}
 	if m.consecutiveSpeedFail == nil {
 		m.consecutiveSpeedFail = make(map[string]int)
+	}
+	if m.thermalCloudEscalationTime == nil {
+		m.thermalCloudEscalationTime = make(map[string]time.Time)
 	}
 }
 

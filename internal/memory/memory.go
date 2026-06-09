@@ -239,7 +239,7 @@ func (sdb *SqliteDatabase) createTables() error {
 			workflow_execution_id TEXT NOT NULL REFERENCES workflow_executions(id) ON DELETE CASCADE,
 			task_template_id TEXT NOT NULL,
 			task_execution_id TEXT,
-			status TEXT CHECK(status IN ('pending', 'running', 'completed', 'failed')) NOT NULL,
+			status TEXT CHECK(status IN ('pending', 'running', 'completed', 'failed', 'interrupted')) NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,
 			PRIMARY KEY (workflow_execution_id, task_template_id)
@@ -315,6 +315,32 @@ func (sdb *SqliteDatabase) createTables() error {
 	}
 	if err := sdb.ensureColumnExistsTx(tx, "node_states", "raw_output", "TEXT"); err != nil {
 		return fmt.Errorf("failed to migrate node_states schema: %w", err)
+	}
+
+	// Dynamic Workflow Orchestration column migrations (PRD: Dynamic Workflow Orchestration)
+	if err := sdb.ensureColumnExistsTx(tx, "workflows", "orchestration_mode", "TEXT DEFAULT 'static'"); err != nil {
+		return fmt.Errorf("failed to migrate workflows schema (orchestration_mode): %w", err)
+	}
+	if err := sdb.ensureColumnExistsTx(tx, "workflows", "goal", "TEXT DEFAULT ''"); err != nil {
+		return fmt.Errorf("failed to migrate workflows schema (goal): %w", err)
+	}
+	if err := sdb.ensureColumnExistsTx(tx, "workflows", "approved_level", "INTEGER DEFAULT 0"); err != nil {
+		return fmt.Errorf("failed to migrate workflows schema (approved_level): %w", err)
+	}
+	if err := sdb.ensureColumnExistsTx(tx, "workflows", "max_tokens", "INTEGER DEFAULT 0"); err != nil {
+		return fmt.Errorf("failed to migrate workflows schema (max_tokens): %w", err)
+	}
+	if err := sdb.ensureColumnExistsTx(tx, "workflows", "max_tool_calls", "INTEGER DEFAULT 0"); err != nil {
+		return fmt.Errorf("failed to migrate workflows schema (max_tool_calls): %w", err)
+	}
+	if err := sdb.ensureColumnExistsTx(tx, "workflows", "spawned_by", "TEXT DEFAULT ''"); err != nil {
+		return fmt.Errorf("failed to migrate workflows schema (spawned_by): %w", err)
+	}
+	if err := sdb.ensureColumnExistsTx(tx, "workflow_executions", "tokens_consumed", "INTEGER DEFAULT 0"); err != nil {
+		return fmt.Errorf("failed to migrate workflow_executions schema (tokens_consumed): %w", err)
+	}
+	if err := sdb.ensureColumnExistsTx(tx, "workflow_executions", "tool_calls_consumed", "INTEGER DEFAULT 0"); err != nil {
+		return fmt.Errorf("failed to migrate workflow_executions schema (tool_calls_consumed): %w", err)
 	}
 
 	return tx.Commit()

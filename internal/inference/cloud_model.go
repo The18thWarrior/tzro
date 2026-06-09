@@ -99,6 +99,7 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 	req.Header.Set("Authorization", "Bearer "+config.GetCloudAPIKey())
 
 	client := &http.Client{Timeout: 60 * time.Second}
+	startTime := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -127,8 +128,13 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 	}
 
 	if len(result.Choices) > 0 {
+		duration := time.Since(startTime).Seconds()
+		speed := 0.0
+		if duration > 0 && result.Usage.CompletionTokens > 0 {
+			speed = float64(result.Usage.CompletionTokens) / duration
+		}
 		if tracker, ok := GetTokenTracker(ctx); ok {
-			tracker.Record(true, result.Usage.PromptTokens, result.Usage.CompletionTokens)
+			tracker.Record(true, result.Usage.PromptTokens, result.Usage.CompletionTokens, duration, speed)
 		}
 		return result.Choices[0].Message.Content, nil
 	}
@@ -229,6 +235,7 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 	req.Header.Set("Authorization", "Bearer "+config.GetCloudAPIKey())
 
 	client := &http.Client{}
+	startTime := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -302,8 +309,14 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 		}
 	}
 
+	duration := time.Since(startTime).Seconds()
+	speed := 0.0
+	if duration > 0 && completionTokens > 0 {
+		speed = float64(completionTokens) / duration
+	}
+
 	if tracker, ok := GetTokenTracker(ctx); ok {
-		tracker.Record(true, promptTokens, completionTokens)
+		tracker.Record(true, promptTokens, completionTokens, duration, speed)
 	}
 
 	resContent := accumulatedContent.String()

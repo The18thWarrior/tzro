@@ -12,6 +12,7 @@ import (
 	"tzro/internal/agent"
 	"tzro/internal/memory"
 	"tzro/internal/notification"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 	"tzro/internal/telemetry"
 )
@@ -29,6 +30,7 @@ type ObserverAgent struct {
 
 	mu               sync.RWMutex
 	activeEvents     []telemetry.ObserverEvent
+	deferredEvents   [][]telemetry.ObserverEvent // batches deferred during foreground activity
 	debounceInterval time.Duration
 	auditThreshold   int
 }
@@ -75,6 +77,11 @@ func (a *ObserverAgent) Start(ctx context.Context) {
 
 	loopCtx, cancel := context.WithCancel(ctx)
 	a.SetCancel(cancel)
+
+	// Register resume callback to flush deferred events when foreground clears
+	proactivity.RegisterResumeCallback(func() {
+		a.flushDeferredEvents()
+	})
 
 	// Subscribe to standard telemetry stream events
 	sub := a.Subscribe(func(chunk stream.StreamChunk) bool {
@@ -177,8 +184,45 @@ func (a *ObserverAgent) triggerAudit(reason string) {
 	go a.runOperationalChecks(context.Background())
 
 	if llmClient != nil {
-		go a.performReflectionAndIngestion(context.Background(), eventsCopy, llmClient)
+		if proactivity.IsForegroundActive() {
+			// Foreground task running — defer LLM calls to avoid KV cache contention.
+			// Buffer events; they'll be flushed when the foreground clears.
+			a.mu.Lock()
+			a.deferredEvents = append(a.deferredEvents, eventsCopy)
+			a.mu.Unlock()
+			fmt.Fprintf(os.Stderr, "[Observer] Foreground active — deferred reflection for %d events\n", len(eventsCopy))
+		} else {
+			go a.performReflectionAndIngestion(context.Background(), eventsCopy, llmClient)
+		}
 	}
+}
+
+// flushDeferredEvents processes all event batches that were deferred during foreground activity.
+// Called by the proactivity resume callback when the foreground registry empties.
+func (a *ObserverAgent) flushDeferredEvents() {
+	a.mu.Lock()
+	if len(a.deferredEvents) == 0 {
+		a.mu.Unlock()
+		return
+	}
+
+	batches := a.deferredEvents
+	a.deferredEvents = nil
+	llmClient := a.GetLLMClient()
+	a.mu.Unlock()
+
+	if llmClient == nil {
+		return
+	}
+
+	// Merge all deferred batches into a single batch for efficiency
+	var merged []telemetry.ObserverEvent
+	for _, batch := range batches {
+		merged = append(merged, batch...)
+	}
+
+	fmt.Fprintf(os.Stderr, "[Observer] Foreground cleared — flushing %d deferred events (%d batches)\n", len(merged), len(batches))
+	go a.performReflectionAndIngestion(context.Background(), merged, llmClient)
 }
 
 // runOperationalChecks performs deterministic system health evaluations

@@ -11,9 +11,14 @@ const TokenTrackerKey contextKey = "token_tracker"
 
 // TokenUsage holds metrics for token counts.
 type TokenUsage struct {
-	PromptTokens     int `json:"promptTokens"`
-	CompletionTokens int `json:"completionTokens"`
-	TotalTokens      int `json:"totalTokens"`
+	PromptTokens     int     `json:"promptTokens"`
+	CompletionTokens int     `json:"completionTokens"`
+	TotalTokens      int     `json:"totalTokens"`
+	DurationSeconds  float64 `json:"durationSeconds"`
+	AvgTokensPerSec  float64 `json:"avgTokensPerSec"`
+	MinTokensPerSec  float64 `json:"minTokensPerSec"`
+	MaxTokensPerSec  float64 `json:"maxTokensPerSec"`
+	InferenceCount   int     `json:"inferenceCount"`
 }
 
 // TokenTracker collects token usage metrics during a task context.
@@ -42,21 +47,36 @@ func GetTokenTracker(ctx context.Context) (*TokenTracker, bool) {
 	return tracker, ok
 }
 
-// Record local or cloud token usage.
-func (t *TokenTracker) Record(isCloud bool, prompt, completion int) {
+// Record local or cloud token usage with speed metrics.
+func (t *TokenTracker) Record(isCloud bool, prompt, completion int, durationSeconds, tokensPerSecond float64) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	usage := &t.localUsage
 	if isCloud {
-		t.cloudUsage.PromptTokens += prompt
-		t.cloudUsage.CompletionTokens += completion
-		t.cloudUsage.TotalTokens += (prompt + completion)
-	} else {
-		t.localUsage.PromptTokens += prompt
-		t.localUsage.CompletionTokens += completion
-		t.localUsage.TotalTokens += (prompt + completion)
+		usage = &t.cloudUsage
+	}
+
+	usage.PromptTokens += prompt
+	usage.CompletionTokens += completion
+	usage.TotalTokens += (prompt + completion)
+	usage.DurationSeconds += durationSeconds
+
+	if tokensPerSecond > 0 {
+		usage.InferenceCount++
+		if usage.MinTokensPerSec == 0 || tokensPerSecond < usage.MinTokensPerSec {
+			usage.MinTokensPerSec = tokensPerSecond
+		}
+		if tokensPerSecond > usage.MaxTokensPerSec {
+			usage.MaxTokensPerSec = tokensPerSecond
+		}
+		// Recompute rolling average from total completion tokens and total duration
+		if usage.DurationSeconds > 0 {
+			usage.AvgTokensPerSec = float64(usage.CompletionTokens) / usage.DurationSeconds
+		}
 	}
 }
 

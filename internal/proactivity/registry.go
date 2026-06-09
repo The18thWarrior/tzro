@@ -9,6 +9,7 @@ var (
 	registryMutex   sync.RWMutex
 
 	preemptionCallbacks []func()
+	resumeCallbacks     []func()
 	callbacksMutex      sync.Mutex
 )
 
@@ -27,13 +28,19 @@ func RegisterActiveUserTask(taskID string) {
 }
 
 // DeregisterActiveUserTask unregisters a user-initiated task ID upon completion or failure.
+// When the foreground registry becomes empty, resume callbacks are triggered.
 func DeregisterActiveUserTask(taskID string) {
 	if taskID == "" {
 		return
 	}
 	registryMutex.Lock()
 	delete(activeUserTasks, taskID)
+	empty := len(activeUserTasks) == 0
 	registryMutex.Unlock()
+
+	if empty {
+		triggerResumeCallbacks()
+	}
 }
 
 // IsForegroundActive returns true if there is at least one active user-initiated task.
@@ -69,4 +76,34 @@ func ClearActiveTasks() {
 	registryMutex.Lock()
 	activeUserTasks = make(map[string]bool)
 	registryMutex.Unlock()
+}
+
+// RegisterResumeCallback adds a callback to be executed when foreground activity clears.
+// Used to auto-resume interrupted dynamic workflows.
+func RegisterResumeCallback(cb func()) {
+	callbacksMutex.Lock()
+	defer callbacksMutex.Unlock()
+	resumeCallbacks = append(resumeCallbacks, cb)
+}
+
+// triggerResumeCallbacks runs all registered resume callbacks.
+func triggerResumeCallbacks() {
+	callbacksMutex.Lock()
+	callbacks := make([]func(), len(resumeCallbacks))
+	copy(callbacks, resumeCallbacks)
+	callbacksMutex.Unlock()
+
+	for _, cb := range callbacks {
+		if cb != nil {
+			cb()
+		}
+	}
+}
+
+// ClearCallbacks clears all preemption and resume callbacks (for testing).
+func ClearCallbacks() {
+	callbacksMutex.Lock()
+	defer callbacksMutex.Unlock()
+	preemptionCallbacks = nil
+	resumeCallbacks = nil
 }

@@ -10,6 +10,7 @@ import (
 
 	"tzro/internal/agent"
 	"tzro/internal/memory"
+	"tzro/internal/proactivity"
 	"tzro/internal/telemetry"
 )
 
@@ -319,5 +320,95 @@ func TestFingerprintDeterminism(t *testing.T) {
 	if fp1 == fp3 {
 		// Note: order matters. The sentinel sorts candidate IDs before fingerprinting.
 		t.Log("different order produces different fingerprint (expected — sentinel sorts before calling)")
+	}
+}
+
+func TestSentinelDefersSynthesisDuringForeground(t *testing.T) {
+	memory.DB.SetDBPathForTesting("test_sentinel_defer.db")
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init DB: %v", err)
+	}
+	defer func() {
+		_ = memory.DB.Close()
+		_ = os.Remove("test_sentinel_defer.db")
+	}()
+
+	// Clear any stale state from other tests
+	proactivity.ClearActiveTasks()
+	proactivity.ClearCallbacks()
+
+	s := NewSentinelAgent()
+	s.SetScanner(&mockScanner{files: []string{"auth/middleware.go"}})
+
+	mock := &mockLLM{resp: `{"alert": "Test deferred alert", "confidence": 0.95, "priority": "suggestion"}`}
+	s.SetLLMClient(mock)
+
+	// Add an activity report so gatherContext() returns non-empty
+	s.IngestActivityReport(ActivityReport{
+		Activity:  "editing auth module",
+		Timestamp: time.Now().Unix(),
+	})
+
+	// Add a memory so retrieveCandidates() returns non-empty
+	_ = memory.DB.AddMemory(memory.FactMemory{
+		ID:         "mem_sentinel_defer_test",
+		UserID:     "default_user",
+		Type:       "fact",
+		Content:    "Auth middleware uses RS256 tokens",
+		Context:    "auth",
+		Confidence: 0.9,
+		Source:     "test",
+		CreatedAt:  time.Now(),
+	})
+
+	// Register a foreground task
+	proactivity.RegisterActiveUserTask("test_sentinel_fg")
+
+	// Run heartbeat — should gather context and candidates but defer synthesis
+	s.evaluateHeartbeat(context.Background())
+
+	mock.mu.Lock()
+	callsDuringFG := mock.calls
+	mock.mu.Unlock()
+
+	if callsDuringFG != 0 {
+		t.Errorf("Expected 0 LLM calls during foreground, got %d", callsDuringFG)
+	}
+
+	// Verify deferredHeartbeat flag is set
+	s.mu.RLock()
+	deferred := s.deferredHeartbeat
+	s.mu.RUnlock()
+
+	if !deferred {
+		t.Error("Expected deferredHeartbeat to be true after skipping synthesis")
+	}
+
+	// Register the resume callback (normally done in Start(), but we're testing evaluateHeartbeat directly)
+	proactivity.RegisterResumeCallback(func() {
+		s.flushDeferredHeartbeat()
+	})
+
+	// Clear foreground — triggers resume callbacks
+	proactivity.DeregisterActiveUserTask("test_sentinel_fg")
+
+	// Give deferred heartbeat time to execute
+	time.Sleep(50 * time.Millisecond)
+
+	mock.mu.Lock()
+	callsAfterResume := mock.calls
+	mock.mu.Unlock()
+
+	if callsAfterResume == 0 {
+		t.Error("Expected LLM to be called after foreground cleared")
+	}
+
+	// Verify flag is cleared
+	s.mu.RLock()
+	deferredAfter := s.deferredHeartbeat
+	s.mu.RUnlock()
+
+	if deferredAfter {
+		t.Error("Expected deferredHeartbeat to be false after flush")
 	}
 }

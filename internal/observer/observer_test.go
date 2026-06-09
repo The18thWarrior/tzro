@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tzro/internal/memory"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 	"tzro/internal/telemetry"
 )
@@ -280,5 +281,101 @@ func TestObserverAgentReflectionAndKGExtraction(t *testing.T) {
 	}
 	if !foundEdge {
 		t.Error("Did not find edge con_alice -> acc_acme in SQLite Knowledge Graph")
+	}
+}
+
+func TestObserverDefersReflectionDuringForeground(t *testing.T) {
+	// Initialize test database
+	memory.DB.SetDBPathForTesting("test_observer_defer.db")
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("Failed to initialize test DB: %v", err)
+	}
+	defer func() {
+		_ = memory.DB.Close()
+		_ = os.Remove("test_observer_defer.db")
+	}()
+
+	// Clear any stale state from other tests
+	proactivity.ClearActiveTasks()
+	proactivity.ClearCallbacks()
+
+	mgr := telemetry.NewTelemetryManager()
+	agent := NewObserverAgent()
+	agent.SetTelemetryManager(mgr)
+	agent.SetDebounceInterval(10 * time.Millisecond)
+	agent.SetAuditThreshold(1)
+
+	mockClient := &MockLLMClient{
+		returnMem: `{"memories": []}`,
+		returnKG:  `{"nodes": [], "edges": []}`,
+	}
+	agent.SetLLMClient(mockClient)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	agent.Start(ctx)
+
+	// Register a foreground task BEFORE publishing events
+	proactivity.RegisterActiveUserTask("test_foreground_task")
+
+	// Subscribe to observer audits
+	sub := mgr.Subscribe(func(chunk stream.StreamChunk) bool {
+		return chunk.Source == "observer" && chunk.Type == "observer_audit"
+	})
+	defer sub.Unsubscribe()
+
+	// Publish an event — this will trigger audit, but LLM should be deferred
+	mgr.PublishEvent("node_completed", "task-defer-1", "node-1", "Some event payload")
+
+	// Wait for audit to fire (deterministic checks still run, audit notification still sent)
+	select {
+	case <-sub.Ch:
+		// Audit notification received — good
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Timed out waiting for audit notification")
+	}
+
+	// Give goroutine time to NOT call LLM
+	time.Sleep(50 * time.Millisecond)
+
+	mockClient.mu.Lock()
+	callsDuringForeground := mockClient.calledCount
+	mockClient.mu.Unlock()
+
+	if callsDuringForeground != 0 {
+		t.Errorf("Expected 0 LLM calls during foreground activity, got %d", callsDuringForeground)
+	}
+
+	// Verify events are buffered, not lost
+	agent.mu.RLock()
+	deferredCount := len(agent.deferredEvents)
+	agent.mu.RUnlock()
+
+	if deferredCount == 0 {
+		t.Error("Expected deferred events to be buffered, but buffer is empty")
+	}
+
+	// Clear the foreground — this triggers resume callbacks which flush deferred events
+	proactivity.DeregisterActiveUserTask("test_foreground_task")
+
+	// Give the flushed goroutine time to execute
+	time.Sleep(100 * time.Millisecond)
+
+	mockClient.mu.Lock()
+	callsAfterResume := mockClient.calledCount
+	mockClient.mu.Unlock()
+
+	if callsAfterResume < 2 {
+		t.Errorf("Expected at least 2 LLM calls after resume (memory + KG), got %d", callsAfterResume)
+	}
+
+	// Verify deferred buffer is now empty
+	agent.mu.RLock()
+	deferredAfter := len(agent.deferredEvents)
+	agent.mu.RUnlock()
+
+	if deferredAfter != 0 {
+		t.Errorf("Expected deferred events to be flushed, but %d batches remain", deferredAfter)
 	}
 }

@@ -7,8 +7,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"path/filepath"
 	"time"
 	"tzro/internal/compiler"
+	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/tools"
@@ -603,6 +605,14 @@ func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, th
 	// Check if path is already populated
 	if pathVal, exists := args["path"]; exists {
 		if pathStr, ok := pathVal.(string); ok && pathStr != "" {
+			// Resolve relative paths to absolute
+			if !filepath.IsAbs(pathStr) {
+				resolved := config.ResolvePath(pathStr)
+				if resolved != pathStr {
+					fmt.Fprintf(os.Stderr, "[Probe] Resolved relative path: '%s' -> '%s' for tool '%s'\n", pathStr, resolved, toolName)
+					args["path"] = resolved
+				}
+			}
 			return args
 		}
 	}
@@ -610,6 +620,14 @@ func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, th
 	// Try to extract a path from the thought text
 	extracted := extractPathFromText(thought)
 	if extracted != "" {
+		// Resolve relative paths to absolute using TZRO_DIR
+		if !filepath.IsAbs(extracted) {
+			resolved := config.ResolvePath(extracted)
+			if resolved != extracted {
+				fmt.Fprintf(os.Stderr, "[Probe] Resolved rescued path: '%s' -> '%s' for tool '%s'\n", extracted, resolved, toolName)
+				extracted = resolved
+			}
+		}
 		args["path"] = extracted
 		fmt.Fprintf(os.Stderr, "[Probe] Rescued empty path from thought: '%s' for tool '%s'\n", extracted, toolName)
 	}
@@ -618,7 +636,7 @@ func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, th
 }
 
 // extractPathFromText uses heuristics to find file/directory paths in free text.
-// Looks for: absolute paths, relative paths with extensions, known directory names.
+// Looks for: absolute paths, quoted names, relative paths with extensions, known directory names.
 func extractPathFromText(text string) string {
 	if text == "" {
 		return ""
@@ -630,19 +648,43 @@ func extractPathFromText(text string) string {
 		return matches[1]
 	}
 
-	// Priority 2: Filenames with extensions (e.g., CONTEXT.md, go.mod, main.go)
+	// Priority 2: Quoted or backtick-delimited names (e.g., 'tzro-mcp', `bootstrap.go`, "main.go")
+	// This catches bare names the model mentions in reasoning regardless of extension.
+	quotedRe := regexp.MustCompile("['\"`]([a-zA-Z0-9_][a-zA-Z0-9_.\\-]*)['\"`]")
+	if matches := quotedRe.FindStringSubmatch(text); len(matches) > 1 {
+		candidate := matches[1]
+		// Exclude common English words and meta-terms that appear in quotes
+		exclusions := map[string]bool{"path": true, "query": true, "error": true, "tool": true, "arguments": true, "file": true, "directory": true}
+		if !exclusions[candidate] {
+			return candidate
+		}
+	}
+
+	// Priority 3: Filenames with extensions (e.g., CONTEXT.md, go.mod, main.go)
 	fileRe := regexp.MustCompile(`\b([a-zA-Z0-9_\-]+\.[a-zA-Z]{1,10})\b`)
 	if matches := fileRe.FindStringSubmatch(text); len(matches) > 1 {
 		return matches[1]
 	}
 
-	// Priority 3: Known directory patterns (e.g., internal/compiler, cmd/tzro)
+	// Priority 4: Known directory patterns (e.g., internal/compiler, cmd/tzro)
 	dirRe := regexp.MustCompile(`\b((?:internal|cmd|pkg|plugins|tests|docs)/[a-zA-Z0-9_\-/]+)\b`)
 	if matches := dirRe.FindStringSubmatch(text); len(matches) > 1 {
 		return matches[1]
 	}
 
-	// Priority 4: Bare known directory names
+	// Priority 5: Bare filenames with hyphens (e.g., tzro-mcp, llama-server)
+	// These are common executable/project names the model refers to without quotes.
+	bareHyphenRe := regexp.MustCompile(`\b([a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z0-9]+)+)\b`)
+	if matches := bareHyphenRe.FindStringSubmatch(text); len(matches) > 1 {
+		candidate := matches[1]
+		// Exclude common non-path hyphenated phrases
+		exclusions := map[string]bool{"tool-call": true, "read-file": true, "list-dir": true, "next-step": true}
+		if !exclusions[candidate] {
+			return candidate
+		}
+	}
+
+	// Priority 6: Bare known directory names
 	bareDirRe := regexp.MustCompile(`\b(internal|cmd|pkg|plugins|tests|docs|bin)\b`)
 	if matches := bareDirRe.FindStringSubmatch(text); len(matches) > 1 {
 		return matches[1]

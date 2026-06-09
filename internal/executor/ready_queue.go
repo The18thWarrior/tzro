@@ -12,6 +12,7 @@ import (
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/notification"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 )
 
@@ -34,6 +35,11 @@ const contextKeyNodeID contextKeyType = "nodeID"
 func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compiler.ExecutionGraph) error {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
+
+	// Register as foreground activity so the Sentinel defers its LLM calls
+	// and doesn't compete for the local model during task execution.
+	proactivity.RegisterActiveUserTask(graph.TaskID)
+	defer proactivity.DeregisterActiveUserTask(graph.TaskID)
 
 	fmt.Fprintf(os.Stderr, "[Executor/RQ] Starting reactive execution for Task %s with %d nodes...\n", graph.TaskID, len(graph.Nodes))
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task reactive execution initiated")
