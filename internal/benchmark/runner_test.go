@@ -126,7 +126,7 @@ func TestMockToolRegistration(t *testing.T) {
 func TestBenchmarkRunConsolidatedMode(t *testing.T) {
 	// Complete suite simulation run in Consolidated Mode (zero network dependency)
 	ctx := context.Background()
-	results, err := RunSuite(ctx, "bfcl", "consolidated", "local", false, 0)
+	results, err := RunSuite(ctx, "bfcl", "consolidated", "cloud", false, 0)
 	if err != nil {
 		t.Fatalf("benchmark suite execution failed: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestBenchmarkRunTzroDagConsolidated(t *testing.T) {
 	// Complete suite simulation run of the new tzro_dag standard in Consolidated Mode
 	ctx := context.Background()
 	// Let's run a limit of 5 to keep the test extremely fast while verifying full flow
-	results, err := RunSuite(ctx, "tzro_dag", "consolidated", "local", false, 5)
+	results, err := RunSuite(ctx, "tzro_dag", "consolidated", "cloud", false, 5)
 	if err != nil {
 		t.Fatalf("tzro_dag benchmark suite execution failed: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestBenchmarkRunTzroDagConsolidated(t *testing.T) {
 func TestBenchmarkRunInteractiveMode(t *testing.T) {
 	// Complete suite simulation run in Interactive Multi-Turn Mode (zero network dependency)
 	ctx := context.Background()
-	results, err := RunSuite(ctx, "complexfuncbench", "interactive", "local", false, 0)
+	results, err := RunSuite(ctx, "complexfuncbench", "interactive", "cloud", false, 0)
 	if err != nil {
 		t.Fatalf("benchmark suite execution failed: %v", err)
 	}
