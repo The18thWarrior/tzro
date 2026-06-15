@@ -15,10 +15,11 @@ import (
 )
 
 type mockHook struct {
-	beforeLevelFn func(ctx context.Context, taskID string, levelNodes []*compiler.GraphNode) (HookAction, error)
-	afterLevelFn  func(ctx context.Context, taskID string, levelNodes []*compiler.GraphNode) (HookAction, error)
-	beforeNodeFn  func(ctx context.Context, taskID string, node *compiler.GraphNode) (HookAction, error)
-	afterNodeFn   func(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (HookAction, error)
+	beforeLevelFn     func(ctx context.Context, taskID string, levelNodes []*compiler.GraphNode) (HookAction, error)
+	afterLevelFn      func(ctx context.Context, taskID string, levelNodes []*compiler.GraphNode) (HookAction, error)
+	beforeNodeFn      func(ctx context.Context, taskID string, node *compiler.GraphNode) (HookAction, error)
+	afterNodeFn       func(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (HookAction, error)
+	onEdgeTraversalFn func(ctx context.Context, taskID string, sourceNode, targetNode *compiler.GraphNode, edgeThought *memory.EdgeThought) (HookAction, error)
 }
 
 func (m *mockHook) BeforeLevel(ctx context.Context, taskID string, levelNodes []*compiler.GraphNode) (HookAction, error) {
@@ -45,6 +46,13 @@ func (m *mockHook) BeforeNode(ctx context.Context, taskID string, node *compiler
 func (m *mockHook) AfterNode(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (HookAction, error) {
 	if m.afterNodeFn != nil {
 		return m.afterNodeFn(ctx, taskID, node, rawOutput)
+	}
+	return ActionContinue, nil
+}
+
+func (m *mockHook) OnEdgeTraversal(ctx context.Context, taskID string, sourceNode, targetNode *compiler.GraphNode, edgeThought *memory.EdgeThought) (HookAction, error) {
+	if m.onEdgeTraversalFn != nil {
+		return m.onEdgeTraversalFn(ctx, taskID, sourceNode, targetNode, edgeThought)
 	}
 	return ActionContinue, nil
 }

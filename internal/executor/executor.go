@@ -38,14 +38,19 @@ type ExecutionHook interface {
 	AfterLevel(ctx context.Context, taskID string, levelNodes []*compiler.GraphNode) (HookAction, error)
 	BeforeNode(ctx context.Context, taskID string, node *compiler.GraphNode) (HookAction, error)
 	AfterNode(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (HookAction, error)
+	// OnEdgeTraversal fires when an edge is traversed in the ready-queue execution model (ADR-0024).
+	// Called after a source node completes and before the target node begins execution.
+	// The edgeThought may be nil if the target has ActivationThreshold 0.0.
+	OnEdgeTraversal(ctx context.Context, taskID string, sourceNode, targetNode *compiler.GraphNode, edgeThought *memory.EdgeThought) (HookAction, error)
 }
 
 var ErrTaskPaused = fmt.Errorf("task execution paused by hook")
 
 type ExecutionEngine struct {
-	Publisher telemetry.EventPublisher
-	hooks     []ExecutionHook
-	mutex     sync.Mutex
+	Publisher      telemetry.EventPublisher
+	EdgeThoughtGen EdgeThoughtInference // optional: enables neural edge traversal (ADR-0024)
+	hooks          []ExecutionHook
+	mutex          sync.Mutex
 }
 
 func (e *ExecutionEngine) RegisterHook(h ExecutionHook) {
@@ -99,6 +104,8 @@ If you need to analyze, filter, paginate, or count records from the cache, you M
 func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.ExecutionGraph, levels [][]string) error {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
+
+	_, levelDelay := getDelays(ctx)
 
 	fmt.Fprintf(os.Stderr, "[Executor] Starting execution for Task %s with %d topological levels...\n", graph.TaskID, len(levels))
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task execution initiated")
@@ -275,8 +282,10 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 			}
 		}
 
-		// Brief delay between levels for visual representation in GUI (500ms)
-		time.Sleep(500 * time.Millisecond)
+		// Brief delay between levels for visual representation in GUI (500ms default)
+		if levelDelay > 0 {
+			time.Sleep(levelDelay)
+		}
 	}
 
 	// Synthesis SOP skill on successful completion
@@ -306,6 +315,7 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 
 func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler.ExecutionGraph, node *compiler.GraphNode, activeHooks []ExecutionHook) error {
 	taskID := graph.TaskID
+	nodeDelay, _ := getDelays(ctx)
 
 	// 0. Pre-flight Check: Is node already completed or skipped?
 	if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
@@ -416,11 +426,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	interpolatedPrompt := InterpolateVariables(node.Instructions, taskID)
 	fmt.Fprintf(os.Stderr, "[Executor] Interpolated instruction: %s\n", interpolatedPrompt)
 
-	// 1.1 GBNF Bridge node: parameters extraction ONLY
-	if node.Type == "gbnf_bridge" {
+	// 1.1 Semantic Validator node: parameters extraction ONLY
+	if node.Type == "semantic_validator" {
 		// Update node state to running
 		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, fmt.Sprintf("Started %s Bridge", node.Action))
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, fmt.Sprintf("Started %s Validator", node.Action))
 
 		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
 			e.getPublisher().PublishStream(stream.StreamChunk{
@@ -434,28 +444,195 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 		schemaStr, schemaErr := tools.GetSchema(node.Action)
 		if schemaErr != nil {
-			fmt.Fprintf(os.Stderr, "[Executor Warning] Failed to get GBNF schema for action %s: %v. Using fallback.\n", node.Action, schemaErr)
+			fmt.Fprintf(os.Stderr, "[Executor Warning] Failed to get schema for action %s: %v. Using fallback.\n", node.Action, schemaErr)
 			schemaStr = ""
 		}
 
-		// P0 Fix (13:00): Use accumulated context architecture instead of flat interpolated prompt.
-		// Upstream node outputs are passed as labeled structured blocks, enabling the bridge
-		// to extract values by key name rather than re-parsing them from prose.
 		accumulatedCtx := buildAccumulatedContext(taskID, graph)
-		systemPrompt := buildContextAwareSystemPrompt(node.Action, node.Instructions, schemaStr)
-		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
+		staticBase := buildStaticBaseInstruction(true)
 
-		req := inference.StructuredInferenceRequest{
-			SystemPrompt: systemPrompt,
-			UserPrompt:   userPrompt,
-			JSONSchema:   schemaStr,
-			StreamMeta:   &meta,
-			TaskID:       taskID,
+		var inferenceResult string
+		var err error
+
+		// ===== ADR-0030: Proactive Binding Splice =====
+		// Resolve bindings and partition by confidence tier BEFORE inference.
+		// High-confidence values (recursive_key, fuzzy_key) are stripped from the
+		// schema so the model never generates them — they get spliced back after
+		// Pass 2. Low-confidence values (semantic_fallback) are injected as prompt
+		// hints only (existing behavior).
+		var highConfBindings map[string]string
+		validatorSchemaStr := schemaStr // schema the model will see (may be stripped)
+
+		if len(node.DynamicBindings) > 0 {
+			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+			if len(resolved) > 0 {
+				var lowConfBindings map[string]string
+				highConfBindings, lowConfBindings = partitionBindings(resolved)
+
+				// Strip high-confidence params from the inference schema
+				if len(highConfBindings) > 0 {
+					keys := make([]string, 0, len(highConfBindings))
+					for k := range highConfBindings {
+						keys = append(keys, k)
+					}
+					validatorSchemaStr = stripSchemaProperties(schemaStr, keys)
+					highConfJSON, _ := json.MarshalIndent(highConfBindings, "", "  ")
+					fmt.Fprintf(os.Stderr, "[Executor ADR-0030] Stripped %d high-confidence params from schema for %s: %s\n", len(highConfBindings), node.ID, string(highConfJSON))
+				}
+
+				// Inject low-confidence bindings as prompt hints (existing behavior)
+				if len(lowConfBindings) > 0 {
+					lowConfJSON, _ := json.MarshalIndent(lowConfBindings, "", "  ")
+					fmt.Fprintf(os.Stderr, "[Executor] Low-confidence bindings for %s (prompt hint only): %s\n", node.ID, string(lowConfJSON))
+				}
+			}
 		}
 
-		inferenceResult, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
-		if err != nil {
-			return fmt.Errorf("gbnf_bridge execution failed: %w", err)
+		// ===== PASS 1: Free-form XML extraction (no grammar constraint) =====
+		// The LLM generates tool parameters as loose XML tags. This is where the
+		// semantic reasoning happens — understanding context, resolving references,
+		// extracting correct values. No grammar masking means maximum decoding freedom.
+		var xmlResult string
+		maxRetries := 3
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			instruction := fmt.Sprintf("Extract structured tool parameters for '%s' in XML format `<params><argName>value</argName>...</params>`. Do NOT nest the params tag inside itself.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
+
+			// Inject low-confidence bindings as prompt hints (high-confidence are already stripped)
+			if len(node.DynamicBindings) > 0 {
+				resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+				if len(resolved) > 0 {
+					_, lowConf := partitionBindings(resolved)
+					if len(lowConf) > 0 {
+						resolvedJSON, _ := json.MarshalIndent(lowConf, "", "  ")
+						instruction += "\n\n## RESOLVED UPSTREAM VALUES (use these exact values for the corresponding parameters):\n" + string(resolvedJSON)
+						fmt.Fprintf(os.Stderr, "[Executor] DynamicBindings (low-confidence hint) for %s: %s\n", node.ID, string(resolvedJSON))
+					}
+				}
+			}
+
+			msgs := buildSegmentedMessages(staticBase, accumulatedCtx, validatorSchemaStr, instruction, true)
+
+			req := inference.StructuredInferenceRequest{
+				Messages:   msgs,
+				JSONSchema: "", // No GBNF constraint — free-form XML generation
+				StreamMeta: &meta,
+				TaskID:     taskID,
+			}
+
+			isBenchmark := ctx.Value("is_benchmark") != nil
+			useCloud := IsForceCloud(taskID)
+			if !useCloud && !isBenchmark && attempt == 1 {
+				sufficient, _ := assessConfidenceTier(ctx, msgs, schemaStr, taskID)
+				checkAndUpdateConfidence(taskID, sufficient)
+				if !sufficient {
+					useCloud = true
+					e.getPublisher().PublishEvent("confidence_insufficient", taskID, node.ID, "Escalating to cloud")
+				}
+			}
+
+			if useCloud {
+				xmlResult, err = retryWithCloud(ctx, msgs, schemaStr, taskID)
+			} else {
+				xmlResult, err = inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+			}
+
+			if err != nil {
+				return fmt.Errorf("semantic_validator pass 1 (XML extraction) failed: %w", err)
+			}
+
+			// Sanity check: does the output contain any XML-like structure?
+			if strings.Contains(xmlResult, "<") && strings.Contains(xmlResult, ">") {
+				break
+			}
+
+			// Also accept if the LLM returned JSON directly (some models do this)
+			if strings.Contains(xmlResult, "{") && strings.Contains(xmlResult, "}") {
+				break
+			}
+
+			if attempt < maxRetries {
+				interpolatedPrompt += fmt.Sprintf("\n\nValidation failed on attempt %d: Invalid XML format or missing arguments. Please try again.", attempt)
+				continue
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "[Executor] Pass 1 XML result for %s: %s\n", node.ID, xmlResult)
+
+		// ===== PASS 2: GBNF-constrained JSON refinement =====
+		// Take the raw XML output and convert it to schema-valid JSON using grammar
+		// constraints. The prompt is small (just the XML + schema) so it's fast.
+		// Falls back to deterministic XML parsing if GBNF refinement fails.
+		if schemaStr != "" {
+			refinementSystem := "You are a precise data format converter. Convert the provided XML tool arguments into a valid JSON object matching the schema. " +
+				"Preserve all values exactly as they appear in the XML. Do NOT add, remove, or modify any values."
+
+			// Use the stripped schema for Pass 2 as well — high-confidence params aren't in the XML output
+			refinementUser := fmt.Sprintf("Convert the following XML tool arguments for '%s' into the JSON schema format.\n\n"+
+				"XML INPUT:\n%s\n\n"+
+				"TARGET JSON SCHEMA:\n%s\n\n"+
+				"Return ONLY a valid JSON object matching the schema with a top-level \"tool_arguments\" key.",
+				node.Action, xmlResult, validatorSchemaStr)
+
+			refineMeta := inference.StreamMeta{
+				StreamID: fmt.Sprintf("refine_%s_%s", taskID, node.ID),
+				Source:   "executor",
+				TaskID:   taskID,
+				NodeID:   node.ID,
+			}
+
+			refineReq := inference.NewSimpleRequest(refinementSystem, refinementUser, validatorSchemaStr)
+			refineReq.StreamMeta = &refineMeta
+			refineReq.TaskID = taskID
+
+			refineResult, refineErr := inference.GlobalLocalModel.ExecuteStructured(ctx, refineReq)
+			if refineErr == nil {
+				var check map[string]interface{}
+				if json.Unmarshal([]byte(refineResult), &check) == nil {
+					// Recursively unwrap nested tool_arguments (model sometimes double-wraps)
+					unwrapped := extractToolArguments(refineResult)
+					// Store flat args — tool_arguments wrapping is a GBNF schema concern,
+					// not a state storage concern. Re-wrapping caused double nesting that
+					// bloated interpolated context for downstream nodes.
+					flatJSON, _ := json.MarshalIndent(unwrapped, "", "  ")
+					inferenceResult = string(flatJSON)
+					fmt.Fprintf(os.Stderr, "[Executor] Pass 2 GBNF refinement succeeded for %s: %s\n", node.ID, inferenceResult)
+				} else {
+					fmt.Fprintf(os.Stderr, "[Executor Warning] Pass 2 GBNF produced invalid JSON, falling back to XML parse: %s\n", refineResult)
+					args := extractToolArguments(xmlResult)
+					parsedJSON, _ := json.Marshal(map[string]interface{}{"tool_arguments": args})
+					inferenceResult = string(parsedJSON)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "[Executor Warning] Pass 2 GBNF failed: %v. Falling back to XML parse.\n", refineErr)
+				args := extractToolArguments(xmlResult)
+				parsedJSON, _ := json.Marshal(map[string]interface{}{"tool_arguments": args})
+				inferenceResult = string(parsedJSON)
+			}
+		} else {
+			args := extractToolArguments(xmlResult)
+			parsedJSON, _ := json.Marshal(map[string]interface{}{"tool_arguments": args})
+			inferenceResult = string(parsedJSON)
+		}
+		fmt.Fprintf(os.Stderr, "[Executor] Final validator output for %s: %s\n", node.ID, inferenceResult)
+
+		// ADR-0030: Splice high-confidence bindings into the final JSON.
+		// These values were stripped from the schema before inference, so the model
+		// never attempted to generate them. We merge them back deterministically.
+		// Note: binding names may differ from schema property names (e.g.
+		// "receipt_code_path" vs "receipt_path"). This is intentional — the splice
+		// ensures the correct resolved value reaches the tool even when the model
+		// hallucinated a placeholder. Extra synonym keys are harmless noise.
+		if len(highConfBindings) > 0 {
+			var parsedResult map[string]interface{}
+			if json.Unmarshal([]byte(inferenceResult), &parsedResult) == nil {
+				for paramName, val := range highConfBindings {
+					parsedResult[paramName] = val
+					fmt.Fprintf(os.Stderr, "[Executor ADR-0030] Spliced '%s' = %q (tier: high-confidence)\n", paramName, val)
+				}
+				splicedJSON, _ := json.MarshalIndent(parsedResult, "", "  ")
+				inferenceResult = string(splicedJSON)
+				fmt.Fprintf(os.Stderr, "[Executor] Validator output after proactive splice for %s: %s\n", node.ID, inferenceResult)
+			}
 		}
 
 		// Run AfterNode hooks
@@ -479,10 +656,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			return ErrTaskPaused
 		}
 
-		time.Sleep(800 * time.Millisecond)
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		// Store clean validator output (without tier prefix) for downstream
+		// variable interpolation via {{nodes.X_validator.output.Y}}.
+		// Previously only deterministic/probe paths called SetNodeRawOutput,
+		// causing GetNodeStateTolerant to fall back to tier-prefixed Output
+		// for validator nodes — which broke JSON property lookups.
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, inferenceResult)
 		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
 
 		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
@@ -526,30 +711,23 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		var toolArguments map[string]interface{}
 
 		if accumulatedCtx != "" && schemaStr != "" {
-			// Use inference-based parameter extraction with accumulated context
-			detSystemPrompt := buildContextAwareSystemPrompt(node.Action, node.Instructions, schemaStr)
-			detUserPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
+			// Use segmented 4-message structure for KV cache prefix sharing (ADR-0021)
+			staticBase := buildStaticBaseInstruction(false)
+			detInstruction := fmt.Sprintf("Extract structured tool parameters for '%s'.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
+			detMsgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, detInstruction, false)
 
 			detReq := inference.StructuredInferenceRequest{
-				SystemPrompt: detSystemPrompt,
-				UserPrompt:   detUserPrompt,
-				JSONSchema:   schemaStr,
-				StreamMeta:   &meta,
-				TaskID:       taskID,
+				Messages:   detMsgs,
+				JSONSchema: schemaStr,
+				StreamMeta: &meta,
+				TaskID:     taskID,
 			}
 
 			detResult, detErr := inference.GlobalLocalModel.ExecuteStructured(ctx, detReq)
 			if detErr == nil {
-				var detToolCall struct {
-					ToolArguments map[string]interface{} `json:"tool_arguments"`
-				}
-				if json.Unmarshal([]byte(detResult), &detToolCall) == nil && len(detToolCall.ToolArguments) > 0 {
-					toolArguments = detToolCall.ToolArguments
-					fmt.Fprintf(os.Stderr, "[Executor] Deterministic args via context-aware inference: %v\n", toolArguments)
-				} else {
-					toolArguments = extractToolArguments(detResult)
-					fmt.Fprintf(os.Stderr, "[Executor] Deterministic args via inference fallback parse: %v\n", toolArguments)
-				}
+				// Use extractToolArguments which handles recursive tool_arguments unwrapping
+				toolArguments = extractToolArguments(detResult)
+				fmt.Fprintf(os.Stderr, "[Executor] Deterministic args via context-aware inference: %v\n", toolArguments)
 			} else {
 				fmt.Fprintf(os.Stderr, "[Executor Warning] Deterministic inference failed, falling back to interpolation: %v\n", detErr)
 				toolArguments = extractToolArguments(interpolatedPrompt)
@@ -563,6 +741,29 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		coerceNumericArguments(toolArguments, interpolatedPrompt)
 		coerceStringArguments(toolArguments, interpolatedPrompt, node.Action)
 		resolveInterpolatedArguments(toolArguments, interpolatedPrompt, node.Instructions, taskID)
+
+		// Hard-override any dynamically bound params with resolved upstream values.
+		// ADR-0030: High-confidence tiers override unconditionally; low-confidence
+		// (semantic_fallback) only overrides null/empty (existing behavior).
+		if len(node.DynamicBindings) > 0 {
+			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+			for paramName, rb := range resolved {
+				if rb.Value != "" && rb.Value != "null" {
+					existingVal, exists := toolArguments[paramName]
+					existingStr := fmt.Sprintf("%v", existingVal)
+					if rb.Tier == "recursive_key" || rb.Tier == "fuzzy_key" || rb.Tier == "kv_line" {
+						// High-confidence: override unconditionally
+						fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Overriding exec arg '%s': %q -> %q (tier: %s)\n", paramName, existingStr, rb.Value, rb.Tier)
+						toolArguments[paramName] = rb.Value
+					} else if exists && (existingStr == "null" || existingStr == "" || existingStr == "<nil>") {
+						// Low-confidence: only override nulls
+						fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Overriding exec arg '%s': %q -> %q (tier: %s, null-only)\n", paramName, existingStr, rb.Value, rb.Tier)
+						toolArguments[paramName] = rb.Value
+					}
+				}
+			}
+		}
+
 		fmt.Fprintf(os.Stderr, "[Executor] Deterministic tool arguments extracted: %v\n", toolArguments)
 
 		output, err := tools.Call(ctx, node.Action, toolArguments)
@@ -599,7 +800,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
 		}
 
-		time.Sleep(800 * time.Millisecond)
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
@@ -711,12 +914,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		accumulatedCtx := buildAccumulatedContext(taskID, graph)
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
-		req := inference.StructuredInferenceRequest{
-			SystemPrompt: systemPrompt,
-			UserPrompt:   userPrompt,
-			StreamMeta:   &meta,
-			TaskID:       taskID,
-		}
+		req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
+		req.StreamMeta = &meta
+		req.TaskID = taskID
 
 		inferenceResult, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
 		if err != nil {
@@ -744,7 +944,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			return ErrTaskPaused
 		}
 
-		time.Sleep(800 * time.Millisecond)
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
@@ -809,14 +1011,26 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		systemPrompt = buildContextAwareSystemPrompt(node.Action, node.Instructions, schemaStr)
 	}
 
-	userPrompt := buildContextAwareUserPrompt(accumulatedCtx, ragCtx, interpolatedPrompt)
-
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		JSONSchema:   schemaStr,
-		StreamMeta:   &meta,
-		TaskID:       taskID,
+	var req inference.StructuredInferenceRequest
+	if !isCacheExploration && accumulatedCtx != "" {
+		// Use segmented 4-message structure for KV cache prefix sharing (ADR-0021)
+		staticBase := buildStaticBaseInstruction(false)
+		instruction := fmt.Sprintf("Extract structured tool parameters for '%s'.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
+		if ragCtx != "" {
+			instruction = "## Additional Context\n\n" + ragCtx + "\n\n" + instruction
+		}
+		msgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, instruction, false)
+		req = inference.StructuredInferenceRequest{
+			Messages:   msgs,
+			JSONSchema: schemaStr,
+			StreamMeta: &meta,
+			TaskID:     taskID,
+		}
+	} else {
+		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, ragCtx, interpolatedPrompt)
+		req = inference.NewSimpleRequest(systemPrompt, userPrompt, schemaStr)
+		req.StreamMeta = &meta
+		req.TaskID = taskID
 	}
 
 	inferenceResult, err = inference.GlobalLocalModel.ExecuteStructured(ctx, req)
@@ -840,11 +1054,65 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 	fmt.Fprintf(os.Stderr, "[Executor] Tool arguments extracted: %v\n", toolCall.ToolArguments)
 
+	// Schema validation gate (ADR-0020): validate before calling tool
+	// Skip in benchmark mode — mock server provides correct args and retry would interfere
+	isBenchmark := ctx.Value("is_benchmark") != nil
+	if !isBenchmark {
+		if validationErr := validateAgainstSchema(node.Action, toolCall.ToolArguments); validationErr != nil {
+			fmt.Fprintf(os.Stderr, "[RetryPolicy] Schema validation failed for %s: %v — retrying with cloud\n", node.Action, validationErr)
+			e.getPublisher().PublishEvent("schema_validation_failed", taskID, node.ID, validationErr.Error())
+
+			// Retry with cloud
+			cloudResult, cloudErr := retryWithCloud(ctx, req.Messages, schemaStr, taskID)
+			if cloudErr == nil {
+				// Cloud succeeded — extract corrective skill from the diff
+				go func() {
+					_, _ = skills.ExtractCorrectiveSkill(context.Background(), node.Action, inferenceResult, cloudResult, node.Instructions)
+				}()
+				// Re-parse cloud result
+				var cloudToolCall struct {
+					ToolArguments map[string]interface{} `json:"tool_arguments"`
+				}
+				if json.Unmarshal([]byte(cloudResult), &cloudToolCall) == nil && len(cloudToolCall.ToolArguments) > 0 {
+					toolCall.ToolArguments = cloudToolCall.ToolArguments
+				}
+			}
+		}
+	}
+
 	// 5. Execute tool via the dynamic Tool Registry seam
 	var output string
 	output, err = tools.Call(ctx, node.Action, toolCall.ToolArguments)
 	if err != nil {
-		return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
+		if isBenchmark {
+			return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
+		}
+		// Tool execution failure retry (ADR-0020)
+		fmt.Fprintf(os.Stderr, "[RetryPolicy] Tool '%s' execution failed: %v — retrying with cloud\n", node.Action, err)
+		e.getPublisher().PublishEvent("tool_execution_failed", taskID, node.ID, err.Error())
+
+		cloudResult, cloudErr := retryWithCloud(ctx, req.Messages, schemaStr, taskID)
+		if cloudErr == nil {
+			// Cloud succeeded — extract corrective skill
+			go func() {
+				_, _ = skills.ExtractCorrectiveSkill(context.Background(), node.Action, inferenceResult, cloudResult, node.Instructions)
+			}()
+			// Re-parse and re-execute with cloud parameters
+			var cloudToolCall struct {
+				ToolArguments map[string]interface{} `json:"tool_arguments"`
+			}
+			if json.Unmarshal([]byte(cloudResult), &cloudToolCall) == nil && len(cloudToolCall.ToolArguments) > 0 {
+				output, err = tools.Call(ctx, node.Action, cloudToolCall.ToolArguments)
+				if err != nil {
+					return fmt.Errorf("tool '%s' execution failed after cloud retry: %w", node.Action, err)
+				}
+			} else {
+				// Use cloud raw result as output
+				output = cloudResult
+			}
+		} else {
+			return fmt.Errorf("tool '%s' execution failed (cloud retry also failed): %w", node.Action, err)
+		}
 	}
 
 	// Run AfterNode hooks
@@ -882,7 +1150,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
 	}
 
-	time.Sleep(800 * time.Millisecond)
+	if nodeDelay > 0 {
+		time.Sleep(nodeDelay)
+	}
 
 	// Save finished state checkpoint including execution tier metadata
 	nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
@@ -901,6 +1171,222 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 	fmt.Fprintf(os.Stderr, "[Executor] Completed Action Node: %s -> Status: Completed\n", node.ID)
 	return nil
+}
+
+// ResolvedBinding holds a resolved DynamicBinding value alongside the resolution
+// tier that produced it. High-confidence tiers (recursive_key, fuzzy_key, kv_line)
+// are eligible for proactive binding splice (ADR-0030); low-confidence tiers
+// (semantic_fallback) are injected as prompt hints only.
+type ResolvedBinding struct {
+	Value string
+	Tier  string // "recursive_key" | "fuzzy_key" | "kv_line" | "semantic_fallback"
+}
+
+// partitionBindings splits resolved bindings into high-confidence (safe to splice
+// deterministically, bypassing inference) and low-confidence (inject as prompt hints
+// only). See ADR-0030 for the design rationale.
+func partitionBindings(resolved map[string]ResolvedBinding) (highConf map[string]string, lowConf map[string]string) {
+	highConf = make(map[string]string)
+	lowConf = make(map[string]string)
+	for k, rb := range resolved {
+		switch rb.Tier {
+		case "recursive_key", "fuzzy_key", "kv_line":
+			highConf[k] = rb.Value
+		default:
+			lowConf[k] = rb.Value
+		}
+	}
+	return
+}
+
+// stripSchemaProperties removes the named properties from a JSON tool schema string,
+// returning the modified schema. Used by the Proactive Binding Splice (ADR-0030) to
+// prevent the model from generating values that are already deterministically known.
+// If parsing or modification fails, returns the original schema unchanged.
+func stripSchemaProperties(schemaStr string, keysToStrip []string) string {
+	if len(keysToStrip) == 0 || schemaStr == "" {
+		return schemaStr
+	}
+
+	var schema map[string]interface{}
+	if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
+		return schemaStr
+	}
+
+	// Build a set for O(1) lookup
+	stripSet := make(map[string]bool, len(keysToStrip))
+	for _, k := range keysToStrip {
+		stripSet[k] = true
+	}
+
+	// Navigate to tool_arguments.properties (standard schema structure)
+	toolArgs, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		return schemaStr
+	}
+	toolArgsObj, ok := toolArgs["tool_arguments"].(map[string]interface{})
+	if !ok {
+		// Try flat schema (no tool_arguments wrapper)
+		toolArgsObj = schema
+	}
+
+	props, ok := toolArgsObj["properties"].(map[string]interface{})
+	if !ok {
+		return schemaStr
+	}
+
+	// Remove properties
+	for _, key := range keysToStrip {
+		delete(props, key)
+	}
+
+	// Remove from required array if present
+	if reqRaw, ok := toolArgsObj["required"].([]interface{}); ok {
+		filtered := make([]interface{}, 0, len(reqRaw))
+		for _, r := range reqRaw {
+			if rStr, ok := r.(string); ok && !stripSet[rStr] {
+				filtered = append(filtered, r)
+			}
+		}
+		toolArgsObj["required"] = filtered
+	}
+
+	modified, err := json.Marshal(schema)
+	if err != nil {
+		return schemaStr
+	}
+	return string(modified)
+}
+
+// resolveDynamicBindings resolves a node's DynamicBindings by looking up upstream
+// node RawOutput values from the database. Each binding maps a parameter name to
+// an upstream path in the format "nodeId.output.propertyName". Returns a map of
+// paramName → ResolvedBinding (value + resolution tier) for all successfully
+// resolved bindings.
+//
+// Uses a three-tier resolution cascade (ADR-0029 Response Resolver):
+//  1. Recursive key search — parse JSON and walk the tree for an exact key match at any depth
+//  2. KV-line key search — fall back to "key: value" per-line parsing for non-JSON outputs
+//  3. Semantic fallback — invoke the Local Model to semantically match the binding key
+//
+// The returned Tier metadata enables the Proactive Binding Splice (ADR-0030) to
+// determine whether each resolved value can bypass inference (high-confidence)
+// or should be injected as a prompt hint (low-confidence).
+func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}, taskID string) map[string]ResolvedBinding {
+	if len(bindings) == 0 || taskID == "" {
+		return nil
+	}
+
+	resolved := make(map[string]ResolvedBinding)
+	for paramName, rawValue := range bindings {
+		// Coerce to string — handles numbers, bools, etc. that the model occasionally emits
+		bindingPath := fmt.Sprintf("%v", rawValue)
+
+		// Parse "nodeId.output.propertyName" format
+		parts := strings.SplitN(bindingPath, ".", 3) // ["nodeId", "output", "propertyName"]
+		if len(parts) < 3 || parts[1] != "output" {
+			fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] WARNING: Invalid binding format for '%s': %q (expected 'nodeId.output.propertyName')\n", paramName, bindingPath)
+			continue
+		}
+
+		nodeID := parts[0]
+		propertyKey := parts[2]
+
+		// Fetch upstream node's raw output
+		state, ok := GetNodeStateTolerant(taskID, nodeID)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "[Response Resolver] WARNING: Upstream node '%s' not found for binding '%s'\n", nodeID, paramName)
+			continue
+		}
+
+		sourceOutput := state.RawOutput
+		if sourceOutput == "" {
+			sourceOutput = state.Output
+			if idx := strings.Index(sourceOutput, "] "); idx != -1 {
+				sourceOutput = sourceOutput[idx+2:]
+			}
+		}
+
+		if sourceOutput == "" {
+			fmt.Fprintf(os.Stderr, "[Response Resolver] WARNING: Empty output from node '%s' for binding '%s'\n", nodeID, paramName)
+			continue
+		}
+
+		// === Tier 1: JSON recursive key search ===
+		var parsed interface{}
+		jsonParsed := false
+		if err := json.Unmarshal([]byte(sourceOutput), &parsed); err == nil {
+			jsonParsed = true
+			matches := recursiveKeySearch(parsed, propertyKey)
+			if len(matches) == 1 {
+				val := formatMatchValue(matches[0].Value)
+				if val != "" && val != "null" && val != "<nil>" {
+					fmt.Fprintf(os.Stderr, "[Response Resolver] Resolved '%s' via recursive_key (path: %s)\n", paramName, matches[0].Path)
+					resolved[paramName] = ResolvedBinding{Value: val, Tier: "recursive_key"}
+					continue
+				}
+			} else if len(matches) > 1 {
+				// Key collision — fall through to semantic fallback (skip Tier 2)
+				fmt.Fprintf(os.Stderr, "[Response Resolver] Key collision for '%s' (%d matches) — falling through to semantic\n", propertyKey, len(matches))
+				goto semanticFallback
+			}
+
+			// === Tier 1.5: Fuzzy key search (suffix/substring containment) ===
+			// When Tier 1 finds 0 exact matches, try relaxed key matching. This catches
+			// planner-generated binding keys like "receipt_code_path" that don't exactly match
+			// the tool output key "receipt_path" but are clearly related. Resolves deterministically
+			// without invoking the semantic fallback, avoiding hallucination risk.
+			if fuzzyMatch := fuzzyKeySearch(parsed, propertyKey); fuzzyMatch != nil {
+				val := formatMatchValue(fuzzyMatch.Value)
+				if val != "" && val != "null" && val != "<nil>" {
+					// Extract the actual matched key name for logging
+					matchedKey := fuzzyMatch.Path
+					if dotIdx := strings.LastIndex(matchedKey, "."); dotIdx != -1 {
+						matchedKey = matchedKey[dotIdx+1:]
+					}
+					fmt.Fprintf(os.Stderr, "[Response Resolver] Resolved '%s' via fuzzy_key (target: %s → matched: %s, path: %s)\n", paramName, propertyKey, matchedKey, fuzzyMatch.Path)
+					resolved[paramName] = ResolvedBinding{Value: val, Tier: "fuzzy_key"}
+					continue
+				}
+			}
+			// 0 matches from JSON (exact and fuzzy) — fall through to Tier 2 (KV-line) then Tier 3
+		}
+
+		// === Tier 2: KV-line key search ===
+		if !jsonParsed {
+			kvMap := make(map[string]string)
+			lines := strings.Split(sourceOutput, "\n")
+			for _, line := range lines {
+				kvParts := strings.SplitN(line, ":", 2)
+				if len(kvParts) == 2 {
+					key := strings.TrimSpace(kvParts[0])
+					val := strings.TrimSpace(kvParts[1])
+					if key != "" && val != "" {
+						kvMap[key] = val
+					}
+				}
+			}
+			if val, found := kvMap[propertyKey]; found {
+				fmt.Fprintf(os.Stderr, "[Response Resolver] Resolved '%s' via kv_line\n", paramName)
+				resolved[paramName] = ResolvedBinding{Value: val, Tier: "kv_line"}
+				continue
+			}
+		}
+
+	semanticFallback:
+		// === Tier 3: Semantic fallback via Local Model ===
+		semanticVal, err := resolveBindingSemantic(ctx, sourceOutput, propertyKey)
+		if err == nil && semanticVal != "" && semanticVal != "null" {
+			fmt.Fprintf(os.Stderr, "[Response Resolver] Resolved '%s' via semantic_fallback\n", paramName)
+			resolved[paramName] = ResolvedBinding{Value: semanticVal, Tier: "semantic_fallback"}
+			continue
+		}
+
+		// All tiers failed
+		fmt.Fprintf(os.Stderr, "[Response Resolver] WARNING: Could not resolve binding '%s' from '%s' (all tiers exhausted)\n", paramName, bindingPath)
+	}
+
+	return resolved
 }
 
 func InterpolateVariables(instruction string, taskID string) string {
@@ -954,6 +1440,13 @@ func InterpolateVariables(instruction string, taskID string) string {
 
 		val, found := outputMap[propertyKey]
 		if !found {
+			fmt.Fprintf(os.Stderr, "[Executor InterpolationResolver] WARNING: Property '%s' not found in node '%s' output. Available keys: %v. Returning null.\n", propertyKey, nodeID, func() []string {
+				keys := make([]string, 0, len(outputMap))
+				for k := range outputMap {
+					keys = append(keys, k)
+				}
+				return keys
+			}())
 			return "null"
 		}
 		if mVal, ok := val.(map[string]interface{}); ok {
@@ -993,6 +1486,7 @@ func InterpolateVariables(instruction string, taskID string) string {
 }
 
 func extractToolArguments(raw string) map[string]interface{} {
+	// Try JSON parsing first
 	startIdx := strings.Index(raw, "{")
 	endIdx := strings.LastIndex(raw, "}")
 	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
@@ -1010,7 +1504,79 @@ func extractToolArguments(raw string) map[string]interface{} {
 			return parsed
 		}
 	}
+
+	// Try XML parsing: extract <key>value</key> pairs from the raw output.
+	// This handles semantic_validator XML output when GBNF refinement is unavailable.
+	xmlArgs := extractXMLToolArguments(raw)
+	if len(xmlArgs) > 0 {
+		return xmlArgs
+	}
+
 	return map[string]interface{}{"query": raw}
+}
+
+// xmlArgRegex matches simple XML tag pairs: <tagName>value</tagName>
+// It captures the tag name and inner text value for flat key-value extraction.
+var xmlArgRegex = regexp.MustCompile(`<(\w+)>([^<]*)</\w+>`)
+
+// extractXMLToolArguments parses flat XML key-value pairs from a raw string.
+// It focuses on the content inside <tool_arguments>...</tool_arguments> if present,
+// falling back to matching any <key>value</key> pairs in the full string.
+// Values are type-coerced: "true"/"false" → bool, numeric strings → float64.
+func extractXMLToolArguments(raw string) map[string]interface{} {
+	// Narrow scope to innermost wrapper block: try <params>, then <tool_arguments>
+	searchStr := raw
+
+	// Try <params> first (the current instruction format)
+	if pStart := strings.LastIndex(raw, "<params>"); pStart != -1 {
+		if pEnd := strings.Index(raw[pStart:], "</params>"); pEnd != -1 {
+			searchStr = raw[pStart+len("<params>") : pStart+pEnd]
+		}
+	} else if taStart := strings.LastIndex(raw, "<tool_arguments>"); taStart != -1 {
+		// Fall back to <tool_arguments> (legacy format)
+		if taEnd := strings.Index(raw[taStart:], "</tool_arguments>"); taEnd != -1 {
+			searchStr = raw[taStart+len("<tool_arguments>") : taStart+taEnd]
+		}
+	}
+
+	matches := xmlArgRegex.FindAllStringSubmatch(searchStr, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	args := make(map[string]interface{})
+	for _, m := range matches {
+		if len(m) >= 3 {
+			key := m[1]
+			val := strings.TrimSpace(m[2])
+
+			// Skip structural tags like <tool_arguments> or <params> itself
+			if key == "tool_arguments" || key == "tool" || key == "args" || key == "params" {
+				continue
+			}
+
+			// Type coercion
+			if val == "true" {
+				args[key] = true
+			} else if val == "false" {
+				args[key] = false
+			} else if num, err := strconv.ParseFloat(val, 64); err == nil {
+				// Preserve integers as integers for cleaner JSON
+				if num == float64(int64(num)) {
+					args[key] = int64(num)
+				} else {
+					args[key] = num
+				}
+			} else {
+				args[key] = val
+			}
+		}
+	}
+
+	if len(args) == 0 {
+		return nil
+	}
+	return args
 }
 
 // numericLiteralRegex matches signed integers and decimals in natural language instruction text.
@@ -1620,12 +2186,8 @@ func (e *ExecutionEngine) evaluateBranchCondition(ctx context.Context, graph *co
 		"required": ["satisfied"]
 	}`
 
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: "You are the Branch Condition Evaluator. Your job is to evaluate if a given condition is satisfied based on the provided execution history and context. Respond strictly with JSON.",
-		UserPrompt:   userPrompt,
-		JSONSchema:   schema,
-		TaskID:       graph.TaskID,
-	}
+	req := inference.NewSimpleRequest("You are the Branch Condition Evaluator. Your job is to evaluate if a given condition is satisfied based on the provided execution history and context. Respond strictly with JSON.", userPrompt, schema)
+	req.TaskID = graph.TaskID
 
 	resStr, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
 	if err != nil {
@@ -1737,4 +2299,40 @@ func evaluateDeterministicCondition(cond string) (bool, bool) {
 	}
 
 	return false, false
+}
+
+func isTestingOrBenchmark(ctx context.Context) bool {
+	if ctx.Value("is_benchmark") != nil {
+		return true
+	}
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "-test.") || strings.Contains(arg, "test") {
+			return true
+		}
+	}
+	if os.Getenv("TZRO_HEADLESS") == "true" {
+		return true
+	}
+	return false
+}
+
+func getDelays(ctx context.Context) (time.Duration, time.Duration) {
+	cfg := config.Get()
+	nodeDelay := time.Duration(cfg.ExecutorNodeDelayMs) * time.Millisecond
+	levelDelay := time.Duration(cfg.ExecutorLevelDelayMs) * time.Millisecond
+
+	// Assign historical visual pacing defaults if unset (0)
+	if cfg.ExecutorNodeDelayMs == 0 {
+		nodeDelay = 800 * time.Millisecond
+	}
+	if cfg.ExecutorLevelDelayMs == 0 {
+		levelDelay = 500 * time.Millisecond
+	}
+
+	// Bypass delays for testing and benchmarking
+	if isTestingOrBenchmark(ctx) {
+		return 0, 0
+	}
+
+	return nodeDelay, levelDelay
 }

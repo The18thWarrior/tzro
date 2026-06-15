@@ -34,15 +34,28 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 				return nil, err
 			}
 
+			if in.Path == "" {
+				return ToolError("path is required: specify the file path to read"), nil
+			}
+
 			resolvedPath, err := validator.ValidatePath(in.Path)
 			if err != nil {
 				return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
 			}
 
+			// Reject directories — read_file is only for files
+			info, err := os.Stat(resolvedPath)
+			if err != nil {
+				return ToolError(fmt.Sprintf("failed to stat path: %v", err)), nil
+			}
+			if info.IsDir() {
+				return ToolError(fmt.Sprintf("path '%s' is a directory, not a file. Use list_dir to explore directories.", in.Path)), nil
+			}
+
 			// Read the file
 			file, err := os.Open(resolvedPath)
 			if err != nil {
-				return ToolError(fmt.Sprintf("failed to open file: %v", err)), nil
+				return ToolError(fmt.Sprintf("failed to open file '%s': %v", in.Path, err)), nil
 			}
 			defer file.Close()
 
@@ -128,7 +141,17 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 
 			resolvedPath, err := validator.ValidatePath(in.Path)
 			if err != nil {
-				return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
+				// Fallback: if path is empty, default to first allowed root
+				if in.Path == "" {
+					roots := validator.resolveRoots()
+					if len(roots) > 0 {
+						resolvedPath = roots[0]
+						err = nil
+					}
+				}
+				if err != nil {
+					return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
+				}
 			}
 
 			entries, err := os.ReadDir(resolvedPath)
@@ -194,7 +217,17 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 
 			resolvedPath, err := validator.ValidatePath(in.Path)
 			if err != nil {
-				return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
+				// Fallback: if path is empty, default to first allowed root
+				if in.Path == "" {
+					roots := validator.resolveRoots()
+					if len(roots) > 0 {
+						resolvedPath = roots[0]
+						err = nil
+					}
+				}
+				if err != nil {
+					return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
+				}
 			}
 
 			maxResults := 50

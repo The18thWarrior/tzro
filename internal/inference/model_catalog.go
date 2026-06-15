@@ -16,6 +16,18 @@ type ModelEntry struct {
 
 var modelCatalog = []ModelEntry{
 	{
+		ID:           "gemma-4-e4b-it-qat",
+		DisplayName:  "Gemma 4 E4B IT QAT",
+		Params:       "E4B",
+		SizeBytes:    4215693760,
+		SizeLabel:    "~3.9 GB",
+		DownloadURL:  "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf?download=true",
+		Filename:     "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+		Description:  "Default Gemma 4 E4B model with QAT calibration",
+		ToolCallTier: "excellent",
+		IsDefault:    true,
+	},
+	{
 		ID:           "grm-25",
 		DisplayName:  "GRM 2.5",
 		Params:       "",
@@ -23,9 +35,9 @@ var modelCatalog = []ModelEntry{
 		SizeLabel:    "~2.7 GB",
 		DownloadURL:  "https://huggingface.co/mradermacher/GRM-2.5-i1-GGUF/resolve/main/GRM-2.5.i1-Q4_K_M.gguf",
 		Filename:     "GRM-2.5.i1-Q4_K_M.gguf",
-		Description:  "Default model with excellent tool calling support",
+		Description:  "Model with excellent tool calling support",
 		ToolCallTier: "excellent",
-		IsDefault:    true,
+		IsDefault:    false,
 	},
 	{
 		ID:           "qwen3-4b",

@@ -1,7 +1,7 @@
 # Use Case: Web Dashboard Agent Interface
 
 **Actor**: Developer or End User interacting with the tzro server through their web browser.
-**Route**: / (React Frontend Web App)
+**Route**: / (React Frontend Web App — OpenUI-powered layout)
 **Backend**: http://localhost:36888
 **Priority**: P0
 
@@ -9,48 +9,46 @@
 
 ## Intent
 
-A developer wants a beautiful, responsive visual interface to orchestrate, configure, and inspect the state of agents, memories, tasks, and system configurations.
+A developer wants a visual observability surface to monitor active tasks, inspect execution events, view system configuration, manage workflows, and observe the thermal and inference state of the local engine — all rendered from a server-generated OpenUI layout spec that the agent can compose dynamically.
 
 ## Preconditions
 
 - The tzro backend daemon is running and reachable on `http://localhost:36888`.
-- The Vite web development server is running on `http://localhost:8000` (or frontend files served).
+- The dashboard is served at `http://localhost:36888/dashboard/` (static build) or via Vite dev server on `http://localhost:5173`.
 - A modern web browser is used to access the dashboard.
+- At least one task has been executed so the dashboard has data to display.
 
 ## Success Criteria
 
-- [ ] User sees a visually premium dashboard showing system telemetry, active tasks, memory nodes, and running services.
-- [ ] User can view a real-time stream of agent operations, tool executions, and compilation steps.
-- [ ] User can view the relational memory graph in an interactive canvas or neighborhood view.
-- [ ] User can toggle between different execution strategies (T0 Direct, T1 Planned, T2 Supervised) for natural language queries.
-- [ ] User can trigger new agent tasks through the chat interface and receive streaming replies.
-- [ ] User can inspect the active tool catalog, loaded skills, and registered MCP Hosts.
-- [ ] User sees beautiful animations, clean dark-theme layout, and harmonious HSL tailored colors.
-- [ ] User can toggle the mobile menu and see the Mobile Navigation Drawer with navigation links.
-- [ ] User can switch between Raw Input and Compacted panels using the mobile tab switcher on screens smaller than 768px.
-- [ ] User can click Claude Desktop, Cursor Settings, and Antigravity Config tabs in the MCP Setup section and see the corresponding configuration format displayed in the code block.
-- [ ] User can view the "Autonomous Agent Offload & Wait Protocol" detailing the Offload Decision Rule.
-- [ ] User can see suggested prompt templates for Research, Multi-System Automation, and Codebase Exploration (Probe Node) on the onboarding page.
-- [ ] User sees the newly documented Handshake Verification test using a JSON-RPC initialize command and the critical warnings about standard input/output redirection.
+- [ ] User sees a dashboard rendered from the OpenUI layout spec served by the backend at `/api/dashboard/spec`.
+- [ ] User can view a list of active and completed tasks with their statuses.
+- [ ] User can select a task to see its detailed execution timeline (node-level events).
+- [ ] User can view recent observer events in a scrollable event log.
+- [ ] User can view system configuration including model settings and active services.
+- [ ] User can view downloaded models and their status.
+- [ ] User can view workflow definitions and their execution history.
+- [ ] User can trigger a dashboard spec regeneration and see the layout update.
+- [ ] User can toggle between light and dark themes with the theme persisted across sessions.
+- [ ] Dashboard shows a loading skeleton while fetching the spec, not a blank screen.
+- [ ] User can view notifications from the notification system.
+- [ ] Dashboard gracefully handles a missing spec (404) with a clear empty state and regenerate prompt.
 
 ## Edge Cases to Probe
 
-- Prompting the agent with empty, excessively long, or malicious prompt injections.
-- Refreshing the web page while an active background task is executing to verify state persistence.
-- Starting the dashboard when the backend is offline, and verifying clean loading/retry behavior.
-- Operating the dashboard on mobile, tablet, and desktop viewports to ensure responsive container queries.
-- Resizing the window to mobile width (<768px) and toggling the hamburger menu, then checking if the mobile navigation drawer closes when a link is clicked or when clicking outside.
-- Running the compaction pipeline on mobile and verifying that the view automatically switches to the Compacted panel upon completion.
-- Accessing the Handshake Verification section and copying the initialization JSON payload.
-- Reviewing the offload decision rule and verifying layout responsiveness of the policy grid on narrow viewports.
+- Starting the dashboard when the backend is offline and verifying clean error messaging.
+- Triggering spec regeneration while the dashboard is already displaying data.
+- Refreshing the browser while a task is in progress to verify the spec re-fetch is seamless.
+- Viewing the dashboard with no tasks, no events, and no workflows to verify empty states.
+- Resizing the window between desktop and mobile widths to verify responsive layout.
+- Rapidly switching between light and dark themes to verify no flash-of-unstyled-content.
 
 ## Anti-Patterns to Watch For
 
-- [ ] Entire screen flashes white or displays a blank screen due to React runtime crashes.
-- [ ] Broken layouts, text wrapping overlaps, or unstyled default HTML components.
-- [ ] Stale data indicators persisting when tasks have completed or failed.
-- [ ] Raw backend JSON errors or network stack traces displayed directly in the user interface.
-- [ ] Buttons or input forms becoming dead/unresponsive without visual loading/disabled cues.
-- [ ] Mobile navigation drawer or hamburger menu overlapping other UI elements or blocking interaction.
-- [ ] Mobile tab switcher displaying incorrect payload size metrics or failing to display the active panel.
-- [ ] The "Autonomous Agent Offload & Wait Protocol" section breaks layout or overlaps on mobile screen widths.
+- [ ] Blank screen or React runtime crash when the layout spec contains an unknown component type.
+- [ ] Raw JSON errors or network stack traces displayed directly in the UI.
+- [ ] Stale data persisting after a spec regeneration completes.
+- [ ] Theme toggle not persisting across page reloads.
+- [ ] Loading spinner that never resolves when the backend is unreachable (should timeout with message).
+- [ ] Task spotlight/detail view showing empty content for a task that has completed nodes.
+- [ ] Broken layout when the OpenUI spec includes nested grid or flex containers.
+- [ ] Regenerate button remaining in "loading" state after the regeneration request completes or fails.

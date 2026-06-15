@@ -6,18 +6,21 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type EngineConfig struct {
-	ModelMode          string  `json:"modelMode"`     // "cooperative" | "local" | "cloud"
-	CloudProvider      string  `json:"cloudProvider"` // "google" | "openai"
-	CloudAPIKey        string  `json:"cloudApiKey"`
-	CloudModel         string  `json:"cloudModel"`                   // the cloud model name to use (e.g. gemini-flash-latest)
-	SpeedFloor         float64 `json:"speedFloor"`                   // default 5.0 t/s
-	SidecarEnabled     bool    `json:"sidecarEnabled"`               // default true
-	GGUFModelPath      string  `json:"ggufModelPath"`                // path to local gguf model file
-	ModelsDir          string  `json:"modelsDir"`                    // directory for downloaded models
-	MaxRAGContextChars int     `json:"maxRagContextChars,omitempty"` // max chars for Graph-RAG context injection (0 = use default 2000)
+	ModelMode                   string  `json:"modelMode"`     // "cooperative" | "local" | "cloud"
+	CloudProvider               string  `json:"cloudProvider"` // "google" | "openai"
+	CloudAPIKey                 string  `json:"cloudApiKey"`
+	CloudModel                  string  `json:"cloudModel"`                            // the cloud model name to use (e.g. gemini-flash-latest)
+	SpeedFloor                  float64 `json:"speedFloor"`                            // default 5.0 t/s
+	SidecarEnabled              bool    `json:"sidecarEnabled"`                        // default true
+	ThermalCooldownSeconds      int     `json:"thermalCooldownSeconds,omitempty"`      // default 30
+	ThermalCloudCooldownMinutes int     `json:"thermalCloudCooldownMinutes,omitempty"` // default 5
+	GGUFModelPath               string  `json:"ggufModelPath"`                         // path to local gguf model file
+	ModelsDir                   string  `json:"modelsDir"`                             // directory for downloaded models
+	MaxRAGContextChars          int     `json:"maxRagContextChars,omitempty"`          // max chars for Graph-RAG context injection (0 = use default 2000)
 
 	// Inference Backend (ADR-0016)
 	InferenceBackend BackendConfig `json:"inferenceBackend,omitempty"`
@@ -31,6 +34,23 @@ type EngineConfig struct {
 
 	// Observer Agent
 	ObserverEnabled *bool `json:"observerEnabled,omitempty"` // nil = auto (on for llama-server, off otherwise)
+
+	// Sentinel Agent (ADR-0023)
+	SentinelEnabled  *bool `json:"sentinelEnabled,omitempty"`  // nil = auto (same logic as Observer)
+	SentinelInterval int   `json:"sentinelInterval,omitempty"` // heartbeat interval in seconds (default 300 = 5 min)
+
+	// Confidence Tier (ADR-0020): consecutive insufficient results before sticky cloud fallback
+	ConfidenceThreshold int `json:"confidenceThreshold,omitempty"`
+
+	// Dynamic Local Planning & Routing
+	PrivacyLevel          string   `json:"privacyLevel,omitempty"`          // "strict-local" | "hybrid" | "cloud-preferred" (default: "hybrid")
+	RestrictedDirectories []string `json:"restrictedDirectories,omitempty"` // Paths locked to local-only planning
+	ComplexityThreshold   string   `json:"complexityThreshold,omitempty"`   // "T0" | "T1" | "T2" (default: "T1")
+	SensitiveKeywords     []string `json:"sensitiveKeywords,omitempty"`     // Custom keywords; empty = built-in defaults
+
+	// Visual dashboard pacing delays in milliseconds
+	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
+	ExecutorLevelDelayMs int `json:"executorLevelDelayMs,omitempty"`
 }
 
 type BackendConfig struct {
@@ -101,14 +121,17 @@ func FindBinary(name string) string {
 var (
 	detectedDir  = detectTzroDir()
 	GlobalConfig = &EngineConfig{
-		ModelMode:      "cooperative",
-		CloudProvider:  "google",
-		CloudAPIKey:    "",
-		CloudModel:     "gemini-flash-latest",
-		SpeedFloor:     5.0,
-		SidecarEnabled: true,
-		GGUFModelPath:  "models/grm-2.5-q4.gguf",
-		ModelsDir:      defaultModelsDir(),
+		ModelMode:            "cooperative",
+		CloudProvider:        "google",
+		CloudAPIKey:          "",
+		CloudModel:           "gemini-flash-latest",
+		SpeedFloor:           5.0,
+		SidecarEnabled:       true,
+		GGUFModelPath:        "models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+		ModelsDir:            defaultModelsDir(),
+		ConfidenceThreshold:  3,
+		ExecutorNodeDelayMs:  800,
+		ExecutorLevelDelayMs: 500,
 	}
 	configMutex sync.RWMutex
 	configPath  = filepath.Join(".tzro", "config.json")
@@ -157,7 +180,16 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
 	GlobalConfig.InferenceBackend = cfg.InferenceBackend
 	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
+	GlobalConfig.SentinelEnabled = cfg.SentinelEnabled
+	GlobalConfig.SentinelInterval = cfg.SentinelInterval
 	GlobalConfig.DelegationMode = cfg.DelegationMode
+	GlobalConfig.ConfidenceThreshold = cfg.ConfidenceThreshold
+	GlobalConfig.PrivacyLevel = cfg.PrivacyLevel
+	GlobalConfig.RestrictedDirectories = cfg.RestrictedDirectories
+	GlobalConfig.ComplexityThreshold = cfg.ComplexityThreshold
+	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
+	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
+	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -179,7 +211,16 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.GGUFModelPath = cfg.GGUFModelPath
 	GlobalConfig.InferenceBackend = cfg.InferenceBackend
 	GlobalConfig.ObserverEnabled = cfg.ObserverEnabled
+	GlobalConfig.SentinelEnabled = cfg.SentinelEnabled
+	GlobalConfig.SentinelInterval = cfg.SentinelInterval
 	GlobalConfig.DelegationMode = cfg.DelegationMode
+	GlobalConfig.ConfidenceThreshold = cfg.ConfidenceThreshold
+	GlobalConfig.PrivacyLevel = cfg.PrivacyLevel
+	GlobalConfig.RestrictedDirectories = cfg.RestrictedDirectories
+	GlobalConfig.ComplexityThreshold = cfg.ComplexityThreshold
+	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
+	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
+	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -193,6 +234,28 @@ func (c EngineConfig) IsObserverEnabled() bool {
 		return *c.ObserverEnabled
 	}
 	return c.InferenceBackend.Type == "" || c.InferenceBackend.Type == "llama-server"
+}
+
+// IsSentinelEnabled returns true if the sentinel agent is enabled.
+// If not explicitly set, follows the same auto-detection logic as the Observer.
+func (c EngineConfig) IsSentinelEnabled() bool {
+	if c.SentinelEnabled != nil {
+		return *c.SentinelEnabled
+	}
+	return c.InferenceBackend.Type == "" || c.InferenceBackend.Type == "llama-server"
+}
+
+// GetSentinelInterval returns the configured sentinel heartbeat interval.
+// Defaults to 5 minutes (300 seconds) if not explicitly configured.
+func GetSentinelInterval() time.Duration {
+	configMutex.RLock()
+	interval := GlobalConfig.SentinelInterval
+	configMutex.RUnlock()
+
+	if interval <= 0 {
+		return 5 * time.Minute
+	}
+	return time.Duration(interval) * time.Second
 }
 
 func saveLocked(cfg *EngineConfig) error {
@@ -309,4 +372,100 @@ func GetDelegationMode() string {
 	default:
 		return "balanced"
 	}
+}
+
+// GetConfidenceThreshold returns the configured number of consecutive insufficient
+// confidence assessments before sticky cloud fallback activates for a task.
+// Defaults to 3 if not explicitly configured or set to a non-positive value.
+func GetConfidenceThreshold() int {
+	configMutex.RLock()
+	t := GlobalConfig.ConfidenceThreshold
+	configMutex.RUnlock()
+
+	if t <= 0 {
+		return 3
+	}
+	return t
+}
+
+// GetPrivacyLevel returns the configured privacy routing level.
+// Defaults to "hybrid" if not explicitly configured or set to an invalid value.
+func GetPrivacyLevel() string {
+	configMutex.RLock()
+	level := GlobalConfig.PrivacyLevel
+	configMutex.RUnlock()
+
+	switch level {
+	case "strict-local", "hybrid", "cloud-preferred":
+		return level
+	default:
+		return "hybrid"
+	}
+}
+
+// GetPlanningComplexityThreshold returns the configured complexity tier threshold
+// for routing planning to cloud vs. local. Tasks at or below this tier plan locally.
+// Defaults to "T1" if not explicitly configured or set to an invalid value.
+func GetPlanningComplexityThreshold() string {
+	configMutex.RLock()
+	t := GlobalConfig.ComplexityThreshold
+	configMutex.RUnlock()
+
+	switch t {
+	case "T0", "T1", "T2":
+		return t
+	default:
+		return "T1"
+	}
+}
+
+// GetSensitiveKeywords returns the configured sensitive keywords list for privacy quarantine.
+// If not configured, returns a built-in default list of common sensitive terms.
+func GetSensitiveKeywords() []string {
+	configMutex.RLock()
+	keywords := GlobalConfig.SensitiveKeywords
+	configMutex.RUnlock()
+
+	if len(keywords) > 0 {
+		return keywords
+	}
+	return []string{"password", "secret", "private_key", "api_key", "token", "credential", "db_url", "ssh_key"}
+}
+
+// GetRestrictedDirectories returns the configured list of directory paths
+// that are locked to local-only planning for privacy quarantine.
+func GetRestrictedDirectories() []string {
+	configMutex.RLock()
+	dirs := GlobalConfig.RestrictedDirectories
+	configMutex.RUnlock()
+
+	return dirs
+}
+
+// GetThermalCooldownSeconds returns the configured cooldown pause duration
+// between thermal re-samples when pressure is "serious".
+// Defaults to 30 seconds if not explicitly configured.
+func GetThermalCooldownSeconds() int {
+	configMutex.RLock()
+	v := GlobalConfig.ThermalCooldownSeconds
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 30
+	}
+	return v
+}
+
+// GetThermalCloudCooldownMinutes returns the configured duration a task stays
+// on cloud after thermal escalation before retrying local inference.
+// Defaults to 5 minutes if not explicitly configured.
+func GetThermalCloudCooldownMinutes() int {
+	configMutex.RLock()
+	v := GlobalConfig.ThermalCloudCooldownMinutes
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 5
+	}
+	return v
 }

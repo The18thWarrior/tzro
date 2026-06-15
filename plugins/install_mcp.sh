@@ -388,9 +388,34 @@ fi
 # --- Antigravity IDE (index 5) ---
 if [ "${IFACE_SELECTED[5]}" = "true" ]; then
     echo -e "\n  ${BOLD}${MAGENTA}Antigravity IDE${NC}"
-    echo -e "  ${DIM}Antigravity uses the plugin system — run:${NC}"
-    echo -e "  ${CYAN}bash plugins/install_plugins.sh${NC}"
-    echo -e "  ${GREEN}✔ (Handled by existing plugin installer)${NC}"
+
+    # Clean up stale MCP configs that cause duplicate tzro-mcp process spawning.
+    # Antigravity reads from multiple ~/.gemini/ subdirectories; only the canonical
+    # location (~/.gemini/config/mcp_config.json) should contain the server entry.
+    STALE_LOCATIONS=(
+        "$HOME/.gemini/antigravity/mcp_config.json"
+        "$HOME/.gemini/antigravity-ide/mcp_config.json"
+    )
+    for stale in "${STALE_LOCATIONS[@]}"; do
+        if [ -f "${stale}" ]; then
+            # Only remove if it contains a tzro entry (don't nuke unrelated configs)
+            if grep -q '"tzro"' "${stale}" 2>/dev/null; then
+                if [ "${DRY_RUN}" = "true" ]; then
+                    echo -e "    ${DIM}[DRY RUN] Would remove stale config: ${stale}${NC}"
+                else
+                    rm -f "${stale}"
+                    echo -e "    ${YELLOW}⚠ Removed stale MCP config: ${stale}${NC}"
+                fi
+            fi
+        fi
+    done
+
+    # MCP config: canonical location only
+    echo -e "  ${DIM}MCP Config:${NC}"
+    inject_mcp_config "$HOME/.gemini/config/mcp_config.json" "mcpServers" "Antigravity IDE"
+
+    # Plugin installation is handled separately
+    echo -e "  ${DIM}Plugin: run ${CYAN}bash plugins/install_plugins.sh${NC} ${DIM}to install/update the IDE plugin${NC}"
 fi
 
 # ---------------------------------------------------------------------------

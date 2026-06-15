@@ -6,7 +6,7 @@ import (
 )
 
 // ExpandToSCTGraph dynamically expands a simplified Strategy Plan (high-level DAG)
-// into a fine-grained execution graph with paired GBNF-Bridge, execution, and synthesis nodes.
+// into a fine-grained execution graph with paired Semantic-Validator, execution, and synthesis nodes.
 func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string, error)) (*ExecutionGraph, error) {
 	var sctNodes []GraphNode
 	var sctEdges []GraphEdge
@@ -19,10 +19,10 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	for _, node := range graph.Nodes {
 		// Only expand "action" or "deterministic" steps that require execution
 		if node.Type == "action" || node.Type == "deterministic" {
-			bridgeID := node.ID + "_bridge"
+			validatorID := node.ID + "_validator"
 			execID := node.ID + "_exec"
 
-			// Get the GBNF constraint schema dynamically using the resolver
+			// Get the tool schema dynamically using the resolver
 			var schemaStr string
 			if schemaResolver != nil {
 				if sch, err := schemaResolver(node.Action); err == nil {
@@ -30,36 +30,38 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				}
 			}
 
-			// 1. Logit-level GBNF Grammar bridge node
+			// 1. Semantic Validator node
 			sctNodes = append(sctNodes, GraphNode{
-				ID:              bridgeID,
-				Type:            "gbnf_bridge",
+				ID:              validatorID,
+				Type:            "semantic_validator",
 				Action:          node.Action,
 				Instructions:    node.Instructions,
 				AllowedTools:    node.AllowedTools,
 				OutputSchema:    schemaStr,
 				SuggestedSkills: node.SuggestedSkills,
+				DynamicBindings: node.DynamicBindings,
 				Status:          "pending",
 			})
 
 			// 2. Deterministic Tool execution node
 			sctNodes = append(sctNodes, GraphNode{
-				ID:           execID,
-				Type:         "deterministic",
-				Action:       node.Action,
-				Instructions: fmt.Sprintf("Execute tool '%s' using the structured arguments extracted by the bridge node {{nodes.%s.output}}", node.Action, bridgeID),
-				AllowedTools: node.AllowedTools,
-				Status:       "pending",
+				ID:              execID,
+				Type:            "deterministic",
+				Action:          node.Action,
+				Instructions:    fmt.Sprintf("Execute tool '%s' using the structured arguments extracted by the validator node {{nodes.%s.output}}", node.Action, validatorID),
+				AllowedTools:    node.AllowedTools,
+				DynamicBindings: node.DynamicBindings,
+				Status:          "pending",
 			})
 
-			// Bridge -> Exec edge
+			// Validator -> Exec edge
 			sctEdges = append(sctEdges, GraphEdge{
-				SourceID: bridgeID,
+				SourceID: validatorID,
 				TargetID: execID,
 			})
 
 			execNodeMap[node.ID] = execID
-			bridgeNodeMap[node.ID] = bridgeID
+			bridgeNodeMap[node.ID] = validatorID
 		} else {
 			// Keep other structural nodes (branch, merge, probe) as is.
 			// Probe nodes run their own internal Thought Chain loop and
@@ -73,10 +75,10 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	for _, edge := range graph.Edges {
 		srcExecID, srcExists := execNodeMap[edge.SourceID]
 
-		// Target ID resolution: link to its bridge node if it exists, otherwise the target ID itself
+		// Target ID resolution: link to its validator node if it exists, otherwise the target ID itself
 		var targetID string
-		if tgtBridgeID, tgtExists := bridgeNodeMap[edge.TargetID]; tgtExists {
-			targetID = tgtBridgeID
+		if tgtValidatorID, tgtExists := bridgeNodeMap[edge.TargetID]; tgtExists {
+			targetID = tgtValidatorID
 		} else {
 			targetID = execNodeMap[edge.TargetID]
 		}
@@ -120,10 +122,11 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 
 	return &ExecutionGraph{
-		TaskID:    graph.TaskID,
-		Nodes:     sctNodes,
-		Edges:     sctEdges,
-		MaxCycles: graph.MaxCycles,
-		CreatedAt: time.Now().Unix(),
+		TaskID:     graph.TaskID,
+		GoalPrompt: graph.GoalPrompt,
+		Nodes:      sctNodes,
+		Edges:      sctEdges,
+		MaxCycles:  graph.MaxCycles,
+		CreatedAt:  time.Now().Unix(),
 	}, nil
 }

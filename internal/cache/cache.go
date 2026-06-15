@@ -84,11 +84,7 @@ Respond with ONLY valid JSON matching the schema below. No markdown fences.`
   "required": ["columns"]
 }`
 
-	req := inference.StructuredInferenceRequest{
-		SystemPrompt: PruneSystemPrompt,
-		UserPrompt:   userPrompt,
-		JSONSchema:   PruneSchema,
-	}
+	req := inference.NewSimpleRequest(PruneSystemPrompt, userPrompt, PruneSchema)
 
 	resContent, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
 	if err != nil {
@@ -238,6 +234,7 @@ func (s *sqlCacheStore) Introspect(ctx context.Context, cacheID string) string {
 		var envelopeJSON string
 		err := db.QueryRow("SELECT envelope_json FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&envelopeJSON)
 		if err == nil && envelopeJSON != "" {
+			RecordCacheHit()
 			return envelopeJSON
 		}
 	}
@@ -246,9 +243,11 @@ func (s *sqlCacheStore) Introspect(ctx context.Context, cacheID string) string {
 	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	bytes, err := os.ReadFile(cacheFilePath)
 	if err != nil {
+		RecordCacheMiss()
 		return fmt.Sprintf("Error: cache with ID '%s' not found in database or disk", cacheID)
 	}
 
+	RecordCacheHit()
 	envJSON, _ := createCacheEnvelope(string(bytes))
 	return envJSON
 }
@@ -321,6 +320,7 @@ func (s *sqlCacheStore) getRawPayload(cacheID string) string {
 		var rawPayload string
 		err := db.QueryRow("SELECT raw_payload FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&rawPayload)
 		if err == nil && rawPayload != "" {
+			RecordCacheHit()
 			return rawPayload
 		}
 	}
@@ -329,8 +329,10 @@ func (s *sqlCacheStore) getRawPayload(cacheID string) string {
 	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	bytes, err := os.ReadFile(cacheFilePath)
 	if err != nil {
+		RecordCacheMiss()
 		return fmt.Sprintf("Error: cache with ID '%s' not found on database or disk", cacheID)
 	}
+	RecordCacheHit()
 	return string(bytes)
 }
 

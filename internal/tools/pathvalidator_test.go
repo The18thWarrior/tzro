@@ -40,7 +40,7 @@ func TestPathValidator_AcceptsPathInsideRoot(t *testing.T) {
 
 func TestPathValidator_RejectsTraversalOutsideRoot(t *testing.T) {
 	root := testdataDir(t)
-	v := NewPathValidator([]string{root})
+	v := NewStaticPathValidator([]string{root})
 
 	// Try to escape via ../
 	_, err := v.ValidatePath(filepath.Join(root, "..", "outside", "secret.txt"))
@@ -61,7 +61,7 @@ func TestPathValidator_RejectsSymlinkOutsideRoot(t *testing.T) {
 	}
 	defer os.Remove(symlinkPath)
 
-	v := NewPathValidator([]string{root})
+	v := NewStaticPathValidator([]string{root})
 
 	_, err := v.ValidatePath(filepath.Join(root, "escape_link", "secret.txt"))
 	if err == nil {
@@ -113,10 +113,58 @@ func TestPathValidator_RejectsNonExistentPath(t *testing.T) {
 }
 
 func TestPathValidator_RejectsEmptyAllowedRoots(t *testing.T) {
-	v := NewPathValidator(nil)
+	v := NewStaticPathValidator(nil)
 
 	_, err := v.ValidatePath("/some/path")
 	if err == nil {
 		t.Fatal("expected error when no allowed roots configured, got nil")
+	}
+}
+
+// TestPathValidator_ResolvesBareRelativeAgainstRoot verifies that bare relative
+// paths like "nested" (not prefixed with the root) resolve against allowed roots.
+// This is the exact failure mode that caused probe nodes to loop: the local model
+// emits "cmd" and filepath.Abs resolves it against the daemon's cwd, not the project root.
+func TestPathValidator_ResolvesBareRelativeAgainstRoot(t *testing.T) {
+	root := testdataDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	// "nested" is a directory inside testdata/project/
+	resolved, err := v.ValidatePath("nested")
+	if err != nil {
+		t.Fatalf("expected bare relative path to resolve against allowed root, got error: %v", err)
+	}
+	expected := filepath.Join(root, "nested")
+	if resolved != expected {
+		t.Errorf("expected %s, got %s", expected, resolved)
+	}
+}
+
+// TestPathValidator_ResolvesBareRelativeFile verifies that a bare relative file
+// path resolves against the first matching allowed root.
+func TestPathValidator_ResolvesBareRelativeFile(t *testing.T) {
+	root := testdataDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	resolved, err := v.ValidatePath("readme.txt")
+	if err != nil {
+		t.Fatalf("expected bare relative file to resolve against allowed root, got error: %v", err)
+	}
+	expected := filepath.Join(root, "readme.txt")
+	if resolved != expected {
+		t.Errorf("expected %s, got %s", expected, resolved)
+	}
+}
+
+// TestPathValidator_BareRelativeStillRejectsOutsideRoot ensures that even with
+// relative path resolution, the security boundary is enforced — a relative path
+// that resolves inside a root but via traversal is still rejected.
+func TestPathValidator_BareRelativeNonExistent(t *testing.T) {
+	root := testdataDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	_, err := v.ValidatePath("does_not_exist_anywhere")
+	if err == nil {
+		t.Fatal("expected error for non-existent bare relative path, got nil")
 	}
 }

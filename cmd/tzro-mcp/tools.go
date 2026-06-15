@@ -11,13 +11,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"tzro/internal/channel"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/executor"
 	"tzro/internal/inference"
 	internalmcp "tzro/internal/mcp"
 	"tzro/internal/memory"
+	"tzro/internal/packagemanager"
+	"tzro/internal/sentinel"
 	"tzro/internal/task"
+	"tzro/internal/tools"
 )
 
 // tzro_run tool definition
@@ -44,6 +48,17 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 		timeoutSec = 60
 	}
 
+	// Start SubagentChannel for real-time event delivery to the harness.
+	// Node count is unknown at this point (planning hasn't started), so pass 0.
+	ch := startSubagentChannel(req, mcpServer, taskID, 0)
+	if ch != nil {
+		defer ch.Close()
+		// v2: Register channel for bidirectional tool dispatch.
+		// ChannelToolHook will intercept client-tool nodes and dispatch via sampling.
+		channel.GlobalChannelToolHook.RegisterChannel(taskID, ch)
+		defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
+	}
+
 	type execResult struct {
 		nodes []memory.NodeState
 		err   error
@@ -54,8 +69,9 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 	// Execute task in a background goroutine to allow fallback to async mode if it times out
 	go func() {
 		_, _, err := task.Execute(context.Background(), args.Prompt, task.ExecuteOptions{
-			TaskID:     taskID,
-			IntentType: "workflow",
+			TaskID:       taskID,
+			IntentType:   "workflow",
+			IsForeground: true,
 		})
 		nodes := memory.DB.GetAllNodeStates(taskID)
 		doneChan <- execResult{nodes: nodes, err: err}
@@ -87,7 +103,67 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 		}, nil, nil
 
 	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		// Exceeded timeout limit: let it run in background and return async details
+		// Timeout hit: check if the graph was persisted to SQLite by querying node_states.
+		// If nodes exist, the executor is running and the task ID is safe to return.
+		// If no nodes exist, planning is still in progress or failed — give a brief grace period.
+		nodes := memory.DB.GetAllNodeStates(taskID)
+		if len(nodes) == 0 {
+			// Brief grace: wait up to 5 more seconds for planning to complete
+			graceTimer := time.After(5 * time.Second)
+			graceTicker := time.NewTicker(500 * time.Millisecond)
+			defer graceTicker.Stop()
+
+		graceLoop:
+			for {
+				select {
+				case res := <-doneChan:
+					// Task finished during grace period
+					status := "completed"
+					var errMsg string
+					if res.err != nil {
+						status = "failed"
+						errMsg = res.err.Error()
+					}
+					respMap := map[string]interface{}{
+						"taskId": taskID,
+						"status": status,
+						"nodes":  res.nodes,
+					}
+					if errMsg != "" {
+						respMap["error"] = errMsg
+					}
+					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+					return &mcp.CallToolResult{
+						Content: []mcp.Content{
+							&mcp.TextContent{Text: string(respBytes)},
+						},
+					}, nil, nil
+
+				case <-graceTicker.C:
+					nodes = memory.DB.GetAllNodeStates(taskID)
+					if len(nodes) > 0 {
+						break graceLoop
+					}
+
+				case <-graceTimer:
+					// Grace period exhausted — return "planning" status
+					respMap := map[string]interface{}{
+						"taskId": taskID,
+						"status": "planning",
+						"message": "Task is still being planned. The graph has not been compiled yet. " +
+							"Check tzro_status after a delay — the task may not appear until planning completes.",
+					}
+					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+					return &mcp.CallToolResult{
+						Content: []mcp.Content{
+							&mcp.TextContent{Text: string(respBytes)},
+						},
+					}, nil, nil
+				}
+			}
+		}
+
+		// Nodes exist — graph is persisted and execution is in progress
 		respMap := map[string]interface{}{
 			"taskId": taskID,
 			"status": "running",
@@ -900,7 +976,7 @@ func handleTzroCompletion(ctx context.Context, req *mcp.CallToolRequest, args Tz
 		}
 	}
 
-	result, err := backend.CallModel(ctx, args.SystemPrompt, args.UserPrompt, args.JsonSchema)
+	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: args.SystemPrompt}, {Role: "user", Content: args.UserPrompt}}, args.JsonSchema)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -1004,7 +1080,7 @@ func handleTzroClassification(ctx context.Context, req *mcp.CallToolRequest, arg
 		"required": ["category", "confidence", "reasoning"]
 	}`, string(categoriesJSON))
 
-	result, err := backend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -1066,6 +1142,617 @@ func runDelegationHint() string {
 }
 
 // registerTools registers all tools with the MCP server.
+// tzro_activity_report tool definition
+
+// TzroActivityReportArgs defines the inputs for reporting agent activity to the Sentinel.
+type TzroActivityReportArgs struct {
+	Activity     string   `json:"activity" jsonschema:"required,Brief description of current work"`
+	FilesTouched []string `json:"filesTouched,omitempty" jsonschema:"File paths read or modified"`
+	ToolsUsed    []string `json:"toolsUsed,omitempty" jsonschema:"Tools called since last report"`
+}
+
+func handleTzroActivityReport(ctx context.Context, req *mcp.CallToolRequest, args TzroActivityReportArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Activity) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "activity cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	report := sentinel.ActivityReport{
+		Activity:     args.Activity,
+		FilesTouched: args.FilesTouched,
+		ToolsUsed:    args.ToolsUsed,
+		Timestamp:    time.Now().Unix(),
+	}
+
+	sentinel.DefaultAgent.IngestActivityReport(report)
+
+	result, _ := json.Marshal(map[string]string{"status": "acknowledged"})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(result)},
+		},
+	}, nil, nil
+}
+
+// tzro_sentinel_alerts tool definition
+
+// TzroSentinelAlertsArgs defines the inputs for querying Sentinel alerts.
+type TzroSentinelAlertsArgs struct {
+	Status string `json:"status,omitempty" jsonschema:"Filter by status: unread, read, dismissed. Default unread"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Max alerts to return. Default 10"`
+}
+
+func handleTzroSentinelAlerts(ctx context.Context, req *mcp.CallToolRequest, args TzroSentinelAlertsArgs) (*mcp.CallToolResult, any, error) {
+	status := args.Status
+	if status == "" {
+		status = "unread"
+	}
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	notifs, err := memory.DB.GetNotifications(status)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to query alerts: %s"}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Filter to sentinel-sourced notifications only
+	var sentinelAlerts []memory.DurableNotification
+	for _, n := range notifs {
+		if n.Source == "sentinel" {
+			sentinelAlerts = append(sentinelAlerts, n)
+			if len(sentinelAlerts) >= limit {
+				break
+			}
+		}
+	}
+
+	// Mark returned unread alerts as read
+	if status == "unread" {
+		for _, n := range sentinelAlerts {
+			_ = memory.DB.UpdateNotificationStatus(n.ID, "read")
+		}
+	}
+
+	if sentinelAlerts == nil {
+		sentinelAlerts = []memory.DurableNotification{}
+	}
+
+	result, _ := json.Marshal(map[string]interface{}{
+		"alerts": sentinelAlerts,
+		"count":  len(sentinelAlerts),
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(result)},
+		},
+	}, nil, nil
+}
+
+// tzro_sentinel_wake tool definition
+
+// TzroSentinelWakeArgs defines the inputs for manually waking the Sentinel Agent.
+type TzroSentinelWakeArgs struct {
+	ContextHint string `json:"contextHint,omitempty" jsonschema:"Optional hint to bias Sentinel analysis toward a specific topic, e.g. 'check for security issues in auth module'"`
+}
+
+func handleTzroSentinelWake(ctx context.Context, req *mcp.CallToolRequest, args TzroSentinelWakeArgs) (*mcp.CallToolResult, any, error) {
+	alerted := sentinel.DefaultAgent.Wake(ctx, args.ContextHint)
+
+	respMap := map[string]interface{}{
+		"status":        "completed",
+		"alertProduced": alerted,
+	}
+	if args.ContextHint != "" {
+		respMap["contextHint"] = args.ContextHint
+	}
+
+	result, _ := json.Marshal(respMap)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(result)},
+		},
+	}, nil, nil
+}
+
+// tzro_workflow tool definition
+
+// WorkflowNodeInput defines a single node in a user-specified DAG workflow.
+type WorkflowNodeInput struct {
+	ID                  string              `json:"id" jsonschema:"required,Unique node identifier"`
+	Type                string              `json:"type" jsonschema:"required,Node type: action, probe, deterministic, branch, merge, synthesis, hypothesis"`
+	Action              string              `json:"action,omitempty" jsonschema:"Target tool name for action/deterministic nodes"`
+	Instructions        string              `json:"instructions" jsonschema:"required,Natural language step instructions. Use double-braces variable binding to reference upstream node outputs."`
+	AllowedTools        []string            `json:"allowedTools,omitempty" jsonschema:"Whitelist of permitted tools for this node"`
+	StaticArgs          string              `json:"staticArgs,omitempty" jsonschema:"Pre-known arguments as a JSON string"`
+	RequireApproval     bool                `json:"requireApproval,omitempty" jsonschema:"Pause and wait for human approval before executing"`
+	ActivationThreshold float64             `json:"activationThreshold,omitempty" jsonschema:"Sufficiency gate 0.0-1.0. 0.0 disables Edge Thoughts."`
+	ProbeConfig         *WorkflowProbeInput `json:"probeConfig,omitempty" jsonschema:"Configuration for probe nodes. Required when type is probe."`
+}
+
+// WorkflowEdgeInput defines a directed edge between two nodes.
+type WorkflowEdgeInput struct {
+	SourceID string `json:"sourceId" jsonschema:"required,Source node ID"`
+	TargetID string `json:"targetId" jsonschema:"required,Target node ID"`
+}
+
+// WorkflowProbeInput configures a Probe Node's Thought Chain execution loop.
+type WorkflowProbeInput struct {
+	Goal         string   `json:"goal" jsonschema:"required,The exploration objective"`
+	AllowedTools []string `json:"allowedTools" jsonschema:"required,Tools the probe may use"`
+	StepBudget   int      `json:"stepBudget,omitempty" jsonschema:"Maximum number of Thought Chain steps before forced synthesis. Default 20"`
+	CompactEvery int      `json:"compactEvery,omitempty" jsonschema:"Rolling compaction frequency in steps. Default 3"`
+}
+
+// TzroWorkflowArgs defines the inputs for creating and executing a DAG workflow directly.
+type TzroWorkflowArgs struct {
+	Nodes          []WorkflowNodeInput `json:"nodes" jsonschema:"required,Array of DAG nodes defining the workflow steps"`
+	Edges          []WorkflowEdgeInput `json:"edges,omitempty" jsonschema:"Array of directed edges defining node dependencies"`
+	MutationBudget int                 `json:"mutationBudget,omitempty" jsonschema:"Max dynamic node spawns for activation thresholds. Default 0 (disabled)"`
+	MaxCycles      int                 `json:"maxCycles,omitempty" jsonschema:"Max execution cycles. Default 5"`
+	Timeout        int                 `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 60"`
+	DryRun         bool                `json:"dryRun,omitempty" jsonschema:"If true validates and compiles the graph without executing. Returns execution levels."`
+}
+
+func handleTzroWorkflow(ctx context.Context, req *mcp.CallToolRequest, args TzroWorkflowArgs) (*mcp.CallToolResult, any, error) {
+	// --- Validation ---
+	if len(args.Nodes) == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "nodes array cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Check for unique node IDs and build lookup set
+	nodeIDs := make(map[string]bool, len(args.Nodes))
+	for _, n := range args.Nodes {
+		if strings.TrimSpace(n.ID) == "" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: `{"error": "all nodes must have a non-empty id"}`},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		if nodeIDs[n.ID] {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "duplicate node id: %s"}`, n.ID)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		nodeIDs[n.ID] = true
+
+		// Validate probe nodes have probeConfig
+		if n.Type == "probe" && n.ProbeConfig == nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "probe node '%s' requires a probeConfig"}`, n.ID)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+	}
+
+	// Validate edge references
+	for _, e := range args.Edges {
+		if !nodeIDs[e.SourceID] {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "edge references non-existent source node: %s"}`, e.SourceID)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		if !nodeIDs[e.TargetID] {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "edge references non-existent target node: %s"}`, e.TargetID)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+	}
+
+	// --- Map to compiler types ---
+	graphNodes := make([]compiler.GraphNode, 0, len(args.Nodes))
+	for _, n := range args.Nodes {
+		gn := compiler.GraphNode{
+			ID:                  n.ID,
+			Type:                n.Type,
+			Action:              n.Action,
+			Instructions:        n.Instructions,
+			AllowedTools:        n.AllowedTools,
+			StaticArgs:          n.StaticArgs,
+			RequireApproval:     n.RequireApproval,
+			ActivationThreshold: n.ActivationThreshold,
+			Status:              "pending",
+		}
+		if n.ProbeConfig != nil {
+			stepBudget := n.ProbeConfig.StepBudget
+			if stepBudget <= 0 {
+				stepBudget = 20
+			}
+			compactEvery := n.ProbeConfig.CompactEvery
+			if compactEvery <= 0 {
+				compactEvery = 3
+			}
+			gn.ProbeConfig = &compiler.ProbeConfig{
+				Goal:         n.ProbeConfig.Goal,
+				AllowedTools: n.ProbeConfig.AllowedTools,
+				StepBudget:   stepBudget,
+				CompactEvery: compactEvery,
+			}
+		}
+		graphNodes = append(graphNodes, gn)
+	}
+
+	graphEdges := make([]compiler.GraphEdge, 0, len(args.Edges))
+	for _, e := range args.Edges {
+		graphEdges = append(graphEdges, compiler.GraphEdge{
+			SourceID: e.SourceID,
+			TargetID: e.TargetID,
+		})
+	}
+
+	taskID := uuid.New().String()
+	maxCycles := args.MaxCycles
+	if maxCycles <= 0 {
+		maxCycles = 5
+	}
+
+	graph := &compiler.ExecutionGraph{
+		TaskID:    taskID,
+		Nodes:     graphNodes,
+		Edges:     graphEdges,
+		MaxCycles: maxCycles,
+		CreatedAt: time.Now().Unix(),
+	}
+
+	// Set mutation budget if provided
+	if args.MutationBudget > 0 {
+		graph.MutationBudget = &compiler.MutationBudget{
+			MaxSpawns:       args.MutationBudget,
+			RemainingSpawns: args.MutationBudget,
+		}
+	}
+
+	// --- SCT Expansion ---
+	expanded, err := compiler.ExpandToSCTGraph(graph, tools.GetSchema)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "SCT expansion failed: %s"}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// --- Kahn Compile ---
+	levels, err := compiler.CompileAndSort(expanded)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "%s"}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// --- Dry Run ---
+	if args.DryRun {
+		respMap := map[string]interface{}{
+			"taskId":          taskID,
+			"status":          "dry_run",
+			"executionLevels": levels,
+			"nodeCount":       len(expanded.Nodes),
+			"edgeCount":       len(expanded.Edges),
+		}
+		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+	}
+
+	// --- Execute with timeout/async fallback (same pattern as tzro_run) ---
+	timeoutSec := args.Timeout
+	if timeoutSec <= 0 {
+		timeoutSec = 60
+	}
+
+	// Start SubagentChannel for real-time event delivery to the harness.
+	// Node count is known from the compiled graph.
+	wfCh := startSubagentChannel(req, mcpServer, taskID, float64(len(expanded.Nodes)))
+	if wfCh != nil {
+		defer wfCh.Close()
+		channel.GlobalChannelToolHook.RegisterChannel(taskID, wfCh)
+		defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
+	}
+
+	type execResult struct {
+		nodes []memory.NodeState
+		err   error
+	}
+
+	doneChan := make(chan execResult, 1)
+
+	go func() {
+		execErr := executor.GlobalEngine.ExecuteGraph(context.Background(), expanded, levels)
+		nodes := memory.DB.GetAllNodeStates(taskID)
+		doneChan <- execResult{nodes: nodes, err: execErr}
+	}()
+
+	select {
+	case res := <-doneChan:
+		status := "completed"
+		var errMsg string
+		if res.err != nil {
+			status = "failed"
+			errMsg = res.err.Error()
+		}
+
+		respMap := map[string]interface{}{
+			"taskId": taskID,
+			"status": status,
+			"nodes":  res.nodes,
+		}
+		if errMsg != "" {
+			respMap["error"] = errMsg
+		}
+
+		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		// Timeout hit: check if nodes were persisted
+		nodes := memory.DB.GetAllNodeStates(taskID)
+		if len(nodes) == 0 {
+			// Brief grace: wait up to 5 more seconds
+			graceTimer := time.After(5 * time.Second)
+			graceTicker := time.NewTicker(500 * time.Millisecond)
+			defer graceTicker.Stop()
+
+		graceLoop:
+			for {
+				select {
+				case res := <-doneChan:
+					status := "completed"
+					var errMsg string
+					if res.err != nil {
+						status = "failed"
+						errMsg = res.err.Error()
+					}
+					respMap := map[string]interface{}{
+						"taskId": taskID,
+						"status": status,
+						"nodes":  res.nodes,
+					}
+					if errMsg != "" {
+						respMap["error"] = errMsg
+					}
+					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+					return &mcp.CallToolResult{
+						Content: []mcp.Content{
+							&mcp.TextContent{Text: string(respBytes)},
+						},
+					}, nil, nil
+
+				case <-graceTicker.C:
+					nodes = memory.DB.GetAllNodeStates(taskID)
+					if len(nodes) > 0 {
+						break graceLoop
+					}
+
+				case <-graceTimer:
+					respMap := map[string]interface{}{
+						"taskId":  taskID,
+						"status":  "compiling",
+						"message": "Workflow graph is still being compiled. Check tzro_status after a delay.",
+					}
+					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+					return &mcp.CallToolResult{
+						Content: []mcp.Content{
+							&mcp.TextContent{Text: string(respBytes)},
+						},
+					}, nil, nil
+				}
+			}
+		}
+
+		// Nodes exist — execution is in progress
+		respMap := map[string]interface{}{
+			"taskId": taskID,
+			"status": "running",
+		}
+		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+	}
+}
+
+// tzro_dashboard tool definition
+
+type TzroDashboardArgs struct{}
+
+func handleTzroDashboard(ctx context.Context, req *mcp.CallToolRequest, args TzroDashboardArgs) (*mcp.CallToolResult, any, error) {
+	spec, err := memory.DB.GetLatestDashboardSpec()
+	if err != nil {
+		respBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	port := "8080"
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		port = envPort
+	}
+	url := fmt.Sprintf("http://localhost:%s/dashboard/", port)
+
+	if spec == nil {
+		// Trigger initial generation in the background
+		taskID := uuid.New().String()
+		go func() {
+			_, _, _ = task.Execute(context.Background(), "Generate system dashboard spec", task.ExecuteOptions{
+				TaskID:       taskID,
+				IntentType:   "workflow",
+				IsForeground: false,
+			})
+		}()
+
+		respBytes, _ := json.Marshal(map[string]interface{}{
+			"url":     url,
+			"status":  "generating",
+			"message": "No dashboard spec found. Triggered initial generation. Please check back shortly.",
+			"taskId":  taskID,
+		})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+		}, nil, nil
+	}
+
+	ageSeconds := time.Now().Unix() - spec.GeneratedAt
+	respBytes, _ := json.Marshal(map[string]interface{}{
+		"url":             url,
+		"status":          "active",
+		"specId":          spec.ID,
+		"generatedAt":     spec.GeneratedAt,
+		"ageSeconds":      ageSeconds,
+		"generatorTaskId": spec.GeneratorTaskID,
+		"ttlSeconds":      spec.TTLSeconds,
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+// tzro_dashboard_regenerate tool definition
+
+type TzroDashboardRegenerateArgs struct {
+	Wait bool `json:"wait,omitempty" jsonschema:"Whether to block and wait for the generation to complete"`
+}
+
+func handleTzroDashboardRegenerate(ctx context.Context, req *mcp.CallToolRequest, args TzroDashboardRegenerateArgs) (*mcp.CallToolResult, any, error) {
+	taskID := uuid.New().String()
+	prompt := "Generate system dashboard spec"
+
+	if args.Wait {
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		graph, _, err := task.Execute(timeoutCtx, prompt, task.ExecuteOptions{
+			TaskID:       taskID,
+			IntentType:   "workflow",
+			IsForeground: true,
+		})
+		if err != nil {
+			if timeoutCtx.Err() == context.DeadlineExceeded {
+				respBytes, _ := json.Marshal(map[string]interface{}{
+					"status": "generating",
+					"taskId": taskID,
+				})
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+				}, nil, nil
+			}
+			respBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		nodeSucceeded := false
+		for _, node := range graph.Nodes {
+			if node.Action == "terminal_synthesis" {
+				state, ok := memory.DB.GetNodeState(taskID, node.ID)
+				if ok && state.Status == "completed" {
+					nodeSucceeded = true
+				}
+			}
+		}
+
+		status := "failed"
+		if nodeSucceeded {
+			status = "completed"
+		}
+
+		respBytes, _ := json.Marshal(map[string]interface{}{
+			"status": status,
+			"taskId": taskID,
+		})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+		}, nil, nil
+	}
+
+	go func() {
+		_, _, _ = task.Execute(context.Background(), prompt, task.ExecuteOptions{
+			TaskID:       taskID,
+			IntentType:   "workflow",
+			IsForeground: false,
+		})
+	}()
+
+	respBytes, _ := json.Marshal(map[string]interface{}{
+		"status": "generating",
+		"taskId": taskID,
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+// tzro_dashboard_spec tool definition
+
+type TzroDashboardSpecArgs struct{}
+
+func handleTzroDashboardSpec(ctx context.Context, req *mcp.CallToolRequest, args TzroDashboardSpecArgs) (*mcp.CallToolResult, any, error) {
+	spec, err := memory.DB.GetLatestDashboardSpec()
+	if err != nil {
+		respBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	if spec == nil {
+		respBytes, _ := json.Marshal(map[string]string{"error": "no dashboard spec found"})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: spec.Spec}},
+	}, nil, nil
+}
+
 func registerTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
@@ -1205,4 +1892,189 @@ func registerTools(server *mcp.Server) {
 			"no hallucination possible. Use for sentiment analysis, intent routing, priority triage, " +
 			"content categorization, or any multi-class classification task. Zero cost, fully private." + delegationHint(),
 	}, handleTzroClassification)
+
+	// Sentinel Agent tools (ADR-0023)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_activity_report",
+		Description: "Report current agent activity to the Sentinel for proactive context analysis. Called periodically by the cloud agent to enable richer proactive assistance.",
+	}, handleTzroActivityReport)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_sentinel_alerts",
+		Description: "Retrieve proactive insight alerts generated by the Sentinel Agent. Returns alerts filtered by status (default: unread). Marks returned unread alerts as read.",
+	}, handleTzroSentinelAlerts)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_sentinel_wake",
+		Description: "Manually trigger the Sentinel Agent's retrieval-grounded synthesis pipeline outside its normal heartbeat cadence. Use when you want an immediate proactive analysis — e.g., after completing a major code change, before a commit, or when the user explicitly asks for a Sentinel check. Accepts an optional contextHint to bias the analysis toward a specific topic.",
+	}, handleTzroSentinelWake)
+
+	// Direct workflow creation tool
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_workflow",
+		Description: "Create and execute a tzro DAG workflow by directly specifying nodes, edges, " +
+			"and execution parameters. Bypasses the LLM Strategic Planner — use when you have a " +
+			"pre-defined workflow structure. The graph is SCT-expanded (action nodes decomposed into " +
+			"bridge/exec pairs) and Kahn-sorted before execution. Supports dry-run validation, " +
+			"probe nodes, activation thresholds, mutation budgets, and human-in-the-loop approval gates.",
+	}, handleTzroWorkflow)
+
+	// Dashboard tools
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard",
+		Description: "Check spec status and return the HTTP dashboard URL, age, and status. Triggers initial generation if no spec exists.",
+	}, handleTzroDashboard)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard_regenerate",
+		Description: "Trigger immediate generation of the system dashboard spec, supporting optional wait blocking parameters.",
+	}, handleTzroDashboardRegenerate)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard_spec",
+		Description: "Return the current raw system dashboard spec JSON for debugging.",
+	}, handleTzroDashboardSpec)
+
+	// Agent App Package Manager tools (ADR-0031)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_apps_list",
+		Description: "List all installed Agent Apps (.tzroapp packages) and their current status.",
+	}, handleTzroAppsList)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_apps_install",
+		Description: "Install an Agent App from a .tzroapp archive path. Extracts files, runs SQL migrations, registers tools, and indexes micro-skills.",
+	}, handleTzroAppsInstall)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_apps_uninstall",
+		Description: "Uninstall an Agent App by its ID. Soft-disables the app by default (deregisters tools, preserves data). Set purge=true to permanently remove all data and tables.",
+	}, handleTzroAppsUninstall)
+}
+
+// --- Agent App Package Manager MCP tool handlers ---
+
+// getOrInitPackageManager creates a packagemanager.Manager using the shared memory DB.
+func getOrInitPackageManager() (*packagemanager.Manager, error) {
+	db := memory.DB.RawDB()
+	if db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	appsDir := config.ResolvePath(".tzro/apps")
+	mgr := packagemanager.NewManager(db, internalmcp.GlobalRegistry, appsDir)
+	if err := mgr.InitSchema(); err != nil {
+		return nil, fmt.Errorf("failed to initialize package manager schema: %w", err)
+	}
+	return mgr, nil
+}
+
+// TzroAppsListArgs defines the inputs for listing installed Agent Apps.
+type TzroAppsListArgs struct{}
+
+func handleTzroAppsList(ctx context.Context, req *mcp.CallToolRequest, args TzroAppsListArgs) (*mcp.CallToolResult, any, error) {
+	mgr, err := getOrInitPackageManager()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	apps, err := mgr.List()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	respBytes, _ := json.MarshalIndent(apps, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// TzroAppsInstallArgs defines the inputs for installing an Agent App.
+type TzroAppsInstallArgs struct {
+	ArchivePath string `json:"archivePath" jsonschema:"required,Absolute path to the .tzroapp archive file"`
+}
+
+func handleTzroAppsInstall(ctx context.Context, req *mcp.CallToolRequest, args TzroAppsInstallArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.ArchivePath) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "archivePath cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	mgr, err := getOrInitPackageManager()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	app, err := mgr.Install(args.ArchivePath)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": %q}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	respBytes, _ := json.MarshalIndent(app, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// TzroAppsUninstallArgs defines the inputs for uninstalling an Agent App.
+type TzroAppsUninstallArgs struct {
+	AppID string `json:"appId" jsonschema:"required,The Agent App ID to uninstall"`
+	Purge bool   `json:"purge,omitempty" jsonschema:"If true permanently removes all data and tables. Default false (soft-disable)."`
+}
+
+func handleTzroAppsUninstall(ctx context.Context, req *mcp.CallToolRequest, args TzroAppsUninstallArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.AppID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "appId cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	mgr, err := getOrInitPackageManager()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if args.Purge {
+		err = mgr.Purge(args.AppID)
+	} else {
+		err = mgr.Uninstall(args.AppID)
+	}
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": %q}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	action := "uninstalled"
+	if args.Purge {
+		action = "purged"
+	}
+	respBytes, _ := json.MarshalIndent(map[string]string{
+		"status": "success",
+		"appId":  args.AppID,
+		"action": action,
+	}, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
 }

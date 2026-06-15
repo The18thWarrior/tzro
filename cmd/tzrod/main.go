@@ -6,13 +6,17 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 	"tzro/internal/config"
 	"tzro/internal/executor"
 	"tzro/internal/inference"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/observer"
+	"tzro/internal/proactivity"
+	"tzro/internal/sentinel"
 	"tzro/internal/server"
+	"tzro/internal/services"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
 	"tzro/internal/workflow"
@@ -61,18 +65,60 @@ func main() {
 		fmt.Printf("[Init Warning] Failed to initialize Tool Registry: %v\n", err)
 	}
 
-	// 5. Spawn background debounced event monitor Observer (if enabled)
-	if cfg.IsObserverEnabled() {
-		fmt.Println("[Init] Injecting LLM client adapter into Telemetry Observer...")
-		observer.SetLLMClient(&TelemetryLLMAdapter{
-			manager: inference.GlobalLocalModel,
-		})
+	// 5. Register background services via declarative ServiceRegistry
+	fmt.Println("[Init] Registering background services...")
+	svcRegistry := services.NewRegistry()
 
-		fmt.Println("[Init] Spawning background debouncer Observer...")
-		observer.Start()
-	} else {
-		fmt.Println("[Init] Observer Agent is disabled per configuration settings.")
-	}
+	// Observer Agent
+	svcRegistry.Register(services.ServiceDef{
+		Name:    "observer",
+		Type:    "background_agent",
+		Enabled: cfg.IsObserverEnabled(),
+		Start: func() error {
+			fmt.Println("[Init] Injecting LLM client adapter into Telemetry Observer...")
+			observer.SetLLMClient(&TelemetryLLMAdapter{
+				manager: inference.GlobalLocalModel,
+			})
+			fmt.Println("[Init] Spawning background debouncer Observer...")
+			observer.Start()
+			return nil
+		},
+		Stop: func() error { return nil },
+	})
+
+	// Sentinel Agent (ADR-0023)
+	svcRegistry.Register(services.ServiceDef{
+		Name:    "sentinel",
+		Type:    "background_agent",
+		Enabled: cfg.IsSentinelEnabled(),
+		Start: func() error {
+			fmt.Println("[Init] Injecting LLM client adapter into Sentinel Agent...")
+			sentinel.SetLLMClient(&TelemetryLLMAdapter{
+				manager: inference.GlobalLocalModel,
+			})
+			fmt.Println("[Init] Spawning background Sentinel heartbeat...")
+			sentinel.Start()
+			return nil
+		},
+		Stop: func() error { return nil },
+	})
+
+	// Attention Scheduler (Proactivity subsystem)
+	svcRegistry.Register(services.ServiceDef{
+		Name:    "attention_scheduler",
+		Type:    "scheduler",
+		Enabled: true,
+		Start: func() error {
+			fmt.Println("[Init] Starting Proactivity AttentionScheduler...")
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewObserverDaemon())
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewCompactorDaemon())
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewReconcilerDaemon())
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewPrefetcherDaemon())
+			_ = proactivity.GlobalScheduler.Start(context.Background())
+			return nil
+		},
+		Stop: func() error { return nil },
+	})
 
 	// 5.25. Register Hooks Globally
 	fmt.Println("[Init] Registering global hooks...")
@@ -81,8 +127,62 @@ func main() {
 
 	// 5.5. Initialize background cron scheduler and run Boot Recovery
 	fmt.Println("[Init] Starting background cron scheduler & recovering interrupted workflows...")
+
+	// Register system_dashboard workflow on boot if not present
+	fmt.Println("[Init] Registering system dashboard workflow...")
+	systemWF := memory.WorkflowDefinition{
+		ID:                "system_dashboard",
+		Name:              "System Dashboard Spec Generator",
+		Description:       "Generates the system dashboard layout specification JSON dynamically.",
+		TriggerType:       "cron",
+		TriggerConfig:     "0 */4 * * *",
+		Status:            "active",
+		OrchestrationMode: "static",
+		CreatedAt:         time.Now().Unix(),
+		UpdatedAt:         time.Now().Unix(),
+	}
+	systemWFTasks := []memory.WorkflowTask{
+		{
+			WorkflowID:     "system_dashboard",
+			TaskTemplateID: "generate_spec",
+			Name:           "Generate Dashboard Spec",
+			Instructions:   "Generate system dashboard spec",
+			Dependencies:   "",
+		},
+	}
+	// Check if already registered first
+	wfs, err := memory.DB.GetWorkflows()
+	exists := false
+	if err == nil {
+		for _, w := range wfs {
+			if w.ID == "system_dashboard" {
+				exists = true
+				break
+			}
+		}
+	}
+	if !exists {
+		err = memory.DB.SaveWorkflow(systemWF, systemWFTasks)
+		if err != nil {
+			fmt.Printf("[Init Warning] Failed to register system_dashboard workflow: %v\n", err)
+		} else {
+			fmt.Println("[Init] Registered system_dashboard workflow successfully.")
+		}
+	}
+
 	workflow.Scheduler.Start(context.Background())
 	workflow.RecoverInterruptedWorkflows(context.Background())
+
+	// Start all enabled background services
+	fmt.Println("[Init] Starting all enabled background services...")
+	svcRegistry.StartAll()
+	for _, s := range svcRegistry.List() {
+		if !s.Enabled {
+			fmt.Printf("[Init] Service '%s' is disabled per configuration settings.\n", s.Name)
+		} else {
+			fmt.Printf("[Init] Service '%s' → %s\n", s.Name, s.Status)
+		}
+	}
 
 	// 6. Start Unified REST Endpoint API & serve GUI Dashboard static assets
 	port := ":8080"
@@ -104,15 +204,11 @@ type TelemetryLLMAdapter struct {
 
 func (a *TelemetryLLMAdapter) CallModel(ctx context.Context, systemPrompt, userPrompt string, jsonSchema string) (string, error) {
 	if inference.ActiveBackend != nil {
-		res, err := inference.ActiveBackend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+		res, err := inference.ActiveBackend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 		if err != nil {
 			return "", err
 		}
 		return res.Content, nil
 	}
-	return a.manager.ExecuteStructured(ctx, inference.StructuredInferenceRequest{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
-		JSONSchema:   jsonSchema,
-	})
+	return a.manager.ExecuteStructured(ctx, inference.NewSimpleRequest(systemPrompt, userPrompt, jsonSchema))
 }

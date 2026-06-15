@@ -4,6 +4,372 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-14T22:10:00-07:00] implementation | Package Manager — TDD Implementation
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the Agent App Package Manager. 15 vertical slices, 16 tests, all passing. `go build ./...` clean. `go vet` clean.
+- **Feature Summary**: Implements the full Agent App lifecycle via `internal/packagemanager/`. Parses `.tzroapp` zip archives, validates manifests, extracts files to `.tzro/apps/{appId}/`, runs SQL migrations tracked via `_tzro_migrations` table, registers WASM tools with app-scoped namespacing (`{appId}_{toolName}`), incrementally registers MCP daemons, and indexes pre-authored Procedural Micro-Skills. Supports soft-disable uninstall (preserves data) and explicit purge (destructive cleanup).
+- **Design Decisions**:
+  - **Deep module**: 4-method public interface (`Install`, `Uninstall`, `Purge`, `List`), complex 9-step install pipeline hidden inside.
+  - **Exported FunctionTool fields**: Changed `name/schema/fn` to `NameVal/SchemaVal/Fn` so packagemanager can construct tool instances cross-package without import cycles.
+  - **Incremental MCPRegistry**: `RegisterDaemon`/`UnregisterDaemon` added to live registry without full `LoadConfig` teardown.
+  - **Zip-slip protection**: Archive extraction validates destination paths against the app directory prefix.
+  - **Convention-enforced DB isolation**: Purge uses `sqlite_master` scan for `{appId}_%` tables to identify tables to drop.
+- **Files Created/Modified**:
+  - [NEW] [manifest.go](../../internal/packagemanager/manifest.go) (Manifest/ManifestTool/MCPServerDef structs, ParseManifest)
+  - [NEW] [manager.go](../../internal/packagemanager/manager.go) (Manager service with Install/Uninstall/Purge/List)
+  - [NEW] [packagemanager_test.go](../../internal/packagemanager/packagemanager_test.go) (16 integration tests)
+  - [MODIFY] [mcp.go](../../internal/mcp/mcp.go) (InitForTesting, RegisterDaemon, UnregisterDaemon)
+  - [MODIFY] [tools.go](../../internal/tools/tools.go) (Exported FunctionTool fields, nil-guard on Call)
+  - [MODIFY] [proactivity_levels_test.go](../../internal/tools/proactivity_levels_test.go) (Field name migration)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-14T21:18:00-07:00] grill-with-docs | .tzroapp Package Manager Design
+
+- **Activity**: Grilling session resolved 10 design decisions for the `.tzroapp` Agent App packaging standard and Package Manager service. Defined Agent App as a composable capability extension, established tool namespacing, incremental MCP registration, developer-trusted permission model, soft-disable uninstall lifecycle, and pre-authored Procedural Micro-Skills as app prompts.
+- **Terminology Resolved**:
+  - **Agent App** added to `CONTEXT.md`: Self-contained, installable capability extension distributed as a `.tzroapp` archive. Composable, identified by locally-unique short slug, tools namespaced as `{appId}_{toolName}`.
+  - **Package Manager** added to `CONTEXT.md`: Daemon-resident service and CLI subcommand managing Agent App lifecycle (install, uninstall, list, purge).
+  - **Procedural Micro-Skill** broadened in `CONTEXT.md`: Now includes developer-authored SOPs shipped with Agent Apps, not only runtime-extracted from trajectories.
+- **Key Decisions**:
+  - **At least one tool required (Q1)**: An Agent App must bundle at least one tool (WASM or MCP). Toolless packages are just prompt templates and don't justify the packaging machinery.
+  - **Config extension, not replacement (Q2)**: Apps extend `mcp_config.json` rather than bundling the entire tzro binary. Custom scripts (Node.js, Python) included as the "custom delta" on top of vanilla tzro.
+  - **Composable, not flavor (Q3)**: Multiple Agent Apps coexist additively. Rejected exclusive "flavor" model because multi-tool orchestration across apps is the core value.
+  - **Short slug, local uniqueness (Q4)**: App ID is a short slug (e.g., `hubspot`). Tools registered as `{appId}_{toolName}`. Global uniqueness unnecessary without centralized registry.
+  - **Incremental MCP registration (Q5)**: Package Manager calls `RegisterDaemon` on live MCPRegistry — no `LoadConfig` teardown, no disruption to running tasks. Per-app configs in `.tzro/apps/{appId}/mcp.json`.
+  - **Trust the developer (Q6)**: Manifest declares capabilities mapped to Proactivity Ladder tiers. No runtime enforcement beyond natural sandbox guarantees. User approves at install time.
+  - **Soft-disable + explicit purge (Q7)**: `uninstall` deregisters tools and stops daemons but preserves data. `purge` drops tables and removes files. Migration tracking via `_tzro_migrations` table.
+  - **Prompts = pre-authored Procedural Micro-Skills (Q8)**: App `prompts/` directory contains developer-authored Markdown SOPs in existing format, indexed into skill store on install.
+  - **Local file only at GA (Q9)**: URL-based installation deferred to avoid trust surface without supporting infrastructure.
+  - **Convention-enforced DB isolation (Q10)**: Shared `tzro.db`, table names prefixed by app ID. Per-app databases rejected (kills cross-app workflows). Query-rewriting rejected (fragile, marginal gain).
+- **ADRs Created**:
+  - [ADR-0031: Agent App Packaging and Package Manager](../adr/0031-agent-app-packaging-and-package-manager.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Agent App, Package Manager; broadened Procedural Micro-Skill)
+  - [NEW] [0031-agent-app-packaging-and-package-manager.md](../adr/0031-agent-app-packaging-and-package-manager.md)
+  - [MODIFY] [agent-app-packaging.md](features/agent-app-packaging.md) (Updated with all resolved design decisions)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-14T17:55:00-07:00] implementation | SubagentChannel v3: Concurrency, Payloads, Backpressure, SSE & Plugin Adapters
+
+- **Activity**: Full TDD (red-green-refactor) implementation of all v3 SubagentChannel features. 12 vertical slices, 17 new tests (39 total), all passing with `-race`. `go build ./...` clean.
+- **Feature Summary**: Adds concurrency safety, structured payloads with output truncation, dynamic progress total, error backpressure via `BridgeWithOptions`, SSE adapter for dashboard streaming, and Plugin adapter for in-process Go integrations.
+- **Design Decisions**:
+  - **sync.Mutex over RWMutex**: Write-heavy access pattern (every EmitEvent) makes RWMutex overhead unjustified.
+  - **chunkContent generic parser**: Single struct with optional fields avoids type-switching on raw JSON. All 11 event types share one unmarshal path.
+  - **BridgeWithOptions as primary, Bridge as wrapper**: Backward-compatible refactor — existing callers unchanged, new callers get error callbacks.
+  - **SSE adapter sets headers in constructor**: Content-Type, Cache-Control, Connection set once in `NewSSESubagentChannel`.
+  - **Plugin adapter holds raw Go callbacks**: Zero serialization. `EventCallback` and `ToolCallback` function types, not interfaces.
+- **Files Created/Modified**:
+  - [NEW] [payloads.go](../../internal/channel/payloads.go) (11 typed payload structs)
+  - [NEW] [sse_adapter.go](../../internal/channel/sse_adapter.go) (SSE SubagentChannel adapter)
+  - [NEW] [plugin_adapter.go](../../internal/channel/plugin_adapter.go) (Plugin SubagentChannel adapter)
+  - [MODIFY] [channel.go](../../internal/channel/channel.go) (UpdateTotal added to interface)
+  - [MODIFY] [mcp_adapter.go](../../internal/channel/mcp_adapter.go) (sync.Mutex + UpdateTotal)
+  - [MODIFY] [bridge.go](../../internal/channel/bridge.go) (buildPayload, BridgeWithOptions, dynamic total)
+  - [MODIFY] [hook_test.go](../../internal/channel/hook_test.go) (UpdateTotal stub on mock)
+  - [MODIFY] [channel_test.go](../../internal/channel/channel_test.go) (17 new tests)
+  - [MODIFY] [server.go](../../internal/server/server.go) (GET /api/tasks/events SSE endpoint)
+  - [NEW] [subagent-channel-v3.md](architecture/subagent-channel-v3.md) (Wiki page)
+  - [MODIFY] [index.md](index.md) (Added wiki entry)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-11T18:15:00-07:00] implementation | SubagentChannel: Interactive Task Execution Events
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the SubagentChannel spec. 10 vertical slices, 13 unit tests, all passing. `go build ./...` clean. Zero changes to executor, stream bus, or telemetry.
+- **Feature Summary**: Delivers real-time execution events from the tzro engine to external MCP harnesses during task execution. Uses MCP's `NotifyProgress` when the client provides a `progressToken` in `_meta`, falls back to `ResourceUpdated` otherwise. Transport-agnostic interface designed for future SSE, native plugin, and Antigravity SDK adapters.
+- **Design Decisions**:
+  - **Seam interfaces over SDK dependency**: `ProgressNotifier` and `ResourceUpdater` interfaces in `internal/channel/` keep the package free of MCP SDK imports. Adapters injected by `cmd/tzro-mcp/`.
+  - **Bus injection over global**: `Bridge()` takes `*stream.Bus` as parameter for testable isolation.
+  - **Progress on node_completed only**: Monotonic counter increments exclusively on `node_completed` events per MCP spec semantics.
+  - **nodeCount=0 for tzro_run**: Planning hasn't started; MCP spec says `Total=0` means unknown.
+- **Files Created/Modified**:
+  - [NEW] [channel.go](../../internal/channel/channel.go) (ExecutionEvent, SubagentChannel interface, event constants, RecordingChannel)
+  - [NEW] [bridge.go](../../internal/channel/bridge.go) (ChunkToEvent mapper, Bridge goroutine)
+  - [NEW] [mcp_adapter.go](../../internal/channel/mcp_adapter.go) (MCPSubagentChannel with dual-mode progress/fallback)
+  - [NEW] [channel_test.go](../../internal/channel/channel_test.go) (13 tests)
+  - [NEW] [channel_adapters.go](../../cmd/tzro-mcp/channel_adapters.go) (MCP SDK adapter wrappers, startSubagentChannel factory)
+  - [MODIFY] [main.go](../../cmd/tzro-mcp/main.go) (Package-level mcpServer variable)
+  - [MODIFY] [tools.go](../../cmd/tzro-mcp/tools.go) (SubagentChannel wiring in handleTzroRun and handleTzroWorkflow)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-10T23:05:00-07:00] document | PRD: Response Resolver
+
+- **Activity**: Published PRD for Response Resolver, synthesizing all design decisions from the grill-with-docs session into a ready-for-agent implementation spec. 3 modules: Recursive Key Resolver (pure function), Semantic Binding Resolver (Local Model inference), updated `resolveDynamicBindings` integration. Tests specified for all 3 modules.
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/response-resolver/PRD.md) (Response Resolver PRD)
+  - [NEW] [response-resolver.md](features/response-resolver.md) (Wiki feature page)
+  - [MODIFY] [index.md](index.md) (Added feature link)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-10T22:10:00-07:00] grill-with-docs | Response Resolver — Dynamic Binding Output Resolution
+
+- **Activity**: Grilling session walked down 7 branches of the "Tool Output Schema Registry" design tree, originating from benchmark_debug2.log analysis showing ~30 `DynamicBindings` resolution failures across 10 cases. The session reframed the problem from a static registry to a runtime resolution mechanism, rejected MCP extension and write-time flattening, and converged on a two-tier deterministic+semantic design.
+- **Terminology Resolved**:
+  - **Response Resolver** added to `CONTEXT.md`: Transparent post-execution step within action nodes that makes tool outputs resolvable by downstream DynamicBindings. Two-tier: recursive key search (deterministic) + Local Model semantic fallback. Output-side counterpart to the Semantic Validator.
+- **Key Decisions**:
+  - **Internal resolution, not MCP extension (Q2-Q3)**: The harness agent should not need to know tool output schemas. Some tools have dynamic/unpredictable outputs. tzro handles impedance mismatch internally.
+  - **Not a new DAG node (Q4)**: Transparent post-execution step inside action nodes, like `cache.Process`. No additional DAG node injection by the Kahn Compiler.
+  - **Recursive key search, not flattening (Q5)**: No write-time normalization or flattened property map. The raw output (already stored via `SetNodeRawOutput`) is searched recursively at read-time. Simpler, no new storage.
+  - **Uncapped semantic fallback (Q6)**: When recursive key search fails or finds collisions, the Local Model resolves bindings via a focused prompt (~100 tokens). No hard cap — 1-2 calls per task is negligible overhead.
+  - **Format-agnostic resolution cascade (Q7)**: Three tiers — JSON recursive key search → KV-line key search → Local Model semantic fallback. The semantic tier handles non-JSON outputs (plain text, XML, etc.) natively.
+  - **Semantic Validator approach validated**: Benchmark data confirms the 2-pass XML→GBNF pipeline works (0% typed-parameter failure rate). The 50% strict pass rate is driven by evaluator rigidity on free-text fields and binding resolution gaps — not validator failures.
+- **Rejected Alternatives**:
+  - Extending MCP tool definitions with `outputSchema` — couples harness to tzro internals
+  - Write-time flattening into normalized property map — premature complexity, no new storage needed
+  - Hard cap on semantic fallback calls — negligible cost doesn't justify silent failures
+  - Leaf-value flatten with collision handling — recursive search achieves the same without new storage
+- **ADRs Created**:
+  - [ADR-0029: Response Resolver and Semantic Binding Fallback](../adr/0029-response-resolver-and-semantic-binding-fallback.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Response Resolver glossary term)
+  - [NEW] [0029-response-resolver-and-semantic-binding-fallback.md](../adr/0029-response-resolver-and-semantic-binding-fallback.md)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the Thermal Pressure Gating feature from the [design spec](../../docs/superpowers/specs/2026-06-09-thermal-pressure-gating-design.md). 9 red-green cycles covering 3 platform parsers + 6 behavioral tests. 15/15 tests pass in `internal/inference/`, 3/3 in `internal/config/`. `go vet` clean. `go build ./...` clean.
+- **Feature Summary**: Proactive hardware stewardship — detects elevated thermal pressure from the OS and gates inference execution before the machine reaches damaging temperatures. Cross-platform (macOS via `pmset`, Linux via sysfs, Windows via WMI). CGO-free. On-demand pre-flight check before each local inference call. Tiered response: cooldown pause for `serious` pressure, cloud escalation for `critical`.
+- **Design Decisions**:
+  - **Injectable function vars**: `thermalCommandRunner`, `thermalStateReader`, `thermalSleepFunc` for testing at system boundaries without interfaces.
+  - **Separate `thermalCloudEscalationTime` map**: Thermal escalation is transient (machine cools down). Speed-floor escalation is permanent per-task. Cannot share `forceCloudFallback`.
+  - **`temperatureCelsiusToState()` shared helper**: Linux/Windows both map to °C with identical thresholds. Darwin uses CPU_Speed_Limit (percentage).
+  - **Graceful degradation**: If thermal reading fails, returns `nominal` and logs once. Speed floor remains as secondary safety net.
+- **Files Created/Modified**:
+  - [NEW] [thermal.go](../../internal/inference/thermal.go) (ThermalState enum, 3 platform parsers, ReadThermalState, CheckThermalPressure)
+  - [NEW] [thermal_test.go](../../internal/inference/thermal_test.go) (9 test functions, 19+ sub-tests)
+  - [MODIFY] [config.go](../../internal/config/config.go) (ThermalCooldownSeconds, ThermalCloudCooldownMinutes fields + getters)
+  - [MODIFY] [local_model.go](../../internal/inference/local_model.go) (thermalCloudEscalationTime map)
+  - [MODIFY] [routing.go](../../internal/inference/routing.go) (Pre-flight thermal check in ExecuteStructured, initMaps update)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-09T08:40:00-07:00] implementation | MCP Singleton Guard — TDD Implementation
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the MCP Singleton Guard across 2 modules. 7 unit tests + 1 integration test, all passing. Full project builds cleanly. All existing tests pass.
+- **Modules Implemented**:
+  1. **`internal/pidlock`**: Deep module with 2-function public interface (`Acquire`, `IsHeld`). Uses `flock(2)` for kernel-managed exclusive locking with automatic release on crash/SIGKILL. PID written for diagnostics. `ErrAlreadyRunning` error type carries holder PID. Unlock closure with idempotency guard.
+  2. **`cmd/tzro-mcp/main.go`**: Lock acquired pre-bootstrap between log redirect and daemon check. `ErrAlreadyRunning` logs diagnostic and exits code 0. `defer unlock()` ensures cleanup.
+- **Testing**:
+  - 7 unit tests in `internal/pidlock`: fresh acquisition + PID content, concurrent rejection + error type, stale lockfile reclaim, unlock idempotency, IsHeld accuracy (held/not-held/after-unlock).
+  - 1 integration test in `cmd/tzro-mcp`: builds binary, spawns two instances against same workspace, verifies second exits code 0 while first stays alive, confirms lockfile contains first instance's PID.
+- **Files Created/Modified**:
+  - [NEW] [pidlock.go](../../internal/pidlock/pidlock.go) (PID lockfile module)
+  - [NEW] [pidlock_test.go](../../internal/pidlock/pidlock_test.go) (7 unit tests)
+  - [MODIFY] [main.go](../../cmd/tzro-mcp/main.go) (Singleton guard in startup path)
+  - [MODIFY] [mcp_test.go](../../cmd/tzro-mcp/mcp_test.go) (Dual-spawn integration test)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-09T00:22:00-07:00] document | PRD: MCP Singleton Guard
+
+- **Activity**: Published PRD for MCP Singleton Guard. Diagnosed duplicate `tzro-mcp` processes caused by Antigravity IDE spawning two language server instances (standard + LSP-enabled), each independently launching a child `tzro-mcp` process. Designed a `flock(2)`-based PID lockfile at `<workspace>/.tzro/mcp.lock` to ensure only one instance runs per workspace.
+- **Key Decisions**:
+  - `flock(2)` (kernel-released on crash/SIGKILL) over advisory `fcntl` or TCP port binding.
+  - Second instance exits code 0 to prevent IDE retry loops.
+  - Workspace-scoped lockfile via `config.ResolvePath`.
+  - Deep module `internal/pidlock` with `Acquire`/`IsHeld` interface.
+  - Tests: unit tests for pidlock + integration test spawning two MCP processes.
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/mcp-singleton-guard/PRD.md) (MCP Singleton Guard PRD)
+  - [NEW] [mcp-singleton-guard.md](features/mcp-singleton-guard.md) (Wiki feature page)
+  - [MODIFY] [index.md](index.md) (Added feature link)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-08T20:25:00-07:00] document | PRD: Dynamic Workflow Orchestration
+
+- **Activity**: Published PRD for Dynamic Workflow Orchestration, synthesizing all design decisions from the grill-with-docs session into a ready-for-agent implementation spec. Covers 6 modules: dynamic orchestrator, Tool Proactivity Level registry, escalation gate, BackgroundAgent spawning, preemption lifecycle, and data model extension. Tests specified for all 6 modules.
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/dynamic-workflow-orchestration/PRD.md) (Dynamic Workflow Orchestration PRD)
+  - [MODIFY] [reactive-daemons.md](features/reactive-daemons.md) (Updated references to new PRD)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-08T19:56:00-07:00] grill-with-docs | Reactive Agent Daemons → Dynamic Workflow Orchestration
+
+- **Activity**: Grilling session walked down 11 branches of the "Reactive Agent Daemons" design tree. The session revealed that the proposed `ReactiveDaemon` abstraction is functionally a Workflow — a goal-oriented parent process that spawns and monitors child Tasks. The feature was collapsed into an LLM-driven extension of the existing Workflow orchestrator. No new abstraction needed.
+- **Terminology Resolved**:
+  - **Workflow** broadened in `CONTEXT.md`: Removed "days or weeks" and "business goals" qualifiers. Now covers both user-spawned and system-spawned orchestrations of any duration, with static or dynamic (LLM-driven) orchestration modes.
+  - **Tool Proactivity Level** added to `CONTEXT.md`: Per-tool Proactivity Ladder annotation at registration time for deterministic escalation gating. Defaults: built-in hardcoded, MCP Host L3, harness-forwarded L1.
+  - **ReactiveDaemon** rejected as a term — collapses into Workflow.
+  - **Spawned Agent** rejected as a term — a background Task/Workflow, not an Agent.
+- **Key Decisions**:
+  - **No new abstraction (Q1-Q4)**: "ReactiveDaemon" collapsed into Workflow after walking through three candidate abstractions: Daemon extension (rejected — Daemon is stateless), BackgroundAgent subtype (rejected — Agent has Start/Stop lifecycle, not Submit/Complete), novel ReAct loop (rejected — DAG executor already provides checkpointed iterative execution).
+  - **DAG executor for child Tasks (Q3)**: Single-node Tasks with Activation Thresholds initially, potentially full DAGs later.
+  - **Self-terminating completion (Q3)**: Goal-met (LLM decides) or budget-exhausted (runtime enforces). Owned by Workflow runtime, not AttentionScheduler.
+  - **Auto-resume after preemption (Q6)**: Foreground preemption cancels active child Task context; Workflow stays "running" in SQLite and resumes from last checkpoint when foreground clears.
+  - **Gate-and-escalate safety model (Q7)**: Background Workflows run at their approved Proactivity Ladder level. If a tool dispatch exceeds the ceiling, the harness deterministically suspends the Workflow and enqueues an escalation request. The LLM does not decide safety policy.
+  - **Per-tool Proactivity Level annotations (Q8)**: Each tool declares its level at registration. Defaults by source: built-in hardcoded, MCP Host L3, harness-forwarded L1. Rejected allowlist-at-spawn (circular: Sentinel pre-authorizing levels above its own Workflow). Rejected category heuristic (fragile).
+  - **BackgroundAgent LLMClient for orchestrator (Q9)**: Between-Task LLM reasoning calls use the BackgroundAgent's LLMClient, not the task executor's inference path.
+  - **Broadened Workflow definition (Q10)**: Single concept regardless of trigger source, duration, or orchestration mode.
+  - **WASM scripting dropped (Q11)**: Served by existing Sandboxed Micro-Skills as tools within Workflow Tasks.
+- **ADRs Created**:
+  - [ADR-0027: Dynamic Workflow Orchestration Over Reactive Daemons](../../docs/adr/0027-dynamic-workflow-orchestration-over-reactive-daemons.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Broadened Workflow, added Tool Proactivity Level)
+  - [NEW] [0027-dynamic-workflow-orchestration-over-reactive-daemons.md](../../docs/adr/0027-dynamic-workflow-orchestration-over-reactive-daemons.md)
+  - [MODIFY] [reactive-daemons.md](features/reactive-daemons.md) (Rewritten as Dynamic Workflow Orchestration)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-08T15:16:00-07:00] grill-with-docs | Agent Inter-Process Communication — Shelved
+
+- **Activity**: Grilling session walked down 9 branches of the Agent IPC design tree. The session revealed a fundamental paradigm mismatch: the PRD's motivating scenario (named agents delegating work via IPC) is an artifact of the ReAct/monolithic-agent-loop model, which contradicts tzro's DAG-first architecture. Feature shelved.
+- **Terminology Resolved**:
+  - **Participant** and **Agent Message Bus** were provisionally added to `CONTEXT.md` during the session, then reverted when the feature was shelved.
+- **Key Decisions**:
+  - **Identity split (Q1)**: Resolved that IPC-addressable entities should be called "Participants" (both in-process Agents and external socket processes). Moot after shelving.
+  - **Separate package (Q2)**: AMB would live in `internal/ipc/`, not extend `internal/stream/`. StreamBus stays telemetry-only. Moot after shelving.
+  - **Bounded block with timeout (Q3)**: Send-side delivery uses context-driven bounded block, matching Go idioms.
+  - **Three-value MessageType (Q4)**: `request`/`response`/`notify` — AMB routes on type but stays payload-opaque.
+  - **KV cache yielding deferred (Q5)**: Resource yielding couples IPC to inference scheduling; deferred to Phase 2.
+  - **Socket path and lifecycle (Q6)**: `$TZRO_DIR/run/ipc.sock`, config-gated (`ipc.enabled`, default `false`).
+  - **AMB ≠ DAG replacement (Q7)**: AMB handles within-node queries and between-daemon coordination, not step orchestration. Kahn Compiler owns step-level flow.
+  - **Unified observability (Q8)**: IPC traffic publishes routing-metadata summary chunks to StreamBus.
+  - **Feature shelved (Q9)**: No concrete use case survived scrutiny. DAG edges handle inter-step flow, MCP Host handles external tools, shared persistent state handles daemon coordination. The "Coding Agent talks to Web Research Agent" scenario is already solved by DAG nodes with dependency edges.
+- **ADRs Created**:
+  - [ADR-0026: No Agent IPC Bus](../../docs/adr/0026-no-agent-ipc-bus.md) — Documents why the DAG-first architecture makes ReAct-style IPC unnecessary.
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Participant and AMB terms added then reverted)
+  - [NEW] [0026-no-agent-ipc-bus.md](../../docs/adr/0026-no-agent-ipc-bus.md) (No-IPC ADR)
+  - [MODIFY] [agent-ipc.md](features/agent-ipc.md) (Updated to shelved status with rationale)
+  - [MODIFY] [PRD.md](../../.scratch/agent-ipc/PRD.md) (Status changed to shelved)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-08T01:25:00-07:00] grill-with-docs | Attention and Proactivity Scheduler
+
+- **Activity**: Grilling session resolved 8 design decisions for the Attention and Proactivity Scheduler subsystem in tzro. Outlined core structures, safety policies, execution flow, budgeting model, and event/telemetry integration.
+- **Terminology Resolved**:
+  - **Attention Scheduler** added to `CONTEXT.md`: The background daemon coordinator that schedules, executes, and filters low-priority event-driven background daemons.
+  - **Proactivity Ladder** added to `CONTEXT.md`: The 5-tier safety/visibility classification (L0-L4) governing proposed actions.
+  - **Proposed Action** added to `CONTEXT.md`: Structured proposals returned by daemons to the scheduler.
+  - **Attention Queue** added to `CONTEXT.md`: User-visible interface holding suggestions/actions.
+- **Key Decisions**:
+  - **Durable Notification Re-use (Option A)**: The Attention Queue is backed by the existing `durable_notifications` SQLite table and uses statuses like `unread` (pending), `approved`, `rejected` to simplify persistence and dashboard UI integration.
+  - **Memory-based Active Registry (Option B)**: Foreground activity is tracked using an in-memory thread-safe registry of active user-initiated task IDs.
+  - **Register via ExecuteOptions**: `ExecuteOptions` is extended with `IsForeground bool`. Foreground runners set it to true, which automatically registers/deregisters tasks in the active registry.
+  - **Preemption & Cancellation**: Background actions run inside a cancellable context. When a foreground task starts, all running background actions are immediately cancelled.
+  - **Execution & Accumulated Budgets (Option B+C)**: Enforces limits per-execution (CPU time, tokens, tools) and accumulated consumption per-interval (e.g. hourly accumulators).
+  - **Event/Telemetry Ingestion**: The scheduler subscribes to the global `telemetry.TelemetryManager` stream, translating relevant stream chunks (e.g., node/task failure events) into scheduler events.
+  - **Policy Safety Gates**: Background daemons cannot run tools directly; they return a proposed action callback executed only post-approval. LLM/tool access requires explicit capability permissions and is gated/budgeted.
+
+## [2026-06-07T12:45:00-07:00] implementation | ADR-0024 Neural Edge Traversal — TDD Implementation
+
+- **Activity**: Full TDD (red-green-refactor) implementation of ADR-0024 Neural Edge Traversal across 6 layers. 14 new tests, all passing. Full project builds cleanly. All existing tests pass.
+- **Layers Implemented**:
+  1. **Compiler Data Structures**: `ActivationThreshold` on `GraphNode`, `MutationBudget` on `ExecutionGraph`, `IncrementalSort` method.
+  2. **Memory — Edge Thought Persistence**: `edge_thoughts` SQLite table, `EdgeThought` model, `AddEdgeThought`/`GetEdgeThoughtsForNode`/`GetLatestEdgeThought` CRUD methods.
+  3. **Mutation Engine**: `ApplySpawn` with edge re-wiring, budget enforcement (max spawns), consecutive failure dampening (3-failure threshold).
+  4. **Ready Queue Execution Loop**: `ExecuteGraphReactive` — batch-wait-enqueue pattern replacing level-based iteration. True parallel execution for independent nodes. Crash-resume from checkpointed state.
+  5. **Edge Thought Evaluation**: `evaluateActivationThreshold` sufficiency gate (spawn/continue/halt). `shouldGenerateEdgeThought` zero-overhead gate (threshold 0.0 = disabled).
+  6. **Hook System Evolution**: `OnEdgeTraversal` added to `ExecutionHook` interface. `BeforeLevel`/`AfterLevel` retained for backward compatibility with existing `ExecuteGraph`.
+- **Files Created**:
+  - [NEW] `internal/executor/mutation.go` — ApplySpawn + budget/dampening logic
+  - [NEW] `internal/executor/ready_queue.go` — ExecuteGraphReactive + dependency satisfaction
+  - [NEW] `internal/executor/edge_thought.go` — ActivationAction, evaluateActivationThreshold, EdgeThoughtInference
+  - [NEW] `internal/executor/mutation_test.go` — 5 tests
+  - [NEW] `internal/executor/ready_queue_test.go` — 4 tests
+  - [NEW] `internal/executor/edge_thought_test.go` — 6 tests
+  - [NEW] `internal/executor/hook_edge_traversal_test.go` — 2 tests
+  - [NEW] `internal/memory/edge_thought_test.go` — 1 test
+  - [NEW] `internal/compiler/compiler_edge_thought_test.go` — 2 tests (Layer 0, prior session)
+- **Files Modified**:
+  - [MODIFY] `internal/compiler/compiler.go` — ActivationThreshold, MutationBudget, IncrementalSort
+  - [MODIFY] `internal/memory/models.go` — EdgeThought struct
+  - [MODIFY] `internal/memory/memory.go` — edge_thoughts table + CRUD methods
+  - [MODIFY] `internal/executor/executor.go` — OnEdgeTraversal on ExecutionHook interface
+  - [MODIFY] `internal/executor/approval.go` — OnEdgeTraversal no-op
+  - [MODIFY] `internal/executor/client_tool.go` — OnEdgeTraversal no-op
+  - [MODIFY] `internal/executor/executor_hooks_test.go` — mockHook OnEdgeTraversal
+
+## [2026-06-07T12:25:00-07:00] grill-with-docs | Neural Edge Traversal — Edge Thought and Activation Threshold
+
+- **Activity**: Grilling session resolved 14 design decisions spanning a new neural-inspired execution model that treats DAG edges as synaptic connections carrying reasoning state, with dynamic graph mutation via activation thresholds. Deprecates the Probe Node (ADR-0019) and Thought Chain as distinct concepts.
+- **Terminology Resolved**:
+  - **Edge Thought** added to `CONTEXT.md`: A compact reasoning state generated on a DAG edge traversal, summarizing what execution has learned and its goal confidence. Target-gated, edge-generated.
+  - **Activation Threshold** added to `CONTEXT.md`: A per-node sufficiency gate (0.0–1.0) that triggers dynamic node spawning when Edge Thought confidence falls below threshold.
+  - **Probe Node** deprecated in `CONTEXT.md`: Superseded by Edge Thought + Activation Threshold generalization.
+  - **Thought Chain** deprecated in `CONTEXT.md`: Superseded by Edge Thought with checkpointed node spawning.
+- **Key Decisions**:
+  - **Edge Thought replaces STM and Thought Chain**: The Thought Chain's internal loop becomes dynamic node spawning — each tool call is a real, checkpointed DAG node.
+  - **Full durability over hidden loops**: Every spawned tool call is persisted in `graph_node_states` for crash-resume at any step. Rejected hiding tool calls inside opaque Probe nodes.
+  - **Incremental Kahn sort**: Only pending/new nodes are re-sorted after mutations. Completed nodes are frozen.
+  - **Event-driven ready queue**: Replaces pre-computed topological level iteration. Nodes fire when dependencies are satisfied, not by level membership.
+  - **Local Model single-step spawn**: The Local Model decides immediate next steps (like the Probe's ThoughtChainStep). No Cloud Planner involvement in runtime mutations.
+  - **Sufficiency gate semantics**: Low confidence = fire (need more work). High confidence = continue (downstream has what it needs).
+  - **Per-task mutation budget + consecutive failure dampening**: Global spawn cap prevents runaway expansion; failure dampening inhibits cascading retries.
+  - **Hybrid planner schema**: Cloud Planner can optionally emit `activationThreshold` and `mutationBudget`; Kahn Compiler fills defaults by node type.
+  - **Layered context**: Edge Thoughts as primary reasoning context; raw accumulated data included on-demand for GBNF parameter extraction.
+  - **Hook system evolution**: `BeforeLevel`/`AfterLevel` removed (no levels in ready-queue model). `OnEdgeTraversal` added. `BeforeNode`/`AfterNode` survive unchanged.
+  - **Spawn-only mutation**: Halt is a flag on Edge Thought. Redirect dropped (equivalent to spawn + skip).
+  - **Target-gated Edge Thoughts**: The target node's threshold determines whether an Edge Thought is generated on incoming edges. Threshold 0.0 = disabled (zero overhead for deterministic nodes).
+- **ADRs Created**:
+  - [ADR-0024: Edge Thought and Activation Threshold](../adr/0024-edge-thought-and-activation-threshold.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Edge Thought, Activation Threshold; deprecated Probe Node, Thought Chain)
+  - [NEW] [0024-edge-thought-and-activation-threshold.md](../adr/0024-edge-thought-and-activation-threshold.md)
+  - [MODIFY] [index.md](index.md) (Added ADR-0024 link)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
+
+- **Activity**: Grilling session resolved 12 design decisions spanning a new agent hosting abstraction, the Sentinel Agent as a proactive intelligence agent, workspace scanning, activity reporting, and dual-path alert delivery. Originated from analysis of external feedback on tzro's local↔cloud relationship.
+- **Terminology Resolved**:
+  - **Agent** added to `CONTEXT.md`: Minimal contract for any autonomous process hosted by the tzro engine.
+  - **Background Agent** added to `CONTEXT.md`: Agent subtype running continuously inside the daemon on its own trigger schedule with shared infrastructure.
+  - **Observer Agent** sharpened in `CONTEXT.md`: Now explicitly a Background Agent firing reactively on debounced telemetry events.
+  - **Sentinel Agent** added to `CONTEXT.md`: Background Agent firing proactively on heartbeat timer. Intelligence agent (Jarvis-like), not operational.
+- **Key Decisions**:
+  - **Agent hierarchy**: Agent → BackgroundAgent → Observer/Sentinel as peers. Rejected Observer extension and duplication.
+  - **Minimal Agent interface**: `Name()`, `Start(ctx)`, `Stop()`. BackgroundAgent adds shared infra. Interactive Agent deferred.
+  - **Observer refactor now (Option A)**: Two implementation patterns for the same abstraction is unacceptable.
+  - **Observer scope expansion**: Deterministic operational checks added to Observer as part of this work.
+  - **Sentinel = intelligence agent**: Retrieval-grounded synthesis for emergent insights, not operational health.
+  - **Sentinel pipeline**: Embed → semantic search → threshold → synthesize from matched context → confidence gate.
+  - **Activity report = opt-in enrichment**: Heartbeat-first, activity-enriched. Not a core dependency.
+  - **Workspace scanning**: Git default, mtime fallback with deterministic ignores + sensitive filename regex.
+  - **Dual-path alert delivery**: MCP resource notifications + `tzro_sentinel_alerts` tool.
+  - **Alert deduplication (Option C)**: Acknowledgment loop via notification status + TargetID fingerprint.
+  - **Two ADRs**: ADR-0022 (Agent abstraction) and ADR-0023 (Sentinel).
+- **ADRs Created**:
+  - [ADR-0022: Background Agent Abstraction and Observer Refactor](../adr/0022-background-agent-abstraction-and-observer-refactor.md)
+  - [ADR-0023: Sentinel Agent and Proactive Activity Channel](../adr/0023-sentinel-agent-and-proactive-activity-channel.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Agent, Background Agent, Sentinel Agent; sharpened Observer Agent)
+  - [NEW] [0022-background-agent-abstraction-and-observer-refactor.md](../adr/0022-background-agent-abstraction-and-observer-refactor.md)
+  - [NEW] [0023-sentinel-agent-and-proactive-activity-channel.md](../adr/0023-sentinel-agent-and-proactive-activity-channel.md)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-05T10:25:00-07:00] grill-with-docs | Self-Assessing Local Routing & KV Cache Segment Sharing
+
+- **Activity**: Grilling session resolved 13 design decisions across two architectural evolution paths for the tzro execution engine, informed by the "Bleeding-Edge Architectures for Edge-Cloud LLM Task Offloading" research.
+- **Terminology Resolved**:
+  - **Confidence Tier** added to `CONTEXT.md`: Per-node pre-flight self-assessment where the Local Model evaluates parameter extraction capability before committing to full inference. Returns `sufficient` or `insufficient`.
+  - **Corrective Micro-Skill** added to `CONTEXT.md`: Anti-pattern SOP auto-extracted from the diff between a failed Local Model extraction and a successful Cloud Model re-execution. Injected via existing skill pipeline for in-context reinforcement without weight updates.
+- **Key Decisions (Self-Assessing Local Routing)**:
+  - **Pre-flight classification** over mid-generation abort — preserves llama-server as opaque HTTP endpoint.
+  - **Schema Confidence Classification** — single cheap GBNF-constrained call returning `sufficient`/`insufficient` with reason.
+  - **Sticky escalation with decay** — threshold = 3 consecutive `insufficient` results (configurable via `EngineConfig.ConfidenceThreshold`), resets on success.
+  - **Scoped to GBNF bridge/exec nodes only** — branch, synthesis, and probe nodes excluded.
+  - **Dual retry policy** — schema validation gate (pre-tool-call) + tool execution failure (post-tool-call) as retry triggers.
+  - **Corrective Micro-Skills** for calibration learning (Option 2) over historical success rates (Option 1) — surgical per-pattern correction vs. blunt per-tool penalization. Prevents over-routing high-frequency tools with isolated failure patterns.
+  - **Inline cloud extraction** — Cloud Model extracts corrective skill immediately after successful re-execution. Marginal cost argument: already paid for escalation call.
+- **Key Decisions (KV Cache Segment Sharing)**:
+  - **Static system prompt restructuring** — push per-node variables (schema, instruction) to user prompt; static prefix shared across all nodes.
+  - **Multi-turn 4-message segmented prompt** — Turn 1 (system: static base), Turn 2 (user: accumulated context), Turn 3 (assistant: synthetic ACK), Turn 4 (user: per-node schema + instruction). Prefix matching via `--cache-reuse` reuses KV through turns 1-3 for parallel nodes.
+  - **`--cache-reuse` raised to 2048** from 256 — captures full accumulated context sharing between parallel nodes at same Kahn level. ~12MB memory cost per cached prefix, negligible on modern hardware.
+  - **`StructuredInferenceRequest` refactored to `Messages []InferenceMessage`** (Option A) — breaking change for full flexibility, supporting arbitrary n-message conversations for future execution modes. `NewSimpleRequest` helper for backwards-compatible 2-message callers. 8 callsites to migrate.
+  - **Confidence Tier primes KV cache** — classification uses same 4-message structure; prefix match ensures extraction call reuses cached KV, making the pre-flight check effectively free.
+  - **Same prompt structure sent to cloud on escalation** — consistency for Corrective Micro-Skill diff extraction outweighs trivial extra token cost.
+- **ADRs Created**:
+  - [ADR-0020: Confidence Tier and Corrective Micro-Skills](../adr/0020-confidence-tier-and-corrective-micro-skills.md)
+  - [ADR-0021: Segmented Multi-Turn Prompt for KV Cache Sharing](../adr/0021-segmented-multi-turn-prompt-kv-cache-sharing.md)
+- **Handoff Created**:
+  - [Dynamic LoRA Adapter Switching](/tmp/handoff-dynamic-lora-adapter-switching.md) — handoff for a future session exploring LoRA-Switch, LoRAX, and Temporal LoRA integration with the Pluggable Inference Backend.
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Confidence Tier and Corrective Micro-Skill glossary terms)
+  - [NEW] [0020-confidence-tier-and-corrective-micro-skills.md](../adr/0020-confidence-tier-and-corrective-micro-skills.md)
+  - [NEW] [0021-segmented-multi-turn-prompt-kv-cache-sharing.md](../adr/0021-segmented-multi-turn-prompt-kv-cache-sharing.md)
+  - [MODIFY] [index.md](index.md) (Added ADR-0019, ADR-0020, ADR-0021 links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
+
 ## [2026-06-04T18:55:00Z] grill-with-docs | Design Probe Node, Thought Chain, and Filesystem Tools
 
 - **Activity**: Grilling session resolved 12 design decisions spanning filesystem tool integration, a new DAG node type (Probe Node), and its internal execution pattern (Thought Chain), plus strengthened Offload Policy.
@@ -892,4 +1258,41 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [NEW] [0017-mcp-resource-subscriptions.md](../adr/0017-mcp-resource-subscriptions.md) (Detailed architectural decision record)
   - [MODIFY] [index.md](index.md) (Local wiki index)
   - [MODIFY] [log.md](log.md) (This log entry)
+
+---
+
+## [2026-06-05T08:36:00-07:00] ingest | Edge-Cloud LLM Task Offloading Research
+
+- **Activity**: Ingested bleeding-edge research on task offloading architectures for edge-cloud LLM co-orchestration beyond Directed Acyclic Graphs. Mapped findings to the `tzro` context and performed an architectural gap analysis.
+- **Key Deliverables**:
+  - **Source Ingestion**: Summarized event-driven runtimes, blackboard systems, GAPG RL routing, speculative decoding (PicoSpec), segment-level KV sharing (CrossKV), token-wise adapter switching (LoRA-Switch), and decentralized topologies (Exo).
+  - **Gap Analysis**: Detailed how `tzro`'s Strategy-vs-Tactics (SCT) pattern and Kahn-based executor compare to these advanced dynamic coordination models, identifying routes for future optimization (local self-assessment routing, KV cache segment reuse, dynamic LoRA swapping).
+- **Key Files Created/Modified**:
+  - [NEW] [edge-cloud-task-offloading.md](sources/edge-cloud-task-offloading.md) (Research summary file)
+  - [NEW] [edge-cloud-co-orchestration.md](architecture/edge-cloud-co-orchestration.md) (Co-orchestration architecture concept file)
+  - [MODIFY] [index.md](index.md) (Updated local wiki index links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+---
+
+## [2026-06-08T19:15:00-07:00] document | PRD Creation for Agentic OS Transition Dimensions
+
+- **Activity**: Formulated product requirements documents (PRDs) and local wiki feature summary pages for the four key transition dimensions required to promote the `tzro` durable local execution engine to a full Agentic Operating System (AgentOS).
+- **Key Deliverables**:
+  - **Dynamic Local Planning & Routing PRD**: Enables cost, latency, complexity, and privacy-guided planning routes with fail-safe local validation and cloud fallback templates.
+  - **Reactive Agent Daemons PRD**: Extends background schedulers and observer agents to support autonomous model loops and sandboxed tool executions under preemption and resource budgets.
+  - **Agent Inter-Process Communication (IPC) PRD**: Details an addressable Agent Message Bus (AMB) with RPC-style bidirectional request-response matches, correlation ID checks, and context yields.
+  - **Agent App Packaging Standard PRD**: Introduces `.tzroapp` zip archives and unified manifest schemas mapping prompts, migrations, tools, and permissions.
+- **Key Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/local-planning-routing/PRD.md)
+  - [NEW] [local-planning-routing.md](features/local-planning-routing.md)
+  - [NEW] [PRD.md](../../.scratch/reactive-daemons/PRD.md)
+  - [NEW] [reactive-daemons.md](features/reactive-daemons.md)
+  - [NEW] [PRD.md](../../.scratch/agent-ipc/PRD.md)
+  - [NEW] [agent-ipc.md](features/agent-ipc.md)
+  - [NEW] [PRD.md](../../.scratch/agent-app-packaging/PRD.md)
+  - [NEW] [agent-app-packaging.md](features/agent-app-packaging.md)
+  - [MODIFY] [index.md](index.md) (Updated local wiki index links)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 

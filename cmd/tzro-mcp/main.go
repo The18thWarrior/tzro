@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,18 +14,23 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tzro/internal/config"
+	"tzro/internal/pidlock"
 )
 
 var version = "1.0.0"
+
+// mcpServer holds the *mcp.Server reference for use by tool handlers
+// that need to create SubagentChannels (e.g., handleTzroRun, handleTzroWorkflow).
+var mcpServer *mcp.Server
 
 func isDaemonRunning() bool {
 	port := "8080"
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		port = envPort
 	}
-	url := fmt.Sprintf("http://localhost:%s/api/config", port)
+	url := fmt.Sprintf("http://127.0.0.1:%s/api/config", port)
 	client := &http.Client{
-		Timeout: 100 * time.Millisecond,
+		Timeout: 500 * time.Millisecond,
 	}
 	resp, err := client.Get(url)
 	if err == nil {
@@ -101,6 +107,19 @@ func main() {
 		}
 	}
 
+	// Singleton guard: ensure only one tzro-mcp per workspace
+	lockPath := filepath.Join(logDir, "mcp.lock")
+	unlock, lockErr := pidlock.Acquire(lockPath)
+	if lockErr != nil {
+		var alreadyRunning *pidlock.ErrAlreadyRunning
+		if errors.As(lockErr, &alreadyRunning) {
+			log.Printf("[tzro-mcp] Another instance is already running (PID %d). Exiting.\n", alreadyRunning.HolderPID)
+			os.Exit(0)
+		}
+		log.Fatalf("[tzro-mcp] Failed to acquire lockfile: %v", lockErr)
+	}
+	defer unlock()
+
 	// Check if daemon is running, if not start it
 	if !isDaemonRunning() {
 		startDaemon()
@@ -114,6 +133,7 @@ func main() {
 		Name:    "tzro",
 		Version: version,
 	}, getResourcesServerOptions())
+	mcpServer = server
 
 	// Register tzro-specific Phase 1 tools
 	registerTools(server)

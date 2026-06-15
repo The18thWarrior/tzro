@@ -27,8 +27,36 @@ When executing any task that does not explicitly require frontier model knowledg
 ### Why Delegate to tzro
 - **Durability & Resiliency**: Tasks are checkpointed in the SQLite database (`tzro.db`). If the parent agent session restarts or crashes, execution state is preserved.
 - **Token Efficiency**: Compressing step logs via the compaction pipeline prevents context-window slot thrashing.
-- **Parallelization**: Layered steps are topologically sorted by the Kahn Compiler and executed in parallel.
+- **Parallelization**: Steps are topologically sorted by the Kahn Compiler and executed in parallel via an event-driven ready queue.
+- **Neural Edge Traversal**: Edge Thoughts and Activation Thresholds enable dynamic graph mutation at runtime — nodes can spawn additional work mid-execution when goal confidence is below threshold.
 - **Micro-Skill Extraction**: Successful trajectories automatically synthesize procedural micro-skills (SOPs) for future runs.
+
+### Execution Model (ADR-0024)
+
+tzro uses an **event-driven ready queue** where nodes fire as soon as their dependencies are satisfied. This replaces the older level-based iteration model.
+
+#### Edge Thoughts & Activation Thresholds
+
+When a node has a non-zero **Activation Threshold** (0.0–1.0), the system generates an **Edge Thought** on each incoming edge after the source node completes. The Edge Thought is a compact reasoning state produced by the Local Model, containing:
+- **Goal Confidence** (0.0–1.0): How sufficient the accumulated context is for the target node
+- **Goal Achieved** (bool): Halt flag — the task's objective has already been met
+
+The **sufficiency gate** then evaluates:
+- **Confidence ≥ Threshold → Continue**: The target node executes normally
+- **Confidence < Threshold → Spawn**: A new node is dynamically inserted between source and target (like a neuron firing)
+- **Goal Achieved → Halt**: The target and all downstream nodes are skipped
+
+This creates a quasi-neural network where the DAG responds dynamically to runtime discoveries. Each spawned node is a real, checkpointed DAG node with full durability — not a hidden internal step.
+
+#### Safety Model
+- **Mutation Budget**: Per-task cap on total spawns (prevents runaway expansion)
+- **Failure Dampening**: 3 consecutive spawned-node failures suppress further spawning
+- **Incremental Kahn Sort**: Only pending/new nodes are re-sorted after mutations; completed nodes are frozen
+
+#### When Activation Thresholds Apply
+- **Threshold 0.0** (default for deterministic nodes): No Edge Thought generated, zero overhead
+- **Threshold > 0** (action/exploration nodes): Edge Thought generated and evaluated on each incoming edge
+- The Kahn Compiler defaults thresholds by node type: 0.0 for deterministic/synthesis, 0.7 for action nodes
 
 ### Offload Policy
 
@@ -42,12 +70,12 @@ When confronted, the agent argued that codebase exploration *"requires frontier 
 
 The cost: ~$2-5 in cloud tokens for work that could have been $0 locally. Multiplied across every "explore this codebase" request, this defeats the entire purpose of tzro.
 
-**Probe Nodes** (ADR-0019) were built specifically to solve this. They run a bounded Thought Chain on the Local Model with `read_file`, `list_dir`, and `search_files` — no cloud tokens needed. The agent's only job is to delegate with a goal and consume the compacted synthesis.
+**Activation Thresholds** solve this: exploration tasks use nodes with high thresholds, and the system dynamically spawns additional tool calls as needed. Each spawned call is a real, checkpointed DAG node — no cloud tokens needed. The agent's only job is to delegate with a goal and consume the compacted synthesis.
 
 #### Mandatory Delegation
 
 The following task patterns **MUST** be delegated to `tzro_run`. Do not execute these in-context:
-- **Codebase exploration and directory analysis** — these are handled by **Probe Nodes** with **Thought Chain** execution internally. Delegate with a goal (e.g., `"Explore the project at /path and explain its architecture"`).
+- **Codebase exploration and directory analysis** — delegate with a goal and let the system dynamically spawn exploration nodes via Activation Thresholds (e.g., `"Explore the project at /path and explain its architecture"`).
 - **Web research and multi-source information gathering** — delegate as DAG workflows using `web_search` and `save_memory`.
 - **Memory ingestion pipelines** — bulk ingest operations across multiple sources.
 
@@ -96,7 +124,7 @@ When designing prompts for the Strategic Planner, ensure the prompt guides the e
 - **Variable Binding**: Guide the planner to use strict variable binding (`{{nodes.node_id.output.property}}`) to pass data downstream cleanly.
 - **Restricted Tool Spaces**: Explicitly limit node `allowedTools` to the 1-2 tools strictly required for that node's focus area to prevent execution hallucinations.
 - **Conciseness**: Keep the DAG compact (typically 2-4 nodes). Ensure dependencies are cycle-free.
-- **Exploration → Probe, not DAG**: When a task involves open-ended exploration where the next step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), the prompt **must** steer the planner toward a **Probe Node** instead of a rigid bridge→exec DAG. Rigid DAGs fail at exploration because the local model cannot extract correct tool parameters without seeing intermediate results — it guesses paths, constructs malformed patterns, and cascading errors corrupt all downstream nodes. Probe Nodes solve this with a reactive Thought Chain that observes each tool output before deciding the next step.
+- **Exploration → Activation Threshold, not rigid DAG**: When a task involves open-ended exploration where the next step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), the prompt should steer the planner toward a node with a **high Activation Threshold** (e.g., 0.8) and allocated **mutation budget**. The system will dynamically spawn additional tool-call nodes as needed, with each spawned step being a real checkpointed node. Rigid multi-node DAGs fail at exploration because the local model cannot extract correct tool parameters without seeing intermediate results.
 
 ### Suggested Prompts to Leverage tzro
 When delegating tasks to `tzro` (using CLI or the `tzro_run` tool), use or adapt the following prompt structures to ensure the Strategic Planner builds optimal, cycle-free DAGs with correct bindings:
@@ -116,10 +144,33 @@ Use this when you need to fetch bulk records from a service, run local deduplica
 - **Conciseness:** Restricts the graph to a clean 3-level pipeline (`salesforce_query` -> `postgres_insert` -> `slack_message`).
 
 #### Template C: Codebase Exploration and Analysis
-Use this when the task requires navigating an unknown structure where each step depends on what was just discovered. **Do NOT use a rigid multi-node DAG for exploration** — bridge nodes cannot extract correct paths/patterns without seeing intermediate results, and errors cascade through all downstream nodes.
+Use this when the task requires navigating an unknown structure where each step depends on what was just discovered.
 > **Example Prompt:**
-> *"Explore the project at /path/to/repo using a Probe Node. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary covering purpose, major components, key packages, and design patterns. Use read_file, list_dir, and search_files."*
-- **Why Probe over DAG:** Exploration is inherently reactive — you list a directory, see what's there, then decide which file to read. A rigid DAG pre-commits to paths it hasn't seen yet, causing the local model to guess (and guess wrong). A Probe's Thought Chain observes each output before choosing the next step.
-- **Key signals for the planner:** Include the phrase "Probe Node" or "explore" and name the allowed tools explicitly. This steers the planner to emit a single probe-type node with a Thought Chain budget rather than a sequence of bridge→exec pairs.
-- **Tool constraint:** Always specify `allowedTools` explicitly (e.g., `read_file, list_dir, search_files`) to prevent the Probe from drifting into unrelated tool calls.
+> *"Explore the project at /path/to/repo. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary covering purpose, major components, key packages, and design patterns. Use read_file, list_dir, and search_files. Set activationThreshold to 0.8 and mutationBudget to 15."*
+- **Why Activation Threshold over rigid DAG:** Exploration is inherently reactive — you list a directory, see what's there, then decide which file to read. A rigid DAG pre-commits to paths it hasn't seen yet, causing the local model to guess (and guess wrong). With Activation Thresholds, the system dynamically spawns additional exploration nodes as needed, each one observing the previous output before deciding the next step.
+- **Key signals for the planner:** Include `activationThreshold` and `mutationBudget` parameters explicitly. Name the allowed tools (`read_file, list_dir, search_files`) to constrain the spawned nodes' tool space.
+- **Budget constraint:** Set `mutationBudget` to cap total spawned nodes (typically 10–20 for codebase exploration). This prevents runaway expansion while allowing sufficient depth.
 
+### Activity Reporting (Recommended)
+
+After every **5th consecutive in-context tool call**, call `tzro_activity_report` with:
+- `activity`: A brief description of what you're currently working on
+- `filesTouched`: File paths you've read or modified since last report
+- `toolsUsed`: Tools you've called since last report
+
+This enables the **Sentinel Agent** to provide richer proactive assistance by correlating your current work with accumulated knowledge. Activity reports are non-blocking and return immediately with `{"status": "acknowledged"}`.
+
+> **Example:**
+> ```json
+> {"activity": "Implementing auth middleware refactor", "filesTouched": ["auth/middleware.go", "auth/handler.go"], "toolsUsed": ["grep_search", "view_file", "replace_file_content"]}
+> ```
+
+### Sentinel Alert Handling
+
+When checking `tzro_hook_list` for pending workflow approvals, also check `tzro_sentinel_alerts` for proactive insights from the Sentinel Agent.
+
+- **`critical`** alerts: Surface immediately to the user
+- **`suggestion`** alerts: Surface at natural conversation breaks (e.g., between major tasks)
+- **`ambient`** alerts: Batch and mention only if the user asks for status
+
+Alerts are automatically marked as `read` when retrieved via `tzro_sentinel_alerts`. To prevent repeated alerts for the same context, alerts use fingerprint-based deduplication — they only regenerate after being `dismissed`.

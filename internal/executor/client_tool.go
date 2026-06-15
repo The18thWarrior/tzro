@@ -80,3 +80,7 @@ func (h *ClientToolHook) BeforeNode(ctx context.Context, taskID string, node *co
 func (h *ClientToolHook) AfterNode(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (HookAction, error) {
 	return ActionContinue, nil
 }
+
+func (h *ClientToolHook) OnEdgeTraversal(ctx context.Context, taskID string, sourceNode, targetNode *compiler.GraphNode, edgeThought *memory.EdgeThought) (HookAction, error) {
+	return ActionContinue, nil
+}

@@ -66,7 +66,7 @@ func TestCallCloudModel(t *testing.T) {
 	http.DefaultTransport = &mockRoundTripper{server.URL, oldTransport}
 
 	ctx := context.Background()
-	res, err := inference.CallCloudModel(ctx, "sys", "usr", `{"type":"object"}`)
+	res, err := inference.CallCloudModel(ctx, []inference.InferenceMessage{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}}, `{"type":"object"}`)
 	if err != nil {
 		t.Fatalf("callCloudModel failed: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestCallCloudModelStream(t *testing.T) {
 	defer sub.Unsubscribe()
 
 	ctx := context.Background()
-	res, err := inference.CallCloudModelStream(ctx, "sys", "usr", `{"type":"object"}`, meta, nil)
+	res, err := inference.CallCloudModelStream(ctx, []inference.InferenceMessage{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}}, `{"type":"object"}`, meta, nil)
 	if err != nil {
 		t.Fatalf("CallCloudModelStream failed: %v", err)
 	}

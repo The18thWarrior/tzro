@@ -9,53 +9,47 @@ import (
 	"sync"
 	"time"
 
+	"tzro/internal/agent"
 	"tzro/internal/memory"
 	"tzro/internal/notification"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 	"tzro/internal/telemetry"
 )
 
-// LLMClient decouples structured inference execution from the observer system
-type LLMClient interface {
-	CallModel(ctx context.Context, systemPrompt, userPrompt string, jsonSchema string) (string, error)
-}
+// LLMClient is an alias for the canonical agent.LLMClient interface.
+type LLMClient = agent.LLMClient
 
 // ObserverEvent is a type alias to the consolidated telemetry event schema
 type ObserverEvent = telemetry.ObserverEvent
 
 // ObserverAgent handles background debouncing, aggregation, reflection, and ingestion.
+// It embeds agent.BackgroundAgent for shared infrastructure (ADR-0022).
 type ObserverAgent struct {
+	agent.BackgroundAgent
+
 	mu               sync.RWMutex
 	activeEvents     []telemetry.ObserverEvent
+	deferredEvents   [][]telemetry.ObserverEvent // batches deferred during foreground activity
 	debounceInterval time.Duration
 	auditThreshold   int
-	llm              LLMClient
-	cancelFunc       context.CancelFunc
-	subscription     *telemetry.TelemetrySubscription
-	telemetry        *telemetry.TelemetryManager
+}
+
+// Verify interface compliance at compile time.
+var _ agent.Agent = (*ObserverAgent)(nil)
+
+// Name returns the agent's canonical name.
+func (a *ObserverAgent) Name() string {
+	return a.AgentName()
 }
 
 // NewObserverAgent creates a new isolated ObserverAgent.
 func NewObserverAgent() *ObserverAgent {
 	return &ObserverAgent{
+		BackgroundAgent:  agent.NewBackgroundAgent("observer"),
 		debounceInterval: 2 * time.Second,
 		auditThreshold:   10,
-		telemetry:        telemetry.Default,
 	}
-}
-
-// SetLLMClient registers an LLM client with the agent.
-func (a *ObserverAgent) SetLLMClient(client LLMClient) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.llm = client
-}
-
-// SetTelemetryManager overrides the telemetry manager instance used by the agent.
-func (a *ObserverAgent) SetTelemetryManager(tm *telemetry.TelemetryManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.telemetry = tm
 }
 
 // SetDebounceInterval allows overriding the debounce time.
@@ -77,19 +71,24 @@ func (a *ObserverAgent) Start(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.cancelFunc != nil {
+	if a.IsRunning() {
 		return
 	}
 
 	loopCtx, cancel := context.WithCancel(ctx)
-	a.cancelFunc = cancel
+	a.SetCancel(cancel)
+
+	// Register resume callback to flush deferred events when foreground clears
+	proactivity.RegisterResumeCallback(func() {
+		a.flushDeferredEvents()
+	})
 
 	// Subscribe to standard telemetry stream events
-	a.subscription = a.telemetry.Subscribe(func(chunk stream.StreamChunk) bool {
+	sub := a.Subscribe(func(chunk stream.StreamChunk) bool {
 		return chunk.Source == "telemetry"
 	})
 
-	subCh := a.subscription.Ch
+	subCh := sub.Ch
 
 	go func() {
 		ticker := time.NewTicker(a.debounceInterval)
@@ -146,18 +145,8 @@ func (a *ObserverAgent) Start(ctx context.Context) {
 
 // Stop cancels the background loop context and unsubscribes from the stream.
 func (a *ObserverAgent) Stop() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.cancelFunc != nil {
-		a.cancelFunc()
-		a.cancelFunc = nil
-	}
-
-	if a.subscription != nil {
-		a.subscription.Unsubscribe()
-		a.subscription = nil
-	}
+	a.Cancel()
+	a.Unsubscribe()
 }
 
 func (a *ObserverAgent) triggerAudit(reason string) {
@@ -178,8 +167,8 @@ func (a *ObserverAgent) triggerAudit(reason string) {
 	copy(eventsCopy, a.activeEvents)
 
 	a.activeEvents = nil
-	llmClient := a.llm
-	tm := a.telemetry
+	llmClient := a.GetLLMClient()
+	tm := a.GetTelemetryManager()
 	a.mu.Unlock()
 
 	tm.PublishStream(stream.StreamChunk{
@@ -191,8 +180,93 @@ func (a *ObserverAgent) triggerAudit(reason string) {
 	_, _ = notification.Send(context.Background(), "observer", "info", "Observer Verification Audit Complete",
 		fmt.Sprintf("Observer Agent completed automated verification for %d execution events (%s). System health remains optimal.", eventCount, reason))
 
+	// Run deterministic operational checks (pre-pass before LLM reflection)
+	go a.runOperationalChecks(context.Background())
+
 	if llmClient != nil {
-		go a.performReflectionAndIngestion(context.Background(), eventsCopy, llmClient)
+		if proactivity.IsForegroundActive() {
+			// Foreground task running — defer LLM calls to avoid KV cache contention.
+			// Buffer events; they'll be flushed when the foreground clears.
+			a.mu.Lock()
+			a.deferredEvents = append(a.deferredEvents, eventsCopy)
+			a.mu.Unlock()
+			fmt.Fprintf(os.Stderr, "[Observer] Foreground active — deferred reflection for %d events\n", len(eventsCopy))
+		} else {
+			go a.performReflectionAndIngestion(context.Background(), eventsCopy, llmClient)
+		}
+	}
+}
+
+// flushDeferredEvents processes all event batches that were deferred during foreground activity.
+// Called by the proactivity resume callback when the foreground registry empties.
+func (a *ObserverAgent) flushDeferredEvents() {
+	a.mu.Lock()
+	if len(a.deferredEvents) == 0 {
+		a.mu.Unlock()
+		return
+	}
+
+	batches := a.deferredEvents
+	a.deferredEvents = nil
+	llmClient := a.GetLLMClient()
+	a.mu.Unlock()
+
+	if llmClient == nil {
+		return
+	}
+
+	// Merge all deferred batches into a single batch for efficiency
+	var merged []telemetry.ObserverEvent
+	for _, batch := range batches {
+		merged = append(merged, batch...)
+	}
+
+	fmt.Fprintf(os.Stderr, "[Observer] Foreground cleared — flushing %d deferred events (%d batches)\n", len(merged), len(batches))
+	go a.performReflectionAndIngestion(context.Background(), merged, llmClient)
+}
+
+// runOperationalChecks performs deterministic system health evaluations
+// that don't require LLM inference. These produce alerts for stale workflows,
+// escalation trends, and micro-skill staleness.
+func (a *ObserverAgent) runOperationalChecks(ctx context.Context) {
+	now := time.Now().Unix()
+
+	// 1. Stale workflow detection: approval requests older than 6 hours
+	notifs, err := notification.List(ctx, "unread")
+	if err == nil {
+		staleThreshold := int64(6 * 60 * 60) // 6 hours in seconds
+		for _, n := range notifs {
+			if n.Source == "human_approval" && n.Type == "approval_request" {
+				age := now - n.CreatedAt
+				if age > staleThreshold {
+					fp := agent.Fingerprint("stale_approval", n.ID)
+					if !a.HasActiveAlert(fp) {
+						hours := age / 3600
+						_ = a.ProduceAlert(ctx, "ambient",
+							"Stale Workflow Approval",
+							fmt.Sprintf("Approval request for task '%s' node '%s' has been pending for %d hours.",
+								n.TaskID, n.TargetID, hours),
+							fp)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Micro-skill staleness: skills older than 30 days
+	skills := memory.DB.GetSkills()
+	staleSkillAge := int64(30 * 24 * 60 * 60) // 30 days in seconds
+	for _, s := range skills {
+		if s.CreatedAt > 0 && (now-s.CreatedAt) > staleSkillAge {
+			fp := agent.Fingerprint("stale_skill", s.ID)
+			if !a.HasActiveAlert(fp) {
+				days := (now - s.CreatedAt) / (24 * 60 * 60)
+				_ = a.ProduceAlert(ctx, "ambient",
+					"Stale Micro-Skill Detected",
+					fmt.Sprintf("Skill '%s' was created %d days ago and may need review.", s.Name, days),
+					fp)
+			}
+		}
 	}
 }
 
@@ -357,9 +431,7 @@ Return valid JSON in this exact structure:
 	kgJSON, err := client.CallModel(ctx, systemPromptKG, eventsText, gbnfSchemaKG)
 	var newNodeCount int
 	var newEdgeCount int
-	a.mu.Lock()
-	tm := a.telemetry
-	a.mu.Unlock()
+	tm := a.GetTelemetryManager()
 	if err == nil {
 		var res struct {
 			Nodes []struct {

@@ -372,9 +372,9 @@ func TestSCT_PassesProbeNodeThrough(t *testing.T) {
 		t.Error("expected ProbeConfig to be preserved on probe node")
 	}
 
-	// action1 should be expanded into bridge + exec
-	if _, ok := nodeMap["action1_bridge"]; !ok {
-		t.Error("expected action1 to be expanded into action1_bridge")
+	// action1 should be expanded into validator + exec
+	if _, ok := nodeMap["action1_validator"]; !ok {
+		t.Error("expected action1 to be expanded into action1_validator")
 	}
 	if _, ok := nodeMap["action1_exec"]; !ok {
 		t.Error("expected action1 to be expanded into action1_exec")
@@ -390,3 +390,120 @@ func TestSCT_PassesProbeNodeThrough(t *testing.T) {
 // Suppress unused import warnings
 var _ = json.Marshal
 var _ = fmt.Sprintf
+
+func TestExtractPathFromText(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		expected string
+	}{
+		{
+			name:     "absolute path",
+			text:     "Read the file at /Users/jp/Desktop/Repos/tzro/CONTEXT.md to understand the architecture",
+			expected: "/Users/jp/Desktop/Repos/tzro/CONTEXT.md",
+		},
+		{
+			name:     "quoted bare filename without extension",
+			text:     "The file 'tzro-mcp' is the main binary entry point",
+			expected: "tzro-mcp",
+		},
+		{
+			name:     "backtick bare filename",
+			text:     "I need to read `bootstrap.go` to understand initialization",
+			expected: "bootstrap.go",
+		},
+		{
+			name:     "filename with extension",
+			text:     "Read CONTEXT.md to understand the architecture",
+			expected: "CONTEXT.md",
+		},
+		{
+			name:     "known directory pattern",
+			text:     "Explore internal/compiler to find the DAG compilation logic",
+			expected: "internal/compiler",
+		},
+		{
+			name:     "bare hyphenated name without quotes",
+			text:     "The tzro-mcp binary handles all MCP protocol communication",
+			expected: "tzro-mcp",
+		},
+		{
+			name:     "bare known directory",
+			text:     "List the contents of bin to find executables",
+			expected: "bin",
+		},
+		{
+			name:     "empty text",
+			text:     "",
+			expected: "",
+		},
+		{
+			name:     "no path at all",
+			text:     "I need more information about the system",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractPathFromText(tt.text)
+			if result != tt.expected {
+				t.Errorf("extractPathFromText(%q) = %q, want %q", tt.text, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRescueEmptyPath_ResolvesRelativePaths(t *testing.T) {
+	// Set TZRO_DIR so config.ResolvePath can resolve
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", "/test/project")
+	defer os.Setenv("TZRO_DIR", oldTzroDir)
+
+	tests := []struct {
+		name         string
+		toolName     string
+		args         map[string]interface{}
+		thought      string
+		expectedPath string
+	}{
+		{
+			name:         "resolves relative path from existing args",
+			toolName:     "list_dir",
+			args:         map[string]interface{}{"path": "bin"},
+			thought:      "List the bin directory",
+			expectedPath: "/test/project/bin",
+		},
+		{
+			name:         "resolves relative path rescued from thought",
+			toolName:     "read_file",
+			args:         map[string]interface{}{},
+			thought:      "Read CONTEXT.md to understand the domain",
+			expectedPath: "/test/project/CONTEXT.md",
+		},
+		{
+			name:         "does not modify absolute paths",
+			toolName:     "read_file",
+			args:         map[string]interface{}{"path": "/absolute/path/file.go"},
+			thought:      "Reading a specific file",
+			expectedPath: "/absolute/path/file.go",
+		},
+		{
+			name:         "skips non-filesystem tools",
+			toolName:     "web_search",
+			args:         map[string]interface{}{},
+			thought:      "Search for something",
+			expectedPath: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := rescueEmptyPathFromThought(tt.toolName, tt.args, tt.thought)
+			pathVal, _ := result["path"].(string)
+			if pathVal != tt.expectedPath {
+				t.Errorf("rescueEmptyPathFromThought path = %q, want %q", pathVal, tt.expectedPath)
+			}
+		})
+	}
+}

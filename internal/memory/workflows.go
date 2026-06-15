@@ -17,8 +17,12 @@ func (sdb *SqliteDatabase) SaveWorkflow(wf WorkflowDefinition, tasks []WorkflowT
 	defer tx.Rollback()
 
 	// 1. Save or replace workflow definition
-	_, err = tx.Exec(`INSERT OR REPLACE INTO workflows (id, name, description, trigger_type, trigger_config, status, next_run_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, wf.ID, wf.Name, wf.Description, wf.TriggerType, wf.TriggerConfig, wf.Status, wf.NextRunAt, wf.CreatedAt, wf.UpdatedAt)
+	orchMode := wf.OrchestrationMode
+	if orchMode == "" {
+		orchMode = "static"
+	}
+	_, err = tx.Exec(`INSERT OR REPLACE INTO workflows (id, name, description, trigger_type, trigger_config, status, next_run_at, created_at, updated_at, orchestration_mode, goal, approved_level, max_tokens, max_tool_calls, spawned_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, wf.ID, wf.Name, wf.Description, wf.TriggerType, wf.TriggerConfig, wf.Status, wf.NextRunAt, wf.CreatedAt, wf.UpdatedAt, orchMode, wf.Goal, wf.ApprovedLevel, wf.MaxTokens, wf.MaxToolCalls, wf.SpawnedBy)
 	if err != nil {
 		return err
 	}
@@ -49,7 +53,7 @@ func (sdb *SqliteDatabase) GetWorkflows() ([]WorkflowDefinition, error) {
 		return []WorkflowDefinition{}, nil
 	}
 
-	rows, err := sdb.db.Query("SELECT id, name, description, trigger_type, trigger_config, status, next_run_at, created_at, updated_at FROM workflows ORDER BY created_at DESC")
+	rows, err := sdb.db.Query("SELECT id, name, description, trigger_type, trigger_config, status, next_run_at, created_at, updated_at, COALESCE(orchestration_mode, 'static'), COALESCE(goal, ''), COALESCE(approved_level, 0), COALESCE(max_tokens, 0), COALESCE(max_tool_calls, 0), COALESCE(spawned_by, '') FROM workflows ORDER BY created_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +63,7 @@ func (sdb *SqliteDatabase) GetWorkflows() ([]WorkflowDefinition, error) {
 	for rows.Next() {
 		var wf WorkflowDefinition
 		var nextRun sql.NullInt64
-		err := rows.Scan(&wf.ID, &wf.Name, &wf.Description, &wf.TriggerType, &wf.TriggerConfig, &wf.Status, &nextRun, &wf.CreatedAt, &wf.UpdatedAt)
+		err := rows.Scan(&wf.ID, &wf.Name, &wf.Description, &wf.TriggerType, &wf.TriggerConfig, &wf.Status, &nextRun, &wf.CreatedAt, &wf.UpdatedAt, &wf.OrchestrationMode, &wf.Goal, &wf.ApprovedLevel, &wf.MaxTokens, &wf.MaxToolCalls, &wf.SpawnedBy)
 		if err != nil {
 			return nil, err
 		}
@@ -141,8 +145,8 @@ func (sdb *SqliteDatabase) CreateWorkflowExecution(exec WorkflowExecution, taskR
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(`INSERT INTO workflow_executions (id, workflow_id, status, started_at)
-		VALUES (?, ?, ?, ?)`, exec.ID, exec.WorkflowID, exec.Status, exec.StartedAt)
+	_, err = tx.Exec(`INSERT INTO workflow_executions (id, workflow_id, status, started_at, tokens_consumed, tool_calls_consumed)
+		VALUES (?, ?, ?, ?, ?, ?)`, exec.ID, exec.WorkflowID, exec.Status, exec.StartedAt, exec.TokensConsumed, exec.ToolCallsConsumed)
 	if err != nil {
 		return err
 	}
@@ -202,6 +206,22 @@ func (sdb *SqliteDatabase) UpdateWorkflowTaskExecution(execID string, taskTempla
 	return err
 }
 
+// InsertWorkflowTaskExecution inserts a single child task execution row into an existing workflow execution.
+// Used by the dynamic orchestrator to incrementally track spawned child tasks.
+func (sdb *SqliteDatabase) InsertWorkflowTaskExecution(tr WorkflowTaskExecution) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	var taskExecID sql.NullString
+	if tr.TaskExecutionID != "" {
+		taskExecID.String = tr.TaskExecutionID
+		taskExecID.Valid = true
+	}
+	_, err := sdb.db.Exec(`INSERT OR REPLACE INTO workflow_task_executions (workflow_execution_id, task_template_id, task_execution_id, status, started_at)
+		VALUES (?, ?, ?, ?, ?)`, tr.WorkflowExecutionID, tr.TaskTemplateID, taskExecID, tr.Status, tr.StartedAt)
+	return err
+}
+
 func (sdb *SqliteDatabase) GetWorkflowExecutions(wfID string) ([]WorkflowExecution, error) {
 	sdb.mutex.RLock()
 	defer sdb.mutex.RUnlock()
@@ -209,9 +229,9 @@ func (sdb *SqliteDatabase) GetWorkflowExecutions(wfID string) ([]WorkflowExecuti
 	var rows *sql.Rows
 	var err error
 	if wfID != "" {
-		rows, err = sdb.db.Query("SELECT id, workflow_id, status, started_at, completed_at FROM workflow_executions WHERE workflow_id = ? ORDER BY started_at DESC", wfID)
+		rows, err = sdb.db.Query("SELECT id, workflow_id, status, started_at, completed_at, COALESCE(tokens_consumed, 0), COALESCE(tool_calls_consumed, 0) FROM workflow_executions WHERE workflow_id = ? ORDER BY started_at DESC", wfID)
 	} else {
-		rows, err = sdb.db.Query("SELECT id, workflow_id, status, started_at, completed_at FROM workflow_executions ORDER BY started_at DESC")
+		rows, err = sdb.db.Query("SELECT id, workflow_id, status, started_at, completed_at, COALESCE(tokens_consumed, 0), COALESCE(tool_calls_consumed, 0) FROM workflow_executions ORDER BY started_at DESC")
 	}
 	if err != nil {
 		return nil, err
@@ -222,7 +242,7 @@ func (sdb *SqliteDatabase) GetWorkflowExecutions(wfID string) ([]WorkflowExecuti
 	for rows.Next() {
 		var exec WorkflowExecution
 		var completed sql.NullInt64
-		err := rows.Scan(&exec.ID, &exec.WorkflowID, &exec.Status, &exec.StartedAt, &completed)
+		err := rows.Scan(&exec.ID, &exec.WorkflowID, &exec.Status, &exec.StartedAt, &completed, &exec.TokensConsumed, &exec.ToolCallsConsumed)
 		if err != nil {
 			return nil, err
 		}
@@ -243,8 +263,8 @@ func (sdb *SqliteDatabase) GetWorkflowExecutionDetails(execID string) (*Workflow
 
 	var exec WorkflowExecution
 	var completed sql.NullInt64
-	err := sdb.db.QueryRow("SELECT id, workflow_id, status, started_at, completed_at FROM workflow_executions WHERE id = ?", execID).
-		Scan(&exec.ID, &exec.WorkflowID, &exec.Status, &exec.StartedAt, &completed)
+	err := sdb.db.QueryRow("SELECT id, workflow_id, status, started_at, completed_at, COALESCE(tokens_consumed, 0), COALESCE(tool_calls_consumed, 0) FROM workflow_executions WHERE id = ?", execID).
+		Scan(&exec.ID, &exec.WorkflowID, &exec.Status, &exec.StartedAt, &completed, &exec.TokensConsumed, &exec.ToolCallsConsumed)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil, fmt.Errorf("workflow execution '%s' not found", execID)
@@ -283,4 +303,53 @@ func (sdb *SqliteDatabase) GetWorkflowExecutionDetails(execID string) (*Workflow
 	}
 
 	return &exec, taskRuns, nil
+}
+
+// UpdateWorkflowExecutionBudget atomically increments budget accumulators for a workflow execution.
+func (sdb *SqliteDatabase) UpdateWorkflowExecutionBudget(execID string, tokensConsumed, toolCallsConsumed int) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec(`UPDATE workflow_executions 
+		SET tokens_consumed = COALESCE(tokens_consumed, 0) + ?, 
+		    tool_calls_consumed = COALESCE(tool_calls_consumed, 0) + ?
+		WHERE id = ?`, tokensConsumed, toolCallsConsumed, execID)
+	return err
+}
+
+// GetInterruptedWorkflowExecutions returns workflow executions in "running" status
+// that have at least one child task with "interrupted" status, suitable for auto-resume.
+func (sdb *SqliteDatabase) GetInterruptedWorkflowExecutions() ([]WorkflowExecution, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	rows, err := sdb.db.Query(`
+		SELECT DISTINCT we.id, we.workflow_id, we.status, we.started_at, we.completed_at, 
+		       COALESCE(we.tokens_consumed, 0), COALESCE(we.tool_calls_consumed, 0)
+		FROM workflow_executions we
+		INNER JOIN workflow_task_executions wte ON wte.workflow_execution_id = we.id
+		WHERE we.status = 'running' AND wte.status = 'interrupted'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []WorkflowExecution
+	for rows.Next() {
+		var exec WorkflowExecution
+		var completed sql.NullInt64
+		err := rows.Scan(&exec.ID, &exec.WorkflowID, &exec.Status, &exec.StartedAt, &completed, &exec.TokensConsumed, &exec.ToolCallsConsumed)
+		if err != nil {
+			return nil, err
+		}
+		if completed.Valid {
+			exec.CompletedAt = completed.Int64
+		}
+		list = append(list, exec)
+	}
+	if list == nil {
+		list = []WorkflowExecution{}
+	}
+	return list, nil
 }

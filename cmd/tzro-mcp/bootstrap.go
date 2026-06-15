@@ -7,12 +7,15 @@ import (
 	"os"
 	"path/filepath"
 
+	"tzro/internal/channel"
 	"tzro/internal/config"
 	"tzro/internal/executor"
 	"tzro/internal/inference"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/observer"
+	"tzro/internal/proactivity"
+	"tzro/internal/sentinel"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
 )
@@ -27,7 +30,7 @@ func (a *TelemetryLLMAdapter) CallModel(ctx context.Context, systemPrompt, userP
 	if a.backend == nil {
 		return "", fmt.Errorf("no active inference backend configured for observer")
 	}
-	res, err := a.backend.CallModel(ctx, systemPrompt, userPrompt, jsonSchema)
+	res, err := a.backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 	if err != nil {
 		return "", err
 	}
@@ -74,7 +77,23 @@ func bootstrapEngine() {
 		observer.Start()
 	}
 
-	// 7. Register Hooks Globally
+	// 7. Conditionally Start Sentinel (ADR-0023)
+	if cfg.IsSentinelEnabled() {
+		sentinel.SetLLMClient(&TelemetryLLMAdapter{
+			backend: inference.ActiveBackend,
+		})
+		sentinel.Start()
+	}
+
+	// 8. Register Hooks Globally
 	executor.GlobalEngine.RegisterHook(&executor.McpApprovalHook{})
-	executor.GlobalEngine.RegisterHook(&executor.ClientToolHook{})
+	executor.GlobalEngine.RegisterHook(channel.GlobalChannelToolHook) // v2: bidirectional dispatch
+	executor.GlobalEngine.RegisterHook(&executor.ClientToolHook{})    // v1 fallback
+
+	// 9. Start Proactivity AttentionScheduler
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewObserverDaemon())
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewCompactorDaemon())
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewReconcilerDaemon())
+	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewPrefetcherDaemon())
+	_ = proactivity.GlobalScheduler.Start(context.Background())
 }

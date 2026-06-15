@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tzro/internal/compiler"
 	"tzro/internal/memory"
 )
@@ -160,6 +162,10 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 		"tzro_model_set":             false,
 		"tzro_completion":            false,
 		"tzro_classification":        false,
+		"tzro_activity_report":       false,
+		"tzro_sentinel_alerts":       false,
+		"tzro_sentinel_wake":         false,
+		"tzro_workflow":              false,
 	}
 
 	for _, toolItem := range tools {
@@ -1402,4 +1408,533 @@ func TestMCPServer_EdgeCases(t *testing.T) {
 	assertValidationFail(17, "tzro_classification", `{"input": "text", "categories": ["A"]}`, "at least 2 categories are required")
 	assertValidationFail(18, "tzro_client_tool_submit", `{"taskId": "", "nodeId": ""}`, "must provide either requestId or both taskId and nodeId")
 	assertValidationFail(19, "tzro_web_search", `{"query": ""}`, "query cannot be empty")
+}
+
+func TestMCPServer_SingletonGuard_DualSpawnRejection(t *testing.T) {
+	// 1. Build the binary
+	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-singleton-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	binPath := filepath.Join(tmpDir, "tzro-mcp")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build tzro-mcp binary: %v", err)
+	}
+
+	// 2. Start instance 1 — should acquire the lock and stay running
+	cmd1 := exec.Command(binPath)
+	cmd1.Dir = tmpDir
+	cmd1.Env = append(os.Environ(), "TZRO_DIR="+tmpDir)
+
+	stdin1, err := cmd1.StdinPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdin pipe for instance 1: %v", err)
+	}
+	stdout1, err := cmd1.StdoutPipe()
+	if err != nil {
+		t.Fatalf("failed to get stdout pipe for instance 1: %v", err)
+	}
+	stderr1, err := cmd1.StderrPipe()
+	if err != nil {
+		t.Fatalf("failed to get stderr pipe for instance 1: %v", err)
+	}
+
+	if err := cmd1.Start(); err != nil {
+		t.Fatalf("failed to start instance 1: %v", err)
+	}
+
+	go func() { _, _ = io.Copy(io.Discard, stderr1) }()
+	go func() { _, _ = io.Copy(io.Discard, stdout1) }()
+
+	defer func() {
+		_ = stdin1.Close()
+		_ = cmd1.Process.Kill()
+		_ = cmd1.Wait()
+	}()
+
+	// Give instance 1 time to acquire the lock and start listening
+	time.Sleep(1 * time.Second)
+
+	// Verify instance 1 is still alive
+	if cmd1.ProcessState != nil && cmd1.ProcessState.Exited() {
+		t.Fatal("instance 1 should still be running, but it exited")
+	}
+
+	// 3. Start instance 2 against the same workspace — should exit with code 0
+	cmd2 := exec.Command(binPath)
+	cmd2.Dir = tmpDir
+	cmd2.Env = append(os.Environ(), "TZRO_DIR="+tmpDir)
+
+	var stderr2Buf strings.Builder
+	cmd2.Stderr = &stderr2Buf
+
+	err = cmd2.Run()
+
+	// Instance 2 should exit with code 0 (not an error)
+	if err != nil {
+		t.Errorf("instance 2 should exit cleanly (code 0), got error: %v", err)
+	}
+
+	if cmd2.ProcessState == nil {
+		t.Fatal("instance 2 ProcessState should be available after Run")
+	}
+
+	if code := cmd2.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("instance 2 exit code = %d, want 0", code)
+	}
+
+	// 4. Verify the lock file contains instance 1's PID
+	lockPath := filepath.Join(tmpDir, ".tzro", "mcp.lock")
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("lockfile should exist: %v", err)
+	}
+
+	lockPIDStr := strings.TrimSpace(string(data))
+	lockPID := 0
+	fmt.Sscanf(lockPIDStr, "%d", &lockPID)
+
+	if lockPID != cmd1.Process.Pid {
+		t.Errorf("lockfile PID = %d, want instance 1 PID %d", lockPID, cmd1.Process.Pid)
+	}
+}
+
+// --- tzro_workflow unit tests ---
+// These test the handler function directly (no binary needed) for validation and dry-run paths.
+
+func TestTzroWorkflow_EmptyNodes(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{},
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for empty nodes")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "nodes array cannot be empty") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroWorkflow_DuplicateNodeID(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "node1", Type: "action", Action: "web_search", Instructions: "search for cats"},
+			{ID: "node1", Type: "action", Action: "web_search", Instructions: "search for dogs"},
+		},
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for duplicate node IDs")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "duplicate node id: node1") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroWorkflow_EmptyNodeID(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "", Type: "action", Action: "web_search", Instructions: "search"},
+		},
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for empty node ID")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "non-empty id") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroWorkflow_InvalidEdgeSourceRef(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "node1", Type: "action", Action: "web_search", Instructions: "search"},
+		},
+		Edges: []WorkflowEdgeInput{
+			{SourceID: "phantom", TargetID: "node1"},
+		},
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for invalid edge source")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "non-existent source node: phantom") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroWorkflow_InvalidEdgeTargetRef(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "node1", Type: "action", Action: "web_search", Instructions: "search"},
+		},
+		Edges: []WorkflowEdgeInput{
+			{SourceID: "node1", TargetID: "phantom"},
+		},
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for invalid edge target")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "non-existent target node: phantom") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroWorkflow_ProbeWithoutConfig(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "probe1", Type: "probe", Instructions: "explore the codebase"},
+		},
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for probe without config")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "requires a probeConfig") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroWorkflow_CycleDetection(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "a", Type: "action", Action: "web_search", Instructions: "step a"},
+			{ID: "b", Type: "action", Action: "web_search", Instructions: "step b"},
+		},
+		Edges: []WorkflowEdgeInput{
+			{SourceID: "a", TargetID: "b"},
+			{SourceID: "b", TargetID: "a"},
+		},
+		DryRun: true,
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for cyclic graph")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "cyclic") {
+		t.Errorf("expected cycle error, got: %s", text)
+	}
+}
+
+func TestTzroWorkflow_DryRun_SingleNode(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "node1", Type: "action", Action: "web_search", Instructions: "search for AI trends", AllowedTools: []string{"web_search"}},
+		},
+		DryRun: true,
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		text := result.Content[0].(*mcp.TextContent).Text
+		t.Fatalf("expected successful dry run, got error: %s", text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "dry_run") {
+		t.Errorf("expected dry_run status, got: %s", text)
+	}
+	if !strings.Contains(text, "executionLevels") {
+		t.Errorf("expected executionLevels in dry run response, got: %s", text)
+	}
+	if !strings.Contains(text, "taskId") {
+		t.Errorf("expected taskId in response, got: %s", text)
+	}
+	// SCT expansion creates validator + exec + terminal_synthesis nodes
+	if !strings.Contains(text, "node1_validator") || !strings.Contains(text, "node1_exec") || !strings.Contains(text, "terminal_synthesis") {
+		t.Errorf("expected SCT-expanded node IDs in levels, got: %s", text)
+	}
+}
+
+func TestTzroWorkflow_DryRun_MultiNodeDAG(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "fetch", Type: "action", Action: "web_search", Instructions: "search for data", AllowedTools: []string{"web_search"}},
+			{ID: "process", Type: "deterministic", Action: "save_memory", Instructions: "save results from {{nodes.fetch_exec.output}}", AllowedTools: []string{"save_memory"}},
+		},
+		Edges: []WorkflowEdgeInput{
+			{SourceID: "fetch", TargetID: "process"},
+		},
+		DryRun: true,
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		text := result.Content[0].(*mcp.TextContent).Text
+		t.Fatalf("expected successful dry run, got error: %s", text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+
+	// Parse the response to verify structure
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse response JSON: %v", err)
+	}
+	if resp["status"] != "dry_run" {
+		t.Errorf("expected status dry_run, got: %v", resp["status"])
+	}
+	// Should have expanded nodes: fetch_validator, fetch_exec, process_validator, process_exec, terminal_synthesis
+	nodeCount, ok := resp["nodeCount"].(float64)
+	if !ok || nodeCount < 5 {
+		t.Errorf("expected at least 5 expanded nodes (2 action * 2 + synthesis), got: %v", resp["nodeCount"])
+	}
+}
+
+func TestTzroWorkflow_DryRun_ProbeNode(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{
+				ID:           "explore",
+				Type:         "probe",
+				Instructions: "Explore the project at /tmp/test and explain the architecture",
+				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				ProbeConfig: &WorkflowProbeInput{
+					Goal:         "Understand the project architecture",
+					AllowedTools: []string{"read_file", "list_dir", "search_files"},
+					StepBudget:   15,
+					CompactEvery: 5,
+				},
+			},
+		},
+		DryRun: true,
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		text := result.Content[0].(*mcp.TextContent).Text
+		t.Fatalf("expected successful dry run, got error: %s", text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "dry_run") {
+		t.Errorf("expected dry_run status, got: %s", text)
+	}
+	// Probe nodes are NOT SCT-expanded (kept as-is)
+	if !strings.Contains(text, "explore") {
+		t.Errorf("expected probe node 'explore' in levels, got: %s", text)
+	}
+}
+
+func TestTzroWorkflow_DryRun_MutationBudget(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{
+				ID:                  "explore",
+				Type:                "probe",
+				Instructions:        "Explore the project",
+				AllowedTools:        []string{"read_file", "list_dir"},
+				ActivationThreshold: 0.8,
+				ProbeConfig: &WorkflowProbeInput{
+					Goal:         "Understand the project",
+					AllowedTools: []string{"read_file", "list_dir"},
+				},
+			},
+		},
+		MutationBudget: 15,
+		DryRun:         true,
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		text := result.Content[0].(*mcp.TextContent).Text
+		t.Fatalf("expected successful dry run, got error: %s", text)
+	}
+
+	// The mutation budget is set on the graph, which is used at runtime.
+	// In dry run mode we verify the compilation succeeds.
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "dry_run") {
+		t.Errorf("expected dry_run status, got: %s", text)
+	}
+}
+
+func TestTzroWorkflow_DryRun_DefaultMaxCycles(t *testing.T) {
+	args := TzroWorkflowArgs{
+		Nodes: []WorkflowNodeInput{
+			{ID: "n1", Type: "action", Action: "web_search", Instructions: "search"},
+		},
+		DryRun: true,
+	}
+	result, _, err := handleTzroWorkflow(nil, nil, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		text := result.Content[0].(*mcp.TextContent).Text
+		t.Fatalf("expected successful dry run, got error: %s", text)
+	}
+	// Verify the graph compiled successfully (maxCycles defaults to 5)
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "dry_run") {
+		t.Errorf("expected dry_run, got: %s", text)
+	}
+}
+
+// --- Agent App Package Manager MCP tool tests ---
+// These test handler functions directly, verifying behavior through the public interface.
+
+func initTestDB(t *testing.T) func() {
+	t.Helper()
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	tmpDir, err := os.MkdirTemp("", "tzro-apps-mcp-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	dbPath := filepath.Join(tmpDir, "test_apps.db")
+	memory.DB.SetDBPathForTesting(dbPath)
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+	return func() {
+		memory.DB.Close()
+		os.RemoveAll(tmpDir)
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}
+}
+
+func TestTzroAppsList_EmptyWhenNoApps(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsList(context.TODO(), nil, TzroAppsListArgs{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected successful result")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	// Should return an empty JSON array, not null
+	if !strings.Contains(text, "[]") {
+		t.Errorf("expected empty array, got: %s", text)
+	}
+}
+
+func TestTzroAppsInstall_RejectsEmptyPath(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsInstall(context.TODO(), nil, TzroAppsInstallArgs{ArchivePath: ""})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for empty archive path")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "archivePath cannot be empty") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroAppsInstall_RejectsWhitespacePath(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsInstall(context.TODO(), nil, TzroAppsInstallArgs{ArchivePath: "   "})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for whitespace archive path")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "archivePath cannot be empty") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroAppsInstall_RejectsNonexistentPath(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsInstall(context.TODO(), nil, TzroAppsInstallArgs{ArchivePath: "/tmp/nonexistent-file.tzroapp"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for nonexistent archive")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "error") {
+		t.Errorf("expected error in response, got: %s", text)
+	}
+}
+
+func TestTzroAppsUninstall_RejectsEmptyAppId(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsUninstall(context.TODO(), nil, TzroAppsUninstallArgs{AppID: ""})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for empty appId")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "appId cannot be empty") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroAppsUninstall_RejectsUnknownApp(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsUninstall(context.TODO(), nil, TzroAppsUninstallArgs{AppID: "nonexistent-app"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for unknown app")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "not installed") {
+		t.Errorf("expected 'not installed' error, got: %s", text)
+	}
 }

@@ -9,9 +9,9 @@ import (
 // InferenceBackend abstracts structured LLM inference calls from the hosting process.
 type InferenceBackend interface {
 	// CallModel performs a structured inference call with optional JSON schema constraint.
-	CallModel(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (*InferenceResult, error)
+	CallModel(ctx context.Context, messages []InferenceMessage, jsonSchema string) (*InferenceResult, error)
 	// CallModelStream performs a streaming inference call.
-	CallModelStream(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, meta StreamMeta) (*InferenceResult, error)
+	CallModelStream(ctx context.Context, messages []InferenceMessage, jsonSchema string, meta StreamMeta) (*InferenceResult, error)
 	// Status returns the backend's current readiness.
 	Status() string // "active" | "stopped" | "unavailable"
 	// Start initializes the backend (no-op for remote backends).

@@ -18,22 +18,23 @@ import (
 )
 
 var (
-	taskOutputRegex = regexp.MustCompile(`^tzro://tasks/([^/?]+)/output(?:\?.*)?$`)
-	nodeOutputRegex = regexp.MustCompile(`^tzro://tasks/([^/?]+)/nodes/([^/?]+)/output(?:\?.*)?$`)
+	taskOutputRegex     = regexp.MustCompile(`^tzro://tasks/([^/?]+)/output(?:\?.*)?$`)
+	nodeOutputRegex     = regexp.MustCompile(`^tzro://tasks/([^/?]+)/nodes/([^/?]+)/output(?:\?.*)?$`)
+	sentinelAlertsRegex = regexp.MustCompile(`^tzro://sentinel/alerts(?:\?.*)?$`)
 )
 
 func getResourcesServerOptions() *mcp.ServerOptions {
 	return &mcp.ServerOptions{
 		SubscribeHandler: func(ctx context.Context, req *mcp.SubscribeRequest) error {
 			uri := req.Params.URI
-			if taskOutputRegex.MatchString(uri) || nodeOutputRegex.MatchString(uri) {
+			if taskOutputRegex.MatchString(uri) || nodeOutputRegex.MatchString(uri) || sentinelAlertsRegex.MatchString(uri) {
 				return nil
 			}
 			return fmt.Errorf("invalid subscription URI: %s", uri)
 		},
 		UnsubscribeHandler: func(ctx context.Context, req *mcp.UnsubscribeRequest) error {
 			uri := req.Params.URI
-			if taskOutputRegex.MatchString(uri) || nodeOutputRegex.MatchString(uri) {
+			if taskOutputRegex.MatchString(uri) || nodeOutputRegex.MatchString(uri) || sentinelAlertsRegex.MatchString(uri) {
 				return nil
 			}
 			return fmt.Errorf("invalid unsubscription URI: %s", uri)
@@ -55,6 +56,13 @@ func registerResources(server *mcp.Server) {
 		Name:        "node-output",
 		Description: "Intermediate output for a single execution node step.",
 	}, handleReadNodeOutputResource)
+
+	// Register the sentinel alerts resource template (ADR-0023)
+	server.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: "tzro://sentinel/alerts{?status}",
+		Name:        "sentinel-alerts",
+		Description: "Proactive insight alerts from the Sentinel Agent, filtered by status.",
+	}, handleReadSentinelAlertsResource)
 
 	// Start the background event bridge to trigger client updates
 	startEventBridge(server)
@@ -186,6 +194,10 @@ func startLocalBridge(ctx context.Context, server *mcp.Server) {
 			if !ok {
 				return
 			}
+			// Sentinel alert chunks trigger the sentinel resource update
+			if chunk.Source == "sentinel" && chunk.Type == "sentinel_alert" {
+				notifySentinelResourceUpdate(server)
+			}
 			notifyResourceUpdate(server, chunk.TaskID, chunk.NodeID)
 		}
 	}
@@ -224,8 +236,13 @@ func startSSEBridge(ctx context.Context, server *mcp.Server, daemonURL string) e
 		var chunk struct {
 			TaskID string `json:"taskId"`
 			NodeID string `json:"nodeId"`
+			Source string `json:"source"`
+			Type   string `json:"type"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			if chunk.Source == "sentinel" && chunk.Type == "sentinel_alert" {
+				notifySentinelResourceUpdate(server)
+			}
 			notifyResourceUpdate(server, chunk.TaskID, chunk.NodeID)
 		}
 	}
@@ -251,4 +268,59 @@ func notifyResourceUpdate(server *mcp.Server, taskID, nodeID string) {
 			URI: nodeURI,
 		})
 	}
+}
+
+// handleReadSentinelAlertsResource handles reads of the tzro://sentinel/alerts resource.
+func handleReadSentinelAlertsResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	uri := req.Params.URI
+
+	// Parse optional status query parameter
+	status := "unread"
+	u, err := url.Parse(uri)
+	if err == nil {
+		if s := u.Query().Get("status"); s != "" {
+			status = s
+		}
+	}
+
+	notifs, err := memory.DB.GetNotifications(status)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query sentinel alerts: %w", err)
+	}
+
+	// Filter to sentinel-sourced notifications
+	var sentinelAlerts []memory.DurableNotification
+	for _, n := range notifs {
+		if n.Source == "sentinel" {
+			sentinelAlerts = append(sentinelAlerts, n)
+		}
+	}
+	if sentinelAlerts == nil {
+		sentinelAlerts = []memory.DurableNotification{}
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"alerts": sentinelAlerts,
+		"count":  len(sentinelAlerts),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal sentinel alerts: %w", err)
+	}
+
+	return &mcp.ReadResourceResult{
+		Contents: []*mcp.ResourceContents{
+			{
+				URI:      uri,
+				MIMEType: "application/json",
+				Text:     string(payload),
+			},
+		},
+	}, nil
+}
+
+// notifySentinelResourceUpdate fires a ResourceUpdated notification for the sentinel alerts URI.
+func notifySentinelResourceUpdate(server *mcp.Server) {
+	_ = server.ResourceUpdated(context.Background(), &mcp.ResourceUpdatedNotificationParams{
+		URI: "tzro://sentinel/alerts",
+	})
 }
