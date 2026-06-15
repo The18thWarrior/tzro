@@ -291,11 +291,11 @@ func (g *ComposeLayoutTool) GetSchema() (string, error) {
 	level3Schema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"type":        map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
-			"columns":     map[string]interface{}{"type": "integer"},
-			"props":       map[string]interface{}{"type": "object"},
-			"children":    map[string]interface{}{
-				"type": "array",
+			"type":    map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
+			"columns": map[string]interface{}{"type": "integer"},
+			"props":   map[string]interface{}{"type": "object"},
+			"children": map[string]interface{}{
+				"type":  "array",
 				"items": level4Schema,
 			},
 		},
@@ -305,11 +305,11 @@ func (g *ComposeLayoutTool) GetSchema() (string, error) {
 	level2Schema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"type":        map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
-			"columns":     map[string]interface{}{"type": "integer"},
-			"props":       map[string]interface{}{"type": "object"},
-			"children":    map[string]interface{}{
-				"type": "array",
+			"type":    map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
+			"columns": map[string]interface{}{"type": "integer"},
+			"props":   map[string]interface{}{"type": "object"},
+			"children": map[string]interface{}{
+				"type":  "array",
 				"items": level3Schema,
 			},
 		},
@@ -319,11 +319,11 @@ func (g *ComposeLayoutTool) GetSchema() (string, error) {
 	componentSchema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"type":        map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
-			"columns":     map[string]interface{}{"type": "integer"},
-			"props":       map[string]interface{}{"type": "object"},
-			"children":    map[string]interface{}{
-				"type": "array",
+			"type":    map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
+			"columns": map[string]interface{}{"type": "integer"},
+			"props":   map[string]interface{}{"type": "object"},
+			"children": map[string]interface{}{
+				"type":  "array",
 				"items": level2Schema,
 			},
 		},

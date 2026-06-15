@@ -430,7 +430,7 @@ func TestFuzzyKeySearch(t *testing.T) {
 	t.Run("AmbiguousMultipleMatches", func(t *testing.T) {
 		// If multiple keys fuzzy-match, return nil to avoid ambiguity
 		data := map[string]interface{}{
-			"receipt_path":    "/a.pdf",
+			"receipt_path":     "/a.pdf",
 			"old_receipt_path": "/b.pdf",
 		}
 		match := fuzzyKeySearch(data, "generated_receipt_path")

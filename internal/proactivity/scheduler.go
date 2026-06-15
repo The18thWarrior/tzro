@@ -18,12 +18,12 @@ var GlobalScheduler *DefaultAttentionScheduler
 
 // DefaultAttentionScheduler coordinates background daemons, budgets, and preemption.
 type DefaultAttentionScheduler struct {
-	mu           sync.RWMutex
-	ctx          context.Context
-	cancelFunc   context.CancelFunc
-	daemons      map[string]Daemon
-	tracker      *BudgetTracker
-	gate         *SentinelGate
+	mu            sync.RWMutex
+	ctx           context.Context
+	cancelFunc    context.CancelFunc
+	daemons       map[string]Daemon
+	tracker       *BudgetTracker
+	gate          *SentinelGate
 	activeCancels map[string]context.CancelFunc // tracks background execution context cancels
 	activeActions map[string]*ProposedAction    // maps notification/attention ID to Go ProposedAction
 
@@ -259,12 +259,12 @@ func (s *DefaultAttentionScheduler) PendingAttention(ctx context.Context) ([]Att
 				}
 			}
 			items = append(items, AttentionItem{
-				ID:            n.ID,
+				ID:             n.ID,
 				ProposedAction: action,
-				Reason:        n.Message,
-				Severity:      n.Type,
-				CreatedTime:   n.CreatedAt,
-				Status:        n.Status,
+				Reason:         n.Message,
+				Severity:       n.Type,
+				CreatedTime:    n.CreatedAt,
+				Status:         n.Status,
 			})
 		}
 	}

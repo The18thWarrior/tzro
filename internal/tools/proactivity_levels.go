@@ -7,11 +7,11 @@ import (
 // ProactivityLevel constants mirror proactivity.ProactivityLevel but are defined
 // here to avoid a circular dependency between tools and proactivity packages.
 const (
-	PLevelObserve             = 0 // L0: read-only observation
-	PLevelPrepare             = 1 // L1: local deterministic preparation
-	PLevelSuggest             = 2 // L2: surfaces recommendations
-	PLevelReversibleAction    = 3 // L3: local reversible actions
-	PLevelExternalSideEffect  = 4 // L4: costly or external-facing actions
+	PLevelObserve            = 0 // L0: read-only observation
+	PLevelPrepare            = 1 // L1: local deterministic preparation
+	PLevelSuggest            = 2 // L2: surfaces recommendations
+	PLevelReversibleAction   = 3 // L3: local reversible actions
+	PLevelExternalSideEffect = 4 // L4: costly or external-facing actions
 )
 
 var (
@@ -22,13 +22,13 @@ var (
 	// These are set once at init and represent the source-based defaults described in the PRD.
 	builtInToolLevels = map[string]int{
 		// L0 — read-only observation
-		"read_file":       PLevelObserve,
-		"list_dir":        PLevelObserve,
-		"search_files":    PLevelObserve,
+		"read_file":        PLevelObserve,
+		"list_dir":         PLevelObserve,
+		"search_files":     PLevelObserve,
 		"introspect_cache": PLevelObserve,
 		"read_cached_data": PLevelObserve,
-		"jq_cached_data":  PLevelObserve,
-		"list_tools":      PLevelObserve,
+		"jq_cached_data":   PLevelObserve,
+		"list_tools":       PLevelObserve,
 
 		// L1 — local deterministic preparation
 		"save_memory":    PLevelPrepare,

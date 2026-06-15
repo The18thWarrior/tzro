@@ -242,4 +242,3 @@ func collectAllKeys(data interface{}, currentPath string, results *[]keyMatch) {
 		}
 	}
 }
-

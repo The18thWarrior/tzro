@@ -142,7 +142,7 @@ func ChunkToEvent(chunk stream.StreamChunk) *ExecutionEvent {
 type BridgeOptions struct {
 	Bus         *stream.Bus
 	OnEmitError func(event ExecutionEvent, err error) // default: no-op
-	StopOnError bool                                   // default: false (keep streaming)
+	StopOnError bool                                  // default: false (keep streaming)
 }
 
 // BridgeWithOptions subscribes to the given bus filtered by taskID and forwards

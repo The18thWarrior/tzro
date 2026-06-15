@@ -1345,4 +1345,3 @@ func (sdb *SqliteDatabase) GetLatestEdgeThought(taskID string) (*EdgeThought, er
 	et.GoalAchieved = goalAchievedInt != 0
 	return &et, nil
 }
-

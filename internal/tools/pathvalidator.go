@@ -190,4 +190,3 @@ func isInsideRoot(path, root string) bool {
 	prefix := root + string(filepath.Separator)
 	return strings.HasPrefix(path, prefix)
 }
-

@@ -33,18 +33,18 @@ type InferenceResult struct {
 }
 
 type LocalModelManager struct {
-	Publisher            telemetry.EventPublisher
-	ActivePort           int    `json:"activePort"`
-	ActivePID            int    `json:"activePid"`
-	Status               string `json:"status"` // "Stopped" | "Starting" | "Active" | "Adopted"
-	ManifestProgress     int    `json:"manifestProgress"`
-	GGUFModelPath        string `json:"ggufModelPath"`
-	checkpointFile       string
-	isPreempted          bool
-	cmd                  *exec.Cmd
-	mutex                sync.Mutex
-	healthClient         *http.Client // Short timeout for /health, /slots control-plane calls
-	inferenceClient      *http.Client // No fixed timeout — relies on ctx deadline for inference calls
+	Publisher                  telemetry.EventPublisher
+	ActivePort                 int    `json:"activePort"`
+	ActivePID                  int    `json:"activePid"`
+	Status                     string `json:"status"` // "Stopped" | "Starting" | "Active" | "Adopted"
+	ManifestProgress           int    `json:"manifestProgress"`
+	GGUFModelPath              string `json:"ggufModelPath"`
+	checkpointFile             string
+	isPreempted                bool
+	cmd                        *exec.Cmd
+	mutex                      sync.Mutex
+	healthClient               *http.Client // Short timeout for /health, /slots control-plane calls
+	inferenceClient            *http.Client // No fixed timeout — relies on ctx deadline for inference calls
 	forceCloudFallback         map[string]bool
 	consecutiveSpeedFail       map[string]int
 	thermalCloudEscalationTime map[string]time.Time // taskID → when thermal cloud escalation was triggered
@@ -74,8 +74,8 @@ var GlobalLocalModel = &LocalModelManager{
 		// This prevents the 3-second timeout from killing inference calls that
 		// legitimately take 10-600+ seconds for large planning outputs.
 	},
-	forceCloudFallback:   make(map[string]bool),
-	consecutiveSpeedFail: make(map[string]int),
+	forceCloudFallback:         make(map[string]bool),
+	consecutiveSpeedFail:       make(map[string]int),
 	thermalCloudEscalationTime: make(map[string]time.Time),
 }
 

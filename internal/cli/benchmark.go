@@ -102,17 +102,35 @@ var benchmarkRunCmd = &cobra.Command{
 			}
 		}
 		// Fix min widths for result columns
-		if widths[1] < 10 { widths[1] = 10 } // PLAN MATCH
-		if widths[2] < 12 { widths[2] = 12 } // PARAM MATCH
+		if widths[1] < 10 {
+			widths[1] = 10
+		} // PLAN MATCH
+		if widths[2] < 12 {
+			widths[2] = 12
+		} // PARAM MATCH
 		if benchmarkDataset == "tzro_dag" {
-			if widths[3] < 12 { widths[3] = 12 } // SPIRIT MATCH
-			if widths[4] < 8 { widths[4] = 8 }   // DURATION
-			if widths[5] < 12 { widths[5] = 12 } // TOKENS
-			if widths[6] < 8 { widths[6] = 8 }   // STATUS
+			if widths[3] < 12 {
+				widths[3] = 12
+			} // SPIRIT MATCH
+			if widths[4] < 8 {
+				widths[4] = 8
+			} // DURATION
+			if widths[5] < 12 {
+				widths[5] = 12
+			} // TOKENS
+			if widths[6] < 8 {
+				widths[6] = 8
+			} // STATUS
 		} else {
-			if widths[3] < 8 { widths[3] = 8 }   // DURATION
-			if widths[4] < 12 { widths[4] = 12 } // TOKENS
-			if widths[5] < 8 { widths[5] = 8 }   // STATUS
+			if widths[3] < 8 {
+				widths[3] = 8
+			} // DURATION
+			if widths[4] < 12 {
+				widths[4] = 12
+			} // TOKENS
+			if widths[5] < 8 {
+				widths[5] = 8
+			} // STATUS
 		}
 
 		printRow := func(w io.Writer, row []string) {
@@ -127,7 +145,9 @@ var benchmarkRunCmd = &cobra.Command{
 				cleaned = strings.ReplaceAll(cleaned, "\u001b[33m", "")
 				cleaned = strings.ReplaceAll(cleaned, "\u001b[0m", "")
 				padding := widths[i] - len(cleaned)
-				if padding < 0 { padding = 0 }
+				if padding < 0 {
+					padding = 0
+				}
 				fmt.Fprintf(w, " %s%s |", val, strings.Repeat(" ", padding))
 			}
 			fmt.Fprintln(w)

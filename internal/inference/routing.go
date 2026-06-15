@@ -14,7 +14,7 @@ import (
 
 // InferenceMessage represents a single message in a multi-turn conversation.
 type InferenceMessage struct {
-	Role    string `json:"role"`    // "system" | "user" | "assistant"
+	Role    string `json:"role"` // "system" | "user" | "assistant"
 	Content string `json:"content"`
 }
 

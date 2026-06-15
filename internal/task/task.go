@@ -214,7 +214,6 @@ func isLocalSidecarActive() bool {
 	return status == "Active" || status == "Adopted"
 }
 
-
 func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*compiler.ExecutionGraph, error) {
 	if inference.ActiveBackend == nil {
 		return nil, fmt.Errorf("no active inference backend configured")

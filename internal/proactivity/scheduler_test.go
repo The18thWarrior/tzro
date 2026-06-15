@@ -41,11 +41,11 @@ type MockDaemon struct {
 	handlerCalls  int32
 }
 
-func (d *MockDaemon) Name() string { return d.name }
-func (d *MockDaemon) Subscriptions() []string { return d.subs }
-func (d *MockDaemon) MaxLevel() ProactivityLevel { return d.maxLevel }
+func (d *MockDaemon) Name() string                 { return d.name }
+func (d *MockDaemon) Subscriptions() []string      { return d.subs }
+func (d *MockDaemon) MaxLevel() ProactivityLevel   { return d.maxLevel }
 func (d *MockDaemon) ResourceRequirements() Budget { return d.reqBudget }
-func (d *MockDaemon) RequiresLLM() bool { return d.requiresLLM }
+func (d *MockDaemon) RequiresLLM() bool            { return d.requiresLLM }
 func (d *MockDaemon) Handler(ctx context.Context, event Event) (*ProposedAction, error) {
 	atomic.AddInt32(&d.handlerCalls, 1)
 	return d.handlerResult, d.handlerErr

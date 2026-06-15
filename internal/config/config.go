@@ -10,17 +10,17 @@ import (
 )
 
 type EngineConfig struct {
-	ModelMode          string  `json:"modelMode"`     // "cooperative" | "local" | "cloud"
-	CloudProvider      string  `json:"cloudProvider"` // "google" | "openai"
-	CloudAPIKey        string  `json:"cloudApiKey"`
-	CloudModel         string  `json:"cloudModel"`                   // the cloud model name to use (e.g. gemini-flash-latest)
-	SpeedFloor                 float64 `json:"speedFloor"`                         // default 5.0 t/s
-	SidecarEnabled             bool    `json:"sidecarEnabled"`                     // default true
-	ThermalCooldownSeconds     int     `json:"thermalCooldownSeconds,omitempty"`   // default 30
-	ThermalCloudCooldownMinutes int    `json:"thermalCloudCooldownMinutes,omitempty"` // default 5
-	GGUFModelPath      string  `json:"ggufModelPath"`                // path to local gguf model file
-	ModelsDir          string  `json:"modelsDir"`                    // directory for downloaded models
-	MaxRAGContextChars int     `json:"maxRagContextChars,omitempty"` // max chars for Graph-RAG context injection (0 = use default 2000)
+	ModelMode                   string  `json:"modelMode"`     // "cooperative" | "local" | "cloud"
+	CloudProvider               string  `json:"cloudProvider"` // "google" | "openai"
+	CloudAPIKey                 string  `json:"cloudApiKey"`
+	CloudModel                  string  `json:"cloudModel"`                            // the cloud model name to use (e.g. gemini-flash-latest)
+	SpeedFloor                  float64 `json:"speedFloor"`                            // default 5.0 t/s
+	SidecarEnabled              bool    `json:"sidecarEnabled"`                        // default true
+	ThermalCooldownSeconds      int     `json:"thermalCooldownSeconds,omitempty"`      // default 30
+	ThermalCloudCooldownMinutes int     `json:"thermalCloudCooldownMinutes,omitempty"` // default 5
+	GGUFModelPath               string  `json:"ggufModelPath"`                         // path to local gguf model file
+	ModelsDir                   string  `json:"modelsDir"`                             // directory for downloaded models
+	MaxRAGContextChars          int     `json:"maxRagContextChars,omitempty"`          // max chars for Graph-RAG context injection (0 = use default 2000)
 
 	// Inference Backend (ADR-0016)
 	InferenceBackend BackendConfig `json:"inferenceBackend,omitempty"`
@@ -121,15 +121,15 @@ func FindBinary(name string) string {
 var (
 	detectedDir  = detectTzroDir()
 	GlobalConfig = &EngineConfig{
-		ModelMode:           "cooperative",
-		CloudProvider:       "google",
-		CloudAPIKey:         "",
-		CloudModel:          "gemini-flash-latest",
-		SpeedFloor:          5.0,
-		SidecarEnabled:      true,
-		GGUFModelPath:       "models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
-		ModelsDir:           defaultModelsDir(),
-		ConfidenceThreshold: 3,
+		ModelMode:            "cooperative",
+		CloudProvider:        "google",
+		CloudAPIKey:          "",
+		CloudModel:           "gemini-flash-latest",
+		SpeedFloor:           5.0,
+		SidecarEnabled:       true,
+		GGUFModelPath:        "models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+		ModelsDir:            defaultModelsDir(),
+		ConfidenceThreshold:  3,
 		ExecutorNodeDelayMs:  800,
 		ExecutorLevelDelayMs: 500,
 	}
@@ -469,4 +469,3 @@ func GetThermalCloudCooldownMinutes() int {
 	}
 	return v
 }
-

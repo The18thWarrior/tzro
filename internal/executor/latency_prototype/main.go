@@ -48,18 +48,18 @@ var Topologies = []Topology{
 
 // Model representing application state
 type Model struct {
-	NodeSleep      time.Duration
-	LevelSleep     time.Duration
-	ToolWork       time.Duration
-	ParallelMode   bool
-	TopologyIndex  int
-	Running        bool
-	ProgressLevel  int
-	NodeStates     map[string]string // "pending" | "running" | "completed"
-	StartTime      time.Time
-	ElapsedTime    time.Duration
-	SimResults     *SimReport
-	TickMutex      sync.Mutex
+	NodeSleep     time.Duration
+	LevelSleep    time.Duration
+	ToolWork      time.Duration
+	ParallelMode  bool
+	TopologyIndex int
+	Running       bool
+	ProgressLevel int
+	NodeStates    map[string]string // "pending" | "running" | "completed"
+	StartTime     time.Time
+	ElapsedTime   time.Duration
+	SimResults    *SimReport
+	TickMutex     sync.Mutex
 }
 
 type SimReport struct {
@@ -155,7 +155,7 @@ func (m Model) runSimulation() tea.Cmd {
 	return func() tea.Msg {
 		topo := Topologies[m.TopologyIndex]
 		startTime := time.Now()
-		
+
 		// Copy initial states
 		states := make(map[string]string)
 		for _, lvl := range topo.Levels {
@@ -170,7 +170,7 @@ func (m Model) runSimulation() tea.Cmd {
 			for _, nodeID := range lvl {
 				states[nodeID] = "running"
 			}
-			
+
 			// Broadcast step start
 			// (We scale down the delays in the live GUI demo by 0.5x so the user doesn't have to wait too long)
 			scale := 0.5
@@ -221,7 +221,7 @@ func (m Model) runSimulation() tea.Cmd {
 		}
 
 		actualElapsed := time.Since(startTime) // Scaled duration
-		_ = actualElapsed // We output the theoretical report to be mathematically correct
+		_ = actualElapsed                      // We output the theoretical report to be mathematically correct
 
 		return doneMsg{
 			TotalSleepDuration: totalSleep,
@@ -305,7 +305,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		if m.Running {
 			m.ElapsedTime = time.Since(m.StartTime)
-			
+
 			// Drive GUI node animation in a simple mock fashion based on elapsed time
 			topo := Topologies[m.TopologyIndex]
 			scale := 0.5
@@ -436,10 +436,10 @@ func (m Model) View() string {
 		sb.WriteString(sectionStyle.Render("3. SIMULATED PROFILE RESULTS (THEORETICAL OUTCOME)") + "\n")
 		sb.WriteString(fmt.Sprintf("%s %v\n", boldStyle.Render("Total Sleeptime Overhead:"), m.SimResults.TotalSleepDuration))
 		sb.WriteString(fmt.Sprintf("%s %v\n", boldStyle.Render("Total Actual Tool Work:  "), m.SimResults.TotalWorkDuration))
-		
+
 		totalDur := m.SimResults.TotalDuration
 		sb.WriteString(fmt.Sprintf("%s %v\n", boldStyle.Render("Total Combined Duration: "), totalDur))
-		
+
 		eff := m.SimResults.Efficiency
 		effStr := ""
 		if eff > 50.0 {

@@ -52,8 +52,8 @@ func TestDashboardTools(t *testing.T) {
 	// Save some fake node states to memory DB to simulate historical tasks
 	db := memory.DB.RawDB()
 	now := time.Now().Unix()
-	_, _ = db.Exec("INSERT INTO node_states (task_id, node_id, status, completed_at) VALUES (?, ?, ?, ?)", "task_today", "node_1", "completed", now - 3600)
-	_, _ = db.Exec("INSERT INTO node_states (task_id, node_id, status, completed_at) VALUES (?, ?, ?, ?)", "task_yesterday", "node_1", "completed", now - 3600*30)
+	_, _ = db.Exec("INSERT INTO node_states (task_id, node_id, status, completed_at) VALUES (?, ?, ?, ?)", "task_today", "node_1", "completed", now-3600)
+	_, _ = db.Exec("INSERT INTO node_states (task_id, node_id, status, completed_at) VALUES (?, ?, ?, ?)", "task_yesterday", "node_1", "completed", now-3600*30)
 
 	metricsRes, err := metricsTool.Call(ctx, nil)
 	if err != nil {

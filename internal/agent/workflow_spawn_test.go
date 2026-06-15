@@ -39,8 +39,8 @@ func TestSpawnWorkflow_CreatesWorkflow(t *testing.T) {
 		context.Background(),
 		"Investigate 3 consecutive tool failures",
 		WorkflowSpawnBudget{MaxTokens: 5000, MaxToolCalls: 10},
-		1,  // ApprovedLevel L1
-		3,  // MaxLevel L3 (sentinel's max)
+		1, // ApprovedLevel L1
+		3, // MaxLevel L3 (sentinel's max)
 	)
 	if err != nil {
 		t.Fatalf("SpawnWorkflow failed: %v", err)
@@ -98,8 +98,8 @@ func TestSpawnWorkflow_BlockedAboveMaxLevel(t *testing.T) {
 		context.Background(),
 		"Attempt high-level spawn",
 		WorkflowSpawnBudget{MaxTokens: 5000, MaxToolCalls: 10},
-		3,  // ApprovedLevel L3
-		1,  // MaxLevel L1 (observer's max)
+		3, // ApprovedLevel L3
+		1, // MaxLevel L1 (observer's max)
 	)
 	if err == nil {
 		t.Fatal("Expected error when ApprovedLevel > MaxLevel, got nil")
@@ -127,8 +127,8 @@ func TestSpawnWorkflow_ExactMaxLevelSucceeds(t *testing.T) {
 		context.Background(),
 		"Spawn at exact limit",
 		WorkflowSpawnBudget{MaxTokens: 1000, MaxToolCalls: 5},
-		2,  // ApprovedLevel L2
-		2,  // MaxLevel L2 (exactly equal)
+		2, // ApprovedLevel L2
+		2, // MaxLevel L2 (exactly equal)
 	)
 	if err != nil {
 		t.Fatalf("SpawnWorkflow failed at exact MaxLevel: %v", err)

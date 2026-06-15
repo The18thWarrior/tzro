@@ -38,10 +38,10 @@ func (m *mockLLMClient) CallModel(ctx context.Context, systemPrompt, userPrompt,
 
 // mockTaskRunner implements TaskRunner for testing.
 type mockTaskRunner struct {
-	mu        sync.Mutex
-	runCount  int
-	failAt    int // -1 means never fail
-	runCalls  []string
+	mu       sync.Mutex
+	runCount int
+	failAt   int // -1 means never fail
+	runCalls []string
 }
 
 func (m *mockTaskRunner) Run(ctx context.Context, instruction string, taskID string) error {

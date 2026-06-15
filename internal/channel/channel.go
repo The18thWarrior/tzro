@@ -12,17 +12,17 @@ import (
 
 // Event type constants matching the SubagentChannel spec vocabulary.
 const (
-	EventTaskStarted           = "task_started"
-	EventTaskCompleted         = "task_completed"
-	EventTaskFailed            = "task_failed"
-	EventTaskPaused            = "task_paused"
-	EventNodeStarted           = "node_started"
-	EventNodeCompleted         = "node_completed"
-	EventNodeFailed            = "node_failed"
-	EventNodeSkipped           = "node_skipped"
-	EventEdgeThought           = "edge_thought"
-	EventConfidenceEscalation  = "confidence_escalation"
-	EventMutationSpawned       = "mutation_spawned"
+	EventTaskStarted          = "task_started"
+	EventTaskCompleted        = "task_completed"
+	EventTaskFailed           = "task_failed"
+	EventTaskPaused           = "task_paused"
+	EventNodeStarted          = "node_started"
+	EventNodeCompleted        = "node_completed"
+	EventNodeFailed           = "node_failed"
+	EventNodeSkipped          = "node_skipped"
+	EventEdgeThought          = "edge_thought"
+	EventConfidenceEscalation = "confidence_escalation"
+	EventMutationSpawned      = "mutation_spawned"
 )
 
 // ExecutionEvent represents a single lifecycle event during task execution.
@@ -128,4 +128,3 @@ func (rc *RecordingChannel) Events() []ExecutionEvent {
 	copy(out, rc.events)
 	return out
 }
-

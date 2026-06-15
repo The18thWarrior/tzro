@@ -29,13 +29,13 @@ type ToolDispatcher interface {
 // when a progressToken is present, falling back to ResourceUpdated otherwise.
 type MCPSubagentChannel struct {
 	taskID         string
-	progressToken  any               // nil → fallback mode
-	notifier       ProgressNotifier  // used when progressToken is present
-	updater        ResourceUpdater   // used when progressToken is absent (fallback)
-	toolDispatcher ToolDispatcher    // v2: nil = no bidirectional dispatch
-	nodeCount      float64           // total nodes in graph
-	completed      float64           // monotonically increasing completion counter
-	mu             sync.Mutex        // v3: guards mutable state
+	progressToken  any              // nil → fallback mode
+	notifier       ProgressNotifier // used when progressToken is present
+	updater        ResourceUpdater  // used when progressToken is absent (fallback)
+	toolDispatcher ToolDispatcher   // v2: nil = no bidirectional dispatch
+	nodeCount      float64          // total nodes in graph
+	completed      float64          // monotonically increasing completion counter
+	mu             sync.Mutex       // v3: guards mutable state
 	closed         bool
 }
 

@@ -54,11 +54,11 @@ func TestRoute_RestrictedDir_ExactMatch(t *testing.T) {
 
 func TestRoute_RestrictedDir_NoMatch(t *testing.T) {
 	d := Route(RoutingContext{
-		ModelMode:         "cooperative",
-		ActivePaths:       []string{"/public/app.go"},
-		RestrictedDirs:    []string{"/secrets"},
-		CloudKeyAvailable: true,
-		ComplexityTier:    "T2",
+		ModelMode:           "cooperative",
+		ActivePaths:         []string{"/public/app.go"},
+		RestrictedDirs:      []string{"/secrets"},
+		CloudKeyAvailable:   true,
+		ComplexityTier:      "T2",
 		ComplexityThreshold: "T1",
 	})
 	if d.PrivacyQuarantined {

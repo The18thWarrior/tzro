@@ -1269,14 +1269,14 @@ func handleTzroSentinelWake(ctx context.Context, req *mcp.CallToolRequest, args 
 
 // WorkflowNodeInput defines a single node in a user-specified DAG workflow.
 type WorkflowNodeInput struct {
-	ID                  string             `json:"id" jsonschema:"required,Unique node identifier"`
-	Type                string             `json:"type" jsonschema:"required,Node type: action, probe, deterministic, branch, merge, synthesis, hypothesis"`
-	Action              string             `json:"action,omitempty" jsonschema:"Target tool name for action/deterministic nodes"`
-	Instructions        string             `json:"instructions" jsonschema:"required,Natural language step instructions. Use double-braces variable binding to reference upstream node outputs."`
-	AllowedTools        []string           `json:"allowedTools,omitempty" jsonschema:"Whitelist of permitted tools for this node"`
-	StaticArgs          string             `json:"staticArgs,omitempty" jsonschema:"Pre-known arguments as a JSON string"`
-	RequireApproval     bool               `json:"requireApproval,omitempty" jsonschema:"Pause and wait for human approval before executing"`
-	ActivationThreshold float64            `json:"activationThreshold,omitempty" jsonschema:"Sufficiency gate 0.0-1.0. 0.0 disables Edge Thoughts."`
+	ID                  string              `json:"id" jsonschema:"required,Unique node identifier"`
+	Type                string              `json:"type" jsonschema:"required,Node type: action, probe, deterministic, branch, merge, synthesis, hypothesis"`
+	Action              string              `json:"action,omitempty" jsonschema:"Target tool name for action/deterministic nodes"`
+	Instructions        string              `json:"instructions" jsonschema:"required,Natural language step instructions. Use double-braces variable binding to reference upstream node outputs."`
+	AllowedTools        []string            `json:"allowedTools,omitempty" jsonschema:"Whitelist of permitted tools for this node"`
+	StaticArgs          string              `json:"staticArgs,omitempty" jsonschema:"Pre-known arguments as a JSON string"`
+	RequireApproval     bool                `json:"requireApproval,omitempty" jsonschema:"Pause and wait for human approval before executing"`
+	ActivationThreshold float64             `json:"activationThreshold,omitempty" jsonschema:"Sufficiency gate 0.0-1.0. 0.0 disables Edge Thoughts."`
 	ProbeConfig         *WorkflowProbeInput `json:"probeConfig,omitempty" jsonschema:"Configuration for probe nodes. Required when type is probe."`
 }
 

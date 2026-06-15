@@ -37,9 +37,9 @@ const ConfidenceSchema = `{
 
 // confidenceState tracks per-task consecutive insufficient confidence assessments.
 type confidenceState struct {
-	mu                sync.Mutex
-	consecutiveFails  map[string]int  // taskID → consecutive insufficient count
-	forceCloudByTask  map[string]bool // taskID → sticky cloud fallback active
+	mu               sync.Mutex
+	consecutiveFails map[string]int  // taskID → consecutive insufficient count
+	forceCloudByTask map[string]bool // taskID → sticky cloud fallback active
 }
 
 var globalConfidenceState = &confidenceState{

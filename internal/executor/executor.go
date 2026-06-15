@@ -1258,7 +1258,6 @@ func stripSchemaProperties(schemaStr string, keysToStrip []string) string {
 	return string(modified)
 }
 
-
 // resolveDynamicBindings resolves a node's DynamicBindings by looking up upstream
 // node RawOutput values from the database. Each binding maps a parameter name to
 // an upstream path in the format "nodeId.output.propertyName". Returns a map of
@@ -1266,9 +1265,9 @@ func stripSchemaProperties(schemaStr string, keysToStrip []string) string {
 // resolved bindings.
 //
 // Uses a three-tier resolution cascade (ADR-0029 Response Resolver):
-//   1. Recursive key search — parse JSON and walk the tree for an exact key match at any depth
-//   2. KV-line key search — fall back to "key: value" per-line parsing for non-JSON outputs
-//   3. Semantic fallback — invoke the Local Model to semantically match the binding key
+//  1. Recursive key search — parse JSON and walk the tree for an exact key match at any depth
+//  2. KV-line key search — fall back to "key: value" per-line parsing for non-JSON outputs
+//  3. Semantic fallback — invoke the Local Model to semantically match the binding key
 //
 // The returned Tier metadata enables the Proactive Binding Splice (ADR-0030) to
 // determine whether each resolved value can bypass inference (high-confidence)
@@ -1390,7 +1389,6 @@ func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}
 	return resolved
 }
 
-
 func InterpolateVariables(instruction string, taskID string) string {
 	reProp := regexp.MustCompile(`\{\{nodes\.([^.]+)\.output\.([^}]+)\}\}`)
 	instruction = reProp.ReplaceAllStringFunc(instruction, func(match string) string {
@@ -1442,7 +1440,13 @@ func InterpolateVariables(instruction string, taskID string) string {
 
 		val, found := outputMap[propertyKey]
 		if !found {
-			fmt.Fprintf(os.Stderr, "[Executor InterpolationResolver] WARNING: Property '%s' not found in node '%s' output. Available keys: %v. Returning null.\n", propertyKey, nodeID, func() []string { keys := make([]string, 0, len(outputMap)); for k := range outputMap { keys = append(keys, k) }; return keys }())
+			fmt.Fprintf(os.Stderr, "[Executor InterpolationResolver] WARNING: Property '%s' not found in node '%s' output. Available keys: %v. Returning null.\n", propertyKey, nodeID, func() []string {
+				keys := make([]string, 0, len(outputMap))
+				for k := range outputMap {
+					keys = append(keys, k)
+				}
+				return keys
+			}())
 			return "null"
 		}
 		if mVal, ok := val.(map[string]interface{}); ok {

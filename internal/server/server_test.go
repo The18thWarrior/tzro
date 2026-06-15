@@ -295,4 +295,3 @@ func TestDashboardEndpoints(t *testing.T) {
 		t.Errorf("unexpected task ID: %v", genResp["taskId"])
 	}
 }
-

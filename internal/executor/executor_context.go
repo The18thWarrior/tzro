@@ -207,7 +207,7 @@ func buildStaticBaseInstruction(expectXML bool) string {
 
 	base += "Do NOT hallucinate or generate placeholder values — use EXACT values from the context. " +
 		"If the instruction contains {{nodes.X.output.Y}} references, match them to corresponding values in the accumulated context blocks."
-	
+
 	return base
 }
 
@@ -251,7 +251,7 @@ func buildSegmentedMessages(staticBase string, accumulatedCtx string, schema str
 	}
 	sb.WriteString("INSTRUCTION:\n")
 	sb.WriteString(instruction)
-	
+
 	if expectXML {
 		sb.WriteString("\n\nReturn ONLY a valid XML structure.")
 	} else {

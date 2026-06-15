@@ -1025,4 +1025,3 @@ func sanitizeSchemaTypes(schema map[string]interface{}) {
 		}
 	}
 }
-

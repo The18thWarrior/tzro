@@ -1340,4 +1340,3 @@ func handleTaskSSE(w http.ResponseWriter, r *http.Request) {
 		StopOnError: true, // Client disconnect → stop
 	})
 }
-

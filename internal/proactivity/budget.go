@@ -14,11 +14,11 @@ type ResourceUsage struct {
 
 // BudgetTracker tracks resource consumption for background daemons.
 type BudgetTracker struct {
-	mu             sync.RWMutex
-	daemonUsage    map[string]ResourceUsage
-	globalUsage    ResourceUsage
-	lastResetTime  time.Time
-	resetInterval  time.Duration
+	mu            sync.RWMutex
+	daemonUsage   map[string]ResourceUsage
+	globalUsage   ResourceUsage
+	lastResetTime time.Time
+	resetInterval time.Duration
 }
 
 // NewBudgetTracker creates a new BudgetTracker that resets at the given interval.

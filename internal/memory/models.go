@@ -67,10 +67,10 @@ type WorkflowDefinition struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	Description       string `json:"description"`
-	TriggerType       string `json:"triggerType"`       // "cron" | "manual" | "background"
-	TriggerConfig     string `json:"triggerConfig"`     // cron expression
-	Status            string `json:"status"`            // "active" | "paused"
-	NextRunAt         int64  `json:"nextRunAt"`         // unix timestamp
+	TriggerType       string `json:"triggerType"`   // "cron" | "manual" | "background"
+	TriggerConfig     string `json:"triggerConfig"` // cron expression
+	Status            string `json:"status"`        // "active" | "paused"
+	NextRunAt         int64  `json:"nextRunAt"`     // unix timestamp
 	CreatedAt         int64  `json:"createdAt"`
 	UpdatedAt         int64  `json:"updatedAt"`
 	OrchestrationMode string `json:"orchestrationMode"` // "static" | "dynamic"
@@ -181,4 +181,3 @@ type EdgeThought struct {
 	StepIndex      int     `json:"stepIndex"`
 	CreatedAt      int64   `json:"createdAt"`
 }
-

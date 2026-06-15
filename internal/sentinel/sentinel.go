@@ -274,10 +274,10 @@ func (s *SentinelAgent) gatherContext() string {
 
 // candidate represents a matched context item from the retrieval phase.
 type candidate struct {
-	Source     string  // "memory", "skill", "kg_node"
-	ID        string  // the entity ID
-	Content   string  // display text for the matched item
-	Score     float64 // similarity score
+	Source  string  // "memory", "skill", "kg_node"
+	ID      string  // the entity ID
+	Content string  // display text for the matched item
+	Score   float64 // similarity score
 }
 
 // retrieveCandidates performs semantic search against memory, skills, and KG.
@@ -290,17 +290,17 @@ func (s *SentinelAgent) retrieveCandidates(contextText string) []candidate {
 		for _, m := range mems {
 			candidates = append(candidates, candidate{
 				Source:  "memory",
-				ID:     m.ID,
+				ID:      m.ID,
 				Content: fmt.Sprintf("[%s] %s", m.Type, m.Content),
-				Score:  m.Confidence, // Use confidence as a proxy for relevance
+				Score:   m.Confidence, // Use confidence as a proxy for relevance
 			})
 		}
 		for _, n := range nodes {
 			candidates = append(candidates, candidate{
 				Source:  "kg_node",
-				ID:     n.ID,
+				ID:      n.ID,
 				Content: fmt.Sprintf("[%s] %s", n.NodeType, n.Name),
-				Score:  n.Weight,
+				Score:   n.Weight,
 			})
 		}
 	}
@@ -310,9 +310,9 @@ func (s *SentinelAgent) retrieveCandidates(contextText string) []candidate {
 	for _, sk := range skills {
 		candidates = append(candidates, candidate{
 			Source:  "skill",
-			ID:     sk.ID,
+			ID:      sk.ID,
 			Content: fmt.Sprintf("Skill: %s — %s", sk.Name, sk.TriggerDescription),
-			Score:  1.0, // Pre-ranked, treat as relevant
+			Score:   1.0, // Pre-ranked, treat as relevant
 		})
 	}
 

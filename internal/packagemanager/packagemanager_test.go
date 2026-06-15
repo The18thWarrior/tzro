@@ -274,7 +274,7 @@ func TestInstall_RunsSQLMigrations(t *testing.T) {
 	}`
 
 	archive := buildTestArchive(t, manifest, map[string]string{
-		"wasm/do_thing.wasm":     "fake",
+		"wasm/do_thing.wasm":      "fake",
 		"db/001_create_items.sql": "CREATE TABLE IF NOT EXISTS myapp_items (id TEXT PRIMARY KEY, name TEXT);",
 	})
 
@@ -684,4 +684,3 @@ func TestMCPRegistry_UnregisterDaemon(t *testing.T) {
 		t.Error("expected error for removing non-existent daemon")
 	}
 }
-

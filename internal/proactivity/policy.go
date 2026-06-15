@@ -99,14 +99,14 @@ func (g *SentinelGate) Evaluate(action *ProposedAction, tracker *BudgetTracker, 
 	// CPU Execution limits
 	if daemonReq.MaxCPUTime > 0 && action.EstimatedLatency > daemonReq.MaxCPUTime {
 		return PolicyDecision{
-			Allowed:          false,
-			Reason:           fmt.Sprintf("estimated latency %s exceeds daemon execution limit %s", action.EstimatedLatency, daemonReq.MaxCPUTime),
+			Allowed: false,
+			Reason:  fmt.Sprintf("estimated latency %s exceeds daemon execution limit %s", action.EstimatedLatency, daemonReq.MaxCPUTime),
 		}
 	}
 	if g.GlobalExecutionBudget.MaxCPUTime > 0 && action.EstimatedLatency > g.GlobalExecutionBudget.MaxCPUTime {
 		return PolicyDecision{
-			Allowed:          false,
-			Reason:           fmt.Sprintf("estimated latency %s exceeds global execution limit %s", action.EstimatedLatency, g.GlobalExecutionBudget.MaxCPUTime),
+			Allowed: false,
+			Reason:  fmt.Sprintf("estimated latency %s exceeds global execution limit %s", action.EstimatedLatency, g.GlobalExecutionBudget.MaxCPUTime),
 		}
 	}
 
@@ -117,14 +117,14 @@ func (g *SentinelGate) Evaluate(action *ProposedAction, tracker *BudgetTracker, 
 	// Check Token limits
 	if daemonReq.MaxTokens > 0 && consumed.MaxTokens+action.PayloadTokenEstimate() > daemonReq.MaxTokens {
 		return PolicyDecision{
-			Allowed:          false,
-			Reason:           fmt.Sprintf("daemon '%s' token budget exhausted for current interval", daemon.Name()),
+			Allowed: false,
+			Reason:  fmt.Sprintf("daemon '%s' token budget exhausted for current interval", daemon.Name()),
 		}
 	}
 	if g.GlobalIntervalBudget.MaxTokens > 0 && globalConsumed.MaxTokens+action.PayloadTokenEstimate() > g.GlobalIntervalBudget.MaxTokens {
 		return PolicyDecision{
-			Allowed:          false,
-			Reason:           "global background token budget exhausted for current interval",
+			Allowed: false,
+			Reason:  "global background token budget exhausted for current interval",
 		}
 	}
 
@@ -132,14 +132,14 @@ func (g *SentinelGate) Evaluate(action *ProposedAction, tracker *BudgetTracker, 
 	estimatedCalls := len(action.RequiredCapabilities)
 	if daemonReq.MaxToolCalls > 0 && consumed.MaxToolCalls+estimatedCalls > daemonReq.MaxToolCalls {
 		return PolicyDecision{
-			Allowed:          false,
-			Reason:           fmt.Sprintf("daemon '%s' tool call budget exhausted for current interval", daemon.Name()),
+			Allowed: false,
+			Reason:  fmt.Sprintf("daemon '%s' tool call budget exhausted for current interval", daemon.Name()),
 		}
 	}
 	if g.GlobalIntervalBudget.MaxToolCalls > 0 && globalConsumed.MaxToolCalls+estimatedCalls > g.GlobalIntervalBudget.MaxToolCalls {
 		return PolicyDecision{
-			Allowed:          false,
-			Reason:           "global background tool call budget exhausted for current interval",
+			Allowed: false,
+			Reason:  "global background tool call budget exhausted for current interval",
 		}
 	}
 

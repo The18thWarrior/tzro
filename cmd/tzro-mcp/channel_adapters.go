@@ -44,7 +44,7 @@ func (d *sessionToolDispatcher) CreateMessage(ctx context.Context, systemPrompt,
 	result, err := d.session.CreateMessage(ctx, &mcp.CreateMessageParams{
 		SystemPrompt: systemPrompt,
 		Messages: []*mcp.SamplingMessage{{
-		Role:    "user",
+			Role:    "user",
 			Content: &mcp.TextContent{Text: userMessage},
 		}},
 		MaxTokens: maxTokens,

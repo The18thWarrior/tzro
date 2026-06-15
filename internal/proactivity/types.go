@@ -66,8 +66,8 @@ type ProposedAction struct {
 	RequiresLLM          bool
 	IsReversible         bool
 	ApprovalRequired     bool
-	Payload              interface{}                                    // action parameters
-	Execute              func(ctx context.Context) (string, error)      // action execution logic
+	Payload              interface{}                               // action parameters
+	Execute              func(ctx context.Context) (string, error) // action execution logic
 }
 
 // Budget defines the execution and interval limits for resource consumption.
@@ -90,11 +90,11 @@ type Daemon interface {
 
 // AttentionItem maps onto memory.DurableNotification for storage and UI dashboard delivery.
 type AttentionItem struct {
-	ID            string
+	ID             string
 	ProposedAction *ProposedAction
-	Reason        string
-	Severity      string // "critical" | "warning" | "info"
-	CreatedTime   int64
-	ExpireTime    int64
-	Status        string // "pending" | "approved" | "rejected" | "expired" | "executed" | "dismissed"
+	Reason         string
+	Severity       string // "critical" | "warning" | "info"
+	CreatedTime    int64
+	ExpireTime     int64
+	Status         string // "pending" | "approved" | "rejected" | "expired" | "executed" | "dismissed"
 }
