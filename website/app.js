@@ -1,5 +1,5 @@
 /* =========================================================================
-   TZRO WEBSITE PROTOTYPE: CORE CLIENT-SIDE ENGINE
+   TZRO AGENTIC OS WEBSITE: CORE CLIENT-SIDE ENGINE
    ========================================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -17,7 +17,6 @@ document.addEventListener("DOMContentLoaded", () => {
       mobileMenuToggle.setAttribute("aria-expanded", isOpen);
     });
 
-    // Close mobile menu when a link is clicked
     mobileNavLinks.forEach((link) => {
       link.addEventListener("click", () => {
         mobileNavDrawer.classList.remove("open");
@@ -26,7 +25,6 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
 
-    // Close when clicking outside of the drawer
     document.addEventListener("click", (e) => {
       if (
         mobileNavDrawer.classList.contains("open") &&
@@ -41,14 +39,140 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // =========================================================================
-  // 1. INITIALIZE ALL PLAYGROUNDS
+  // INITIALIZE PLAYGROUND TIMERS
   // =========================================================================
   let vASimIntervals = [];
   let vBSimIntervals = [];
   let vCSimIntervals = [];
 
   // =========================================================================
-  // 2. VARIANT A: KAHN PARALLEL EXECUTION SIMULATOR
+  // OS ARCHITECTURE DIAGRAM: INTERACTIVITY
+  // =========================================================================
+  const osBlocks = document.querySelectorAll(".os-block");
+  const osTooltip = document.getElementById("os-tooltip");
+  const osTooltipText = document.getElementById("os-tooltip-text");
+
+  osBlocks.forEach((block) => {
+    // Click → smooth scroll to target section
+    block.addEventListener("click", () => {
+      const target = block.getAttribute("data-target");
+      if (target) {
+        const el = document.querySelector(target);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+
+          // Briefly highlight the clicked block
+          osBlocks.forEach((b) => b.classList.remove("active"));
+          block.classList.add("active");
+          setTimeout(() => block.classList.remove("active"), 2000);
+        }
+      }
+    });
+
+    // Hover → show tooltip with label
+    block.addEventListener("mouseenter", (e) => {
+      const label = block.getAttribute("data-label");
+      if (label && osTooltip && osTooltipText) {
+        osTooltipText.textContent = label;
+        osTooltip.classList.add("visible");
+      }
+    });
+
+    block.addEventListener("mousemove", (e) => {
+      if (osTooltip) {
+        osTooltip.style.left = e.clientX + 12 + "px";
+        osTooltip.style.top = e.clientY + 12 + "px";
+      }
+    });
+
+    block.addEventListener("mouseleave", () => {
+      if (osTooltip) {
+        osTooltip.classList.remove("visible");
+      }
+    });
+  });
+
+  // Scroll-spy: highlight active OS block based on scroll position
+  const sectionTargetMap = new Map();
+  osBlocks.forEach((block) => {
+    const target = block.getAttribute("data-target");
+    if (target) {
+      sectionTargetMap.set(target, block);
+    }
+  });
+
+  let scrollSpyTicking = false;
+  window.addEventListener("scroll", () => {
+    if (!scrollSpyTicking) {
+      requestAnimationFrame(() => {
+        const scrollY = window.scrollY + 200;
+        let activeTarget = null;
+
+        sectionTargetMap.forEach((block, selector) => {
+          const el = document.querySelector(selector);
+          if (el && el.offsetTop <= scrollY) {
+            activeTarget = selector;
+          }
+        });
+
+        osBlocks.forEach((b) => b.classList.remove("active"));
+        if (activeTarget && sectionTargetMap.has(activeTarget)) {
+          sectionTargetMap.get(activeTarget).classList.add("active");
+        }
+        scrollSpyTicking = false;
+      });
+      scrollSpyTicking = true;
+    }
+  });
+
+  // =========================================================================
+  // TWO-ONRAMP TAB SWITCHING
+  // =========================================================================
+  const onrampTabBtns = document.querySelectorAll(".onramp-tab-btn");
+  const onrampMcp = document.getElementById("onramp-mcp");
+  const onrampFramework = document.getElementById("onramp-framework");
+
+  onrampTabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      onrampTabBtns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.getAttribute("data-onramp");
+
+      if (tab === "mcp") {
+        onrampMcp.classList.add("active");
+        onrampFramework.classList.remove("active");
+      } else {
+        onrampMcp.classList.remove("active");
+        onrampFramework.classList.add("active");
+      }
+    });
+  });
+
+  // =========================================================================
+  // QUICKSTART TAB SWITCHING
+  // =========================================================================
+  const qsTabBtns = document.querySelectorAll(".quickstart-tab-btn");
+  const qsMcp = document.getElementById("qs-mcp");
+  const qsFramework = document.getElementById("qs-framework");
+
+  qsTabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      qsTabBtns.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.getAttribute("data-qs");
+
+      if (tab === "mcp") {
+        qsMcp.classList.add("active");
+        qsFramework.classList.remove("active");
+      } else {
+        qsMcp.classList.remove("active");
+        qsFramework.classList.add("active");
+      }
+    });
+  });
+
+  // =========================================================================
+  // PROCESS SCHEDULER: KAHN SIMULATOR WITH DYNAMIC NODE SPAWNING
   // =========================================================================
   const vAStartBtn = document.getElementById("vA-start-btn");
   const vAResetBtn = document.getElementById("vA-reset-btn");
@@ -59,6 +183,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const node01 = document.getElementById("node-01");
   const node02 = document.getElementById("node-02");
   const node03 = document.getElementById("node-03");
+  const nodeEdgeThought = document.getElementById("node-edge-thought");
+  const nodeSpawned = document.getElementById("node-spawned");
+  const edgeConfidence = document.getElementById("edge-confidence");
 
   function appendConsoleLine(text, cssClass = "") {
     const line = document.createElement("div");
@@ -78,7 +205,7 @@ document.addEventListener("DOMContentLoaded", () => {
       vAHorizonPulse.style.opacity = "0";
     }
 
-    // Reset nodes to default visual state
+    // Reset all nodes
     [nodePlanner, node01, node02, node03].forEach((n) => {
       if (n) {
         n.className = "sim-node pending";
@@ -86,16 +213,28 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     if (nodePlanner) nodePlanner.className = "sim-node planner";
 
+    // Reset edge thought and spawned nodes
+    if (nodeEdgeThought) {
+      nodeEdgeThought.className = "sim-node edge-thought-node hidden";
+    }
+    if (nodeSpawned) {
+      nodeSpawned.className = "sim-node spawned-node hidden";
+    }
+    if (edgeConfidence) {
+      edgeConfidence.textContent = "—";
+      edgeConfidence.className = "";
+    }
+
     vAConsole.innerHTML =
       '<div class="log-line text-muted">Awaiting topological compilation triggers...</div>';
     vAStartBtn.disabled = false;
-    vAStartBtn.textContent = "Compile & Run DAG";
+    vAStartBtn.textContent = "Compile & Run Task";
   }
 
   function runVariantASim() {
     resetVariantASim();
     vAStartBtn.disabled = true;
-    vAStartBtn.textContent = "Running Sim...";
+    vAStartBtn.textContent = "Running...";
 
     if (vAHorizonPulse) {
       vAHorizonPulse.classList.add("pulsing");
@@ -104,16 +243,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     appendConsoleLine(
-      "Compiling abstract graph definition with Kahn Sorter...",
+      "Compiling abstract graph with Kahn Compiler...",
       "cyan",
     );
 
-    // Phase 1: Planning / Strategist runs
+    // Phase 1: Cloud Strategist plans (called ONCE)
     vASimIntervals.push(
       setTimeout(() => {
         nodePlanner.className = "sim-node running";
         appendConsoleLine(
-          "Strategist (Gemini Cloud) called ONCE. Compiling Abstract execution blueprint...",
+          "Cloud Strategist called ONCE. Compiling abstract execution blueprint...",
           "log-line",
         );
       }, 1000),
@@ -123,23 +262,23 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(() => {
         nodePlanner.className = "sim-node completed";
         appendConsoleLine(
-          "Strategic compilation complete. Sorted levels constructed programmatically.",
+          "Strategic compilation complete. Event-driven ready queue initialized.",
           "success",
         );
         appendConsoleLine(
-          "Level sequence mapping: Level 0 [node_01, node_02] (Parallel) -> Level 1 [node_03] (Dependent)",
+          "Level mapping: Level 0 [node_01, node_02] → Edge Thought → Level 1 [node_03]",
           "cyan",
         );
       }, 2500),
     );
 
-    // Phase 2: Level 0 executes (Parallel Goroutines)
+    // Phase 2: Level 0 executes in parallel
     vASimIntervals.push(
       setTimeout(() => {
         node01.className = "sim-node running";
         node02.className = "sim-node running";
         appendConsoleLine(
-          "Level 0 goroutines spawned. Dispatching concurrent tasks in parallel.",
+          "Ready queue fires Level 0. Dispatching parallel goroutines.",
           "cyan",
         );
         appendConsoleLine(
@@ -167,51 +306,117 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(() => {
         node02.className = "sim-node completed";
         appendConsoleLine(
-          "[Level 0: Goroutine 2] node_02 completed. Output: user profiles compiled (Size: 4.8KB).",
+          "[Level 0: Goroutine 2] node_02 completed. Output: user profiles compiled (4.8KB).",
           "success",
         );
       }, 7200),
     );
 
-    // Phase 3: Level 1 executes
+    // Phase 3: EDGE THOUGHT — Neural Edge Traversal
     vASimIntervals.push(
       setTimeout(() => {
         appendConsoleLine(
-          "All Level 0 dependency edges satisfied. Unblocking Level 1.",
+          "All Level 0 edges satisfied. Generating Edge Thought on outgoing edge...",
+          "cyan",
+        );
+        // Show edge thought node
+        nodeEdgeThought.className =
+          "sim-node edge-thought-node visible evaluating";
+        edgeConfidence.textContent = "0.42";
+        edgeConfidence.className = "confidence-low";
+        appendConsoleLine(
+          "Edge Thought evaluated: goalConfidence=0.42, threshold=0.70",
+          "log-line",
+        );
+      }, 8500),
+    );
+
+    // Phase 4: Confidence below threshold → DYNAMIC NODE SPAWN
+    vASimIntervals.push(
+      setTimeout(() => {
+        appendConsoleLine(
+          "⚡ Confidence (0.42) < Activation Threshold (0.70) — SPAWNING new node!",
+          "warning",
+        );
+        // Show spawned node with animation
+        nodeSpawned.className = "sim-node spawned-node visible spawning";
+        appendConsoleLine(
+          "[Dynamic Spawn] node_03a created: enrich_user_data. Mutation budget: 14 remaining.",
+          "success",
+        );
+      }, 10000),
+    );
+
+    // Phase 5: Spawned node executes
+    vASimIntervals.push(
+      setTimeout(() => {
+        nodeSpawned.className = "sim-node running visible";
+        appendConsoleLine(
+          "Executing node_03a (enrich_user_data) via MCP Host...",
+          "log-line",
+        );
+      }, 11200),
+    );
+
+    vASimIntervals.push(
+      setTimeout(() => {
+        nodeSpawned.className = "sim-node completed visible";
+        appendConsoleLine(
+          "[Spawned Node] node_03a completed. Enriched user profiles with org data.",
+          "success",
+        );
+
+        // Update edge thought confidence
+        edgeConfidence.textContent = "0.91";
+        edgeConfidence.className = "confidence-high";
+        nodeEdgeThought.className =
+          "sim-node edge-thought-node visible completed";
+        appendConsoleLine(
+          "Edge Thought re-evaluated: goalConfidence=0.91 ≥ threshold — CONTINUE",
+          "success",
+        );
+      }, 12800),
+    );
+
+    // Phase 6: Level 1 executes (original node_03)
+    vASimIntervals.push(
+      setTimeout(() => {
+        appendConsoleLine(
+          "Edge satisfied with sufficient confidence. Unblocking Level 1.",
           "cyan",
         );
         node03.className = "sim-node running";
         appendConsoleLine(
-          "Executing node_03 (send_team_alert) using Stdio MCP gateway. Mapping parameters forwarded from node_01/node_02...",
+          "Executing node_03 (send_team_alert) using Stdio MCP gateway...",
           "log-line",
         );
-      }, 8500),
+      }, 14000),
     );
 
     vASimIntervals.push(
       setTimeout(() => {
         node03.className = "sim-node completed";
         appendConsoleLine(
-          "[Level 1] node_03 completed. Notification pushed via Stdio Slack MCP server.",
+          "[Level 1] node_03 completed. Notification pushed via Slack MCP server.",
           "success",
         );
-      }, 10500),
+      }, 15500),
     );
 
-    // Terminal synthesis node
+    // Terminal synthesis
     vASimIntervals.push(
       setTimeout(() => {
         appendConsoleLine(
-          "Terminal synthesis node initialized. Compiling summary block...",
+          "Terminal synthesis node compiling summary...",
           "cyan",
         );
-      }, 11500),
+      }, 16500),
     );
 
     vASimIntervals.push(
       setTimeout(() => {
         appendConsoleLine(
-          "TASK DEMO EXECUTION COMPLETE. Status: success. Cloud API calls: 1. Local tool dispatches: 3. Telemetry Stream: closed.",
+          "TASK COMPLETE. Status: success. Cloud calls: 1. Local dispatches: 4 (1 dynamically spawned). Checkpoints: 6.",
           "success",
         );
         if (vAHorizonPulse) {
@@ -220,8 +425,8 @@ document.addEventListener("DOMContentLoaded", () => {
           vAHorizonPulse.style.opacity = "0";
         }
         vAStartBtn.disabled = false;
-        vAStartBtn.textContent = "Re-run DAG Task";
-      }, 12800),
+        vAStartBtn.textContent = "Re-run Task";
+      }, 17800),
     );
   }
 
@@ -229,7 +434,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (vAResetBtn) vAResetBtn.addEventListener("click", resetVariantASim);
 
   // =========================================================================
-  // 3. VARIANT B: 5-LAYER CONTEXT COMPACTION PLAYGROUND
+  // VIRTUAL MEMORY: 5-LAYER CONTEXT COMPACTION PLAYGROUND
   // =========================================================================
   const vBCompressBtn = document.getElementById("vB-compress-btn");
   const rawPayloadDisplay = document.getElementById("raw-payload-display");
@@ -281,7 +486,6 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("step-4"),
   ];
 
-  // Raw Presets Data
   const PAYLOAD_PRESETS = {
     crm: {
       size: "22.4",
@@ -301,8 +505,8 @@ document.addEventListener("DOMContentLoaded", () => {
     },
     scraped: {
       size: "80.6",
-      raw: `<!DOCTYPE html>\n<html>\n<head>\n  <title>TZRO Github Repository Documentation Page</title>\n</head>\n<body>\n  <div id="wrapper">\n    <header class="repo-header">\n      <h1 class="repo-title"><a href="https://github.com/The18thWarrior/tzro">The18thWarrior/tzro</a></h1>\n      <span class="star-count">Stars: 1420</span>\n    </header>\n    \n    <main class="content-body">\n      <div class="readme-preview">\n        <h2>Overview</h2>\n        <p class="summary-p">tzro is a durable, local-first agentic execution engine designed to coordinate complex multi-system automations securely on resource-constrained hardware.</p>\n        <p class="detail-p">By implementing a strategy-vs-tactics planner routing and topological sorted goroutine execution grids, tzro allows local lightweight GGUF models to call tools without arguments hallucination.</p>\n      </div>\n      \n      <aside class="sidebar-info">\n        <h3>Build Status</h3>\n        <div class="status-indicator">passing</div>\n        <h3>License</h3>\n        <span>Apache-2.0</span>\n      </aside>\n    </main>\n  </div>\n</body>\n</html>`,
-      compacted: `URL: https://github.com/The18thWarrior/tzro\nStars: 1420 | Status: passing | License: Apache-2.0\nTitle: TZRO Github Repository Documentation Page\nContent:\n- tzro: durable, local-first agentic execution engine coordinating complex multi-system automations securely on resource-constrained hardware.\n- System uses strategy-vs-tactics planner and topological sorted goroutines to prevent local tool argument hallucinations.`,
+      raw: `<!DOCTYPE html>\n<html>\n<head>\n  <title>TZRO Github Repository Documentation Page</title>\n</head>\n<body>\n  <div id="wrapper">\n    <header class="repo-header">\n      <h1 class="repo-title"><a href="https://github.com/The18thWarrior/tzro">The18thWarrior/tzro</a></h1>\n      <span class="star-count">Stars: 1420</span>\n    </header>\n    \n    <main class="content-body">\n      <div class="readme-preview">\n        <h2>Overview</h2>\n        <p class="summary-p">tzro is a durable, local-first agentic operating system — a portable runtime that carries everything an AI agent needs to be productive.</p>\n        <p class="detail-p">By implementing strategy-vs-tactics planner routing and topological sorted goroutine execution grids, tzro allows local lightweight GGUF models to call tools without argument hallucination.</p>\n      </div>\n      \n      <aside class="sidebar-info">\n        <h3>Build Status</h3>\n        <div class="status-indicator">passing</div>\n        <h3>License</h3>\n        <span>Apache-2.0</span>\n      </aside>\n    </main>\n  </div>\n</body>\n</html>`,
+      compacted: `URL: https://github.com/The18thWarrior/tzro\nStars: 1420 | Status: passing | License: Apache-2.0\nTitle: TZRO Github Repository Documentation Page\nContent:\n- tzro: durable, local-first agentic operating system — portable runtime carrying everything an AI agent needs.\n- System uses strategy-vs-tactics planner and topological sorted goroutines to prevent local tool argument hallucinations.`,
       saving: "93.4%",
       finalSize: "5.3",
       ratio: "15:1 Reduction",
@@ -327,17 +531,14 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    // Reset displays
     const preset = PAYLOAD_PRESETS[activePreset];
     rawSizeLabel.textContent = preset.size;
     compactedSizeLabel.textContent = "0.0";
     rawPayloadDisplay.value = preset.raw;
 
-    // Reset mobile tab elements
     if (rawSizeTab) rawSizeTab.textContent = preset.size;
     if (compactedSizeTab) compactedSizeTab.textContent = "0.0";
 
-    // Switch mobile back to raw panel on reset/preset selection
     if (compactorRawPanel && compactorCompactedPanel) {
       compactorRawPanel.classList.add("active");
       compactorCompactedPanel.classList.remove("active");
@@ -377,80 +578,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const preset = PAYLOAD_PRESETS[activePreset];
     let stepDelays = [500, 1200, 2000, 2800, 3500, 4200];
 
-    // Layer 0: Binary Pruning
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[0].className = "pipeline-step-item active";
-        pipelineSteps[0].querySelector(".status").textContent = "Running";
-      }, stepDelays[0]),
-    );
+    // Layer 0-4 pipeline animation
+    for (let i = 0; i < 5; i++) {
+      vBSimIntervals.push(
+        setTimeout(() => {
+          pipelineSteps[i].className = "pipeline-step-item active";
+          pipelineSteps[i].querySelector(".status").textContent = "Running";
+        }, stepDelays[i]),
+      );
 
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[0].className = "pipeline-step-item completed";
-        pipelineSteps[0].querySelector(".status").textContent = "Done";
-      }, stepDelays[1]),
-    );
-
-    // Layer 1: HTML-to-Markdown
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[1].className = "pipeline-step-item active";
-        pipelineSteps[1].querySelector(".status").textContent = "Running";
-      }, stepDelays[1]),
-    );
-
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[1].className = "pipeline-step-item completed";
-        pipelineSteps[1].querySelector(".status").textContent = "Done";
-      }, stepDelays[2]),
-    );
-
-    // Layer 2: TSV Hoisting
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[2].className = "pipeline-step-item active";
-        pipelineSteps[2].querySelector(".status").textContent = "Running";
-      }, stepDelays[2]),
-    );
-
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[2].className = "pipeline-step-item completed";
-        pipelineSteps[2].querySelector(".status").textContent = "Done";
-      }, stepDelays[3]),
-    );
-
-    // Layer 3: KV Flattening
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[3].className = "pipeline-step-item active";
-        pipelineSteps[3].querySelector(".status").textContent = "Running";
-      }, stepDelays[3]),
-    );
-
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[3].className = "pipeline-step-item completed";
-        pipelineSteps[3].querySelector(".status").textContent = "Done";
-      }, stepDelays[4]),
-    );
-
-    // Layer 4: Dot-Notation Tree Flattening
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[4].className = "pipeline-step-item active";
-        pipelineSteps[4].querySelector(".status").textContent = "Running";
-      }, stepDelays[4]),
-    );
-
-    vBSimIntervals.push(
-      setTimeout(() => {
-        pipelineSteps[4].className = "pipeline-step-item completed";
-        pipelineSteps[4].querySelector(".status").textContent = "Done";
-      }, stepDelays[5]),
-    );
+      vBSimIntervals.push(
+        setTimeout(() => {
+          pipelineSteps[i].className = "pipeline-step-item completed";
+          pipelineSteps[i].querySelector(".status").textContent = "Done";
+        }, stepDelays[i + 1]),
+      );
+    }
 
     // Complete results
     vBSimIntervals.push(
@@ -458,7 +601,7 @@ document.addEventListener("DOMContentLoaded", () => {
         compactedSizeLabel.textContent = preset.finalSize;
         if (compactedSizeTab) compactedSizeTab.textContent = preset.finalSize;
 
-        // Auto switch to compacted tab on mobile when compaction finishes
+        // Auto switch to compacted tab on mobile
         if (compactorRawPanel && compactorCompactedPanel) {
           compactorRawPanel.classList.remove("active");
           compactorCompactedPanel.classList.add("active");
@@ -471,8 +614,7 @@ document.addEventListener("DOMContentLoaded", () => {
           });
         }
 
-        // Determine if SQLite disk cache fallback gets triggered (emulated threshold check)
-        const exceedsThreshold = parseFloat(preset.size) > 30; // Let's emulate threshold for logs & scraped
+        const exceedsThreshold = parseFloat(preset.size) > 30;
 
         if (exceedsThreshold) {
           compactedPayloadDisplay.style.display = "none";
@@ -483,7 +625,6 @@ document.addEventListener("DOMContentLoaded", () => {
           diskCacheBanner.style.display = "none";
         }
 
-        // Show stats circles
         metricSaving.textContent = preset.saving;
         metricInitial.textContent = `${preset.size} KB`;
         metricFinal.textContent = `${preset.finalSize} KB`;
@@ -499,7 +640,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (vBCompressBtn) vBCompressBtn.addEventListener("click", runVariantBSim);
 
   // =========================================================================
-  // 4. VARIANT C: GO DX & INTERACTIVE MIDDLEWARE HOOKS
+  // FRAMEWORK ONRAMP: GO DX & INTERACTIVE MIDDLEWARE HOOKS
   // =========================================================================
   const dxTabBtns = document.querySelectorAll(".dx-nav-btn");
   const dxFilename = document.getElementById("dx-filename");
@@ -514,26 +655,25 @@ document.addEventListener("DOMContentLoaded", () => {
   const hitlApproveBtn = document.getElementById("hitl-approve-btn");
   const hitlAbortBtn = document.getElementById("hitl-abort-btn");
 
-  // SDK Code Snippets Source
   const DX_SNIPPETS = {
     config: {
       file: "config.go",
       code: `package main
 
 import (
-	"fmt"
-	"tzro/internal/config"
+\t"fmt"
+\t"tzro/internal/config"
 )
 
 func main() {
-	// 1. Fetch engine configuration settings
-	cfg := config.Get()
-	fmt.Printf("Engine Mode: %s\\n", cfg.ModelMode) // cooperative, local, cloud
+\t// 1. Fetch engine configuration settings
+\tcfg := config.Get()
+\tfmt.Printf("Engine Mode: %s\\n", cfg.ModelMode) // cooperative, local, cloud
 
-	// 2. Resolve environment-delegated credentials recursively
-	// E.g., "$OPENAI_API_KEY" -> fetches active OS environment values
-	apiKey := config.GetCloudAPIKey()
-	fmt.Printf("Secret Decrypted: length = %d\\n", len(apiKey))
+\t// 2. Resolve environment-delegated credentials recursively
+\t// E.g., "$OPENAI_API_KEY" -> fetches active OS environment values
+\tapiKey := config.GetCloudAPIKey()
+\tfmt.Printf("Secret Decrypted: length = %d\\n", len(apiKey))
 }`,
     },
     tools: {
@@ -541,39 +681,39 @@ func main() {
       code: `package main
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"tzro/internal/tools"
+\t"context"
+\t"encoding/json"
+\t"fmt"
+\t"tzro/internal/tools"
 )
 
 type FileArchiveTool struct{}
 
 func (f *FileArchiveTool) Name() string {
-	return "archive_files"
+\treturn "archive_files"
 }
 
 func (f *FileArchiveTool) GetSchema() (string, error) {
-	return \`{
-		"type": "object",
-		"properties": {
-			"sourcePath": {"type": "string", "description": "Target folder"},
-			"compress": {"type": "boolean"}
-		},
-		"required": ["sourcePath"]
-	}\`, nil
+\treturn \`{
+\t\t"type": "object",
+\t\t"properties": {
+\t\t\t"sourcePath": {"type": "string", "description": "Target folder"},
+\t\t\t"compress": {"type": "boolean"}
+\t\t},
+\t\t"required": ["sourcePath"]
+\t}\`, nil
 }
 
 func (f *FileArchiveTool) Call(ctx context.Context, args map[string]interface{}) (string, error) {
-	path, _ := args["sourcePath"].(string)
-	compress, _ := args["compress"].(bool)
-	fmt.Printf("[Archive Tool] Zipping path: %s\\n", path)
-	return \`{"status": "success", "file": "backup.zip"}\`, nil
+\tpath, _ := args["sourcePath"].(string)
+\tcompress, _ := args["compress"].(bool)
+\tfmt.Printf("[Archive Tool] Zipping path: %s\\n", path)
+\treturn \`{"status": "success", "file": "backup.zip"}\`, nil
 }
 
 func init() {
-	// Register the tool globally
-	tools.Register(&FileArchiveTool{})
+\t// Register the tool globally
+\ttools.Register(&FileArchiveTool{})
 }`,
     },
     compile: {
@@ -581,32 +721,32 @@ func init() {
       code: `package main
 
 import (
-	"context"
-	"fmt"
-	"tzro/internal/compiler"
-	"tzro/internal/executor"
+\t"context"
+\t"fmt"
+\t"tzro/internal/compiler"
+\t"tzro/internal/executor"
 )
 
 func ExecuteTask(ctx context.Context) {
-	// 1. Declare coarse Strategic Abstract Graph
-	graph := &compiler.ExecutionGraph{
-		TaskID: "t_demo_compile",
-		Nodes: []compiler.GraphNode{
-			{
-				ID: "node_01",
-				Type: "action",
-				Action: "archive_files",
-				Instructions: "Archive report records",
-			},
-		},
-	}
+\t// 1. Declare coarse Strategic Abstract Graph
+\tgraph := &compiler.ExecutionGraph{
+\t\tTaskID: "t_demo_compile",
+\t\tNodes: []compiler.GraphNode{
+\t\t\t{
+\t\t\t\tID: "node_01",
+\t\t\t\tType: "action",
+\t\t\t\tAction: "archive_files",
+\t\t\t\tInstructions: "Archive report records",
+\t\t\t},
+\t\t},
+\t}
 
-	// 2. Compile and sort levels topologically using Kahn's Algorithm
-	levels, _ := compiler.CompileAndSort(graph)
-	fmt.Printf("Topological Sequence Sorted: %v\\n", levels)
+\t// 2. Compile and sort levels topologically using Kahn's Algorithm
+\tlevels, _ := compiler.CompileAndSort(graph)
+\tfmt.Printf("Topological Sequence Sorted: %v\\n", levels)
 
-	// 3. Execute concurrently through Kahn levels sequencer
-	_ = executor.GlobalEngine.ExecuteGraph(ctx, graph, levels)
+\t// 3. Execute concurrently through event-driven ready queue
+\t_ = executor.GlobalEngine.ExecuteGraph(ctx, graph, levels)
 }`,
     },
     telemetry: {
@@ -614,22 +754,22 @@ func ExecuteTask(ctx context.Context) {
       code: `package main
 
 import (
-	"fmt"
-	"tzro/internal/stream"
+\t"fmt"
+\t"tzro/internal/stream"
 )
 
 func ListenToEvents(targetTaskID string) {
-	// Subscribe to thread-safe telemetry updates on global StreamBus
-	sub := stream.GlobalBus.Subscribe(func(chunk stream.StreamChunk) bool {
-		return chunk.TaskID == targetTaskID
-	})
-	defer sub.Unsubscribe()
+\t// Subscribe to thread-safe telemetry updates on global StreamBus
+\tsub := stream.GlobalBus.Subscribe(func(chunk stream.StreamChunk) bool {
+\t\treturn chunk.TaskID == targetTaskID
+\t})
+\tdefer sub.Unsubscribe()
 
-	// Consume streamed token deltas and node status updates asynchronously
-	for chunk := range sub.Ch {
-		fmt.Printf("[Telemetry] Node: %s | Type: %s | Content: %s\\n",
-			chunk.NodeID, chunk.Type, chunk.Content)
-	}
+\t// Consume streamed token deltas and node status updates asynchronously
+\tfor chunk := range sub.Ch {
+\t\tfmt.Printf("[Telemetry] Node: %s | Type: %s | Content: %s\\n",
+\t\t\tchunk.NodeID, chunk.Type, chunk.Content)
+\t}
 }`,
     },
     hooks: {
@@ -637,35 +777,35 @@ func ListenToEvents(targetTaskID string) {
       code: `package main
 
 import (
-	"context"
-	"fmt"
-	"strings"
-	"tzro/internal/compiler"
-	"tzro/internal/executor"
+\t"context"
+\t"fmt"
+\t"strings"
+\t"tzro/internal/compiler"
+\t"tzro/internal/executor"
 )
 
 type CustomSafetyHook struct{}
 
 // BeforeNode runs immediately before single node executes
 func (h *CustomSafetyHook) BeforeNode(ctx context.Context, taskID string, node *compiler.GraphNode) (executor.HookAction, error) {
-	if node.Action == "delete_all_records" {
-		fmt.Printf("[Hook] Safety: skipping destructive node %s\\n", node.ID)
-		return executor.ActionSkip, nil // Propagates ActionSkip downstream
-	}
-	return executor.ActionContinue, nil
+\tif node.Action == "delete_all_records" {
+\t\tfmt.Printf("[Hook] Safety: skipping destructive node %s\\n", node.ID)
+\t\treturn executor.ActionSkip, nil // Propagates ActionSkip downstream
+\t}
+\treturn executor.ActionContinue, nil
 }
 
 // AfterNode runs after tool completion, enabling inline outputs sanitization
 func (h *CustomSafetyHook) AfterNode(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (executor.HookAction, error) {
-	if rawOutput != nil {
-		*rawOutput = strings.ReplaceAll(*rawOutput, "SSN_SECRET_VALUE", "[REDACTED]")
-	}
-	return executor.ActionContinue, nil
+\tif rawOutput != nil {
+\t\t*rawOutput = strings.ReplaceAll(*rawOutput, "SSN_SECRET_VALUE", "[REDACTED]")
+\t}
+\treturn executor.ActionContinue, nil
 }
 
 func main() {
-	// Register hook globally inside executing daemon
-	executor.GlobalEngine.RegisterHook(&CustomSafetyHook{})
+\t// Register hook globally inside executing daemon
+\texecutor.GlobalEngine.RegisterHook(&CustomSafetyHook{})
 }`,
     },
   };
@@ -687,9 +827,9 @@ func main() {
   });
 
   // Load first tab default snippet
-  selectTab(dxTabBtns[0]);
+  if (dxTabBtns.length > 0) selectTab(dxTabBtns[0]);
 
-  // Hook simulator state variables
+  // Hook simulator
   let hitlApprovalPromiseResolve = null;
 
   function appendDxConsole(text, cssClass = "") {
@@ -729,7 +869,6 @@ func main() {
       "console-line",
     );
 
-    // Print which hooks are active based on toggles
     const piiActive = hookPII.checked;
     const guardActive = hookGuard.checked;
     const hitlActive = hookHITL.checked;
@@ -755,7 +894,7 @@ func main() {
       "console-line",
     );
 
-    // Phase 1: Level 0 executes (Safe Nodes)
+    // Phase 1: Level 0
     vCSimIntervals.push(
       setTimeout(() => {
         appendDxConsole(
@@ -794,7 +933,7 @@ func main() {
       }, 2800),
     );
 
-    // Phase 2: Level 1 executes
+    // Phase 2: Level 1
     vCSimIntervals.push(
       setTimeout(async () => {
         appendDxConsole(
@@ -812,11 +951,9 @@ func main() {
             "error",
           );
 
-          // Show approval panel and pause
           vCRunBtn.textContent = "Awaiting Approval...";
           hitlPrompt.style.display = "block";
 
-          // Create a promise to wait for button click
           const approved = await new Promise((resolve) => {
             hitlApprovalPromiseResolve = resolve;
           });
@@ -925,7 +1062,7 @@ func main() {
   }
 
   // =========================================================================
-  // 5. MCP CLIENT CONFIGURATION TABS
+  // MCP CLIENT CONFIGURATION TABS
   // =========================================================================
   const mcpTabBtns = document.querySelectorAll(".mcp-tab-btn");
   const mcpConfigDisplay = document.getElementById("mcp-config-display");
@@ -973,10 +1110,10 @@ Command: /absolute/path/to/tzro/bin/tzro-mcp`,
     });
   }
 
-  // Perform initial resets once all elements are declared and listeners are bound
+  // =========================================================================
+  // INITIAL RESET ON PAGE LOAD
+  // =========================================================================
   resetVariantASim();
   resetVariantBSim();
   resetVariantCSim();
-
-  // All simulators initialized successfully above on page load.
 });

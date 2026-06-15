@@ -2436,3 +2436,568 @@
     padding: 1.25rem;
   }
 }
+
+/* =========================================================================
+   AGENTIC OS: HERO CTAs
+   ========================================================================= */
+.hero-ctas {
+  display: flex;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.hero-cta-primary {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.8rem 2rem;
+  background-color: var(--accent-color);
+  color: #0a110d;
+  font-weight: 700;
+  font-size: 1rem;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  box-shadow: 0 4px 12px rgba(182, 255, 0, 0.15);
+}
+
+.hero-cta-primary:hover {
+  background-color: #c4ff33;
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 18px rgba(182, 255, 0, 0.3),
+    0 0 12px rgba(182, 255, 0, 0.4);
+}
+
+.hero-cta-secondary {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.8rem 2rem;
+  background-color: #1d2f24;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.hero-cta-secondary:hover {
+  background-color: #273f30;
+  transform: translateY(-1px);
+}
+
+/* =========================================================================
+   AGENTIC OS: "WHY NOT JUST CLOUD?" COMPARISON
+   ========================================================================= */
+.comparison-section {
+  padding: 6rem 2rem;
+  position: relative;
+  border-top: 1px solid var(--border-color);
+}
+
+.comparison-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background-color: var(--bg-card);
+}
+
+.comparison-header {
+  display: grid;
+  grid-template-columns: 160px 1fr 1fr;
+  background-color: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.comparison-label {
+  padding: 1rem 1.2rem;
+}
+
+.comparison-col-header {
+  padding: 1rem 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.comparison-col-header .col-icon {
+  font-size: 1.2rem;
+}
+
+.cloud-col {
+  color: var(--text-secondary);
+  border-left: 1px solid var(--border-color);
+}
+
+.tzro-col {
+  color: var(--accent-color);
+  border-left: 1px solid var(--border-color);
+}
+
+.comparison-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 1fr;
+  border-bottom: 1px solid var(--border-color);
+  transition: background-color var(--transition-fast);
+}
+
+.comparison-row:last-child {
+  border-bottom: none;
+}
+
+.comparison-row:hover {
+  background-color: rgba(182, 255, 0, 0.02);
+}
+
+.comparison-dimension {
+  padding: 1rem 1.2rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+}
+
+.comparison-cell {
+  padding: 1rem 1.2rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  border-left: 1px solid var(--border-color);
+}
+
+.cloud-cell {
+  color: var(--text-muted);
+}
+
+.tzro-cell {
+  color: var(--text-secondary);
+}
+
+.tzro-cell strong {
+  color: var(--accent-color);
+}
+
+.tzro-cell code {
+  color: var(--accent-color);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 768px) {
+  .comparison-header {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .comparison-label {
+    display: none;
+  }
+
+  .comparison-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .comparison-dimension {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.82rem;
+  }
+
+  .comparison-cell {
+    border-left: none;
+    padding: 0.8rem 1.2rem;
+  }
+
+  .cloud-cell {
+    border-bottom: 1px dashed rgba(92, 107, 98, 0.3);
+  }
+}
+
+/* =========================================================================
+   AGENTIC OS: INTERACTIVE OS ARCHITECTURE DIAGRAM
+   ========================================================================= */
+.architecture-section {
+  padding: 6rem 2rem;
+  position: relative;
+  border-top: 1px solid var(--border-color);
+}
+
+.os-diagram {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.os-block {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 1.2rem 1rem;
+  cursor: pointer;
+  transition: all var(--transition-smooth);
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+}
+
+.os-block::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: var(--accent-color);
+  transform: scaleX(0);
+  transition: transform var(--transition-smooth);
+}
+
+.os-block:hover {
+  border-color: var(--accent-color);
+  background-color: rgba(182, 255, 0, 0.03);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(182, 255, 0, 0.08);
+}
+
+.os-block:hover::before {
+  transform: scaleX(1);
+}
+
+.os-block-os-name {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.4rem;
+}
+
+.os-block-tzro-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: var(--font-geom);
+}
+
+.os-block.active {
+  border-color: var(--accent-color);
+  background-color: rgba(182, 255, 0, 0.05);
+}
+
+.os-block.active::before {
+  transform: scaleX(1);
+}
+
+/* OS Tooltip */
+.os-tooltip {
+  position: fixed;
+  background-color: rgba(10, 17, 13, 0.95);
+  border: 1px solid var(--accent-color);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 1rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 9999;
+  max-width: 320px;
+  backdrop-filter: blur(8px);
+}
+
+.os-tooltip.visible {
+  opacity: 1;
+}
+
+@media (max-width: 768px) {
+  .os-diagram {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem;
+  }
+
+  .os-block {
+    padding: 0.9rem 0.7rem;
+  }
+
+  .os-block-os-name {
+    font-size: 0.62rem;
+  }
+
+  .os-block-tzro-name {
+    font-size: 0.82rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .os-diagram {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* =========================================================================
+   AGENTIC OS: TWO-ONRAMP TABS
+   ========================================================================= */
+.onramp-tab-bar,
+.quickstart-tab-bar {
+  display: flex;
+  gap: 0;
+  margin-bottom: 2rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  width: fit-content;
+}
+
+.onramp-tab-btn,
+.quickstart-tab-btn {
+  padding: 0.8rem 2rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background-color: var(--bg-card);
+  border: none;
+  transition: all var(--transition-fast);
+  cursor: pointer;
+}
+
+.onramp-tab-btn:not(:last-child),
+.quickstart-tab-btn:not(:last-child) {
+  border-right: 1px solid var(--border-color);
+}
+
+.onramp-tab-btn.active,
+.quickstart-tab-btn.active {
+  background-color: rgba(182, 255, 0, 0.08);
+  color: var(--accent-color);
+}
+
+.onramp-tab-btn:hover:not(.active),
+.quickstart-tab-btn:hover:not(.active) {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.onramp-panel,
+.quickstart-panel {
+  display: none;
+}
+
+.onramp-panel.active,
+.quickstart-panel.active {
+  display: block;
+}
+
+@media (max-width: 600px) {
+  .onramp-tab-bar,
+  .quickstart-tab-bar {
+    width: 100%;
+  }
+
+  .onramp-tab-btn,
+  .quickstart-tab-btn {
+    flex: 1;
+    padding: 0.7rem 1rem;
+    font-size: 0.85rem;
+    text-align: center;
+  }
+}
+
+/* =========================================================================
+   AGENTIC OS: EDGE THOUGHT & DYNAMIC NODE SPAWNING
+   ========================================================================= */
+.edge-thought-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  font-size: 0.65rem;
+  font-weight: 700;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+
+.sim-node.edge-thought-node {
+  border-color: #8b5cf6;
+  background-color: rgba(139, 92, 246, 0.08);
+  max-width: 160px;
+}
+
+.sim-node.edge-thought-node .node-id {
+  color: #a78bfa;
+}
+
+.sim-node.edge-thought-node.evaluating {
+  animation: pulse-thought 1s infinite;
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
+}
+
+@keyframes pulse-thought {
+  0%, 100% {
+    border-color: #8b5cf6;
+  }
+  50% {
+    border-color: #a78bfa;
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.4);
+  }
+}
+
+.sim-node.spawned-node {
+  border-color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.08);
+  max-width: 160px;
+}
+
+.sim-node.spawned-node .node-id {
+  color: #fbbf24;
+}
+
+.sim-node.spawned-node.spawning {
+  animation: spawn-in 0.6s ease-out forwards;
+}
+
+@keyframes spawn-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.sim-node.hidden {
+  display: none;
+}
+
+.sim-node.edge-thought-node.visible,
+.sim-node.spawned-node.visible {
+  display: block;
+}
+
+/* Confidence display in edge thought */
+.sim-node.edge-thought-node .node-action span {
+  font-weight: 700;
+}
+
+.confidence-low {
+  color: #f59e0b !important;
+}
+
+.confidence-high {
+  color: var(--accent-color) !important;
+}
+
+/* =========================================================================
+   AGENTIC OS: UNDER THE HOOD CARD GRID
+   ========================================================================= */
+.hood-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+.hood-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 2rem 1.5rem;
+  transition: all var(--transition-smooth);
+  position: relative;
+  overflow: hidden;
+}
+
+.hood-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--accent-color),
+    transparent
+  );
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--transition-smooth);
+}
+
+.hood-card:hover {
+  border-color: rgba(182, 255, 0, 0.3);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.hood-card:hover::before {
+  transform: scaleX(1);
+}
+
+.hood-card-icon {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+}
+
+.hood-card h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+  font-family: var(--font-geom);
+}
+
+.hood-card-subtitle {
+  font-size: 0.78rem;
+  color: var(--accent-color);
+  font-family: var(--font-mono);
+  margin-bottom: 1rem;
+}
+
+.hood-card p:last-child {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.hood-card p:last-child strong {
+  color: var(--accent-color);
+}
+
+@media (max-width: 900px) {
+  .hood-card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .hood-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================================================
+   AGENTIC OS: QUICKSTART SECTION UPDATES
+   ========================================================================= */
+.quickstart-section {
+  text-align: left;
+}
+
+.quickstart-section .section-desc {
+  margin-bottom: 1.5rem;
+}
+
+.quickstart-section .code-box pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -1,6 +1,6 @@
 # tzro Context
 
-A durable, local-first agentic execution engine designed to coordinate complex multi-system automations securely on resource-constrained hardware.
+A durable, local-first agentic operating system — a portable runtime that carries everything an AI agent needs to be productive: a scheduler, persistent memory, a tool registry, a local model, a knowledge graph, a skill library, and a durable execution substrate. Activates through MCP or direct Go framework embedding.
 
 ## Language
 
