@@ -16,14 +16,14 @@ type ModelEntry struct {
 
 var modelCatalog = []ModelEntry{
 	{
-		ID:           "gemma-4-12b-it-qat",
-		DisplayName:  "Gemma 4 12B IT QAT",
-		Params:       "12B",
-		SizeBytes:    6975877728,
-		SizeLabel:    "~6.5 GB",
-		DownloadURL:  "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/resolve/main/gemma-4-12b-it-qat-q4_0.gguf?download=true",
-		Filename:     "gemma-4-12b-it-qat-q4_0.gguf",
-		Description:  "Default Gemma 4 model with QAT calibration",
+		ID:           "gemma-4-e4b-it-qat",
+		DisplayName:  "Gemma 4 E4B IT QAT",
+		Params:       "E4B",
+		SizeBytes:    4215693760,
+		SizeLabel:    "~3.9 GB",
+		DownloadURL:  "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf?download=true",
+		Filename:     "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+		Description:  "Default Gemma 4 E4B model with QAT calibration",
 		ToolCallTier: "excellent",
 		IsDefault:    true,
 	},

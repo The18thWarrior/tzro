@@ -259,6 +259,12 @@ func Init(configPath string) error {
 	Register(NewUpdateTool())
 	Register(NewDeleteTool())
 	Register(NewQueryTool())
+	Register(&GatherMetricsTool{})
+	Register(&GatherTasksTool{})
+	Register(&GatherConfigTool{})
+	Register(&GatherWorkflowsTool{})
+	Register(&ComposeLayoutTool{})
+	Register(&TerminalSynthesisTool{})
 
 	// Register filesystem tools with path validation security boundary
 	fsValidator := NewPathValidator(GetAllowedPaths())

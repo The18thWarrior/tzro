@@ -29,7 +29,7 @@ A non-executed JSON schema blueprint generated during planning that maps step no
 _Avoid_: Execution sequence, flowchart JSON
 
 **Kahn Compiler**:
-The compiler engine that translates simplified strategic Abstract Graphs into fine-grained execution nodes (GBNF-bridge, deterministic, and synthesis) and runs Kahn's topological sort algorithm to organize them into parallel, cycle-free layers.
+The compiler engine that translates simplified strategic Abstract Graphs into fine-grained execution nodes (semantic validator, deterministic, and synthesis) and runs Kahn's topological sort algorithm to organize them into parallel, cycle-free layers.
 _Avoid_: Graph builder, sort pipeline
 
 **Hybrid Branch Evaluator**:
@@ -49,8 +49,21 @@ The exception-path remote LLM invoked only when the **Local Model** lacks suffic
 _Avoid_: Cloud API, remote agent, fallback model
 
 **GBNF Constraint**:
-Logit-level grammar constraints forced onto local worker models to guarantee 100% syntactically valid JSON tool parameters.
+Logit-level grammar constraints forced onto local worker models. Previously used for deep JSON schemas, now restricted to shallow structural enforcement (e.g., ensuring valid XML wrapper tags) to maximize generation speed while delegating schema coercion to the **Semantic Validator**.
 _Avoid_: Output parser, regex validator
+
+**Semantic Validator**:
+A deterministic boundary seam that parses loose, high-speed XML outputs from the **Local Model** and coerces them into the strict JSON parameters required by tool schemas. Concentrates type coercion, default imputation, and fuzzy matching in one place to prevent grammar-masking bottlenecks during inference.
+_Avoid_: JSON parser, output fixer
+
+**Response Resolver**:
+A transparent post-execution step within action nodes that normalizes raw tool outputs into a flattened property map, making them resolvable by downstream **DynamicBindings** references. Uses a three-tier cascade: recursive JSON key search (exact match at any depth), fuzzy key search (suffix/substring containment), and semantic matching via the **Local Model** as fallback. Each resolution carries a confidence tier (`recursive_key`, `fuzzy_key`, `semantic_fallback`) used by the **Proactive Binding Splice** to determine whether to bypass inference. The output-side counterpart to the **Semantic Validator** (input-side).
+_Avoid_: Output Schema Registry, Tool Output Schema, output parser
+
+**Proactive Binding Splice**:
+A pre-inference optimization where high-confidence **Response Resolver** outputs (`recursive_key`, `fuzzy_key`) are stripped from the tool schema before the **Semantic Validator** runs inference, then spliced back into the final JSON after extraction. Prevents the **Local Model** from generating values that are already deterministically known, eliminating an entire class of parameter mismatch failures.
+_Avoid_: Post-extraction override, reactive cleanup, prompt injection hint
+
 
 **Agent**:
 The minimal contract for any autonomous process hosted by the tzro engine. Has a name, a lifecycle (`Start`/`Stop`), and runs within the daemon process. Concrete agent types specialize the trigger mechanism and capabilities.

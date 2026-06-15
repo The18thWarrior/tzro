@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"tzro/internal/channel"
 	"tzro/internal/classifier"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
@@ -87,6 +88,7 @@ func StartServer(addr string) error {
 	mux.HandleFunc("/api/events", corsHandler(handleEvents))
 	mux.HandleFunc("/api/notifications", corsHandler(handleNotifications))
 	mux.HandleFunc("/api/notifications/update", corsHandler(handleNotificationsUpdate))
+	mux.HandleFunc("/api/tasks/events", corsHandler(handleTaskSSE))
 
 	// Workflows routing
 	mux.HandleFunc("/api/workflows", corsHandler(handleWorkflows))
@@ -94,6 +96,30 @@ func StartServer(addr string) error {
 	mux.HandleFunc("/api/workflows/trigger", corsHandler(handleWorkflowTrigger))
 	mux.HandleFunc("/api/workflows/executions", corsHandler(handleWorkflowExecutions))
 	mux.HandleFunc("/api/workflows/executions/detail", corsHandler(handleWorkflowExecutionDetail))
+
+	// Dashboard routing
+	mux.HandleFunc("/api/dashboard/spec", corsHandler(handleDashboardSpec))
+	mux.HandleFunc("/api/dashboard/regenerate", corsHandler(handleDashboardRegenerate))
+
+	// Serve Dashboard static files with SPA routing fallback
+	dashboardDir := "./static/dashboard"
+	dashboardHandler := corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, "/dashboard")
+		p = path.Clean(p)
+		if p == "" || p == "/" || p == "." {
+			p = "index.html"
+		}
+
+		fullPath := filepath.Join(dashboardDir, p)
+		info, err := os.Stat(fullPath)
+		if err != nil || info.IsDir() {
+			// SPA fallback
+			http.ServeFile(w, r, filepath.Join(dashboardDir, "index.html"))
+			return
+		}
+		http.ServeFile(w, r, fullPath)
+	})
+	mux.HandleFunc("/dashboard/", dashboardHandler)
 
 	// Serve GUI static files
 	fileServer := http.FileServer(http.Dir("./static"))
@@ -1189,3 +1215,129 @@ func handleOpenAPIMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+func handleDashboardSpec(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	spec, err := memory.DB.GetLatestDashboardSpec()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query dashboard spec: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if spec == nil {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"status":"error","message":"No dashboard spec found. Please trigger regeneration."}`))
+		return
+	}
+
+	type dashboardSpecAPIResponse struct {
+		ID              string          `json:"id"`
+		Spec            json.RawMessage `json:"spec"`
+		GeneratedAt     int64           `json:"generatedAt"`
+		GeneratorTaskID string          `json:"generatorTaskId"`
+		TTLSeconds      int64           `json:"ttlSeconds"`
+	}
+	resp := dashboardSpecAPIResponse{
+		ID:              spec.ID,
+		Spec:            json.RawMessage(spec.Spec),
+		GeneratedAt:     spec.GeneratedAt,
+		GeneratorTaskID: spec.GeneratorTaskID,
+		TTLSeconds:      spec.TTLSeconds,
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func handleDashboardRegenerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	waitParam := r.URL.Query().Get("wait")
+	shouldWait := waitParam == "true" || waitParam == "1"
+
+	taskID := fmt.Sprintf("task_dashboard_gen_%d", time.Now().UnixNano())
+	prompt := "Generate system dashboard spec"
+
+	ctx := context.Background()
+
+	if shouldWait {
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		graph, _, err := task.Execute(timeoutCtx, prompt, task.ExecuteOptions{
+			TaskID:       taskID,
+			IntentType:   "workflow",
+			IsForeground: true,
+		})
+		if err != nil {
+			if timeoutCtx.Err() == context.DeadlineExceeded {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"generating","taskId":"%s"}`, taskID)))
+				return
+			}
+			http.Error(w, fmt.Sprintf("Generation failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		nodeSucceeded := false
+		for _, node := range graph.Nodes {
+			if node.Action == "terminal_synthesis" {
+				state, ok := memory.DB.GetNodeState(taskID, node.ID)
+				if ok && state.Status == "completed" {
+					nodeSucceeded = true
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if nodeSucceeded {
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"completed","taskId":"%s"}`, taskID)))
+		} else {
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"failed","taskId":"%s"}`, taskID)))
+		}
+		return
+	} else {
+		go func() {
+			_, _, _ = task.Execute(context.Background(), prompt, task.ExecuteOptions{
+				TaskID:       taskID,
+				IntentType:   "workflow",
+				IsForeground: false,
+			})
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"generating","taskId":"%s"}`, taskID)))
+	}
+}
+
+// handleTaskSSE streams execution events for a specific task via Server-Sent Events.
+// Accessible at: GET /api/tasks/events?taskId=X
+func handleTaskSSE(w http.ResponseWriter, r *http.Request) {
+	taskID := r.URL.Query().Get("taskId")
+	if taskID == "" {
+		http.Error(w, "taskId query parameter required", http.StatusBadRequest)
+		return
+	}
+
+	ch, err := channel.NewSSESubagentChannel(w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer ch.Close()
+
+	// Bridge blocks until bus closes or client disconnects
+	channel.BridgeWithOptions(ch, taskID, channel.BridgeOptions{
+		StopOnError: true, // Client disconnect → stop
+	})
+}
+

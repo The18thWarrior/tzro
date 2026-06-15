@@ -25,6 +25,7 @@ import (
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/task"
+	"tzro/internal/telemetry"
 	"tzro/internal/tools"
 )
 
@@ -228,6 +229,12 @@ func RunSuite(ctx context.Context, dataset string, mode string, modelMode string
 
 	// Automatically start and manage local llama-server GGUF sidecar if local/cooperative real benchmark is selected
 	if realLLM && (modelMode == "local" || modelMode == "cooperative") {
+		oldBackend := inference.ActiveBackend
+		inference.ActiveBackend = inference.NewLlamaServerBackend(inference.GlobalLocalModel, telemetry.Default)
+		defer func() {
+			inference.ActiveBackend = oldBackend
+		}()
+
 		status, activePort, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
 		if status == "Stopped" {
 			fmt.Fprintln(os.Stderr, "[Benchmark] Starting local model sidecar automatically...")
@@ -352,6 +359,7 @@ func RunSuite(ctx context.Context, dataset string, mode string, modelMode string
 				res.Dataset = tc.Dataset
 				res.Passed = false
 				res.ErrorMessage = err.Error()
+				fmt.Fprintf(os.Stderr, "[Benchmark ERROR] Case %s failed: %s\n", tc.ID, err.Error())
 			}
 			for _, cb := range callbacks {
 				if cb.OnTestComplete != nil {
@@ -359,6 +367,13 @@ func RunSuite(ctx context.Context, dataset string, mode string, modelMode string
 				}
 			}
 			results = append(results, res)
+
+			// Synchronous KV cache slot erasure between cases.
+			// ExecuteGraph only fires GC on success (and async via goroutine), so failed
+			// cases leak stale KV cache entries that poison subsequent cases' planning.
+			if realLLM {
+				_ = inference.GlobalLocalModel.TriggerGC(ctx)
+			}
 		}
 	}
 
@@ -390,6 +405,7 @@ func runSingleTestCase(ctx context.Context, tc BenchmarkTestCase, mode string, r
 	}()
 	// 1. Dynamic Mock tool registration in tools registry
 	for _, tool := range tc.Tools {
+		sanitizeSchemaTypes(tool.Parameters)
 		schemaBytes, _ := json.Marshal(tool.Parameters)
 		schemaStr := string(schemaBytes)
 
@@ -499,10 +515,10 @@ func runSingleTestCase(ctx context.Context, tc BenchmarkTestCase, mode string, r
 
 			// Constraint Check: Max 10 logical action nodes compiled per turn.
 			// Count only action/deterministic nodes that represent real tool calls,
-			// excluding SCT infrastructure nodes (gbnf_bridge, synthesis) injected by ExpandToSCTGraph.
+			// excluding SCT infrastructure nodes (semantic_validator, synthesis) injected by ExpandToSCTGraph.
 			logicalNodeCount := 0
 			for _, n := range graph.Nodes {
-				if n.Type != "gbnf_bridge" && n.Type != "synthesis" {
+				if n.Type != "semantic_validator" && n.Type != "synthesis" {
 					logicalNodeCount++
 				}
 			}
@@ -987,3 +1003,26 @@ func StratifiedSample(testCases []BenchmarkTestCase, limit int) []BenchmarkTestC
 
 	return selected
 }
+
+func sanitizeSchemaTypes(schema map[string]interface{}) {
+	for k, v := range schema {
+		if k == "type" {
+			if str, ok := v.(string); ok {
+				if str == "float" || str == "double" {
+					schema[k] = "number"
+				} else if str == "int" {
+					schema[k] = "integer"
+				}
+			}
+		} else if nestedMap, ok := v.(map[string]interface{}); ok {
+			sanitizeSchemaTypes(nestedMap)
+		} else if nestedSlice, ok := v.([]interface{}); ok {
+			for _, item := range nestedSlice {
+				if itemMap, ok := item.(map[string]interface{}); ok {
+					sanitizeSchemaTypes(itemMap)
+				}
+			}
+		}
+	}
+}
+

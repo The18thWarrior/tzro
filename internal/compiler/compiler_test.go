@@ -76,9 +76,9 @@ func TestStrategicGraphToSCTExpansion(t *testing.T) {
 	}
 
 	// We expect:
-	// 1. step1_bridge (gbnf_bridge)
+	// 1. step1_validator (semantic_validator)
 	// 2. step1_exec (deterministic)
-	// 3. step2_bridge (gbnf_bridge)
+	// 3. step2_validator (semantic_validator)
 	// 4. step2_exec (deterministic)
 	// 5. terminal_synthesis (synthesis)
 	// Total 5 nodes
@@ -92,14 +92,14 @@ func TestStrategicGraphToSCTExpansion(t *testing.T) {
 	}
 
 	// Assert correct node types and structures
-	if nodeMap["step1_bridge"].Type != "gbnf_bridge" || nodeMap["step1_bridge"].OutputSchema != `{"mock": "web_search_schema"}` {
-		t.Errorf("incorrect step1_bridge: %v", nodeMap["step1_bridge"])
+	if nodeMap["step1_validator"].Type != "semantic_validator" || nodeMap["step1_validator"].OutputSchema != `{"mock": "web_search_schema"}` {
+		t.Errorf("incorrect step1_validator: %v", nodeMap["step1_validator"])
 	}
 	if nodeMap["step1_exec"].Type != "deterministic" {
 		t.Errorf("incorrect step1_exec: %v", nodeMap["step1_exec"])
 	}
-	if nodeMap["step2_bridge"].Type != "gbnf_bridge" {
-		t.Errorf("incorrect step2_bridge: %v", nodeMap["step2_bridge"])
+	if nodeMap["step2_validator"].Type != "semantic_validator" {
+		t.Errorf("incorrect step2_validator: %v", nodeMap["step2_validator"])
 	}
 	if nodeMap["step2_exec"].Type != "deterministic" {
 		t.Errorf("incorrect step2_exec: %v", nodeMap["step2_exec"])

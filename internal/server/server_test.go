@@ -13,6 +13,7 @@ import (
 
 	"tzro/internal/config"
 	"tzro/internal/inference"
+	"tzro/internal/memory"
 	"tzro/internal/stream"
 )
 
@@ -229,3 +230,69 @@ data: [DONE]
 		t.Errorf("expected full reply 'hello world', got %q", fullReply)
 	}
 }
+
+func TestDashboardEndpoints(t *testing.T) {
+	// Setup isolated test database
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	dbName := "test_server_dashboard.db"
+	memory.DB.SetDBPathForTesting(dbName)
+	_ = os.Remove(dbName)
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init DB: %v", err)
+	}
+	defer func() {
+		_ = memory.DB.Close()
+		_ = os.Remove(dbName)
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+
+	// 1. Get spec (none exists yet) -> should return 404
+	req404 := httptest.NewRequest("GET", "/api/dashboard/spec", nil)
+	w404 := httptest.NewRecorder()
+	handleDashboardSpec(w404, req404)
+	if w404.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", w404.Code)
+	}
+
+	// 2. Insert mock spec and request again -> should return 200
+	now := time.Now().Unix()
+	err := memory.DB.SaveDashboardSpec("spec_test_server", `{"version":1,"layout":{"type":"Stack"}}`, now, "task_sys", 14400)
+	if err != nil {
+		t.Fatalf("failed to save spec: %v", err)
+	}
+
+	req200 := httptest.NewRequest("GET", "/api/dashboard/spec", nil)
+	w200 := httptest.NewRecorder()
+	handleDashboardSpec(w200, req200)
+	if w200.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w200.Code)
+	}
+
+	var specResp map[string]interface{}
+	if err := json.NewDecoder(w200.Body).Decode(&specResp); err != nil {
+		t.Fatalf("failed to decode spec response: %v", err)
+	}
+	if specResp["id"].(string) != "spec_test_server" {
+		t.Errorf("expected spec id spec_test_server, got %v", specResp["id"])
+	}
+
+	// 3. Test immediate generation (wait=false) -> should return 202
+	reqGen := httptest.NewRequest("POST", "/api/dashboard/regenerate?wait=false", nil)
+	wGen := httptest.NewRecorder()
+	handleDashboardRegenerate(wGen, reqGen)
+	if wGen.Code != http.StatusAccepted {
+		t.Errorf("expected status 202, got %d", wGen.Code)
+	}
+
+	var genResp map[string]interface{}
+	if err := json.NewDecoder(wGen.Body).Decode(&genResp); err != nil {
+		t.Fatalf("failed to decode regenerate response: %v", err)
+	}
+	if genResp["status"].(string) != "generating" {
+		t.Errorf("expected status generating, got %v", genResp["status"])
+	}
+	if !strings.HasPrefix(genResp["taskId"].(string), "task_dashboard_gen_") {
+		t.Errorf("unexpected task ID: %v", genResp["taskId"])
+	}
+}
+

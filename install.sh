@@ -84,7 +84,8 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
     echo "echo 'mock llama-server'" >> "${INSTALL_DIR}/bin/llama-server"
     chmod +x "${INSTALL_DIR}/bin/llama-server"
 
-    echo "mock model content" > "${INSTALL_DIR}/models/gemma-4-12b-it-qat-q4_0.gguf"
+    echo "mock model content" > "${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+    echo "mock mtp drafter" > "${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
     
     echo "#!/bin/sh" > "${INSTALL_DIR}/bin/tzro-mcp"
     echo "echo 'mock tzro-mcp'" >> "${INSTALL_DIR}/bin/tzro-mcp"
@@ -174,12 +175,26 @@ EOF
     fi
 
     # Provision Tactician Model GGUF
-    GGUF_PATH="${INSTALL_DIR}/models/gemma-4-12b-it-qat-q4_0.gguf"
+    GGUF_PATH="${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
     if [ ! -f "${GGUF_PATH}" ]; then
         echo -e "  Creating lightweight GGUF tactician model placeholder..."
-        # In a real install we'd download the model (~1.5GB) from HuggingFace
-        # MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+        # In a real install we'd download the model (~5GB) from HuggingFace
+        # MODEL_URL="https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
         echo "tzro-model-gguf-placeholder" > "${GGUF_PATH}"
+    fi
+
+    # Provision MTP Draft Assistant Model (~74MB lightweight 4-layer drafter for speculative decoding)
+    MTP_DRAFT_PATH="${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
+    MTP_DRAFT_URL="https://huggingface.co/cascade-tech/gemma-4-E4B-it-qat-q4_0-unquantized-assistant-gguf/resolve/main/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
+    if [ ! -f "${MTP_DRAFT_PATH}" ]; then
+        echo -e "  Downloading MTP draft assistant model (~74MB) for speculative decoding..."
+        if curl -fSL --progress-bar -o "${MTP_DRAFT_PATH}" "${MTP_DRAFT_URL}" 2>/dev/null; then
+            echo -e "  ${GREEN}✔ MTP draft assistant model downloaded${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ MTP draft model download failed. Sidecar will use ngram-simple fallback.${NC}"
+        fi
+    else
+        echo -e "  ${GREEN}✔ MTP draft assistant model already present${NC}"
     fi
 fi
 
@@ -212,7 +227,8 @@ echo -e "  ${BOLD}Workspace Boundary:${NC}  ${INSTALL_DIR}"
 echo -e "  ${BOLD}Database Booted:${NC}     ${DB_PATH}"
 echo -e "  ${BOLD}Llama Sidecar:${NC}       ${INSTALL_DIR}/bin/llama-server"
 echo -e "  ${BOLD}MCP Server:${NC}          ${INSTALL_DIR}/bin/tzro-mcp"
-echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/gemma-4-12b-it-qat-q4_0.gguf"
+echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+echo -e "  ${BOLD}MTP Draft Model:${NC}     ${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
 echo -e "=========================================================="
 
 if [ "$PATH_OK" = "true" ]; then

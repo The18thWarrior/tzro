@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 	"tzro/internal/config"
 	"tzro/internal/executor"
 	"tzro/internal/inference"
@@ -96,6 +97,49 @@ func main() {
 
 	// 5.5. Initialize background cron scheduler and run Boot Recovery
 	fmt.Println("[Init] Starting background cron scheduler & recovering interrupted workflows...")
+
+	// Register system_dashboard workflow on boot if not present
+	fmt.Println("[Init] Registering system dashboard workflow...")
+	systemWF := memory.WorkflowDefinition{
+		ID:                "system_dashboard",
+		Name:              "System Dashboard Spec Generator",
+		Description:       "Generates the system dashboard layout specification JSON dynamically.",
+		TriggerType:       "cron",
+		TriggerConfig:     "0 */4 * * *",
+		Status:            "active",
+		OrchestrationMode: "static",
+		CreatedAt:         time.Now().Unix(),
+		UpdatedAt:         time.Now().Unix(),
+	}
+	systemWFTasks := []memory.WorkflowTask{
+		{
+			WorkflowID:     "system_dashboard",
+			TaskTemplateID: "generate_spec",
+			Name:           "Generate Dashboard Spec",
+			Instructions:   "Generate system dashboard spec",
+			Dependencies:   "",
+		},
+	}
+	// Check if already registered first
+	wfs, err := memory.DB.GetWorkflows()
+	exists := false
+	if err == nil {
+		for _, w := range wfs {
+			if w.ID == "system_dashboard" {
+				exists = true
+				break
+			}
+		}
+	}
+	if !exists {
+		err = memory.DB.SaveWorkflow(systemWF, systemWFTasks)
+		if err != nil {
+			fmt.Printf("[Init Warning] Failed to register system_dashboard workflow: %v\n", err)
+		} else {
+			fmt.Println("[Init] Registered system_dashboard workflow successfully.")
+		}
+	}
+
 	workflow.Scheduler.Start(context.Background())
 	workflow.RecoverInterruptedWorkflows(context.Background())
 

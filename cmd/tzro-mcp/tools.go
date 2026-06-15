@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"tzro/internal/channel"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/executor"
@@ -44,6 +45,17 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 	timeoutSec := args.Timeout
 	if timeoutSec <= 0 {
 		timeoutSec = 60
+	}
+
+	// Start SubagentChannel for real-time event delivery to the harness.
+	// Node count is unknown at this point (planning hasn't started), so pass 0.
+	ch := startSubagentChannel(req, mcpServer, taskID, 0)
+	if ch != nil {
+		defer ch.Close()
+		// v2: Register channel for bidirectional tool dispatch.
+		// ChannelToolHook will intercept client-tool nodes and dispatch via sampling.
+		channel.GlobalChannelToolHook.RegisterChannel(taskID, ch)
+		defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
 	}
 
 	type execResult struct {
@@ -1462,6 +1474,15 @@ func handleTzroWorkflow(ctx context.Context, req *mcp.CallToolRequest, args Tzro
 		timeoutSec = 60
 	}
 
+	// Start SubagentChannel for real-time event delivery to the harness.
+	// Node count is known from the compiled graph.
+	wfCh := startSubagentChannel(req, mcpServer, taskID, float64(len(expanded.Nodes)))
+	if wfCh != nil {
+		defer wfCh.Close()
+		channel.GlobalChannelToolHook.RegisterChannel(taskID, wfCh)
+		defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
+	}
+
 	type execResult struct {
 		nodes []memory.NodeState
 		err   error
@@ -1568,6 +1589,167 @@ func handleTzroWorkflow(ctx context.Context, req *mcp.CallToolRequest, args Tzro
 			},
 		}, nil, nil
 	}
+}
+
+// tzro_dashboard tool definition
+
+type TzroDashboardArgs struct{}
+
+func handleTzroDashboard(ctx context.Context, req *mcp.CallToolRequest, args TzroDashboardArgs) (*mcp.CallToolResult, any, error) {
+	spec, err := memory.DB.GetLatestDashboardSpec()
+	if err != nil {
+		respBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	port := "8080"
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		port = envPort
+	}
+	url := fmt.Sprintf("http://localhost:%s/dashboard/", port)
+
+	if spec == nil {
+		// Trigger initial generation in the background
+		taskID := uuid.New().String()
+		go func() {
+			_, _, _ = task.Execute(context.Background(), "Generate system dashboard spec", task.ExecuteOptions{
+				TaskID:       taskID,
+				IntentType:   "workflow",
+				IsForeground: false,
+			})
+		}()
+
+		respBytes, _ := json.Marshal(map[string]interface{}{
+			"url":     url,
+			"status":  "generating",
+			"message": "No dashboard spec found. Triggered initial generation. Please check back shortly.",
+			"taskId":  taskID,
+		})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+		}, nil, nil
+	}
+
+	ageSeconds := time.Now().Unix() - spec.GeneratedAt
+	respBytes, _ := json.Marshal(map[string]interface{}{
+		"url":             url,
+		"status":          "active",
+		"specId":          spec.ID,
+		"generatedAt":     spec.GeneratedAt,
+		"ageSeconds":      ageSeconds,
+		"generatorTaskId": spec.GeneratorTaskID,
+		"ttlSeconds":      spec.TTLSeconds,
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+// tzro_dashboard_regenerate tool definition
+
+type TzroDashboardRegenerateArgs struct {
+	Wait bool `json:"wait,omitempty" jsonschema:"Whether to block and wait for the generation to complete"`
+}
+
+func handleTzroDashboardRegenerate(ctx context.Context, req *mcp.CallToolRequest, args TzroDashboardRegenerateArgs) (*mcp.CallToolResult, any, error) {
+	taskID := uuid.New().String()
+	prompt := "Generate system dashboard spec"
+
+	if args.Wait {
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		graph, _, err := task.Execute(timeoutCtx, prompt, task.ExecuteOptions{
+			TaskID:       taskID,
+			IntentType:   "workflow",
+			IsForeground: true,
+		})
+		if err != nil {
+			if timeoutCtx.Err() == context.DeadlineExceeded {
+				respBytes, _ := json.Marshal(map[string]interface{}{
+					"status": "generating",
+					"taskId": taskID,
+				})
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+				}, nil, nil
+			}
+			respBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		nodeSucceeded := false
+		for _, node := range graph.Nodes {
+			if node.Action == "terminal_synthesis" {
+				state, ok := memory.DB.GetNodeState(taskID, node.ID)
+				if ok && state.Status == "completed" {
+					nodeSucceeded = true
+				}
+			}
+		}
+
+		status := "failed"
+		if nodeSucceeded {
+			status = "completed"
+		}
+
+		respBytes, _ := json.Marshal(map[string]interface{}{
+			"status": status,
+			"taskId": taskID,
+		})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+		}, nil, nil
+	}
+
+	go func() {
+		_, _, _ = task.Execute(context.Background(), prompt, task.ExecuteOptions{
+			TaskID:       taskID,
+			IntentType:   "workflow",
+			IsForeground: false,
+		})
+	}()
+
+	respBytes, _ := json.Marshal(map[string]interface{}{
+		"status": "generating",
+		"taskId": taskID,
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+// tzro_dashboard_spec tool definition
+
+type TzroDashboardSpecArgs struct{}
+
+func handleTzroDashboardSpec(ctx context.Context, req *mcp.CallToolRequest, args TzroDashboardSpecArgs) (*mcp.CallToolResult, any, error) {
+	spec, err := memory.DB.GetLatestDashboardSpec()
+	if err != nil {
+		respBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	if spec == nil {
+		respBytes, _ := json.Marshal(map[string]string{"error": "no dashboard spec found"})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: spec.Spec}},
+	}, nil, nil
 }
 
 func registerTools(server *mcp.Server) {
@@ -1735,4 +1917,20 @@ func registerTools(server *mcp.Server) {
 			"bridge/exec pairs) and Kahn-sorted before execution. Supports dry-run validation, " +
 			"probe nodes, activation thresholds, mutation budgets, and human-in-the-loop approval gates.",
 	}, handleTzroWorkflow)
+
+	// Dashboard tools
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard",
+		Description: "Check spec status and return the HTTP dashboard URL, age, and status. Triggers initial generation if no spec exists.",
+	}, handleTzroDashboard)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard_regenerate",
+		Description: "Trigger immediate generation of the system dashboard spec, supporting optional wait blocking parameters.",
+	}, handleTzroDashboardRegenerate)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard_spec",
+		Description: "Return the current raw system dashboard spec JSON for debugging.",
+	}, handleTzroDashboardSpec)
 }

@@ -372,9 +372,9 @@ func TestSCT_PassesProbeNodeThrough(t *testing.T) {
 		t.Error("expected ProbeConfig to be preserved on probe node")
 	}
 
-	// action1 should be expanded into bridge + exec
-	if _, ok := nodeMap["action1_bridge"]; !ok {
-		t.Error("expected action1 to be expanded into action1_bridge")
+	// action1 should be expanded into validator + exec
+	if _, ok := nodeMap["action1_validator"]; !ok {
+		t.Error("expected action1 to be expanded into action1_validator")
 	}
 	if _, ok := nodeMap["action1_exec"]; !ok {
 		t.Error("expected action1 to be expanded into action1_exec")

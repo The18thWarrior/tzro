@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -93,47 +92,45 @@ var benchmarkRunCmd = &cobra.Command{
 		if benchmarkDataset == "tzro_dag" {
 			headers = []string{"CASE ID", "PLAN MATCH", "PARAM MATCH", "SPIRIT MATCH", "DURATION", "TOKENS (L/C)", "STATUS"}
 		}
-		var rows [][]string
-		caseIndex := make(map[string]int)
-
-		for idx, tc := range testCases {
-			caseIndex[tc.ID] = idx
-			var pendingRow []string
-			if benchmarkDataset == "tzro_dag" {
-				pendingRow = []string{
-					tc.ID,
-					"\u001b[90m...\u001b[0m", // Gray dots
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90mPENDING\u001b[0m",
-				}
-			} else {
-				pendingRow = []string{
-					tc.ID,
-					"\u001b[90m...\u001b[0m", // Gray dots
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90mPENDING\u001b[0m",
-				}
+		widths := make([]int, len(headers))
+		for i, h := range headers {
+			widths[i] = len(h)
+		}
+		for _, tc := range testCases {
+			if len(tc.ID) > widths[0] {
+				widths[0] = len(tc.ID)
 			}
-			rows = append(rows, pendingRow)
+		}
+		// Fix min widths for result columns
+		if widths[1] < 10 { widths[1] = 10 } // PLAN MATCH
+		if widths[2] < 12 { widths[2] = 12 } // PARAM MATCH
+		if benchmarkDataset == "tzro_dag" {
+			if widths[3] < 12 { widths[3] = 12 } // SPIRIT MATCH
+			if widths[4] < 8 { widths[4] = 8 }   // DURATION
+			if widths[5] < 12 { widths[5] = 12 } // TOKENS
+			if widths[6] < 8 { widths[6] = 8 }   // STATUS
+		} else {
+			if widths[3] < 8 { widths[3] = 8 }   // DURATION
+			if widths[4] < 12 { widths[4] = 12 } // TOKENS
+			if widths[5] < 8 { widths[5] = 8 }   // STATUS
 		}
 
-		var lastLinesPrinted int
-		redrawTable := func(w io.Writer, h []string, r [][]string) {
+		printRow := func(w io.Writer, row []string) {
 			if benchmarkVerbose {
 				return
 			}
-			if lastLinesPrinted > 0 {
-				fmt.Fprintf(w, "\033[%dA\033[J", lastLinesPrinted)
+			fmt.Fprint(w, "|")
+			for i, val := range row {
+				cleaned := val
+				cleaned = strings.ReplaceAll(cleaned, "\u001b[32m", "")
+				cleaned = strings.ReplaceAll(cleaned, "\u001b[31m", "")
+				cleaned = strings.ReplaceAll(cleaned, "\u001b[33m", "")
+				cleaned = strings.ReplaceAll(cleaned, "\u001b[0m", "")
+				padding := widths[i] - len(cleaned)
+				if padding < 0 { padding = 0 }
+				fmt.Fprintf(w, " %s%s |", val, strings.Repeat(" ", padding))
 			}
-			var buf bytes.Buffer
-			printBenchmarkTable(&buf, h, r)
-			_, _ = w.Write(buf.Bytes())
-			lastLinesPrinted = strings.Count(buf.String(), "\n")
+			fmt.Fprintln(w)
 		}
 
 		formatResultRow := func(r benchmark.BenchmarkResult) []string {
@@ -166,27 +163,7 @@ var benchmarkRunCmd = &cobra.Command{
 			return []string{r.TestCaseID, planStatus, paramStatus, duration, tokensStr, status}
 		}
 
-		formatRunningRow := func(id string) []string {
-			if benchmarkDataset == "tzro_dag" {
-				return []string{
-					id,
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[90m...\u001b[0m",
-					"\u001b[33mRUNNING\u001b[0m",
-				}
-			}
-			return []string{
-				id,
-				"\u001b[90m...\u001b[0m",
-				"\u001b[90m...\u001b[0m",
-				"\u001b[90m...\u001b[0m",
-				"\u001b[90m...\u001b[0m",
-				"\u001b[33mRUNNING\u001b[0m",
-			}
-		}
+		// formatRunningRow removed because we stream rows on completion
 
 		passedCount := 0
 		planMatchCount := 0
@@ -196,29 +173,25 @@ var benchmarkRunCmd = &cobra.Command{
 		var totalLocalPrompt, totalLocalCompletion, totalLocalTotal int
 		var totalCloudPrompt, totalCloudCompletion, totalCloudTotal int
 
-		// Print the initial pending table
-		if out != nil {
-			redrawTable(out, headers, rows)
+		// Print the initial table header
+		if out != nil && !benchmarkVerbose {
+			printBenchmarkDivider(out, widths)
+			fmt.Fprint(out, "|")
+			for i, h := range headers {
+				fmt.Fprintf(out, " %-*s |", widths[i], h)
+			}
+			fmt.Fprintln(out)
+			printBenchmarkDivider(out, widths)
 		}
 
 		// Setup callbacks
 		callbacks := benchmark.SuiteCallbacks{
 			OnTestStart: func(testCaseID string) {
-				idx, ok := caseIndex[testCaseID]
-				if ok {
-					rows[idx] = formatRunningRow(testCaseID)
-					if out != nil {
-						redrawTable(out, headers, rows)
-					}
-				}
+				// No longer printing pending rows to avoid cursor manipulation issues
 			},
 			OnTestComplete: func(res benchmark.BenchmarkResult) {
-				idx, ok := caseIndex[res.TestCaseID]
-				if ok {
-					rows[idx] = formatResultRow(res)
-					if out != nil {
-						redrawTable(out, headers, rows)
-					}
+				if out != nil {
+					printRow(out, formatResultRow(res))
 				}
 				// Accumulate metrics
 				totalDuration += res.ExecutionDurationMs
@@ -278,8 +251,8 @@ var benchmarkRunCmd = &cobra.Command{
 		}
 
 		if out != nil {
-			if benchmarkVerbose {
-				printBenchmarkTable(out, headers, rows)
+			if !benchmarkVerbose {
+				printBenchmarkDivider(out, widths)
 			}
 
 			totalCases := len(results)

@@ -4,7 +4,83 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
-## [2026-06-09T10:32:00-07:00] implementation | Thermal Pressure Gating — TDD Implementation
+## [2026-06-14T17:55:00-07:00] implementation | SubagentChannel v3: Concurrency, Payloads, Backpressure, SSE & Plugin Adapters
+
+- **Activity**: Full TDD (red-green-refactor) implementation of all v3 SubagentChannel features. 12 vertical slices, 17 new tests (39 total), all passing with `-race`. `go build ./...` clean.
+- **Feature Summary**: Adds concurrency safety, structured payloads with output truncation, dynamic progress total, error backpressure via `BridgeWithOptions`, SSE adapter for dashboard streaming, and Plugin adapter for in-process Go integrations.
+- **Design Decisions**:
+  - **sync.Mutex over RWMutex**: Write-heavy access pattern (every EmitEvent) makes RWMutex overhead unjustified.
+  - **chunkContent generic parser**: Single struct with optional fields avoids type-switching on raw JSON. All 11 event types share one unmarshal path.
+  - **BridgeWithOptions as primary, Bridge as wrapper**: Backward-compatible refactor — existing callers unchanged, new callers get error callbacks.
+  - **SSE adapter sets headers in constructor**: Content-Type, Cache-Control, Connection set once in `NewSSESubagentChannel`.
+  - **Plugin adapter holds raw Go callbacks**: Zero serialization. `EventCallback` and `ToolCallback` function types, not interfaces.
+- **Files Created/Modified**:
+  - [NEW] [payloads.go](../../internal/channel/payloads.go) (11 typed payload structs)
+  - [NEW] [sse_adapter.go](../../internal/channel/sse_adapter.go) (SSE SubagentChannel adapter)
+  - [NEW] [plugin_adapter.go](../../internal/channel/plugin_adapter.go) (Plugin SubagentChannel adapter)
+  - [MODIFY] [channel.go](../../internal/channel/channel.go) (UpdateTotal added to interface)
+  - [MODIFY] [mcp_adapter.go](../../internal/channel/mcp_adapter.go) (sync.Mutex + UpdateTotal)
+  - [MODIFY] [bridge.go](../../internal/channel/bridge.go) (buildPayload, BridgeWithOptions, dynamic total)
+  - [MODIFY] [hook_test.go](../../internal/channel/hook_test.go) (UpdateTotal stub on mock)
+  - [MODIFY] [channel_test.go](../../internal/channel/channel_test.go) (17 new tests)
+  - [MODIFY] [server.go](../../internal/server/server.go) (GET /api/tasks/events SSE endpoint)
+  - [NEW] [subagent-channel-v3.md](architecture/subagent-channel-v3.md) (Wiki page)
+  - [MODIFY] [index.md](index.md) (Added wiki entry)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-11T18:15:00-07:00] implementation | SubagentChannel: Interactive Task Execution Events
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the SubagentChannel spec. 10 vertical slices, 13 unit tests, all passing. `go build ./...` clean. Zero changes to executor, stream bus, or telemetry.
+- **Feature Summary**: Delivers real-time execution events from the tzro engine to external MCP harnesses during task execution. Uses MCP's `NotifyProgress` when the client provides a `progressToken` in `_meta`, falls back to `ResourceUpdated` otherwise. Transport-agnostic interface designed for future SSE, native plugin, and Antigravity SDK adapters.
+- **Design Decisions**:
+  - **Seam interfaces over SDK dependency**: `ProgressNotifier` and `ResourceUpdater` interfaces in `internal/channel/` keep the package free of MCP SDK imports. Adapters injected by `cmd/tzro-mcp/`.
+  - **Bus injection over global**: `Bridge()` takes `*stream.Bus` as parameter for testable isolation.
+  - **Progress on node_completed only**: Monotonic counter increments exclusively on `node_completed` events per MCP spec semantics.
+  - **nodeCount=0 for tzro_run**: Planning hasn't started; MCP spec says `Total=0` means unknown.
+- **Files Created/Modified**:
+  - [NEW] [channel.go](../../internal/channel/channel.go) (ExecutionEvent, SubagentChannel interface, event constants, RecordingChannel)
+  - [NEW] [bridge.go](../../internal/channel/bridge.go) (ChunkToEvent mapper, Bridge goroutine)
+  - [NEW] [mcp_adapter.go](../../internal/channel/mcp_adapter.go) (MCPSubagentChannel with dual-mode progress/fallback)
+  - [NEW] [channel_test.go](../../internal/channel/channel_test.go) (13 tests)
+  - [NEW] [channel_adapters.go](../../cmd/tzro-mcp/channel_adapters.go) (MCP SDK adapter wrappers, startSubagentChannel factory)
+  - [MODIFY] [main.go](../../cmd/tzro-mcp/main.go) (Package-level mcpServer variable)
+  - [MODIFY] [tools.go](../../cmd/tzro-mcp/tools.go) (SubagentChannel wiring in handleTzroRun and handleTzroWorkflow)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-10T23:05:00-07:00] document | PRD: Response Resolver
+
+- **Activity**: Published PRD for Response Resolver, synthesizing all design decisions from the grill-with-docs session into a ready-for-agent implementation spec. 3 modules: Recursive Key Resolver (pure function), Semantic Binding Resolver (Local Model inference), updated `resolveDynamicBindings` integration. Tests specified for all 3 modules.
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/response-resolver/PRD.md) (Response Resolver PRD)
+  - [NEW] [response-resolver.md](features/response-resolver.md) (Wiki feature page)
+  - [MODIFY] [index.md](index.md) (Added feature link)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-10T22:10:00-07:00] grill-with-docs | Response Resolver — Dynamic Binding Output Resolution
+
+- **Activity**: Grilling session walked down 7 branches of the "Tool Output Schema Registry" design tree, originating from benchmark_debug2.log analysis showing ~30 `DynamicBindings` resolution failures across 10 cases. The session reframed the problem from a static registry to a runtime resolution mechanism, rejected MCP extension and write-time flattening, and converged on a two-tier deterministic+semantic design.
+- **Terminology Resolved**:
+  - **Response Resolver** added to `CONTEXT.md`: Transparent post-execution step within action nodes that makes tool outputs resolvable by downstream DynamicBindings. Two-tier: recursive key search (deterministic) + Local Model semantic fallback. Output-side counterpart to the Semantic Validator.
+- **Key Decisions**:
+  - **Internal resolution, not MCP extension (Q2-Q3)**: The harness agent should not need to know tool output schemas. Some tools have dynamic/unpredictable outputs. tzro handles impedance mismatch internally.
+  - **Not a new DAG node (Q4)**: Transparent post-execution step inside action nodes, like `cache.Process`. No additional DAG node injection by the Kahn Compiler.
+  - **Recursive key search, not flattening (Q5)**: No write-time normalization or flattened property map. The raw output (already stored via `SetNodeRawOutput`) is searched recursively at read-time. Simpler, no new storage.
+  - **Uncapped semantic fallback (Q6)**: When recursive key search fails or finds collisions, the Local Model resolves bindings via a focused prompt (~100 tokens). No hard cap — 1-2 calls per task is negligible overhead.
+  - **Format-agnostic resolution cascade (Q7)**: Three tiers — JSON recursive key search → KV-line key search → Local Model semantic fallback. The semantic tier handles non-JSON outputs (plain text, XML, etc.) natively.
+  - **Semantic Validator approach validated**: Benchmark data confirms the 2-pass XML→GBNF pipeline works (0% typed-parameter failure rate). The 50% strict pass rate is driven by evaluator rigidity on free-text fields and binding resolution gaps — not validator failures.
+- **Rejected Alternatives**:
+  - Extending MCP tool definitions with `outputSchema` — couples harness to tzro internals
+  - Write-time flattening into normalized property map — premature complexity, no new storage needed
+  - Hard cap on semantic fallback calls — negligible cost doesn't justify silent failures
+  - Leaf-value flatten with collision handling — recursive search achieves the same without new storage
+- **ADRs Created**:
+  - [ADR-0029: Response Resolver and Semantic Binding Fallback](../adr/0029-response-resolver-and-semantic-binding-fallback.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Response Resolver glossary term)
+  - [NEW] [0029-response-resolver-and-semantic-binding-fallback.md](../adr/0029-response-resolver-and-semantic-binding-fallback.md)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
 
 - **Activity**: Full TDD (red-green-refactor) implementation of the Thermal Pressure Gating feature from the [design spec](../../docs/superpowers/specs/2026-06-09-thermal-pressure-gating-design.md). 9 red-green cycles covering 3 platform parsers + 6 behavioral tests. 15/15 tests pass in `internal/inference/`, 3/3 in `internal/config/`. `go vet` clean. `go build ./...` clean.
 - **Feature Summary**: Proactive hardware stewardship — detects elevated thermal pressure from the OS and gates inference execution before the machine reaches damaging temperatures. Cross-platform (macOS via `pmset`, Linux via sysfs, Windows via WMI). CGO-free. On-demand pre-flight check before each local inference call. Tiered response: cooldown pause for `serious` pressure, cloud escalation for `critical`.

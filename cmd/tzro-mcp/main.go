@@ -19,14 +19,18 @@ import (
 
 var version = "1.0.0"
 
+// mcpServer holds the *mcp.Server reference for use by tool handlers
+// that need to create SubagentChannels (e.g., handleTzroRun, handleTzroWorkflow).
+var mcpServer *mcp.Server
+
 func isDaemonRunning() bool {
 	port := "8080"
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		port = envPort
 	}
-	url := fmt.Sprintf("http://localhost:%s/api/config", port)
+	url := fmt.Sprintf("http://127.0.0.1:%s/api/config", port)
 	client := &http.Client{
-		Timeout: 100 * time.Millisecond,
+		Timeout: 500 * time.Millisecond,
 	}
 	resp, err := client.Get(url)
 	if err == nil {
@@ -129,6 +133,7 @@ func main() {
 		Name:    "tzro",
 		Version: version,
 	}, getResourcesServerOptions())
+	mcpServer = server
 
 	// Register tzro-specific Phase 1 tools
 	registerTools(server)

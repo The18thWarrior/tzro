@@ -187,6 +187,17 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		return fmt.Errorf("GGUF model file not found at %s — download a model from the Settings panel", m.GGUFModelPath)
 	}
 
+	// 8. Resolve MTP draft model path — use draft-mtp if assistant GGUF is present, else fall back to ngram-simple
+	modelsDir := config.GetModelsDir()
+	mtpDraftModelPath := filepath.Join(modelsDir, "gemma-4-E4B-it-qat-assistant-q4_k_m.gguf")
+	useMTP := false
+	if _, err := os.Stat(mtpDraftModelPath); err == nil {
+		useMTP = true
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar] MTP draft model found: %s\n", mtpDraftModelPath)
+	} else {
+		fmt.Fprintln(os.Stderr, "[Llama Sidecar] MTP draft model not found, falling back to ngram-simple speculative decoding")
+	}
+
 	// Optimized launch args (12 resolved decisions from sidecar optimization session)
 	args := []string{
 		"-m", m.GGUFModelPath,
@@ -199,12 +210,25 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)
-		"--spec-type", "ngram-simple", // Q5: n-gram speculative decoding
-		"--spec-draft-n-max", "48", // Q5: raised from default 16 for JSON verbatim matches
 		"--cache-reuse", "2048", // ADR-0021: segmented prompt structure shares static prefix across nodes
 		"--n-predict", "16384", // Q9: max tokens per generation
 		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
 		"--cache-ram", "2048", // Limit maximum prompt cache host memory to 2GB to resolve memory pressure
+	}
+
+	if useMTP {
+		// MTP speculative decoding: 4-layer drafter shares KV cache with target model
+		args = append(args,
+			"--spec-type", "draft-mtp",
+			"--spec-draft-model", mtpDraftModelPath,
+			"--spec-draft-n-max", "4", // MTP draft heads predict 4 tokens ahead
+		)
+	} else {
+		// Fallback: n-gram speculative decoding (no draft model needed)
+		args = append(args,
+			"--spec-type", "ngram-simple",
+			"--spec-draft-n-max", "48", // Raised from default 16 for JSON verbatim matches
+		)
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
@@ -343,9 +367,9 @@ func (m *LocalModelManager) CheckAndTriggerTier2GC(ctx context.Context) {
 	}
 
 	if rss, err := m.getProcessRSS(pid); err == nil {
-		// 12GB threshold limit = 12 * 1024 * 1024 * 1024 bytes (adjusted for 12B model + 2GB cache)
-		const threshold = 12 * 1024 * 1024 * 1024
-		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 12288MB)\n", rss/(1024*1024))
+		// 8GB threshold limit = 8 * 1024 * 1024 * 1024 bytes (adjusted for E4B model + 2GB cache)
+		const threshold = 8 * 1024 * 1024 * 1024
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 8192MB)\n", rss/(1024*1024))
 
 		if rss > threshold {
 			fmt.Fprintln(os.Stderr, "[Llama Sidecar GC] RSS threshold exceeded. Triggering Tier 2 Graceful Process Recycling...")
@@ -527,7 +551,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	}
 
 	reqBody := CompletionRequest{
-		Model:       "gemma-4-12b-it-qat",
+		Model:       "gemma-4-e4b-it-qat",
 		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0, // Q7: required for min_p to function; GBNF constrains output safety
 		MinP:        0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
@@ -607,6 +631,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				if content, ok := msg["content"].(string); ok {
 					fmt.Fprintf(os.Stderr, "[Llama Sidecar Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
+					RecordGlobalMetrics(promptTokens, completionTokens, duration)
 					if tracker, ok := GetTokenTracker(ctx); ok {
 						tracker.Record(false, promptTokens, completionTokens, duration, speed)
 					}
@@ -668,7 +693,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	}
 
 	reqBody := CompletionRequest{
-		Model:       "gemma-4-12b-it-qat",
+		Model:       "gemma-4-e4b-it-qat",
 		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0,
 		MinP:        0.1,
@@ -799,6 +824,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	})
 
 	fmt.Fprintf(os.Stderr, "[Llama Sidecar Stream Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
+	RecordGlobalMetrics(promptTokens, completionTokens, duration)
 
 	if tracker, ok := GetTokenTracker(ctx); ok {
 		tracker.Record(false, promptTokens, completionTokens, duration, speed)

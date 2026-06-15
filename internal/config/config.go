@@ -127,7 +127,7 @@ var (
 		CloudModel:          "gemini-flash-latest",
 		SpeedFloor:          5.0,
 		SidecarEnabled:      true,
-		GGUFModelPath:       "models/gemma-4-12b-it-qat-q4_0.gguf",
+		GGUFModelPath:       "models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
 		ModelsDir:           defaultModelsDir(),
 		ConfidenceThreshold: 3,
 		ExecutorNodeDelayMs:  800,

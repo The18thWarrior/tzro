@@ -298,6 +298,13 @@ func (sdb *SqliteDatabase) createTables() error {
 			step_index      INTEGER NOT NULL,
 			created_at      INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS dashboard_specs (
+			id TEXT PRIMARY KEY,
+			spec TEXT NOT NULL,
+			generated_at INTEGER NOT NULL,
+			generator_task_id TEXT,
+			ttl_seconds INTEGER NOT NULL DEFAULT 14400
+		);`,
 	}
 
 	for _, query := range queries {

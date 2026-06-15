@@ -18,6 +18,7 @@ _Map of system features, product requirements, and specs._
 - [Agent Inter-Process Communication (IPC)](features/agent-ipc.md) - Bidirectional agent messaging bus enabling sub-task delegation and resource context yielding. (Sources: 1 | Last Updated: 2026-06-08)
 - [Agent App Packaging Standard](features/agent-app-packaging.md) - Unified .tzroapp zip package format containing prompts, WASM/MCP tools, SQL migrations, and permission requests. (Sources: 1 | Last Updated: 2026-06-08)
 - [MCP Singleton Guard](features/mcp-singleton-guard.md) - PID lockfile preventing duplicate tzro-mcp instances when multiple IDE language servers spawn MCP children. (Sources: 1 | Last Updated: 2026-06-09)
+- [Response Resolver](features/response-resolver.md) - Three-tier output resolution cascade (recursive key search + KV-line + semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator. (Sources: 1 | Last Updated: 2026-06-10)
 
 ## Bugs & Post-Mortems
 
@@ -59,6 +60,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
 - [Agentic Harness Integration](architecture/agentic-harness-integration.md) - Analysis of MCP Server, Native Plugin, and Sidecar paradigms for orchestrating client-side execution steps.
 - [Edge-Cloud Co-Orchestration Beyond DAGs](architecture/edge-cloud-co-orchestration.md) - Multi-agent blackboard systems, speculative decoding, GAPG routing, and distributed state reuse.
+- [SubagentChannel v3](architecture/subagent-channel-v3.md) - Concurrency safety, structured payloads, error backpressure, SSE adapter, plugin adapter, and dashboard streaming endpoint.
 
 ### Architecture Decision Records (ADRs)
 
@@ -89,6 +91,8 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0025: Attention and Proactivity Scheduler](../adr/0025-attention-and-proactivity-scheduler.md) - Background daemon coordinator with proactivity ladder, foreground preemption, resource budgets, and approval-gated actions.
 - [ADR-0026: No Agent IPC Bus](../adr/0026-no-agent-ipc-bus.md) - Deliberate rejection of ReAct-style inter-agent messaging; DAG edges, MCP Host, and shared state cover all coordination needs.
 - [ADR-0027: Dynamic Workflow Orchestration Over Reactive Daemons](../adr/0027-dynamic-workflow-orchestration-over-reactive-daemons.md) - Collapsed "Reactive Agent Daemons" into LLM-driven extension of existing Workflow orchestrator. No new abstraction.
+- [ADR-0028: Semantic Validator Seam](../adr/0028-semantic-validator-seam.md) - Deprecated deep GBNF constraints in favor of XML generation with deterministic Semantic Validator coercion. Supersedes ADR-0002.
+- [ADR-0029: Response Resolver and Semantic Binding Fallback](../adr/0029-response-resolver-and-semantic-binding-fallback.md) - Two-tier output resolution (recursive key search + Local Model semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator.
 
 
 ## Ingested Sources

@@ -6,7 +6,7 @@ import (
 
 type GraphNode struct {
 	ID              string       `json:"id"`
-	Type            string       `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "gbnf_bridge" | "synthesis" | "hypothesis" | "probe"
+	Type            string       `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe"
 	Action          string       `json:"action"`              // Target tool name
 	Instructions    string       `json:"instructions"`        // Core step instruction
 	AllowedTools    []string     `json:"allowedTools"`        // Whitelist of permitted tools
@@ -16,7 +16,8 @@ type GraphNode struct {
 	Status          string       `json:"status"`                      // "pending" | "running" | "completed" | "failed" | "skipped"
 	Output          string       `json:"output,omitempty"`
 	OutputSchema    string       `json:"outputSchema,omitempty"` // Added for bridge nodes (GBNF grammar)
-	StaticArgs      string       `json:"staticArgs,omitempty"`   // Added for pre-known arguments
+	StaticArgs      string                 `json:"staticArgs,omitempty"`      // Added for pre-known arguments
+	DynamicBindings map[string]interface{} `json:"dynamicBindings,omitempty"` // Upstream data dependencies: paramName → "nodeId.output.propertyName"
 	Error           string       `json:"error,omitempty"`
 	RequireApproval bool         `json:"requireApproval,omitempty"` // Pause and wait for approval
 	ProbeConfig     *ProbeConfig `json:"probeConfig,omitempty"`     // Configuration for probe nodes (ADR-0019)
@@ -42,6 +43,7 @@ type GraphEdge struct {
 
 type ExecutionGraph struct {
 	TaskID         string          `json:"taskId"`
+	GoalPrompt     string          `json:"goalPrompt,omitempty"`     // Original user prompt for downstream context
 	Nodes          []GraphNode     `json:"nodes"`
 	Edges          []GraphEdge     `json:"edges"`
 	MaxCycles      int             `json:"maxCycles"`
