@@ -321,6 +321,43 @@ func (r *MCPRegistry) LoadConfig(configPath string) error {
 	return nil
 }
 
+// InitForTesting initializes the registry's internal map for use in tests.
+func (r *MCPRegistry) InitForTesting() {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	r.daemons = make(map[string]*MCPDaemon)
+}
+
+// RegisterDaemon adds a single daemon to the live registry without disrupting existing daemons.
+// Returns an error if a daemon with the same name already exists.
+func (r *MCPRegistry) RegisterDaemon(name string, config MCPServerConfig) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	if _, exists := r.daemons[name]; exists {
+		return fmt.Errorf("MCP daemon '%s' is already registered", name)
+	}
+
+	r.daemons[name] = NewMCPDaemon(name, config)
+	return nil
+}
+
+// UnregisterDaemon stops and removes a single daemon from the live registry.
+// Returns an error if the daemon does not exist.
+func (r *MCPRegistry) UnregisterDaemon(name string) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	d, exists := r.daemons[name]
+	if !exists {
+		return fmt.Errorf("MCP daemon '%s' not found", name)
+	}
+
+	_ = d.Stop()
+	delete(r.daemons, name)
+	return nil
+}
+
 func (r *MCPRegistry) GetDaemon(name string) (*MCPDaemon, bool) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()

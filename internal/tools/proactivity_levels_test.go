@@ -98,9 +98,9 @@ func TestProactivityLevel_FunctionToolDefaultsToL1(t *testing.T) {
 	defer ClearAllProactivityLevelOverrides()
 
 	fnTool := &FunctionTool{
-		name:   "unknown_custom_fn",
-		schema: `{"type": "object"}`,
-		fn:     nil,
+		NameVal:   "unknown_custom_fn",
+		SchemaVal: `{"type": "object"}`,
+		Fn:        nil,
 	}
 	Register(fnTool)
 	defer Unregister("unknown_custom_fn")

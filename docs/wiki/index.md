@@ -93,6 +93,8 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0027: Dynamic Workflow Orchestration Over Reactive Daemons](../adr/0027-dynamic-workflow-orchestration-over-reactive-daemons.md) - Collapsed "Reactive Agent Daemons" into LLM-driven extension of existing Workflow orchestrator. No new abstraction.
 - [ADR-0028: Semantic Validator Seam](../adr/0028-semantic-validator-seam.md) - Deprecated deep GBNF constraints in favor of XML generation with deterministic Semantic Validator coercion. Supersedes ADR-0002.
 - [ADR-0029: Response Resolver and Semantic Binding Fallback](../adr/0029-response-resolver-and-semantic-binding-fallback.md) - Two-tier output resolution (recursive key search + Local Model semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator.
+- [ADR-0030: Proactive Binding Splice for Deterministic Resolutions](../adr/0030-proactive-binding-splice-for-deterministic-resolutions.md) - Pre-inference optimization stripping high-confidence resolved bindings from schema before Semantic Validator inference.
+- [ADR-0031: Agent App Packaging and Package Manager](../adr/0031-agent-app-packaging-and-package-manager.md) - Composable `.tzroapp` packaging format with app-scoped namespacing, incremental MCP registration, developer-trusted capability declarations, and soft-disable uninstall lifecycle.
 
 
 ## Ingested Sources

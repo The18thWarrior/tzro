@@ -16,6 +16,7 @@ import (
 	"tzro/internal/proactivity"
 	"tzro/internal/sentinel"
 	"tzro/internal/server"
+	"tzro/internal/services"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
 	"tzro/internal/workflow"
@@ -64,31 +65,60 @@ func main() {
 		fmt.Printf("[Init Warning] Failed to initialize Tool Registry: %v\n", err)
 	}
 
-	// 5. Spawn background debounced event monitor Observer (if enabled)
-	if cfg.IsObserverEnabled() {
-		fmt.Println("[Init] Injecting LLM client adapter into Telemetry Observer...")
-		observer.SetLLMClient(&TelemetryLLMAdapter{
-			manager: inference.GlobalLocalModel,
-		})
+	// 5. Register background services via declarative ServiceRegistry
+	fmt.Println("[Init] Registering background services...")
+	svcRegistry := services.NewRegistry()
 
-		fmt.Println("[Init] Spawning background debouncer Observer...")
-		observer.Start()
-	} else {
-		fmt.Println("[Init] Observer Agent is disabled per configuration settings.")
-	}
+	// Observer Agent
+	svcRegistry.Register(services.ServiceDef{
+		Name:    "observer",
+		Type:    "background_agent",
+		Enabled: cfg.IsObserverEnabled(),
+		Start: func() error {
+			fmt.Println("[Init] Injecting LLM client adapter into Telemetry Observer...")
+			observer.SetLLMClient(&TelemetryLLMAdapter{
+				manager: inference.GlobalLocalModel,
+			})
+			fmt.Println("[Init] Spawning background debouncer Observer...")
+			observer.Start()
+			return nil
+		},
+		Stop: func() error { return nil },
+	})
 
-	// 5.1. Spawn background Sentinel Agent (if enabled, ADR-0023)
-	if cfg.IsSentinelEnabled() {
-		fmt.Println("[Init] Injecting LLM client adapter into Sentinel Agent...")
-		sentinel.SetLLMClient(&TelemetryLLMAdapter{
-			manager: inference.GlobalLocalModel,
-		})
+	// Sentinel Agent (ADR-0023)
+	svcRegistry.Register(services.ServiceDef{
+		Name:    "sentinel",
+		Type:    "background_agent",
+		Enabled: cfg.IsSentinelEnabled(),
+		Start: func() error {
+			fmt.Println("[Init] Injecting LLM client adapter into Sentinel Agent...")
+			sentinel.SetLLMClient(&TelemetryLLMAdapter{
+				manager: inference.GlobalLocalModel,
+			})
+			fmt.Println("[Init] Spawning background Sentinel heartbeat...")
+			sentinel.Start()
+			return nil
+		},
+		Stop: func() error { return nil },
+	})
 
-		fmt.Println("[Init] Spawning background Sentinel heartbeat...")
-		sentinel.Start()
-	} else {
-		fmt.Println("[Init] Sentinel Agent is disabled per configuration settings.")
-	}
+	// Attention Scheduler (Proactivity subsystem)
+	svcRegistry.Register(services.ServiceDef{
+		Name:    "attention_scheduler",
+		Type:    "scheduler",
+		Enabled: true,
+		Start: func() error {
+			fmt.Println("[Init] Starting Proactivity AttentionScheduler...")
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewObserverDaemon())
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewCompactorDaemon())
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewReconcilerDaemon())
+			_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewPrefetcherDaemon())
+			_ = proactivity.GlobalScheduler.Start(context.Background())
+			return nil
+		},
+		Stop: func() error { return nil },
+	})
 
 	// 5.25. Register Hooks Globally
 	fmt.Println("[Init] Registering global hooks...")
@@ -143,13 +173,16 @@ func main() {
 	workflow.Scheduler.Start(context.Background())
 	workflow.RecoverInterruptedWorkflows(context.Background())
 
-	// 5.75. Start AttentionScheduler (Proactivity subsystem)
-	fmt.Println("[Init] Starting Proactivity AttentionScheduler...")
-	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewObserverDaemon())
-	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewCompactorDaemon())
-	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewReconcilerDaemon())
-	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewPrefetcherDaemon())
-	_ = proactivity.GlobalScheduler.Start(context.Background())
+	// Start all enabled background services
+	fmt.Println("[Init] Starting all enabled background services...")
+	svcRegistry.StartAll()
+	for _, s := range svcRegistry.List() {
+		if !s.Enabled {
+			fmt.Printf("[Init] Service '%s' is disabled per configuration settings.\n", s.Name)
+		} else {
+			fmt.Printf("[Init] Service '%s' → %s\n", s.Name, s.Status)
+		}
+	}
 
 	// 6. Start Unified REST Endpoint API & serve GUI Dashboard static assets
 	port := ":8080"

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1674,8 +1675,8 @@ func TestTzroWorkflow_DryRun_SingleNode(t *testing.T) {
 	if !strings.Contains(text, "taskId") {
 		t.Errorf("expected taskId in response, got: %s", text)
 	}
-	// SCT expansion creates bridge + exec + terminal_synthesis nodes
-	if !strings.Contains(text, "node1_bridge") || !strings.Contains(text, "node1_exec") || !strings.Contains(text, "terminal_synthesis") {
+	// SCT expansion creates validator + exec + terminal_synthesis nodes
+	if !strings.Contains(text, "node1_validator") || !strings.Contains(text, "node1_exec") || !strings.Contains(text, "terminal_synthesis") {
 		t.Errorf("expected SCT-expanded node IDs in levels, got: %s", text)
 	}
 }
@@ -1710,7 +1711,7 @@ func TestTzroWorkflow_DryRun_MultiNodeDAG(t *testing.T) {
 	if resp["status"] != "dry_run" {
 		t.Errorf("expected status dry_run, got: %v", resp["status"])
 	}
-	// Should have expanded nodes: fetch_bridge, fetch_exec, process_bridge, process_exec, terminal_synthesis
+	// Should have expanded nodes: fetch_validator, fetch_exec, process_validator, process_exec, terminal_synthesis
 	nodeCount, ok := resp["nodeCount"].(float64)
 	if !ok || nodeCount < 5 {
 		t.Errorf("expected at least 5 expanded nodes (2 action * 2 + synthesis), got: %v", resp["nodeCount"])
@@ -1808,5 +1809,132 @@ func TestTzroWorkflow_DryRun_DefaultMaxCycles(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 	if !strings.Contains(text, "dry_run") {
 		t.Errorf("expected dry_run, got: %s", text)
+	}
+}
+
+// --- Agent App Package Manager MCP tool tests ---
+// These test handler functions directly, verifying behavior through the public interface.
+
+func initTestDB(t *testing.T) func() {
+	t.Helper()
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	tmpDir, err := os.MkdirTemp("", "tzro-apps-mcp-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	dbPath := filepath.Join(tmpDir, "test_apps.db")
+	memory.DB.SetDBPathForTesting(dbPath)
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+	return func() {
+		memory.DB.Close()
+		os.RemoveAll(tmpDir)
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}
+}
+
+func TestTzroAppsList_EmptyWhenNoApps(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsList(context.TODO(), nil, TzroAppsListArgs{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatal("expected successful result")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	// Should return an empty JSON array, not null
+	if !strings.Contains(text, "[]") {
+		t.Errorf("expected empty array, got: %s", text)
+	}
+}
+
+func TestTzroAppsInstall_RejectsEmptyPath(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsInstall(context.TODO(), nil, TzroAppsInstallArgs{ArchivePath: ""})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for empty archive path")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "archivePath cannot be empty") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroAppsInstall_RejectsWhitespacePath(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsInstall(context.TODO(), nil, TzroAppsInstallArgs{ArchivePath: "   "})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for whitespace archive path")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "archivePath cannot be empty") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroAppsInstall_RejectsNonexistentPath(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsInstall(context.TODO(), nil, TzroAppsInstallArgs{ArchivePath: "/tmp/nonexistent-file.tzroapp"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for nonexistent archive")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "error") {
+		t.Errorf("expected error in response, got: %s", text)
+	}
+}
+
+func TestTzroAppsUninstall_RejectsEmptyAppId(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsUninstall(context.TODO(), nil, TzroAppsUninstallArgs{AppID: ""})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for empty appId")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "appId cannot be empty") {
+		t.Errorf("unexpected error text: %s", text)
+	}
+}
+
+func TestTzroAppsUninstall_RejectsUnknownApp(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	result, _, err := handleTzroAppsUninstall(context.TODO(), nil, TzroAppsUninstallArgs{AppID: "nonexistent-app"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result for unknown app")
+	}
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "not installed") {
+		t.Errorf("expected 'not installed' error, got: %s", text)
 	}
 }

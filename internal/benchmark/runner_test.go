@@ -266,7 +266,7 @@ func TestBenchmarkTokenUsageTracking(t *testing.T) {
 	ctx := context.Background()
 
 	// Run consolidated mode with mock simulation
-	results, err := RunSuite(ctx, "bfcl", "consolidated", "local", false, 1)
+	results, err := RunSuite(ctx, "bfcl", "consolidated", "cloud", false, 1)
 	if err != nil {
 		t.Fatalf("failed to run consolidated benchmark suite: %v", err)
 	}

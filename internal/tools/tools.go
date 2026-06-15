@@ -215,21 +215,24 @@ func (m *MCPToolAdapter) Call(ctx context.Context, args map[string]interface{}) 
 
 // FunctionTool allows registering static Go functions directly as tools
 type FunctionTool struct {
-	name   string
-	schema string
-	fn     func(ctx context.Context, args map[string]interface{}) (string, error)
+	NameVal   string
+	SchemaVal string
+	Fn        func(ctx context.Context, args map[string]interface{}) (string, error)
 }
 
 func (f *FunctionTool) Name() string {
-	return f.name
+	return f.NameVal
 }
 
 func (f *FunctionTool) GetSchema() (string, error) {
-	return f.schema, nil
+	return f.SchemaVal, nil
 }
 
 func (f *FunctionTool) Call(ctx context.Context, args map[string]interface{}) (string, error) {
-	return f.fn(ctx, args)
+	if f.Fn == nil {
+		return "", fmt.Errorf("tool '%s' has no execution function", f.NameVal)
+	}
+	return f.Fn(ctx, args)
 }
 
 type StaticToolConfig struct {
@@ -274,8 +277,8 @@ func Init(configPath string) error {
 
 	// 1. Register cache tools statically
 	Register(&FunctionTool{
-		name: "introspect_cache",
-		schema: `{
+		NameVal: "introspect_cache",
+		SchemaVal: `{
 			"type": "object",
 			"properties": {
 				"tool_arguments": {
@@ -288,15 +291,15 @@ func Init(configPath string) error {
 			},
 			"required": ["tool_arguments"]
 		}`,
-		fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
+		Fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
 			cacheID, _ := args["cacheId"].(string)
 			return cache.DefaultStore.Introspect(ctx, cacheID), nil
 		},
 	})
 
 	Register(&FunctionTool{
-		name: "read_cached_data",
-		schema: `{
+		NameVal: "read_cached_data",
+		SchemaVal: `{
 			"type": "object",
 			"properties": {
 				"tool_arguments": {
@@ -311,7 +314,7 @@ func Init(configPath string) error {
 			},
 			"required": ["tool_arguments"]
 		}`,
-		fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
+		Fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
 			cacheID, _ := args["cacheId"].(string)
 			var limit, offset int
 			if l, ok := args["limit"].(float64); ok {
@@ -333,8 +336,8 @@ func Init(configPath string) error {
 	})
 
 	Register(&FunctionTool{
-		name: "jq_cached_data",
-		schema: `{
+		NameVal: "jq_cached_data",
+		SchemaVal: `{
 			"type": "object",
 			"properties": {
 				"tool_arguments": {
@@ -348,7 +351,7 @@ func Init(configPath string) error {
 			},
 			"required": ["tool_arguments"]
 		}`,
-		fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
+		Fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
 			cacheID, _ := args["cacheId"].(string)
 			filter, _ := args["filter"].(string)
 			return cache.DefaultStore.Query(ctx, cacheID, filter), nil
@@ -380,9 +383,9 @@ func Init(configPath string) error {
 				} else {
 					gbnfStr, _ := mcp.GetGBNFSchema(item.Schema)
 					Register(&FunctionTool{
-						name:   name,
-						schema: gbnfStr,
-						fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
+						NameVal:   name,
+						SchemaVal: gbnfStr,
+						Fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
 							return "", fmt.Errorf("static tool '%s' is registered as a schema placeholder and has no execution function", name)
 						},
 					})
@@ -399,6 +402,11 @@ func Init(configPath string) error {
 	// 4. Load dynamic Sandboxed Micro-Skills (WASM-embedded tools) from .tzro/wasm/
 	if err := LoadWasmTools(); err != nil {
 		fmt.Printf("[Tools Init Warning] Failed to load dynamic WASM tools: %v\n", err)
+	}
+
+	// 5. Load Agent App tools from .tzro/apps/ (installed via Package Manager)
+	if err := LoadAppTools(); err != nil {
+		fmt.Printf("[Tools Init Warning] Failed to load Agent App tools: %v\n", err)
 	}
 
 	return nil
@@ -443,6 +451,71 @@ func LoadWasmTools() error {
 		wasmTool := wasm.NewWasmToolAdapter(skillID, wasmPath, schemaPath)
 		Register(wasmTool)
 		fmt.Printf("[WASM Loader] Dynamically registered Sandboxed Micro-Skill: '%s' -> %s\n", skillID, wasmPath)
+	}
+
+	return nil
+}
+
+// LoadAppTools scans .tzro/apps/ for installed Agent App manifests and registers
+// their WASM tools with app-scoped namespacing ({appId}_{toolName}).
+// This is called on daemon startup to restore tools from previously installed apps.
+func LoadAppTools() error {
+	appsDir := config.ResolvePath(filepath.Join(".tzro", "apps"))
+
+	if _, err := os.Stat(appsDir); os.IsNotExist(err) {
+		return nil // No apps installed
+	}
+
+	entries, err := os.ReadDir(appsDir)
+	if err != nil {
+		return fmt.Errorf("failed to read apps directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		appID := entry.Name()
+		manifestPath := filepath.Join(appsDir, appID, "tzro.manifest.json")
+
+		manifestFile, err := os.Open(manifestPath)
+		if err != nil {
+			continue // App directory without manifest, skip
+		}
+
+		var manifest struct {
+			ID    string `json:"id"`
+			Tools []struct {
+				Name string `json:"name"`
+				Type string `json:"type"`
+				Path string `json:"path"`
+			} `json:"tools"`
+		}
+
+		if err := json.NewDecoder(manifestFile).Decode(&manifest); err != nil {
+			manifestFile.Close()
+			continue
+		}
+		manifestFile.Close()
+
+		for _, td := range manifest.Tools {
+			if td.Type != "wasm" {
+				continue
+			}
+
+			namespacedName := appID + "_" + td.Name
+			wasmPath := filepath.Join(appsDir, appID, td.Path)
+			schemaPath := strings.TrimSuffix(wasmPath, filepath.Ext(wasmPath)) + ".json"
+
+			if _, err := os.Stat(schemaPath); os.IsNotExist(err) {
+				continue
+			}
+
+			wasmTool := wasm.NewWasmToolAdapter(namespacedName, wasmPath, schemaPath)
+			Register(wasmTool)
+			fmt.Printf("[App Loader] Registered Agent App tool: '%s' -> %s\n", namespacedName, wasmPath)
+		}
 	}
 
 	return nil

@@ -82,7 +82,7 @@ A **Background Agent** that fires proactively on a periodic heartbeat timer and 
 _Avoid_: Observer Agent (reactive), cron job, monitoring service
 
 **Procedural Micro-Skill**:
-A highly structured Markdown SOP extracted from successful trajectories and injected to prevent zero-shot API hallucinations.
+A highly structured Markdown SOP injected into the **Local Model**'s context pipeline to prevent zero-shot API hallucinations. May be runtime-extracted from successful trajectories or developer-authored and shipped with an **Agent App**.
 _Avoid_: Dynamic prompt context, RAG document
 
 **Corrective Micro-Skill**:
@@ -92,6 +92,14 @@ _Avoid_: Procedural Micro-Skill (success-derived), historical success rate, retr
 **Sandboxed Micro-Skill**:
 A compiled WebAssembly binary containing specialized logic executed safely on-device with strict, isolated resource limits.
 _Avoid_: WASM plugin, executable skill, CGO connector
+
+**Agent App**:
+A self-contained, installable capability extension distributed as a `.tzroapp` archive. Bundles one or more tools (**Sandboxed Micro-Skill**, **MCP Host** sidecar, or both), optional pre-authored **Procedural Micro-Skills**, optional SQLite migrations, and a capability manifest into a single distributable unit. Identified by a locally-unique short slug. Tools are namespaced as `{appId}_{toolName}`. Must contain at least one tool — toolless packages are not Agent Apps. Composable — multiple Agent Apps coexist additively on a single tzro instance.
+_Avoid_: Plugin, extension, module, add-on, flavor
+
+**Package Manager**:
+A daemon-resident service and CLI subcommand (`install`, `uninstall`, `list`, `purge`) that manages the **Agent App** lifecycle. On install: extracts the `.tzroapp` archive, validates the manifest, runs SQLite migrations (tracked via `_tzro_migrations`), registers tools incrementally, and triggers the **Attention Queue** consent flow for capabilities mapped to **Proactivity Ladder** tiers above L1. On uninstall: soft-disables the app (deregisters tools, stops **MCP Host** daemons) but preserves data. Explicit `purge` destroys data and drops tables.
+_Avoid_: App Store, registry, installer wizard
 
 **Edge Thought**:
 A compact reasoning state generated on a DAG edge traversal by the **Local Model**, summarizing what execution has learned so far and how confident it is that the task goal can be achieved. Generated when the executor traverses an edge whose target node has a non-zero **Activation Threshold**. Persisted to SQLite for durability. Serves as the primary reasoning context for downstream nodes, with raw upstream data included on-demand for structured parameter extraction.

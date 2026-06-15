@@ -4,6 +4,51 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-14T22:10:00-07:00] implementation | Package Manager — TDD Implementation
+
+- **Activity**: Full TDD (red-green-refactor) implementation of the Agent App Package Manager. 15 vertical slices, 16 tests, all passing. `go build ./...` clean. `go vet` clean.
+- **Feature Summary**: Implements the full Agent App lifecycle via `internal/packagemanager/`. Parses `.tzroapp` zip archives, validates manifests, extracts files to `.tzro/apps/{appId}/`, runs SQL migrations tracked via `_tzro_migrations` table, registers WASM tools with app-scoped namespacing (`{appId}_{toolName}`), incrementally registers MCP daemons, and indexes pre-authored Procedural Micro-Skills. Supports soft-disable uninstall (preserves data) and explicit purge (destructive cleanup).
+- **Design Decisions**:
+  - **Deep module**: 4-method public interface (`Install`, `Uninstall`, `Purge`, `List`), complex 9-step install pipeline hidden inside.
+  - **Exported FunctionTool fields**: Changed `name/schema/fn` to `NameVal/SchemaVal/Fn` so packagemanager can construct tool instances cross-package without import cycles.
+  - **Incremental MCPRegistry**: `RegisterDaemon`/`UnregisterDaemon` added to live registry without full `LoadConfig` teardown.
+  - **Zip-slip protection**: Archive extraction validates destination paths against the app directory prefix.
+  - **Convention-enforced DB isolation**: Purge uses `sqlite_master` scan for `{appId}_%` tables to identify tables to drop.
+- **Files Created/Modified**:
+  - [NEW] [manifest.go](../../internal/packagemanager/manifest.go) (Manifest/ManifestTool/MCPServerDef structs, ParseManifest)
+  - [NEW] [manager.go](../../internal/packagemanager/manager.go) (Manager service with Install/Uninstall/Purge/List)
+  - [NEW] [packagemanager_test.go](../../internal/packagemanager/packagemanager_test.go) (16 integration tests)
+  - [MODIFY] [mcp.go](../../internal/mcp/mcp.go) (InitForTesting, RegisterDaemon, UnregisterDaemon)
+  - [MODIFY] [tools.go](../../internal/tools/tools.go) (Exported FunctionTool fields, nil-guard on Call)
+  - [MODIFY] [proactivity_levels_test.go](../../internal/tools/proactivity_levels_test.go) (Field name migration)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-06-14T21:18:00-07:00] grill-with-docs | .tzroapp Package Manager Design
+
+- **Activity**: Grilling session resolved 10 design decisions for the `.tzroapp` Agent App packaging standard and Package Manager service. Defined Agent App as a composable capability extension, established tool namespacing, incremental MCP registration, developer-trusted permission model, soft-disable uninstall lifecycle, and pre-authored Procedural Micro-Skills as app prompts.
+- **Terminology Resolved**:
+  - **Agent App** added to `CONTEXT.md`: Self-contained, installable capability extension distributed as a `.tzroapp` archive. Composable, identified by locally-unique short slug, tools namespaced as `{appId}_{toolName}`.
+  - **Package Manager** added to `CONTEXT.md`: Daemon-resident service and CLI subcommand managing Agent App lifecycle (install, uninstall, list, purge).
+  - **Procedural Micro-Skill** broadened in `CONTEXT.md`: Now includes developer-authored SOPs shipped with Agent Apps, not only runtime-extracted from trajectories.
+- **Key Decisions**:
+  - **At least one tool required (Q1)**: An Agent App must bundle at least one tool (WASM or MCP). Toolless packages are just prompt templates and don't justify the packaging machinery.
+  - **Config extension, not replacement (Q2)**: Apps extend `mcp_config.json` rather than bundling the entire tzro binary. Custom scripts (Node.js, Python) included as the "custom delta" on top of vanilla tzro.
+  - **Composable, not flavor (Q3)**: Multiple Agent Apps coexist additively. Rejected exclusive "flavor" model because multi-tool orchestration across apps is the core value.
+  - **Short slug, local uniqueness (Q4)**: App ID is a short slug (e.g., `hubspot`). Tools registered as `{appId}_{toolName}`. Global uniqueness unnecessary without centralized registry.
+  - **Incremental MCP registration (Q5)**: Package Manager calls `RegisterDaemon` on live MCPRegistry — no `LoadConfig` teardown, no disruption to running tasks. Per-app configs in `.tzro/apps/{appId}/mcp.json`.
+  - **Trust the developer (Q6)**: Manifest declares capabilities mapped to Proactivity Ladder tiers. No runtime enforcement beyond natural sandbox guarantees. User approves at install time.
+  - **Soft-disable + explicit purge (Q7)**: `uninstall` deregisters tools and stops daemons but preserves data. `purge` drops tables and removes files. Migration tracking via `_tzro_migrations` table.
+  - **Prompts = pre-authored Procedural Micro-Skills (Q8)**: App `prompts/` directory contains developer-authored Markdown SOPs in existing format, indexed into skill store on install.
+  - **Local file only at GA (Q9)**: URL-based installation deferred to avoid trust surface without supporting infrastructure.
+  - **Convention-enforced DB isolation (Q10)**: Shared `tzro.db`, table names prefixed by app ID. Per-app databases rejected (kills cross-app workflows). Query-rewriting rejected (fragile, marginal gain).
+- **ADRs Created**:
+  - [ADR-0031: Agent App Packaging and Package Manager](../adr/0031-agent-app-packaging-and-package-manager.md)
+- **Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Agent App, Package Manager; broadened Procedural Micro-Skill)
+  - [NEW] [0031-agent-app-packaging-and-package-manager.md](../adr/0031-agent-app-packaging-and-package-manager.md)
+  - [MODIFY] [agent-app-packaging.md](features/agent-app-packaging.md) (Updated with all resolved design decisions)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 ## [2026-06-14T17:55:00-07:00] implementation | SubagentChannel v3: Concurrency, Payloads, Backpressure, SSE & Plugin Adapters
 
 - **Activity**: Full TDD (red-green-refactor) implementation of all v3 SubagentChannel features. 12 vertical slices, 17 new tests (39 total), all passing with `-race`. `go build ./...` clean.

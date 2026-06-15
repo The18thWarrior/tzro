@@ -18,6 +18,7 @@ import (
 	"tzro/internal/inference"
 	internalmcp "tzro/internal/mcp"
 	"tzro/internal/memory"
+	"tzro/internal/packagemanager"
 	"tzro/internal/sentinel"
 	"tzro/internal/task"
 	"tzro/internal/tools"
@@ -1933,4 +1934,147 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_dashboard_spec",
 		Description: "Return the current raw system dashboard spec JSON for debugging.",
 	}, handleTzroDashboardSpec)
+
+	// Agent App Package Manager tools (ADR-0031)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_apps_list",
+		Description: "List all installed Agent Apps (.tzroapp packages) and their current status.",
+	}, handleTzroAppsList)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_apps_install",
+		Description: "Install an Agent App from a .tzroapp archive path. Extracts files, runs SQL migrations, registers tools, and indexes micro-skills.",
+	}, handleTzroAppsInstall)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_apps_uninstall",
+		Description: "Uninstall an Agent App by its ID. Soft-disables the app by default (deregisters tools, preserves data). Set purge=true to permanently remove all data and tables.",
+	}, handleTzroAppsUninstall)
+}
+
+// --- Agent App Package Manager MCP tool handlers ---
+
+// getOrInitPackageManager creates a packagemanager.Manager using the shared memory DB.
+func getOrInitPackageManager() (*packagemanager.Manager, error) {
+	db := memory.DB.RawDB()
+	if db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	appsDir := config.ResolvePath(".tzro/apps")
+	mgr := packagemanager.NewManager(db, internalmcp.GlobalRegistry, appsDir)
+	if err := mgr.InitSchema(); err != nil {
+		return nil, fmt.Errorf("failed to initialize package manager schema: %w", err)
+	}
+	return mgr, nil
+}
+
+// TzroAppsListArgs defines the inputs for listing installed Agent Apps.
+type TzroAppsListArgs struct{}
+
+func handleTzroAppsList(ctx context.Context, req *mcp.CallToolRequest, args TzroAppsListArgs) (*mcp.CallToolResult, any, error) {
+	mgr, err := getOrInitPackageManager()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	apps, err := mgr.List()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	respBytes, _ := json.MarshalIndent(apps, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// TzroAppsInstallArgs defines the inputs for installing an Agent App.
+type TzroAppsInstallArgs struct {
+	ArchivePath string `json:"archivePath" jsonschema:"required,Absolute path to the .tzroapp archive file"`
+}
+
+func handleTzroAppsInstall(ctx context.Context, req *mcp.CallToolRequest, args TzroAppsInstallArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.ArchivePath) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "archivePath cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	mgr, err := getOrInitPackageManager()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	app, err := mgr.Install(args.ArchivePath)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": %q}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	respBytes, _ := json.MarshalIndent(app, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// TzroAppsUninstallArgs defines the inputs for uninstalling an Agent App.
+type TzroAppsUninstallArgs struct {
+	AppID string `json:"appId" jsonschema:"required,The Agent App ID to uninstall"`
+	Purge bool   `json:"purge,omitempty" jsonschema:"If true permanently removes all data and tables. Default false (soft-disable)."`
+}
+
+func handleTzroAppsUninstall(ctx context.Context, req *mcp.CallToolRequest, args TzroAppsUninstallArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.AppID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "appId cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	mgr, err := getOrInitPackageManager()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if args.Purge {
+		err = mgr.Purge(args.AppID)
+	} else {
+		err = mgr.Uninstall(args.AppID)
+	}
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": %q}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	action := "uninstalled"
+	if args.Purge {
+		action = "purged"
+	}
+	respBytes, _ := json.MarshalIndent(map[string]string{
+		"status": "success",
+		"appId":  args.AppID,
+		"action": action,
+	}, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
 }
