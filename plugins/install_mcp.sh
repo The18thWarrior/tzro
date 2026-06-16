@@ -132,7 +132,7 @@ if [ -d "$HOME/.config/opencode" ] || [ -f "$HOME/.opencode.json" ]; then
 fi
 
 # Antigravity IDE
-if [ -d "$HOME/.gemini/config/plugins" ] || [ -d "$HOME/.gemini/antigravity/plugins" ] || [ -d "$HOME/.gemini/antigravity-ide/plugins" ]; then
+if [ -d "$HOME/.gemini/config" ] || [ -d "$HOME/.gemini/antigravity" ] || [ -d "$HOME/.gemini/antigravity-ide" ]; then
     IFACE_DETECTED[5]=true
 fi
 

@@ -22,13 +22,16 @@ install_antigravity_ide() {
     echo -e "\n${BLUE}[1/3] Installing Antigravity IDE plugin...${NC}"
     
     local target_dirs=()
-    if [ -d "$HOME/.gemini/config/plugins" ]; then
+    if [ -d "$HOME/.gemini/config" ]; then
+        mkdir -p "$HOME/.gemini/config/plugins"
         target_dirs+=("$HOME/.gemini/config/plugins/tzro-plugin")
     fi
-    if [ -d "$HOME/.gemini/antigravity-ide/plugins" ]; then
+    if [ -d "$HOME/.gemini/antigravity-ide" ]; then
+        mkdir -p "$HOME/.gemini/antigravity-ide/plugins"
         target_dirs+=("$HOME/.gemini/antigravity-ide/plugins/tzro-plugin")
     fi
-    if [ -d "$HOME/.gemini/antigravity/plugins" ]; then
+    if [ -d "$HOME/.gemini/antigravity" ]; then
+        mkdir -p "$HOME/.gemini/antigravity/plugins"
         target_dirs+=("$HOME/.gemini/antigravity/plugins/tzro-plugin")
     fi
 
