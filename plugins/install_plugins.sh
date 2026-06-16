@@ -20,46 +20,52 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Function to install Antigravity IDE plugin
 install_antigravity_ide() {
     echo -e "\n${BLUE}[1/3] Installing Antigravity IDE plugin...${NC}"
-    PLUGINS_DIR="$HOME/.gemini/config/plugins"
+    
+    local target_dirs=()
+    if [ -d "$HOME/.gemini/config/plugins" ]; then
+        target_dirs+=("$HOME/.gemini/config/plugins/tzro-plugin")
+    fi
+    if [ -d "$HOME/.gemini/antigravity-ide/plugins" ]; then
+        target_dirs+=("$HOME/.gemini/antigravity-ide/plugins/tzro-plugin")
+    fi
 
-    if [ ! -d "${PLUGINS_DIR}" ]; then
-        echo -e "  ${YELLOW}⚠ Antigravity IDE plugins directory not found at ${PLUGINS_DIR}${NC}"
+    if [ ${#target_dirs[@]} -eq 0 ]; then
+        echo -e "  ${YELLOW}⚠ No Antigravity IDE plugins directories found.${NC}"
         echo -e "  Skipping IDE plugin installation."
         return
     fi
 
-    TARGET_DIR="${PLUGINS_DIR}/tzro-plugin"
-
-    if [ -L "${TARGET_DIR}" ] || [ -d "${TARGET_DIR}" ]; then
-        echo -e "  ${YELLOW}⚠ IDE plugin already installed at ${TARGET_DIR}${NC}"
-        local overwrite=true
-        if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
-            read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                overwrite=false
+    for TARGET_DIR in "${target_dirs[@]}"; do
+        if [ -L "${TARGET_DIR}" ] || [ -d "${TARGET_DIR}" ]; then
+            echo -e "  ${YELLOW}⚠ IDE plugin already installed at ${TARGET_DIR}${NC}"
+            local overwrite=true
+            if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+                read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    overwrite=false
+                fi
+            fi
+            if [ "$overwrite" = "true" ]; then
+                rm -rf "${TARGET_DIR}"
+            else
+                echo -e "  Skipping IDE plugin installation at ${TARGET_DIR}."
+                continue
             fi
         fi
-        if [ "$overwrite" = "true" ]; then
-            rm -rf "${TARGET_DIR}"
+
+        # Copy plugin files (not symlink — the plugin dir may have different lifecycle)
+        mkdir -p "${TARGET_DIR}/skills/tzro"
+        mkdir -p "${TARGET_DIR}/references"
+
+        # Check if plugin files exist in the repo
+        PLUGIN_SOURCE="${REPO_ROOT}/plugins/antigravity/ide"
+        if [ -d "${PLUGIN_SOURCE}" ]; then
+            cp -r "${PLUGIN_SOURCE}"/* "${TARGET_DIR}/"
         else
-            echo -e "  Skipping IDE plugin installation."
-            return
-        fi
-    fi
-
-    # Copy plugin files (not symlink — the plugin dir may have different lifecycle)
-    mkdir -p "${TARGET_DIR}/skills/tzro"
-    mkdir -p "${TARGET_DIR}/references"
-
-    # Check if plugin files exist in the repo
-    PLUGIN_SOURCE="${REPO_ROOT}/plugins/antigravity/ide"
-    if [ -d "${PLUGIN_SOURCE}" ]; then
-        cp -r "${PLUGIN_SOURCE}"/* "${TARGET_DIR}/"
-    else
-        echo -e "  ${YELLOW}⚠ IDE plugin source not found at ${PLUGIN_SOURCE}${NC}"
-        echo -e "  Creating minimal plugin structure..."
-        cat > "${TARGET_DIR}/plugin.json" << 'PLUGIN_EOF'
+            echo -e "  ${YELLOW}⚠ IDE plugin source not found at ${PLUGIN_SOURCE}${NC}"
+            echo -e "  Creating minimal plugin structure..."
+            cat > "${TARGET_DIR}/plugin.json" << 'PLUGIN_EOF'
 {
   "name": "tzro-plugin",
   "version": "0.1.0",
@@ -71,9 +77,10 @@ install_antigravity_ide() {
   "license": "Apache-2.0"
 }
 PLUGIN_EOF
-    fi
+        fi
 
-    echo -e "  ${GREEN}✔ IDE plugin installed at: ${BOLD}${TARGET_DIR}${NC}"
+        echo -e "  ${GREEN}✔ IDE plugin installed at: ${BOLD}${TARGET_DIR}${NC}"
+    done
 }
 
 # Function to install Antigravity SDK plugin
