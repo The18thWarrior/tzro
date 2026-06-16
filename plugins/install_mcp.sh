@@ -72,6 +72,10 @@ done
 
 if [ -z "${TZRO_MCP_BIN}" ]; then
     echo -e "  ${YELLOW}⚠ Could not auto-detect tzro-mcp binary.${NC}"
+    if [ "${TZRO_NON_INTERACTIVE:-}" = "true" ]; then
+        echo -e "  ${RED}Error: Cannot auto-detect tzro-mcp binary in non-interactive mode.${NC}"
+        exit 1
+    fi
     read -p "  Enter the absolute path to tzro-mcp: " TZRO_MCP_BIN
     TZRO_MCP_BIN="${TZRO_MCP_BIN/#\~/$HOME}"
     if [ ! -f "${TZRO_MCP_BIN}" ]; then
@@ -157,7 +161,11 @@ for i in "${!IFACE_IDS[@]}"; do
 done
 
 echo ""
-read -p "  Enter numbers (e.g., 1 2 3) or press Enter for detected: " SELECTION_INPUT
+if [ "${TZRO_NON_INTERACTIVE:-}" = "true" ]; then
+    SELECTION_INPUT=""
+else
+    read -p "  Enter numbers (e.g., 1 2 3) or press Enter for detected: " SELECTION_INPUT
+fi
 
 # Build selected list
 if [ -z "${SELECTION_INPUT}" ]; then
@@ -218,17 +226,32 @@ inject_mcp_config() {
     existing=$(jq -r ".${json_key}.tzro // empty" "${config_file}" 2>/dev/null || true)
     if [ -n "${existing}" ]; then
         echo -e "    ${YELLOW}⚠ tzro already configured in ${config_file}${NC}"
-        read -p "    Overwrite? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        local overwrite=true
+        if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+            read -p "    Overwrite? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                overwrite=false
+            fi
+        fi
+        if [ "$overwrite" = "false" ]; then
             return
         fi
+    fi
+
+    # Build env object
+    local env_json=""
+    if [ "${iface_name}" = "Antigravity IDE" ]; then
+        env_json='{"TZRO_DIR": "'"${REPO_ROOT}"'", "ANTIGRAVITY_AGENT": "$ANTIGRAVITY_AGENT", "ANTIGRAVITY_TRAJECTORY_ID": "$ANTIGRAVITY_TRAJECTORY_ID", "ANTIGRAVITY_LS_ADDRESS": "$ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN": "$ANTIGRAVITY_CSRF_TOKEN"}'
+    else
+        env_json='{"TZRO_DIR": "'"${REPO_ROOT}"'"}'
     fi
 
     # Inject the tzro MCP server entry
     local tmp_file="${config_file}.tzro_tmp"
     jq --arg cmd "${TZRO_MCP_BIN}" \
-       ".${json_key}.tzro = {\"command\": \$cmd, \"args\": [], \"env\": {}}" \
+       --argjson env "${env_json}" \
+       ".${json_key}.tzro = {\"command\": \$cmd, \"args\": [], \"env\": \$env}" \
        "${config_file}" > "${tmp_file}" && mv "${tmp_file}" "${config_file}"
 
     echo -e "    ${GREEN}✔ MCP config injected into ${config_file}${NC}"
@@ -436,9 +459,15 @@ elif [ -f "CLAUDE.md" ]; then
     FALLBACK_DONE=true
 else
     echo -e "  ${DIM}Neither AGENTS.md nor CLAUDE.md found.${NC}"
-    read -p "  Create AGENTS.md with tzro instructions? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    local create_agents=true
+    if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+        read -p "  Create AGENTS.md with tzro instructions? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            create_agents=false
+        fi
+    fi
+    if [ "$create_agents" = "true" ]; then
         if [ "${DRY_RUN}" = "true" ]; then
             echo -e "    ${DIM}[DRY RUN] Would create AGENTS.md${NC}"
         else

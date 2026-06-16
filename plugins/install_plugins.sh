@@ -32,9 +32,15 @@ install_antigravity_ide() {
 
     if [ -L "${TARGET_DIR}" ] || [ -d "${TARGET_DIR}" ]; then
         echo -e "  ${YELLOW}⚠ IDE plugin already installed at ${TARGET_DIR}${NC}"
-        read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        local overwrite=true
+        if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+            read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                overwrite=false
+            fi
+        fi
+        if [ "$overwrite" = "true" ]; then
             rm -rf "${TARGET_DIR}"
         else
             echo -e "  Skipping IDE plugin installation."
@@ -75,16 +81,32 @@ install_antigravity_sdk() {
     echo -e "\n${BLUE}[2/3] Installing Google Antigravity SDK plugin...${NC}"
     echo -e "  The SDK integration module will be symlinked to your Python project."
     echo
-    read -p "  Enter the absolute path to your Python project directory: " TARGET_PROJECT
+    local target_project=""
+    if [ "${TZRO_NON_INTERACTIVE:-}" = "true" ]; then
+        if [ -n "${TZRO_SDK_PROJECT:-}" ]; then
+            target_project="${TZRO_SDK_PROJECT}"
+        else
+            echo -e "  ${YELLOW}⚠ Skipping SDK plugin installation (no TZRO_SDK_PROJECT specified in non-interactive mode).${NC}"
+            return
+        fi
+    else
+        read -p "  Enter the absolute path to your Python project directory: " target_project
+    fi
     
     # Resolve tilde
-    TARGET_PROJECT="${TARGET_PROJECT/#\~/$HOME}"
+    TARGET_PROJECT="${target_project/#\~/$HOME}"
     
     if [ ! -d "${TARGET_PROJECT}" ]; then
         echo -e "  ${YELLOW}⚠ Target directory '${TARGET_PROJECT}' does not exist.${NC}"
-        read -p "  Do you want to create it? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        local create_dir=true
+        if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+            read -p "  Do you want to create it? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                create_dir=false
+            fi
+        fi
+        if [ "$create_dir" = "true" ]; then
             mkdir -p "${TARGET_PROJECT}"
         else
             echo -e "  Skipping SDK plugin installation."
@@ -126,9 +148,15 @@ install_hermes() {
 
     if [ ! -d "${HERMES_PLUGINS_DIR}" ]; then
         echo -e "  ${YELLOW}⚠ Hermes plugins directory not found at ${HERMES_PLUGINS_DIR}${NC}"
-        read -p "  Do you want to create it? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        local create_dir=true
+        if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+            read -p "  Do you want to create it? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                create_dir=false
+            fi
+        fi
+        if [ "$create_dir" = "true" ]; then
             mkdir -p "${HERMES_PLUGINS_DIR}"
         else
             echo -e "  Skipping Hermes plugin installation."
@@ -140,9 +168,15 @@ install_hermes() {
 
     if [ -L "${TARGET_TZRO}" ] || [ -d "${TARGET_TZRO}" ]; then
         echo -e "  ${YELLOW}⚠ Hermes plugin already installed at ${TARGET_TZRO}${NC}"
-        read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        local overwrite=true
+        if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+            read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                overwrite=false
+            fi
+        fi
+        if [ "$overwrite" = "true" ]; then
             rm -rf "${TARGET_TZRO}"
         else
             echo -e "  Skipping Hermes plugin installation."

@@ -3,7 +3,9 @@
     "tzro": {
       "command": "/Users/jp/Desktop/Repos/tzro/bin/tzro-mcp",
       "args": [],
-      "env": {}
+      "env": {
+        "TZRO_DIR": "/Users/jp/Desktop/Repos/tzro"
+      }
     }
   }
 }

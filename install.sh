@@ -291,14 +291,20 @@ echo
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MCP_INSTALLER="${SCRIPT_DIR}/plugins/install_mcp.sh"
 
-if [ -f "${MCP_INSTALLER}" ] && [ -t 0 ]; then
-    echo -e "${CYAN}${BOLD}Want to configure tzro for your AI editors?${NC}"
-    echo -e "${DIM}  This will auto-detect Claude Code, Cursor, Windsurf, Copilot, etc.${NC}"
-    echo -e "${DIM}  and wire up MCP tools + agent instructions.${NC}"
-    echo ""
-    read -p "  Run the MCP installer? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [ -f "${MCP_INSTALLER}" ]; then
+    if [ -t 0 ]; then
+        echo -e "${CYAN}${BOLD}Want to configure tzro for your AI editors?${NC}"
+        echo -e "${DIM}  This will auto-detect Claude Code, Cursor, Windsurf, Copilot, etc.${NC}"
+        echo -e "${DIM}  and wire up MCP tools + agent instructions.${NC}"
+        echo ""
+        read -p "  Run the MCP installer? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            bash "${MCP_INSTALLER}"
+        fi
+    elif [ "${TZRO_NON_INTERACTIVE:-}" = "true" ] || [ -n "${ANTIGRAVITY_AGENT:-}" ] || [ -n "${CLAUDE:-}" ] || [ -n "${CLAUDE_AGENT:-}" ]; then
+        echo -e "${BLUE}Running MCP installer non-interactively...${NC}"
+        export TZRO_NON_INTERACTIVE=true
         bash "${MCP_INSTALLER}"
     fi
 fi
