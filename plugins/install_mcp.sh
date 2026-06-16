@@ -240,11 +240,16 @@ inject_mcp_config() {
     fi
 
     # Build env object
+    local tzro_dir_val="${REPO_ROOT}"
+    if [ -n "${TZRO_REPO_ROOT:-}" ] && [ -f "${TZRO_REPO_ROOT}/install.sh" ]; then
+        tzro_dir_val="${TZRO_REPO_ROOT}"
+    fi
+
     local env_json=""
     if [ "${iface_name}" = "Antigravity IDE" ]; then
-        env_json='{"TZRO_DIR": "'"${REPO_ROOT}"'", "ANTIGRAVITY_AGENT": "$ANTIGRAVITY_AGENT", "ANTIGRAVITY_TRAJECTORY_ID": "$ANTIGRAVITY_TRAJECTORY_ID", "ANTIGRAVITY_LS_ADDRESS": "$ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN": "$ANTIGRAVITY_CSRF_TOKEN"}'
+        env_json='{"TZRO_DIR": "'"${tzro_dir_val}"'", "ANTIGRAVITY_AGENT": "$ANTIGRAVITY_AGENT", "ANTIGRAVITY_TRAJECTORY_ID": "$ANTIGRAVITY_TRAJECTORY_ID", "ANTIGRAVITY_LS_ADDRESS": "$ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN": "$ANTIGRAVITY_CSRF_TOKEN"}'
     else
-        env_json='{"TZRO_DIR": "'"${REPO_ROOT}"'"}'
+        env_json='{"TZRO_DIR": "'"${tzro_dir_val}"'"}'
     fi
 
     # Inject the tzro MCP server entry

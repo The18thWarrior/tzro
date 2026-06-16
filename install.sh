@@ -288,8 +288,43 @@ echo -e "=========================================================="
 echo
 
 # Optional: Configure agentic interfaces
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
-MCP_INSTALLER="${SCRIPT_DIR}/plugins/install_mcp.sh"
+# We resolve the plugins directory. If it doesn't exist locally, we download it from GitHub.
+PLUGINS_SRC_DIR=""
+CURRENT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
+if [ -d "${CURRENT_SCRIPT_DIR}/plugins" ] && [ -f "${CURRENT_SCRIPT_DIR}/plugins/install_mcp.sh" ]; then
+    PLUGINS_SRC_DIR="${CURRENT_SCRIPT_DIR}/plugins"
+fi
+
+# Export original repo root for TZRO_DIR lookup in install_mcp.sh
+export TZRO_REPO_ROOT="${CURRENT_SCRIPT_DIR}"
+
+if [ -n "${PLUGINS_SRC_DIR}" ]; then
+    echo -e "\n${BLUE}Copying local plugins to ${INSTALL_DIR}/plugins...${NC}"
+    rm -rf "${INSTALL_DIR}/plugins"
+    cp -r "${PLUGINS_SRC_DIR}" "${INSTALL_DIR}/"
+else
+    echo -e "\n${BLUE}Downloading plugins from GitHub to ${INSTALL_DIR}/plugins...${NC}"
+    TEMP_ZIP="/tmp/tzro-repo.zip"
+    TEMP_EXTRACT="/tmp/tzro-extract"
+    rm -rf "${TEMP_ZIP}" "${TEMP_EXTRACT}"
+    
+    # Download main branch zip from GitHub
+    if curl -fSL -o "${TEMP_ZIP}" "https://github.com/The18thWarrior/tzro/archive/refs/heads/main.zip" 2>/dev/null; then
+        mkdir -p "${TEMP_EXTRACT}"
+        unzip -q "${TEMP_ZIP}" -d "${TEMP_EXTRACT}"
+        # The zip extracts into a folder named tzro-main
+        if [ -d "${TEMP_EXTRACT}/tzro-main/plugins" ]; then
+            rm -rf "${INSTALL_DIR}/plugins"
+            cp -r "${TEMP_EXTRACT}/tzro-main/plugins" "${INSTALL_DIR}/"
+        fi
+        rm -rf "${TEMP_ZIP}" "${TEMP_EXTRACT}"
+    else
+        echo -e "  ${YELLOW}⚠ Failed to download plugins from GitHub. Skipping editor configuration.${NC}"
+    fi
+fi
+
+MCP_INSTALLER="${INSTALL_DIR}/plugins/install_mcp.sh"
+PLUGINS_INSTALLER="${INSTALL_DIR}/plugins/install_plugins.sh"
 
 if [ -f "${MCP_INSTALLER}" ]; then
     if [ -t 0 ]; then
@@ -301,10 +336,16 @@ if [ -f "${MCP_INSTALLER}" ]; then
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             bash "${MCP_INSTALLER}"
+            if [ -f "${PLUGINS_INSTALLER}" ]; then
+                bash "${PLUGINS_INSTALLER}"
+            fi
         fi
     elif [ "${TZRO_NON_INTERACTIVE:-}" = "true" ] || [ -n "${ANTIGRAVITY_AGENT:-}" ] || [ -n "${CLAUDE:-}" ] || [ -n "${CLAUDE_AGENT:-}" ]; then
-        echo -e "${BLUE}Running MCP installer non-interactively...${NC}"
+        echo -e "${BLUE}Running MCP and plugin installers non-interactively...${NC}"
         export TZRO_NON_INTERACTIVE=true
         bash "${MCP_INSTALLER}"
+        if [ -f "${PLUGINS_INSTALLER}" ]; then
+            bash "${PLUGINS_INSTALLER}"
+        fi
     fi
 fi
