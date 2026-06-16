@@ -288,7 +288,7 @@ echo -e "=========================================================="
 echo
 
 # Optional: Configure agentic interfaces
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" && pwd)"
 MCP_INSTALLER="${SCRIPT_DIR}/plugins/install_mcp.sh"
 
 if [ -f "${MCP_INSTALLER}" ]; then

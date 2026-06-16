@@ -27,7 +27,7 @@ NC='\033[0m'
 
 DRY_RUN="${TZRO_DRY_RUN:-false}"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." && pwd)"
 INSTRUCTIONS_SOURCE="${REPO_ROOT}/plugins/mcp/tzro-agent-instructions.md"
 
 # Interface registry (parallel arrays — bash 3.2 compatible)

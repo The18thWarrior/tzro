@@ -15,7 +15,7 @@ echo -e "${BOLD}${CYAN}=========================================================
 echo -e "${BOLD}${CYAN}            tzro Native Plugin Installer                   ${NC}"
 echo -e "${BOLD}${CYAN}==========================================================${NC}"
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." && pwd)"
 
 # Function to install Antigravity IDE plugin
 install_antigravity_ide() {
