@@ -13,6 +13,7 @@ import (
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/observer"
+	"tzro/internal/packagemanager"
 	"tzro/internal/proactivity"
 	"tzro/internal/sentinel"
 	"tzro/internal/server"
@@ -188,6 +189,17 @@ func main() {
 	port := ":8080"
 	if envPort := os.Getenv("PORT"); envPort != "" {
 		port = ":" + envPort
+	}
+
+	// Load active apps on boot
+	fmt.Println("[Init] Loading installed Agent Apps...")
+	db := memory.DB.RawDB()
+	if db != nil {
+		appsDir := config.ResolvePath(".tzro/apps")
+		mgr := packagemanager.NewManager(db, mcp.GlobalRegistry, appsDir)
+		if err := mgr.LoadInstalledApps(); err != nil {
+			fmt.Printf("[Init Warning] Failed to load installed apps: %v\n", err)
+		}
 	}
 
 	fmt.Printf("[Init] Ready! Open your browser to http://localhost%s/ to view the GUI\n", port)

@@ -18,6 +18,9 @@ import (
 
 // CallCloudModel executes standard remote API calls for cloud planning and fallback
 func CallCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr string) (string, error) {
+	if config.Get().PrivacyLevel == "strict-local" {
+		return "", fmt.Errorf("cloud execution disabled under strict-local privacy level")
+	}
 	return callCloudModel(ctx, messages, schemaStr)
 }
 
@@ -47,8 +50,8 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 	}
 
 	type Message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role    string      `json:"role"`
+		Content interface{} `json:"content"` // string or []ContentPart
 	}
 	type ResponseFormatStruct struct {
 		Type   string                 `json:"type"`
@@ -66,6 +69,8 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 	for _, m := range messages {
 		if m.Role == "system" {
 			cloudMessages = append(cloudMessages, Message{Role: "system", Content: systemPrompt})
+		} else if m.HasMultimodalContent() {
+			cloudMessages = append(cloudMessages, Message{Role: m.Role, Content: m.Parts})
 		} else {
 			cloudMessages = append(cloudMessages, Message{Role: m.Role, Content: m.Content})
 		}
@@ -144,6 +149,9 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 
 // CallCloudModelStream executes standard remote API calls with SSE streaming for cloud planning and fallback
 func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, schemaStr string, meta StreamMeta, pub telemetry.EventPublisher) (string, error) {
+	if config.Get().PrivacyLevel == "strict-local" {
+		return "", fmt.Errorf("cloud execution disabled under strict-local privacy level")
+	}
 	if pub == nil {
 		pub = telemetry.Default
 	}
@@ -171,8 +179,8 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 	}
 
 	type Message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role    string      `json:"role"`
+		Content interface{} `json:"content"` // string or []ContentPart
 	}
 
 	type StreamOptionsStruct struct {
@@ -198,6 +206,8 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 	for _, m := range messages {
 		if m.Role == "system" {
 			cloudMessages = append(cloudMessages, Message{Role: "system", Content: systemPrompt})
+		} else if m.HasMultimodalContent() {
+			cloudMessages = append(cloudMessages, Message{Role: m.Role, Content: m.Parts})
 		} else {
 			cloudMessages = append(cloudMessages, Message{Role: m.Role, Content: m.Content})
 		}

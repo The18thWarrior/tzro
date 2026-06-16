@@ -231,6 +231,13 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		)
 	}
 
+	// 9. Multimodal projector for vision support (PDF OCR, image analysis)
+	mmProjPath := config.GetMMProjModelPath()
+	if mmProjPath != "" {
+		args = append(args, "--mmproj", mmProjPath)
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Vision projector loaded: %s\n", mmProjPath)
+	}
+
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
 
 	// Create logs folder
@@ -290,6 +297,17 @@ func (m *LocalModelManager) GetStatusInfo() (string, int, int, int, string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	return m.Status, m.ActivePort, m.ActivePID, m.ManifestProgress, m.GGUFModelPath
+}
+
+// IsVisionAvailable returns true if the multimodal projector is loaded
+// and the backend is active — meaning image content parts will be processed
+// by the local model (e.g., for PDF OCR via vision).
+func (m *LocalModelManager) IsVisionAvailable() bool {
+	m.mutex.Lock()
+	status := m.Status
+	m.mutex.Unlock()
+	return (status == "Active" || status == "Adopted") &&
+		config.GetMMProjModelPath() != ""
 }
 
 func (m *LocalModelManager) getHealthClient() *http.Client {
@@ -542,12 +560,12 @@ func releaseFileLock(f *os.File) {
 func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []InferenceMessage, gbnfSchema string) (*InferenceResult, error) {
 	// Build the completion request with optimized sampling parameters
 	type CompletionRequest struct {
-		Model              string                 `json:"model"`
-		Messages           []map[string]string    `json:"messages"`
-		Temperature        float64                `json:"temperature"`
-		MinP               float64                `json:"min_p"`
-		ResponseFormat     map[string]interface{} `json:"response_format,omitempty"`
-		ChatTemplateKwargs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
+		Model              string                   `json:"model"`
+		Messages           []map[string]interface{} `json:"messages"`
+		Temperature        float64                  `json:"temperature"`
+		MinP               float64                  `json:"min_p"`
+		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
+		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
 
 	reqBody := CompletionRequest{
@@ -682,14 +700,14 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 
 	// Build the completion request with optimized sampling parameters
 	type CompletionRequest struct {
-		Model              string                 `json:"model"`
-		Messages           []map[string]string    `json:"messages"`
-		Temperature        float64                `json:"temperature"`
-		MinP               float64                `json:"min_p"`
-		Stream             bool                   `json:"stream"`
-		StreamOptions      *StreamOptionsStruct   `json:"stream_options,omitempty"`
-		ResponseFormat     map[string]interface{} `json:"response_format,omitempty"`
-		ChatTemplateKwargs map[string]interface{} `json:"chat_template_kwargs,omitempty"`
+		Model              string                   `json:"model"`
+		Messages           []map[string]interface{} `json:"messages"`
+		Temperature        float64                  `json:"temperature"`
+		MinP               float64                  `json:"min_p"`
+		Stream             bool                     `json:"stream"`
+		StreamOptions      *StreamOptionsStruct     `json:"stream_options,omitempty"`
+		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
+		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
 
 	reqBody := CompletionRequest{

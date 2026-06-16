@@ -19,6 +19,7 @@ _Map of system features, product requirements, and specs._
 - [Agent App Packaging Standard](features/agent-app-packaging.md) - Unified .tzroapp zip package format containing prompts, WASM/MCP tools, SQL migrations, and permission requests. (Sources: 1 | Last Updated: 2026-06-08)
 - [MCP Singleton Guard](features/mcp-singleton-guard.md) - PID lockfile preventing duplicate tzro-mcp instances when multiple IDE language servers spawn MCP children. (Sources: 1 | Last Updated: 2026-06-09)
 - [Response Resolver](features/response-resolver.md) - Three-tier output resolution cascade (recursive key search + KV-line + semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator. (Sources: 1 | Last Updated: 2026-06-10)
+- [Dual-Audience Hardening](features/dual-audience-hardening.md) - Secure local-first loopback, MCP-to-daemon delegation proxy, and complete Package Manager CLI/MCP integration. (Sources: 1 | Last Updated: 2026-06-15)
 
 ## Bugs & Post-Mortems
 

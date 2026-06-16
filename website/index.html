@@ -20,7 +20,7 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   </head>
-  <body class="verdant-synth">
+  <body class="verdant-synth" data-mode="user">
     <!-- Universal Header -->
     <header class="tzro-header">
       <div class="header-container">
@@ -67,12 +67,22 @@
           </svg>
           <span class="logo-text">tzro</span>
         </a>
+        <!-- Mode Toggle -->
+        <div class="mode-toggle" id="mode-toggle-desktop">
+          <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
+          <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
+        </div>
         <nav class="header-nav">
-          <a href="#architecture" class="nav-link">Architecture</a>
-          <a href="#get-started" class="nav-link">Get Started</a>
-          <a href="#playgrounds" class="nav-link">Playgrounds</a>
-          <a href="#under-the-hood" class="nav-link">Under the Hood</a>
-          <a href="#quickstart" class="nav-link">Quickstart</a>
+          <!-- User mode nav -->
+          <a href="#use-cases" class="nav-link" data-audience="user">Use Cases</a>
+          <a href="#how-it-works" class="nav-link" data-audience="user">How It Works</a>
+          <a href="#get-started" class="nav-link" data-audience="user">Install</a>
+          <!-- Developer mode nav -->
+          <a href="#architecture" class="nav-link" data-audience="developer">Architecture</a>
+          <a href="#get-started" class="nav-link" data-audience="developer">Get Started</a>
+          <a href="#playgrounds" class="nav-link" data-audience="developer">Playgrounds</a>
+          <a href="#under-the-hood" class="nav-link" data-audience="developer">Under the Hood</a>
+          <a href="#quickstart" class="nav-link" data-audience="developer">Quickstart</a>
           <a
             href="https://github.com/The18thWarrior/tzro"
             target="_blank"
@@ -115,12 +125,23 @@
 
     <!-- Mobile Navigation Drawer -->
     <div class="mobile-nav-drawer" id="mobile-nav-drawer">
+      <div class="mobile-mode-toggle">
+        <div class="mode-toggle" id="mode-toggle-mobile">
+          <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
+          <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
+        </div>
+      </div>
       <nav class="mobile-nav-content">
-        <a href="#architecture" class="mobile-nav-link">Architecture</a>
-        <a href="#get-started" class="mobile-nav-link">Get Started</a>
-        <a href="#playgrounds" class="mobile-nav-link">Playgrounds</a>
-        <a href="#under-the-hood" class="mobile-nav-link">Under the Hood</a>
-        <a href="#quickstart" class="mobile-nav-link">Quickstart</a>
+        <!-- User mode nav -->
+        <a href="#use-cases" class="mobile-nav-link" data-audience="user">Use Cases</a>
+        <a href="#how-it-works" class="mobile-nav-link" data-audience="user">How It Works</a>
+        <a href="#get-started" class="mobile-nav-link" data-audience="user">Install</a>
+        <!-- Developer mode nav -->
+        <a href="#architecture" class="mobile-nav-link" data-audience="developer">Architecture</a>
+        <a href="#get-started" class="mobile-nav-link" data-audience="developer">Get Started</a>
+        <a href="#playgrounds" class="mobile-nav-link" data-audience="developer">Playgrounds</a>
+        <a href="#under-the-hood" class="mobile-nav-link" data-audience="developer">Under the Hood</a>
+        <a href="#quickstart" class="mobile-nav-link" data-audience="developer">Quickstart</a>
         <a
           href="https://github.com/The18thWarrior/tzro"
           target="_blank"
@@ -150,21 +171,86 @@
       <!-- ============================================================ -->
       <section class="hero-section">
         <div class="hero-container">
-          <div class="hero-badge">AGENTIC OPERATING SYSTEM</div>
-          <h1 class="hero-title text-balance">
-            <span class="glow-text">tzro</span> — The Jumpdrive for AI Agents
-          </h1>
-          <p class="hero-desc text-pretty">
-            Your agent has a brain. What it's missing is a body — a portable
-            runtime with a kernel, scheduler, persistent memory, and
-            self-improving reflexes. Plug in tzro and your agent goes from
-            stateless to fully autonomous.
+          <!-- Developer mode hero -->
+          <div data-audience="developer">
+            <div class="hero-badge">AGENTIC OPERATING SYSTEM</div>
+            <h1 class="hero-title text-balance">
+              <span class="glow-text">tzro</span> — The Jumpdrive for AI Agents
+            </h1>
+            <p class="hero-desc text-pretty">
+              Your agent has a brain. What it's missing is a body — a portable
+              runtime with a kernel, scheduler, persistent memory, and
+              self-improving reflexes. Plug in tzro and your agent goes from
+              stateless to fully autonomous.
+            </p>
+            <div class="hero-ctas">
+              <a href="#get-started" class="hero-cta-primary">Get Started</a>
+              <a href="#architecture" class="hero-cta-secondary">Explore the OS</a>
+            </div>
+          </div>
+          <!-- User mode hero -->
+          <div data-audience="user">
+            <div class="hero-badge">WORKS WITH CLAUDE, CURSOR &amp; ANY MCP AGENT</div>
+            <h1 class="hero-title text-balance">
+              Stop babysitting <span class="glow-text">your AI agents</span>
+            </h1>
+            <p class="hero-desc text-pretty">
+              Your agent loses context mid-task. It can't pick up where it left
+              off. It racks up cloud API costs on every step. tzro fixes all of
+              that — it runs agent tasks locally, saves progress, remembers past
+              work, and only calls the cloud when it actually needs to think.
+            </p>
+            <div class="hero-ctas">
+              <a href="#use-cases" class="hero-cta-primary">See Use Cases</a>
+              <a href="#get-started" class="hero-cta-secondary">Install in 60 Seconds</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- USER MODE: WHAT CAN I DO WITH TZRO? (User only) -->
+      <!-- ============================================================ -->
+      <section class="use-cases-section" id="use-cases" data-audience="user">
+        <div class="hero-container">
+          <span class="glass-badge">What Can I Do With tzro?</span>
+          <h2 class="section-title text-balance">
+            Real work, not demos
+          </h2>
+          <p class="section-desc text-pretty">
+            Here's what people actually use tzro for.
           </p>
-          <div class="hero-ctas">
-            <a href="#get-started" class="hero-cta-primary">Get Started</a>
-            <a href="#architecture" class="hero-cta-secondary"
-              >Explore the OS</a
-            >
+
+          <div class="use-case-grid">
+            <div class="use-case-card">
+              <div class="use-case-card-icon">🔍</div>
+              <h3>Run deep research while you sleep</h3>
+              <p>
+                Ask an agent to research 50 companies overnight. It breaks the
+                work into steps, saves progress, and gives you a structured
+                summary in the morning.
+              </p>
+            </div>
+
+            <div class="use-case-card">
+              <div class="use-case-card-icon">🔒</div>
+              <h3>Process sensitive documents locally</h3>
+              <p>
+                Run document-processing workflows without sending raw contracts,
+                medical records, or financial data to cloud APIs. Everything
+                stays on your machine.
+              </p>
+            </div>
+
+            <div class="use-case-card">
+              <div class="use-case-card-icon">🌙</div>
+              <h3>Queue up work. Come back to results.</h3>
+              <p>
+                Set up a multi-step workflow before you leave. Come back to
+                results — not a "session expired" error. If anything fails,
+                it resumes instead of starting over.
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -195,55 +281,60 @@
             <div class="comparison-row">
               <div class="comparison-dimension">API Cost</div>
               <div class="comparison-cell cloud-cell">
-                Linear growth — every tool call is a cloud round-trip
+                <span data-audience="developer">Linear growth — every tool call is a cloud round-trip</span>
+                <span data-audience="user">Every step costs money — costs grow with every task</span>
               </div>
               <div class="comparison-cell tzro-cell">
-                Cloud called <strong>once</strong> for planning; execution runs
-                locally at zero marginal cost
+                <span data-audience="developer">Cloud called <strong>once</strong> for planning; execution runs locally at zero marginal cost</span>
+                <span data-audience="user">Cloud called <strong>once</strong> for planning; execution runs locally for free</span>
               </div>
             </div>
 
             <div class="comparison-row">
               <div class="comparison-dimension">Data Privacy</div>
               <div class="comparison-cell cloud-cell">
-                All raw data shipped to third-party cloud APIs
+                <span data-audience="developer">All raw data shipped to third-party cloud APIs</span>
+                <span data-audience="user">Your data gets sent to third-party servers</span>
               </div>
               <div class="comparison-cell tzro-cell">
-                Data stays within local POSIX loopback boundary
-                (<code>127.0.0.1</code>)
+                <span data-audience="developer">Data stays within local POSIX loopback boundary (<code>127.0.0.1</code>)</span>
+                <span data-audience="user">Your data stays on your machine or server</span>
               </div>
             </div>
 
             <div class="comparison-row">
               <div class="comparison-dimension">Execution Latency</div>
               <div class="comparison-cell cloud-cell">
-                200–500ms network round-trip per tool call
+                <span data-audience="developer">200–500ms network round-trip per tool call</span>
+                <span data-audience="user">200–500ms wait for each step (network round-trip)</span>
               </div>
               <div class="comparison-cell tzro-cell">
-                Sub-10ms — hardware-pinned local model generates tool calls
-                natively
+                <span data-audience="developer">Sub-10ms — hardware-pinned local model generates tool calls natively</span>
+                <span data-audience="user">Near-instant — runs on your hardware, no network needed</span>
               </div>
             </div>
 
             <div class="comparison-row">
               <div class="comparison-dimension">Self-Improvement</div>
               <div class="comparison-cell cloud-cell">
-                None — same behavior every run
+                <span data-audience="developer">None — same behavior every run</span>
+                <span data-audience="user">Same behavior every run — learns nothing</span>
               </div>
               <div class="comparison-cell tzro-cell">
-                Procedural &amp; Corrective Micro-Skills auto-extracted from
-                trajectories
+                <span data-audience="developer">Procedural &amp; Corrective Micro-Skills auto-extracted from trajectories</span>
+                <span data-audience="user">Remembers successful procedures and reuses them automatically</span>
               </div>
             </div>
 
             <div class="comparison-row">
               <div class="comparison-dimension">Crash Recovery</div>
               <div class="comparison-cell cloud-cell">
-                Restart from scratch
+                <span data-audience="developer">Restart from scratch</span>
+                <span data-audience="user">If something fails, start over from scratch</span>
               </div>
               <div class="comparison-cell tzro-cell">
-                Durable checkpointing — resume from exact failing step across
-                crashes
+                <span data-audience="developer">Durable checkpointing — resume from exact failing step across crashes</span>
+                <span data-audience="user">If something fails, it resumes from exactly where it stopped</span>
               </div>
             </div>
           </div>
@@ -251,9 +342,57 @@
       </section>
 
       <!-- ============================================================ -->
-      <!-- INTERACTIVE OS ARCHITECTURE DIAGRAM -->
+      <!-- USER MODE: HOW IT WORKS PIPELINE (User only) -->
       <!-- ============================================================ -->
-      <section class="architecture-section" id="architecture">
+      <section class="pipeline-section" id="how-it-works" data-audience="user">
+        <div class="hero-container">
+          <span class="glass-badge">How It Works</span>
+          <h2 class="section-title text-balance">
+            Cloud plans. Your machine executes.
+          </h2>
+          <p class="section-desc text-pretty">
+            tzro calls the cloud once to break your goal into steps. Everything
+            else runs locally — fast, private, and crash-proof.
+          </p>
+
+          <div class="pipeline-flow">
+            <div class="pipeline-step">
+              <div class="pipeline-step-icon">🎯</div>
+              <div class="pipeline-step-title">1. You give a goal</div>
+              <div class="pipeline-step-desc">"Research these 30 companies"</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-icon">🧠</div>
+              <div class="pipeline-step-title">2. Cloud plans it</div>
+              <div class="pipeline-step-desc">One smart API call breaks the goal into steps</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-icon">⚡</div>
+              <div class="pipeline-step-title">3. Local executes</div>
+              <div class="pipeline-step-desc">Steps run on your machine — fast, free, private</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-icon">💾</div>
+              <div class="pipeline-step-title">4. Progress saves</div>
+              <div class="pipeline-step-desc">Every step checkpointed. Crashes resume, not restart</div>
+            </div>
+            <div class="pipeline-arrow">→</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-icon">📋</div>
+              <div class="pipeline-step-title">5. Results delivered</div>
+              <div class="pipeline-step-desc">Clean summary. Agent remembers for next time.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- INTERACTIVE OS ARCHITECTURE DIAGRAM (Developer only) -->
+      <!-- ============================================================ -->
+      <section class="architecture-section" id="architecture" data-audience="developer">
         <div class="hero-container">
           <span class="glass-badge">System Architecture</span>
           <h2 class="section-title text-balance">
@@ -414,13 +553,21 @@
       <!-- ============================================================ -->
       <section class="playground-section" id="get-started">
         <div class="hero-container">
-          <span class="glass-badge">Get Started</span>
-          <h2 class="section-title text-balance">
+          <span class="glass-badge" data-audience="developer">Get Started</span>
+          <span class="glass-badge" data-audience="user">Install</span>
+          <h2 class="section-title text-balance" data-audience="developer">
             Two ways to give your agent an operating system
           </h2>
-          <p class="section-desc text-pretty">
+          <h2 class="section-title text-balance" data-audience="user">
+            Up and running in 60 seconds
+          </h2>
+          <p class="section-desc text-pretty" data-audience="developer">
             Plug the jumpdrive into an existing agent via MCP, or embed the
             framework directly into your Go application.
+          </p>
+          <p class="section-desc text-pretty" data-audience="user">
+            Install tzro, paste one config block, and your agent gets memory,
+            checkpoints, and local execution.
           </p>
 
           <!-- Onramp Tab Bar -->
@@ -432,7 +579,7 @@
             >
               ⚡ Plug In (MCP)
             </button>
-            <button class="onramp-tab-btn" data-onramp="framework" type="button">
+            <button class="onramp-tab-btn" data-onramp="framework" type="button" data-audience="developer">
               🔧 Build On (Framework)
             </button>
           </div>
@@ -443,7 +590,7 @@
           <div class="onramp-panel active" id="onramp-mcp">
             <div class="mcp-setup-grid premium-border">
               <div class="mcp-steps-panel">
-                <div class="mcp-step">
+              <div class="mcp-step" data-audience="developer">
                   <div class="step-num">1</div>
                   <div class="step-text">
                     <h3>Build the MCP Server Binary</h3>
@@ -457,12 +604,25 @@
                   </div>
                 </div>
 
+                <div class="mcp-step" data-audience="user">
+                  <div class="step-num">1</div>
+                  <div class="step-text">
+                    <h3>Install tzro</h3>
+                    <p>Run this in your terminal:</p>
+                    <pre class="monospace"><code>curl -sSL https://tzro.network/install.sh | bash</code></pre>
+                  </div>
+                </div>
+
                 <div class="mcp-step">
                   <div class="step-num">2</div>
                   <div class="step-text">
-                    <h3>Register in Client Configuration</h3>
-                    <p>
+                    <h3 data-audience="developer">Register in Client Configuration</h3>
+                    <h3 data-audience="user">Add to your agent</h3>
+                    <p data-audience="developer">
                       Select your agent host to get the config block:
+                    </p>
+                    <p data-audience="user">
+                      Paste this into your agent's config file and restart.
                     </p>
 
                     <div class="mcp-tab-bar">
@@ -505,7 +665,7 @@
                   </div>
                 </div>
 
-                <div class="mcp-step">
+                <div class="mcp-step" data-audience="developer">
                   <div class="step-num">3</div>
                   <div class="step-text">
                     <h3>Verify the Handshake</h3>
@@ -532,7 +692,21 @@
                 </div>
               </div>
 
-              <div class="mcp-tools-panel">
+              <!-- User mode: simplified step 3 -->
+              <div class="mcp-step" data-audience="user">
+                <div class="step-num">3</div>
+                <div class="step-text">
+                  <h3>Start using it</h3>
+                  <p>
+                    Your agent can now run long tasks, save memory, and recover
+                    from crashes. Try asking it to research a topic or process
+                    a batch of documents.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+              <div class="mcp-tools-panel" data-audience="developer">
                 <h3>Exposed OS Tools</h3>
                 <p>
                   Once registered, your agent gains access to the full OS
@@ -599,8 +773,8 @@
               </div>
             </div>
 
-            <!-- AGENT DELEGATION & OFFLOAD POLICY -->
-            <div class="agent-policy-grid premium-border">
+            <!-- AGENT DELEGATION & OFFLOAD POLICY (Developer only) -->
+            <div class="agent-policy-grid premium-border" data-audience="developer">
               <div class="policy-header">
                 <span class="glass-badge">Agent Integration</span>
                 <h2>Autonomous Agent Delegation &amp; Wait Protocol</h2>
@@ -716,7 +890,7 @@
           <!-- ======================== -->
           <!-- FRAMEWORK ONRAMP TAB -->
           <!-- ======================== -->
-          <div class="onramp-panel" id="onramp-framework">
+          <div class="onramp-panel" id="onramp-framework" data-audience="developer">
             <div class="dx-showcase-grid">
               <!-- Left: Code Snippet Browser -->
               <div class="dx-nav-panel">
@@ -842,7 +1016,7 @@
       <!-- ============================================================ -->
       <!-- PLAYGROUNDS -->
       <!-- ============================================================ -->
-      <section class="playground-section" id="playgrounds">
+      <section class="playground-section" id="playgrounds" data-audience="developer">
         <div class="hero-container">
           <span class="glass-badge">Interactive Playgrounds</span>
           <h2 class="section-title">See the OS in action</h2>
@@ -853,7 +1027,7 @@
       </section>
 
       <!-- PLAYGROUND 1: PROCESS SCHEDULER (Kahn Simulator) -->
-      <section class="playground-section" id="playground-scheduler">
+      <section class="playground-section" id="playground-scheduler" data-audience="developer">
         <div class="hero-container">
           <span class="glass-badge">Process Scheduler</span>
           <h2 class="section-title">
@@ -1025,7 +1199,7 @@
       </section>
 
       <!-- PLAYGROUND 2: VIRTUAL MEMORY (Compaction) -->
-      <section class="playground-section" id="playground-vmem">
+      <section class="playground-section" id="playground-vmem" data-audience="developer">
         <div class="hero-container">
           <span class="glass-badge">Virtual Memory</span>
           <h2 class="section-title">
@@ -1190,7 +1364,7 @@
       <!-- ============================================================ -->
       <!-- UNDER THE HOOD: NON-DEMOED MOATS -->
       <!-- ============================================================ -->
-      <section class="playground-section" id="under-the-hood">
+      <section class="playground-section" id="under-the-hood" data-audience="developer">
         <div class="hero-container">
           <span class="glass-badge">Under the Hood</span>
           <h2 class="section-title text-balance">
@@ -1311,7 +1485,7 @@
             >
               ⚡ MCP Path
             </button>
-            <button class="quickstart-tab-btn" data-qs="framework" type="button">
+            <button class="quickstart-tab-btn" data-qs="framework" type="button" data-audience="developer">
               🔧 Framework Path
             </button>
           </div>
@@ -1343,7 +1517,7 @@
             </div>
           </div>
 
-          <div class="quickstart-panel" id="qs-framework">
+          <div class="quickstart-panel" id="qs-framework" data-audience="developer">
             <div class="commands-row">
               <div class="code-box">
                 <div class="code-box-header">1. Add the dependency</div>
@@ -1378,8 +1552,10 @@ fmt.Println(result.Synthesis)</code></pre>
             rel="noopener noreferrer"
             >GitHub Codebase</a
           >
-          <a href="#architecture">Architecture</a>
-          <a href="#get-started">Get Started</a>
+          <a href="#use-cases" data-audience="user">Use Cases</a>
+          <a href="#get-started" data-audience="user">Install</a>
+          <a href="#architecture" data-audience="developer">Architecture</a>
+          <a href="#get-started" data-audience="developer">Get Started</a>
         </div>
       </div>
     </footer>

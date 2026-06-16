@@ -185,6 +185,10 @@ _Avoid_: Cost mode, cheapness level, offload policy
 The decision framework an external agent consuming tzro via **MCP Server Mode** applies to determine which phases of work to submit as **Tasks** versus execute directly in its own context window. Phases involving tool-heavy data collection, parallelizable operations, or large output consumption are offloaded; phases requiring frontier reasoning, code generation, or interactive user dialogue are retained.
 _Avoid_: Delegation Mode (internal cloud→local routing), routing policy, execution strategy
 
+**Privacy Level**:
+The configuration governing whether tasks can utilize remote cloud models for planning or execution. Three tiers: **strict-local** (blocks all cloud interactions; planning and execution fail if the local model is insufficient), **hybrid** (default, planning and execution default to local but escalate to cloud when local capability is insufficient), and **cloud-preferred** (planning and complex execution prioritize cloud).
+_Avoid_: LocalOnlyMode, privacy guard, isolation level
+
 **Attention Scheduler**:
 The background daemon coordinator that schedules, executes, and filters low-priority event-driven background daemons under preemption, budget, and safety constraints.
 _Avoid_: Proactivity Scheduler, background loop agent

@@ -38,9 +38,11 @@ type TzroModelListArgs struct{}
 func handleTzroModelList(ctx context.Context, req *mcp.CallToolRequest, args TzroModelListArgs) (*mcp.CallToolResult, any, error) {
 	type ModelListEntry struct {
 		inference.ModelEntry
-		Downloaded bool   `json:"downloaded"`
-		IsActive   bool   `json:"isActive"`
-		LocalPath  string `json:"localPath,omitempty"`
+		Downloaded     bool   `json:"downloaded"`
+		IsActive       bool   `json:"isActive"`
+		LocalPath      string `json:"localPath,omitempty"`
+		VisionReady    bool   `json:"visionReady"`
+		VisionProjPath string `json:"visionProjPath,omitempty"`
 	}
 
 	catalog := inference.GetCatalog()
@@ -68,13 +70,24 @@ func handleTzroModelList(ctx context.Context, req *mcp.CallToolRequest, args Tzr
 		if downloaded {
 			le.LocalPath = modelPath
 		}
+
+		// Check companion mmproj download status
+		if entry.CompanionMMProj != nil {
+			mmProjPath := filepath.Join(modelsDir, entry.CompanionMMProj.Filename)
+			if _, err := os.Stat(mmProjPath); err == nil {
+				le.VisionReady = true
+				le.VisionProjPath = mmProjPath
+			}
+		}
+
 		result = append(result, le)
 	}
 
 	respMap := map[string]interface{}{
-		"models":      result,
-		"activeModel": cfg.GGUFModelPath,
-		"modelsDir":   modelsDir,
+		"models":       result,
+		"activeModel":  cfg.GGUFModelPath,
+		"modelsDir":    modelsDir,
+		"visionStatus": config.GetMMProjModelPath() != "",
 	}
 	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 	return &mcp.CallToolResult{
@@ -357,9 +370,115 @@ func activateModel(ctx context.Context, oldModelPath, newModelPath, modelsDir st
 		}
 	}
 
+	// 5. Auto-download companion mmproj if the activated model has one
+	go downloadCompanionMMProjIfNeeded(newModelPath, modelsDir)
+
 	return ModelSwapResult{
 		Status:       "success",
 		Message:      "Model swapped and sidecar restarted successfully.",
 		NewModelPath: newModelPath,
 	}
+}
+
+// downloadCompanionMMProjIfNeeded checks if the activated model has a companion
+// multimodal projector (mmproj) in the catalog. If found and not already downloaded,
+// it downloads the mmproj file to the models directory in the background.
+// This enables vision features (PDF OCR, image analysis) automatically.
+func downloadCompanionMMProjIfNeeded(modelPath, modelsDir string) {
+	// Find which catalog entry matches the activated model
+	catalog := inference.GetCatalog()
+	var companion *inference.CompanionFile
+	for _, entry := range catalog {
+		if entry.CompanionMMProj == nil {
+			continue
+		}
+		candidatePath := filepath.Join(modelsDir, entry.Filename)
+		if candidatePath == modelPath {
+			companion = entry.CompanionMMProj
+			break
+		}
+	}
+
+	if companion == nil {
+		return // No companion mmproj for this model
+	}
+
+	// Check if already downloaded
+	mmProjPath := filepath.Join(modelsDir, companion.Filename)
+	if _, err := os.Stat(mmProjPath); err == nil {
+		fmt.Fprintf(os.Stderr, "[Vision Projector] mmproj already downloaded: %s\n", companion.Filename)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[Vision Projector] Downloading companion mmproj (%s, %s)...\n", companion.Filename, companion.SizeLabel)
+
+	tmpPath := mmProjPath + ".downloading"
+	httpReq, err := http.NewRequest("GET", companion.DownloadURL, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Vision Projector] Failed to create request: %v\n", err)
+		return
+	}
+	httpReq.Header.Set("User-Agent", "tzro-engine/1.0")
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Vision Projector] HTTP request failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "[Vision Projector] Server returned status %s\n", resp.Status)
+		return
+	}
+
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Vision Projector] Failed to create temp file: %v\n", err)
+		return
+	}
+
+	buf := make([]byte, 32*1024)
+	var downloaded int64
+	totalSize := resp.ContentLength
+
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			_, writeErr := tmpFile.Write(buf[:n])
+			if writeErr != nil {
+				fmt.Fprintf(os.Stderr, "[Vision Projector] Write error: %v\n", writeErr)
+				tmpFile.Close()
+				_ = os.Remove(tmpPath)
+				return
+			}
+			downloaded += int64(n)
+			if totalSize > 0 {
+				pct := int(downloaded * 100 / totalSize)
+				if pct%10 == 0 {
+					fmt.Fprintf(os.Stderr, "[Vision Projector] Download progress: %d%%\n", pct)
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "[Vision Projector] Read error: %v\n", readErr)
+			tmpFile.Close()
+			_ = os.Remove(tmpPath)
+			return
+		}
+	}
+	tmpFile.Close()
+
+	if err := os.Rename(tmpPath, mmProjPath); err != nil {
+		fmt.Fprintf(os.Stderr, "[Vision Projector] Failed to rename temp file: %v\n", err)
+		_ = os.Remove(tmpPath)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[Vision Projector] Successfully downloaded %s — vision capabilities now available\n", companion.Filename)
+	fmt.Fprintf(os.Stderr, "[Vision Projector] Restart the sidecar to activate vision (will auto-detect on next start)\n")
 }

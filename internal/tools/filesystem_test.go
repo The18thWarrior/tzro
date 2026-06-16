@@ -194,6 +194,41 @@ func TestReadFile_RejectsInvalidPath(t *testing.T) {
 	}
 }
 
+func TestReadFile_PDFExtraction(t *testing.T) {
+	root, v := setupFilesystemTestFixtures(t)
+	tool := NewReadFileTool(v)
+
+	// Write minimal PDF
+	pdfPath := filepath.Join(root, "test.pdf")
+	pdfBytes := buildPDFBytes()
+	if err := os.WriteFile(pdfPath, pdfBytes, 0644); err != nil {
+		t.Fatalf("failed to write test.pdf: %v", err)
+	}
+	defer os.Remove(pdfPath)
+
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path": pdfPath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	content := data["content"].(string)
+
+	if !strings.Contains(content, "Hello World") {
+		t.Errorf("expected PDF content containing 'Hello World', got: %s", content)
+	}
+}
+
 // ==========================================
 // list_dir tests
 // ==========================================

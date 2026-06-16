@@ -24,11 +24,8 @@ var version = "1.0.0"
 var mcpServer *mcp.Server
 
 func isDaemonRunning() bool {
-	port := "8080"
-	if envPort := os.Getenv("PORT"); envPort != "" {
-		port = envPort
-	}
-	url := fmt.Sprintf("http://127.0.0.1:%s/api/config", port)
+	daemonURL := config.GetDaemonURL()
+	url := fmt.Sprintf("%s/api/config", daemonURL)
 	client := &http.Client{
 		Timeout: 500 * time.Millisecond,
 	}

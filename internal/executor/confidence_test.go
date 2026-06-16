@@ -2,6 +2,7 @@ package executor
 
 import (
 	"testing"
+	"tzro/internal/config"
 )
 
 func TestConfidenceTierSufficient(t *testing.T) {
@@ -103,4 +104,30 @@ func TestConfidenceSchema(t *testing.T) {
 	if len(ConfidenceSchema) < 50 {
 		t.Error("ConfidenceSchema seems too short")
 	}
+}
+
+func TestConfidenceStrictLocal(t *testing.T) {
+	cfg := config.Get()
+	oldPrivacy := cfg.PrivacyLevel
+	defer func() {
+		cfg.PrivacyLevel = oldPrivacy
+		config.Override(&cfg)
+	}()
+
+	cfg.PrivacyLevel = "strict-local"
+	config.Override(&cfg)
+
+	taskID := "test-confidence-strict-local"
+	ResetConfidenceState(taskID)
+
+	// Even if we hit 3 consecutive insufficient assessments, IsForceCloud must remain false
+	checkAndUpdateConfidence(taskID, false)
+	checkAndUpdateConfidence(taskID, false)
+	checkAndUpdateConfidence(taskID, false)
+
+	if IsForceCloud(taskID) {
+		t.Error("expected IsForceCloud to be false under strict-local privacy level")
+	}
+
+	ResetConfidenceState(taskID)
 }

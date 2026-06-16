@@ -684,3 +684,52 @@ func TestMCPRegistry_UnregisterDaemon(t *testing.T) {
 		t.Error("expected error for removing non-existent daemon")
 	}
 }
+
+func TestLoadInstalledApps_ReloadsToolsAndDaemons(t *testing.T) {
+	mgr, _ := newTestManager(t)
+
+	manifest := `{
+		"id": "hubspot_reload",
+		"name": "HubSpot Reload",
+		"version": "1.0.0",
+		"tools": [{"name": "create_contact", "type": "wasm", "path": "wasm/create_contact.wasm"}],
+		"mcp": {
+			"command": "node",
+			"args": ["server.js"]
+		}
+	}`
+
+	archive := buildTestArchive(t, manifest, map[string]string{
+		"wasm/create_contact.wasm": "fake",
+		"wasm/create_contact.json": `{"type":"object","properties":{}}`,
+	})
+
+	_, err := mgr.Install(archive)
+	if err != nil {
+		t.Fatalf("Install failed: %v", err)
+	}
+
+	tools.Unregister("hubspot_reload_create_contact")
+	_ = mgr.mcpReg.UnregisterDaemon("hubspot_reload_mcp")
+
+	if tools.GetTool("hubspot_reload_create_contact") != nil {
+		t.Fatal("expected tool to be unregistered manually")
+	}
+	if _, found := mgr.mcpReg.GetDaemon("hubspot_reload_mcp"); found {
+		t.Fatal("expected daemon to be unregistered manually")
+	}
+
+	err = mgr.LoadInstalledApps()
+	if err != nil {
+		t.Fatalf("LoadInstalledApps failed: %v", err)
+	}
+
+	if tools.GetTool("hubspot_reload_create_contact") == nil {
+		t.Error("expected tool to be registered again after LoadInstalledApps")
+	}
+	if _, found := mgr.mcpReg.GetDaemon("hubspot_reload_mcp"); !found {
+		t.Error("expected daemon to be registered again after LoadInstalledApps")
+	}
+
+	tools.Unregister("hubspot_reload_create_contact")
+}

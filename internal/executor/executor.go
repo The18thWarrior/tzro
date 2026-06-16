@@ -520,11 +520,14 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			}
 
 			isBenchmark := ctx.Value("is_benchmark") != nil
-			useCloud := IsForceCloud(taskID)
+			useCloud := IsForceCloud(taskID) && config.Get().PrivacyLevel != "strict-local"
 			if !useCloud && !isBenchmark && attempt == 1 {
 				sufficient, _ := assessConfidenceTier(ctx, msgs, schemaStr, taskID)
 				checkAndUpdateConfidence(taskID, sufficient)
 				if !sufficient {
+					if config.Get().PrivacyLevel == "strict-local" {
+						return fmt.Errorf("local execution confidence check failed: local model is insufficient for the task under strict-local privacy level")
+					}
 					useCloud = true
 					e.getPublisher().PublishEvent("confidence_insufficient", taskID, node.ID, "Escalating to cloud")
 				}
@@ -1059,6 +1062,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	isBenchmark := ctx.Value("is_benchmark") != nil
 	if !isBenchmark {
 		if validationErr := validateAgainstSchema(node.Action, toolCall.ToolArguments); validationErr != nil {
+			if config.Get().PrivacyLevel == "strict-local" {
+				return fmt.Errorf("schema validation failed for tool '%s': %w (cloud fallback disabled under strict-local privacy level)", node.Action, validationErr)
+			}
 			fmt.Fprintf(os.Stderr, "[RetryPolicy] Schema validation failed for %s: %v — retrying with cloud\n", node.Action, validationErr)
 			e.getPublisher().PublishEvent("schema_validation_failed", taskID, node.ID, validationErr.Error())
 
@@ -1086,6 +1092,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	if err != nil {
 		if isBenchmark {
 			return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
+		}
+		if config.Get().PrivacyLevel == "strict-local" {
+			return fmt.Errorf("tool '%s' execution failed: %w (cloud fallback disabled under strict-local privacy level)", node.Action, err)
 		}
 		// Tool execution failure retry (ADR-0020)
 		fmt.Fprintf(os.Stderr, "[RetryPolicy] Tool '%s' execution failed: %v — retrying with cloud\n", node.Action, err)

@@ -12,10 +12,38 @@ import (
 	"tzro/internal/telemetry"
 )
 
+// ContentPart represents a single content element in a multimodal message.
+// Used with the OpenAI-compatible vision API format.
+type ContentPart struct {
+	Type     string    `json:"type"`                // "text" | "image_url"
+	Text     string    `json:"text,omitempty"`      // For type="text"
+	ImageURL *ImageURL `json:"image_url,omitempty"` // For type="image_url"
+}
+
+// ImageURL holds the URL (or data URI) for an image content part.
+type ImageURL struct {
+	URL string `json:"url"` // "data:image/png;base64,..." or "https://..."
+}
+
 // InferenceMessage represents a single message in a multi-turn conversation.
+// For text-only messages, use Content. For multimodal messages (text + images),
+// use Parts instead — when Parts is non-empty it takes precedence over Content.
 type InferenceMessage struct {
-	Role    string `json:"role"` // "system" | "user" | "assistant"
-	Content string `json:"content"`
+	Role    string        `json:"role"`            // "system" | "user" | "assistant"
+	Content string        `json:"content"`         // Text-only content (backward compatible)
+	Parts   []ContentPart `json:"parts,omitempty"` // Multimodal content parts (overrides Content when set)
+}
+
+// NewMultimodalMessage creates an InferenceMessage with mixed text and image content parts.
+func NewMultimodalMessage(role string, parts []ContentPart) InferenceMessage {
+	return InferenceMessage{Role: role, Parts: parts}
+}
+
+// HasMultimodalContent returns true if this message contains content parts
+// (typically text + image_url), indicating it should be serialized as an array
+// rather than a plain string.
+func (m InferenceMessage) HasMultimodalContent() bool {
+	return len(m.Parts) > 0
 }
 
 type StructuredInferenceRequest struct {
@@ -38,11 +66,17 @@ func NewSimpleRequest(system, user, schema string) StructuredInferenceRequest {
 	}
 }
 
-// MessagesToMaps converts InferenceMessages to []map[string]string for HTTP request bodies.
-func MessagesToMaps(msgs []InferenceMessage) []map[string]string {
-	result := make([]map[string]string, len(msgs))
+// MessagesToMaps converts InferenceMessages to the OpenAI-compatible message format.
+// For text-only messages, content is a string. For multimodal messages, content is
+// an array of content parts (text + image_url).
+func MessagesToMaps(msgs []InferenceMessage) []map[string]interface{} {
+	result := make([]map[string]interface{}, len(msgs))
 	for i, m := range msgs {
-		result[i] = map[string]string{"role": m.Role, "content": m.Content}
+		if m.HasMultimodalContent() {
+			result[i] = map[string]interface{}{"role": m.Role, "content": m.Parts}
+		} else {
+			result[i] = map[string]interface{}{"role": m.Role, "content": m.Content}
+		}
 	}
 	return result
 }
@@ -83,11 +117,14 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 	// 1. Determine if we should force cloud for this task
 	m.fallbackMutex.RLock()
-	forceCloud := m.forceCloudFallback[req.TaskID]
+	forceCloud := m.forceCloudFallback[req.TaskID] && cfg.PrivacyLevel != "strict-local"
 	m.fallbackMutex.RUnlock()
 
 	// 2. Cloud-only mode
 	if cfg.ModelMode == "cloud" {
+		if cfg.PrivacyLevel == "strict-local" {
+			return "", fmt.Errorf("cloud execution disabled under strict-local privacy level")
+		}
 		if req.StreamMeta != nil {
 			return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
 		}
@@ -210,6 +247,9 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 			// Escalation to cloud in cooperative mode
 			if cfg.ModelMode == "cooperative" {
+				if cfg.PrivacyLevel == "strict-local" {
+					return "", fmt.Errorf("local execution failed: %w (cloud fallback disabled under strict-local privacy level)", err)
+				}
 				m.fallbackMutex.Lock()
 				m.forceCloudFallback[req.TaskID] = true
 				m.fallbackMutex.Unlock()
@@ -249,6 +289,9 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 	// No heuristic, attempt cloud if configured
 	if cloudKey != "" {
+		if cfg.PrivacyLevel == "strict-local" {
+			return "", fmt.Errorf("cloud execution disabled under strict-local privacy level")
+		}
 		if req.StreamMeta != nil {
 			return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
 		}
@@ -259,6 +302,9 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 }
 
 func (m *LocalModelManager) IsForceCloud(taskID string) bool {
+	if config.Get().PrivacyLevel == "strict-local" {
+		return false
+	}
 	m.fallbackMutex.RLock()
 	defer m.fallbackMutex.RUnlock()
 	if m.forceCloudFallback == nil {

@@ -59,10 +59,10 @@ func NewRemoteOpenAIBackend(cfg config.BackendConfig, publisher telemetry.EventP
 // CallModel performs a structured JSON inference call.
 func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []InferenceMessage, jsonSchema string) (*InferenceResult, error) {
 	type CompletionRequest struct {
-		Model          string                 `json:"model"`
-		Messages       []map[string]string    `json:"messages"`
-		Temperature    float64                `json:"temperature"`
-		ResponseFormat map[string]interface{} `json:"response_format,omitempty"`
+		Model          string                   `json:"model"`
+		Messages       []map[string]interface{} `json:"messages"`
+		Temperature    float64                  `json:"temperature"`
+		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
 	}
 
 	reqBody := CompletionRequest{
@@ -168,12 +168,12 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 	}
 
 	type CompletionRequest struct {
-		Model          string                 `json:"model"`
-		Messages       []map[string]string    `json:"messages"`
-		Temperature    float64                `json:"temperature"`
-		Stream         bool                   `json:"stream"`
-		StreamOptions  *StreamOptionsStruct   `json:"stream_options,omitempty"`
-		ResponseFormat map[string]interface{} `json:"response_format,omitempty"`
+		Model          string                   `json:"model"`
+		Messages       []map[string]interface{} `json:"messages"`
+		Temperature    float64                  `json:"temperature"`
+		Stream         bool                     `json:"stream"`
+		StreamOptions  *StreamOptionsStruct     `json:"stream_options,omitempty"`
+		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
 	}
 
 	reqBody := CompletionRequest{

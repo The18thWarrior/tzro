@@ -52,6 +52,63 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 				return ToolError(fmt.Sprintf("path '%s' is a directory, not a file. Use list_dir to explore directories.", in.Path)), nil
 			}
 
+			// If it's a PDF, parse using the ParsePDF utility
+			ext := strings.ToLower(filepath.Ext(resolvedPath))
+			if ext == ".pdf" {
+				content, err := ParsePDF(ctx, resolvedPath)
+				if err != nil {
+					return ToolError(fmt.Sprintf("failed to parse PDF file '%s': %v", in.Path, err)), nil
+				}
+
+				lines := strings.Split(content, "\n")
+				totalLines := len(lines)
+				startIdx := 0
+				endIdx := totalLines
+				if in.StartLine != nil && *in.StartLine > 0 {
+					startIdx = *in.StartLine - 1
+				}
+				if in.EndLine != nil && *in.EndLine > 0 {
+					endIdx = *in.EndLine
+				}
+				if startIdx >= totalLines {
+					startIdx = totalLines
+				}
+				if endIdx > totalLines {
+					endIdx = totalLines
+				}
+				if startIdx > endIdx {
+					startIdx = endIdx
+				}
+
+				selectedLines := lines[startIdx:endIdx]
+				const maxLines = 200
+				truncated := false
+				if len(selectedLines) > maxLines {
+					selectedLines = selectedLines[:maxLines]
+					truncated = true
+				}
+
+				finalContent := strings.Join(selectedLines, "\n")
+				if len(selectedLines) > 0 {
+					finalContent += "\n"
+				}
+
+				result := ToolSuccess(map[string]interface{}{
+					"content":    finalContent,
+					"path":       resolvedPath,
+					"lineCount":  len(selectedLines),
+					"totalLines": totalLines,
+					"startLine":  startIdx + 1,
+					"endLine":    startIdx + len(selectedLines),
+				})
+
+				if truncated {
+					result.Hint = fmt.Sprintf("Output truncated at %d lines. Use startLine/endLine to read remaining content (total: %d lines).", maxLines, totalLines)
+				}
+
+				return result, nil
+			}
+
 			// Read the file
 			file, err := os.Open(resolvedPath)
 			if err != nil {

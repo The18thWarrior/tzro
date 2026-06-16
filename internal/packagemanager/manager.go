@@ -409,3 +409,56 @@ func readFileOrDefault(path string) string {
 	}
 	return string(data)
 }
+
+// LoadInstalledApps reads all active apps from the database and registers their tools and MCP daemons.
+func (m *Manager) LoadInstalledApps() error {
+	if err := m.InitSchema(); err != nil {
+		return err
+	}
+
+	rows, err := m.db.Query("SELECT id FROM _tzro_apps WHERE status = 'active'")
+	if err != nil {
+		return fmt.Errorf("failed to query active apps: %w", err)
+	}
+	defer rows.Close()
+
+	var appIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			appIDs = append(appIDs, id)
+		}
+	}
+
+	for _, appID := range appIDs {
+		appDir := filepath.Join(m.appsDir, appID)
+		manifestPath := filepath.Join(appDir, "tzro.manifest.json")
+		manifestData, err := os.ReadFile(manifestPath)
+		if err != nil {
+			fmt.Printf("[PackageManager] Warning: failed to read manifest for installed app '%s': %v\n", appID, err)
+			continue
+		}
+
+		manifest, err := ParseManifest(strings.NewReader(string(manifestData)))
+		if err != nil {
+			fmt.Printf("[PackageManager] Warning: failed to parse manifest for installed app '%s': %v\n", appID, err)
+			continue
+		}
+
+		m.registerWASMTools(manifest.ID, appDir, manifest.Tools)
+
+		if manifest.MCP != nil {
+			mcpConfig := mcp.MCPServerConfig{
+				Command: manifest.MCP.Command,
+				Args:    manifest.MCP.Args,
+				Env:     manifest.MCP.Env,
+			}
+			daemonName := manifest.ID + "_mcp"
+			if err := m.mcpReg.RegisterDaemon(daemonName, mcpConfig); err != nil {
+				fmt.Printf("[PackageManager] Warning: failed to re-register MCP daemon for '%s': %v\n", manifest.ID, err)
+			}
+		}
+	}
+
+	return nil
+}

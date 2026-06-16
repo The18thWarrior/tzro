@@ -12,6 +12,19 @@ type ModelEntry struct {
 	Description  string `json:"description"`
 	ToolCallTier string `json:"toolCallTier"`
 	IsDefault    bool   `json:"isDefault"`
+
+	// CompanionMMProj is the optional multimodal projector for vision-capable models.
+	// When non-nil, this projector is auto-downloaded alongside the base model to enable
+	// local vision features (PDF OCR, image analysis) without external dependencies.
+	CompanionMMProj *CompanionFile `json:"companionMmproj,omitempty"`
+}
+
+// CompanionFile describes an auxiliary GGUF file that accompanies a base model.
+type CompanionFile struct {
+	DownloadURL string `json:"downloadUrl"`
+	Filename    string `json:"filename"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	SizeLabel   string `json:"sizeLabel"`
 }
 
 var modelCatalog = []ModelEntry{
@@ -26,6 +39,12 @@ var modelCatalog = []ModelEntry{
 		Description:  "Default Gemma 4 E4B model with QAT calibration",
 		ToolCallTier: "excellent",
 		IsDefault:    true,
+		CompanionMMProj: &CompanionFile{
+			DownloadURL: "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/mmproj-gemma-4-E4B-it-Q8_0.gguf",
+			Filename:    "mmproj-gemma-4-E4B-it-Q8_0.gguf",
+			SizeBytes:   559874528,
+			SizeLabel:   "~534 MB",
+		},
 	},
 	{
 		ID:           "grm-25",

@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,13 +72,87 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 
 	// Execute task in a background goroutine to allow fallback to async mode if it times out
 	go func() {
-		_, _, err := task.Execute(context.Background(), args.Prompt, task.ExecuteOptions{
-			TaskID:       taskID,
-			IntentType:   "workflow",
-			IsForeground: true,
-		})
-		nodes := memory.DB.GetAllNodeStates(taskID)
-		doneChan <- execResult{nodes: nodes, err: err}
+		if isDaemonRunning() {
+			type RunRequest struct {
+				Prompt string `json:"prompt"`
+				TaskID string `json:"taskId"`
+			}
+			reqBody := RunRequest{
+				Prompt: args.Prompt,
+				TaskID: taskID,
+			}
+			_, err := proxyToDaemon("/api/tasks/run", "POST", reqBody)
+			if err != nil {
+				doneChan <- execResult{err: fmt.Errorf("daemon task run initiation failed: %w", err)}
+				return
+			}
+
+			daemonURL := config.GetDaemonURL()
+			url := fmt.Sprintf("%s/api/tasks/events?taskId=%s", daemonURL, taskID)
+
+			resp, err := http.Get(url)
+			if err != nil {
+				doneChan <- execResult{err: fmt.Errorf("failed to connect to daemon event stream: %w", err)}
+				return
+			}
+			defer resp.Body.Close()
+
+			reader := bufio.NewReader(resp.Body)
+			var currentEventType string
+			var taskErr error
+			var finalStatus string
+
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					break
+				}
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+
+				if strings.HasPrefix(line, "event: ") {
+					currentEventType = strings.TrimPrefix(line, "event: ")
+				} else if strings.HasPrefix(line, "data: ") {
+					dataStr := strings.TrimPrefix(line, "data: ")
+					if dataStr == "[DONE]" {
+						break
+					}
+
+					var event channel.ExecutionEvent
+					if err := json.Unmarshal([]byte(dataStr), &event); err == nil {
+						if event.Type == "" {
+							event.Type = currentEventType
+						}
+						if ch != nil {
+							_ = ch.EmitEvent(event)
+						}
+
+						if event.Type == channel.EventTaskCompleted {
+							finalStatus = "completed"
+						} else if event.Type == channel.EventTaskFailed {
+							finalStatus = "failed"
+							taskErr = fmt.Errorf("%s", event.Message)
+						}
+					}
+				}
+			}
+
+			nodes := memory.DB.GetAllNodeStates(taskID)
+			if finalStatus == "failed" && taskErr == nil {
+				taskErr = fmt.Errorf("task failed")
+			}
+			doneChan <- execResult{nodes: nodes, err: taskErr}
+		} else {
+			_, _, err := task.Execute(context.Background(), args.Prompt, task.ExecuteOptions{
+				TaskID:       taskID,
+				IntentType:   "workflow",
+				IsForeground: true,
+			})
+			nodes := memory.DB.GetAllNodeStates(taskID)
+			doneChan <- execResult{nodes: nodes, err: err}
+		}
 	}()
 
 	select {
@@ -232,14 +310,19 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 		taskStatus = "completed"
 	}
 
-	// Check if there are unread client-side tool requests for this task
+	// Check if there are unread client-side tool requests or human approval requests for this task
 	if taskStatus == "pending" || taskStatus == "running" {
 		notifs, err := memory.DB.GetNotifications("unread")
 		if err == nil {
 			for _, n := range notifs {
-				if n.TaskID == args.TaskID && n.Source == "client_tool" && n.Type == "client_tool_request" {
-					taskStatus = "waiting_for_client"
-					break
+				if n.TaskID == args.TaskID {
+					if n.Source == "client_tool" && n.Type == "client_tool_request" {
+						taskStatus = "waiting_for_client"
+						break
+					} else if n.Source == "human_approval" && n.Type == "approval_request" {
+						taskStatus = "waiting_for_approval"
+						break
+					}
 				}
 			}
 		}
@@ -250,6 +333,14 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 		"status":      taskStatus,
 		"nodes":       nodes,
 		"completedAt": completedAt,
+	}
+
+	if taskStatus == "waiting_for_approval" {
+		respMap["instruction"] = fmt.Sprintf("Task is waiting for human approval. Use the 'tzro_hook_approve' tool with taskId: '%s' and nodeId: '<nodeId>' to approve, or check pending approvals via 'tzro_hook_list'.", args.TaskID)
+	} else if taskStatus == "waiting_for_client" {
+		respMap["instruction"] = "Task is waiting for client tool execution. Use the 'tzro_client_tool_submit' tool to submit the result."
+	} else if taskStatus == "failed" {
+		respMap["instruction"] = fmt.Sprintf("Task execution failed. Review the errors on the failed node(s), fix any issues, and use the 'tzro_resume' tool with taskId: '%s' to resume.", args.TaskID)
 	}
 
 	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
@@ -776,6 +867,31 @@ func handleTzroHookApprove(ctx context.Context, req *mcp.CallToolRequest, args T
 		}, nil, nil
 	}
 
+	if isDaemonRunning() {
+		type ApproveRequest struct {
+			TaskID string `json:"taskId"`
+			NodeID string `json:"nodeId"`
+		}
+		reqBody := ApproveRequest{
+			TaskID: args.TaskID,
+			NodeID: args.NodeID,
+		}
+		respBytes, err := proxyToDaemon("/api/tasks/approve", "POST", reqBody)
+		if err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "daemon proxy failed: %v"}`, err)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+	}
+
 	notifs, err := memory.DB.GetNotifications("unread")
 	if err != nil {
 		return nil, nil, err
@@ -830,6 +946,29 @@ func handleTzroResume(ctx context.Context, req *mcp.CallToolRequest, args TzroRe
 				&mcp.TextContent{Text: `{"error": "taskId cannot be empty"}`},
 			},
 			IsError: true,
+		}, nil, nil
+	}
+
+	if isDaemonRunning() {
+		type ResumeRequest struct {
+			TaskID string `json:"taskId"`
+		}
+		reqBody := ResumeRequest{
+			TaskID: args.TaskID,
+		}
+		respBytes, err := proxyToDaemon("/api/tasks/resume", "POST", reqBody)
+		if err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "daemon proxy failed: %v"}`, err)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
 		}, nil, nil
 	}
 
@@ -2077,4 +2216,46 @@ func handleTzroAppsUninstall(ctx context.Context, req *mcp.CallToolRequest, args
 			&mcp.TextContent{Text: string(respBytes)},
 		},
 	}, nil, nil
+}
+
+func proxyToDaemon(path string, method string, reqBody interface{}) ([]byte, error) {
+	daemonURL := config.GetDaemonURL()
+	url := fmt.Sprintf("%s%s", daemonURL, path)
+
+	var bodyReader io.Reader
+	if reqBody != nil {
+		reqBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		bodyReader = bytes.NewReader(reqBytes)
+	}
+
+	req, err := http.NewRequest(method, url, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return respBytes, fmt.Errorf("daemon returned status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	return respBytes, nil
 }

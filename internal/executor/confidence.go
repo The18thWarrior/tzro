@@ -50,6 +50,9 @@ var globalConfidenceState = &confidenceState{
 // IsForceCloud returns true if the given task has triggered sticky cloud fallback
 // due to exceeding the confidence threshold.
 func IsForceCloud(taskID string) bool {
+	if config.Get().PrivacyLevel == "strict-local" {
+		return false
+	}
 	globalConfidenceState.mu.Lock()
 	defer globalConfidenceState.mu.Unlock()
 	return globalConfidenceState.forceCloudByTask[taskID]

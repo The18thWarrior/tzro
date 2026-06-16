@@ -4,6 +4,45 @@
 
 document.addEventListener("DOMContentLoaded", () => {
   // =========================================================================
+  // DUAL-AUDIENCE MODE TOGGLE SYSTEM
+  // =========================================================================
+  const modeToggleDesktop = document.getElementById("mode-toggle-desktop");
+  const modeToggleMobile = document.getElementById("mode-toggle-mobile");
+
+  function setMode(mode) {
+    document.body.setAttribute("data-mode", mode);
+    localStorage.setItem("tzro-site-mode", mode);
+
+    // Update URL param
+    const url = new URL(location);
+    url.searchParams.set("view", mode);
+    history.replaceState(null, "", url);
+
+    // Sync all toggle button states
+    document.querySelectorAll(".mode-toggle-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.getAttribute("data-mode") === mode);
+    });
+  }
+
+  function initMode() {
+    const urlMode = new URLSearchParams(location.search).get("view");
+    const storedMode = localStorage.getItem("tzro-site-mode");
+    const mode = urlMode || storedMode || "user";
+    setMode(mode);
+  }
+
+  // Attach click handlers to both desktop and mobile toggles
+  [modeToggleDesktop, modeToggleMobile].forEach((toggle) => {
+    if (!toggle) return;
+    toggle.querySelectorAll(".mode-toggle-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setMode(btn.getAttribute("data-mode"));
+      });
+    });
+  });
+
+  initMode();
+  // =========================================================================
   // Mobile Navigation Drawer Toggle
   // =========================================================================
   const mobileMenuToggle = document.getElementById("mobile-menu-toggle");

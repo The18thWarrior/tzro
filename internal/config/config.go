@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,10 @@ type EngineConfig struct {
 	RestrictedDirectories []string `json:"restrictedDirectories,omitempty"` // Paths locked to local-only planning
 	ComplexityThreshold   string   `json:"complexityThreshold,omitempty"`   // "T0" | "T1" | "T2" (default: "T1")
 	SensitiveKeywords     []string `json:"sensitiveKeywords,omitempty"`     // Custom keywords; empty = built-in defaults
+
+	// Vision / Multimodal
+	MMProjModelPath string `json:"mmProjModelPath,omitempty"` // Path to mmproj GGUF for vision; empty = auto-detect in models dir
+	PDFOcrBackend   string `json:"pdfOcrBackend,omitempty"`   // "vision" | "tesseract" | "auto" (default: "auto")
 
 	// Visual dashboard pacing delays in milliseconds
 	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
@@ -188,6 +193,8 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.RestrictedDirectories = cfg.RestrictedDirectories
 	GlobalConfig.ComplexityThreshold = cfg.ComplexityThreshold
 	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
+	GlobalConfig.MMProjModelPath = cfg.MMProjModelPath
+	GlobalConfig.PDFOcrBackend = cfg.PDFOcrBackend
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
@@ -219,6 +226,8 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.RestrictedDirectories = cfg.RestrictedDirectories
 	GlobalConfig.ComplexityThreshold = cfg.ComplexityThreshold
 	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
+	GlobalConfig.MMProjModelPath = cfg.MMProjModelPath
+	GlobalConfig.PDFOcrBackend = cfg.PDFOcrBackend
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	if cfg.ModelsDir != "" {
@@ -442,6 +451,51 @@ func GetRestrictedDirectories() []string {
 	return dirs
 }
 
+// GetMMProjModelPath resolves the multimodal projector model path.
+// If explicitly configured, uses that path. Otherwise auto-detects by scanning
+// the models directory for a file matching *mmproj*.gguf.
+func GetMMProjModelPath() string {
+	configMutex.RLock()
+	explicit := GlobalConfig.MMProjModelPath
+	configMutex.RUnlock()
+
+	if explicit != "" {
+		if _, err := os.Stat(explicit); err == nil {
+			return explicit
+		}
+	}
+
+	// Auto-detect: scan models dir for mmproj file
+	modelsDir := GetModelsDir()
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		name := strings.ToLower(e.Name())
+		if strings.Contains(name, "mmproj") && strings.HasSuffix(name, ".gguf") {
+			return filepath.Join(modelsDir, e.Name())
+		}
+	}
+	return ""
+}
+
+// GetPDFOcrBackend returns the configured PDF OCR backend preference.
+// Defaults to "auto" which prefers the local vision model (if mmproj is loaded),
+// falling back to system tesseract.
+func GetPDFOcrBackend() string {
+	configMutex.RLock()
+	backend := GlobalConfig.PDFOcrBackend
+	configMutex.RUnlock()
+
+	switch backend {
+	case "vision", "tesseract":
+		return backend
+	default:
+		return "auto"
+	}
+}
+
 // GetThermalCooldownSeconds returns the configured cooldown pause duration
 // between thermal re-samples when pressure is "serious".
 // Defaults to 30 seconds if not explicitly configured.
@@ -468,4 +522,35 @@ func GetThermalCloudCooldownMinutes() int {
 		return 5
 	}
 	return v
+}
+
+// GetDaemonURL returns the active daemon HTTP URL by checking:
+// 1. A cached/running daemon port in `.tzro/.daemon.port`.
+// 2. The $PORT environment variable.
+// 3. Fallback to default "8080".
+func GetDaemonURL() string {
+	portFile := ResolvePath(filepath.Join(".tzro", ".daemon.port"))
+	if data, err := os.ReadFile(portFile); err == nil {
+		portStr := strings.TrimSpace(string(data))
+		if portStr != "" {
+			return "http://127.0.0.1:" + portStr
+		}
+	}
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		return "http://127.0.0.1:" + envPort
+	}
+	return "http://127.0.0.1:8080"
+}
+
+// WriteDaemonPort writes the daemon port to .tzro/.daemon.port.
+func WriteDaemonPort(port int) error {
+	portFile := ResolvePath(filepath.Join(".tzro", ".daemon.port"))
+	_ = os.MkdirAll(filepath.Dir(portFile), 0755)
+	return os.WriteFile(portFile, []byte(strconv.Itoa(port)), 0644)
+}
+
+// RemoveDaemonPort removes the daemon port file.
+func RemoveDaemonPort() {
+	portFile := ResolvePath(filepath.Join(".tzro", ".daemon.port"))
+	_ = os.Remove(portFile)
 }

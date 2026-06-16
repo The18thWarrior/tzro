@@ -85,6 +85,7 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
     chmod +x "${INSTALL_DIR}/bin/llama-server"
 
     echo "mock model content" > "${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+    echo "mock mmproj" > "${INSTALL_DIR}/models/mmproj-gemma-4-E4B-it-Q8_0.gguf"
     echo "mock mtp drafter" > "${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
     
     echo "#!/bin/sh" > "${INSTALL_DIR}/bin/tzro-mcp"
@@ -174,13 +175,39 @@ EOF
         fi
     fi
 
-    # Provision Tactician Model GGUF
+    # Provision Tactician Model GGUF (~3.9 GB default Gemma 4 E4B)
     GGUF_PATH="${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
-    if [ ! -f "${GGUF_PATH}" ]; then
-        echo -e "  Creating lightweight GGUF tactician model placeholder..."
-        # In a real install we'd download the model (~5GB) from HuggingFace
-        # MODEL_URL="https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
-        echo "tzro-model-gguf-placeholder" > "${GGUF_PATH}"
+    GGUF_URL="https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf?download=true"
+    if [ ! -f "${GGUF_PATH}" ] || [ "$(cat "${GGUF_PATH}" 2>/dev/null)" = "tzro-model-gguf-placeholder" ]; then
+        echo -e "  Downloading default Gemma 4 E4B tactician model (~3.9 GB)..."
+        echo -e "  ${DIM}Source: huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF${NC}"
+        GGUF_TMP="${GGUF_PATH}.download"
+        if curl -fSL --progress-bar -o "${GGUF_TMP}" "${GGUF_URL}"; then
+            mv "${GGUF_TMP}" "${GGUF_PATH}"
+            echo -e "  ${GREEN}✔ Default tactician model downloaded${NC}"
+        else
+            rm -f "${GGUF_TMP}"
+            echo -e "  ${RED}✘ Tactician model download failed. Download manually from the Settings panel after install.${NC}"
+        fi
+    else
+        echo -e "  ${GREEN}✔ Tactician model already present${NC}"
+    fi
+
+    # Provision Multimodal Vision Projector (~534 MB companion for PDF OCR & image analysis)
+    MMPROJ_PATH="${INSTALL_DIR}/models/mmproj-gemma-4-E4B-it-Q8_0.gguf"
+    MMPROJ_URL="https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/mmproj-gemma-4-E4B-it-Q8_0.gguf"
+    if [ ! -f "${MMPROJ_PATH}" ]; then
+        echo -e "  Downloading vision projector (~534 MB) for local PDF OCR & image analysis..."
+        MMPROJ_TMP="${MMPROJ_PATH}.download"
+        if curl -fSL --progress-bar -o "${MMPROJ_TMP}" "${MMPROJ_URL}"; then
+            mv "${MMPROJ_TMP}" "${MMPROJ_PATH}"
+            echo -e "  ${GREEN}✔ Vision projector downloaded${NC}"
+        else
+            rm -f "${MMPROJ_TMP}"
+            echo -e "  ${YELLOW}⚠ Vision projector download failed. Local vision features will be unavailable until downloaded from Settings.${NC}"
+        fi
+    else
+        echo -e "  ${GREEN}✔ Vision projector already present${NC}"
     fi
 
     # Provision MTP Draft Assistant Model (~74MB lightweight 4-layer drafter for speculative decoding)
@@ -188,9 +215,12 @@ EOF
     MTP_DRAFT_URL="https://huggingface.co/cascade-tech/gemma-4-E4B-it-qat-q4_0-unquantized-assistant-gguf/resolve/main/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
     if [ ! -f "${MTP_DRAFT_PATH}" ]; then
         echo -e "  Downloading MTP draft assistant model (~74MB) for speculative decoding..."
-        if curl -fSL --progress-bar -o "${MTP_DRAFT_PATH}" "${MTP_DRAFT_URL}" 2>/dev/null; then
+        MTP_TMP="${MTP_DRAFT_PATH}.download"
+        if curl -fSL --progress-bar -o "${MTP_TMP}" "${MTP_DRAFT_URL}"; then
+            mv "${MTP_TMP}" "${MTP_DRAFT_PATH}"
             echo -e "  ${GREEN}✔ MTP draft assistant model downloaded${NC}"
         else
+            rm -f "${MTP_TMP}"
             echo -e "  ${YELLOW}⚠ MTP draft model download failed. Sidecar will use ngram-simple fallback.${NC}"
         fi
     else
@@ -228,6 +258,7 @@ echo -e "  ${BOLD}Database Booted:${NC}     ${DB_PATH}"
 echo -e "  ${BOLD}Llama Sidecar:${NC}       ${INSTALL_DIR}/bin/llama-server"
 echo -e "  ${BOLD}MCP Server:${NC}          ${INSTALL_DIR}/bin/tzro-mcp"
 echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
+echo -e "  ${BOLD}Vision Projector:${NC}    ${INSTALL_DIR}/models/mmproj-gemma-4-E4B-it-Q8_0.gguf"
 echo -e "  ${BOLD}MTP Draft Model:${NC}     ${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
 echo -e "=========================================================="
 

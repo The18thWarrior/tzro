@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/notification"
+	"tzro/internal/packagemanager"
 	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 	"tzro/internal/task"
@@ -87,8 +89,13 @@ func StartServer(addr string) error {
 	mux.HandleFunc("/api/models/download", corsHandler(handleModelDownload))
 	mux.HandleFunc("/api/events", corsHandler(handleEvents))
 	mux.HandleFunc("/api/notifications", corsHandler(handleNotifications))
-	mux.HandleFunc("/api/notifications/update", corsHandler(handleNotificationsUpdate))
 	mux.HandleFunc("/api/tasks/events", corsHandler(handleTaskSSE))
+	mux.HandleFunc("/api/tasks/resume", corsHandler(handleTasksResume))
+	mux.HandleFunc("/api/tasks/approve", corsHandler(handleTasksApprove))
+	mux.HandleFunc("/api/tasks/run", corsHandler(handleTasksRun))
+	mux.HandleFunc("/api/apps/install", corsHandler(handleAppsInstall))
+	mux.HandleFunc("/api/apps/uninstall", corsHandler(handleAppsUninstall))
+	mux.HandleFunc("/api/apps", corsHandler(handleAppsList))
 
 	// Workflows routing
 	mux.HandleFunc("/api/workflows", corsHandler(handleWorkflows))
@@ -125,8 +132,26 @@ func StartServer(addr string) error {
 	fileServer := http.FileServer(http.Dir("./static"))
 	mux.Handle("/", fileServer)
 
-	fmt.Printf("[Server] Unified HTTP Router listening on %s...\n", addr)
-	return http.ListenAndServe(addr, mux)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		if os.Getenv("PORT") == "" {
+			fmt.Printf("[Server] Port %s already in use. Falling back to dynamic port allocation...\n", addr)
+			listener, err = net.Listen("tcp", "127.0.0.1:0")
+		}
+		if err != nil {
+			return fmt.Errorf("failed to listen on %s: %w", addr, err)
+		}
+	}
+	defer listener.Close()
+
+	actualAddr := listener.Addr().(*net.TCPAddr)
+	actualPort := actualAddr.Port
+
+	_ = config.WriteDaemonPort(actualPort)
+	defer config.RemoveDaemonPort()
+
+	fmt.Printf("[Server] Unified HTTP Router listening on http://127.0.0.1:%d...\n", actualPort)
+	return http.Serve(listener, mux)
 }
 
 func handleChat(w http.ResponseWriter, r *http.Request) {
@@ -1339,4 +1364,280 @@ func handleTaskSSE(w http.ResponseWriter, r *http.Request) {
 	channel.BridgeWithOptions(ch, taskID, channel.BridgeOptions{
 		StopOnError: true, // Client disconnect → stop
 	})
+}
+
+var (
+	pkgManager      *packagemanager.Manager
+	pkgManagerMutex sync.Mutex
+)
+
+func getPkgManager() (*packagemanager.Manager, error) {
+	pkgManagerMutex.Lock()
+	defer pkgManagerMutex.Unlock()
+
+	if pkgManager != nil {
+		return pkgManager, nil
+	}
+	db := memory.DB.RawDB()
+	if db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	appsDir := config.ResolvePath(".tzro/apps")
+	pkgManager = packagemanager.NewManager(db, mcp.GlobalRegistry, appsDir)
+	if err := pkgManager.InitSchema(); err != nil {
+		pkgManager = nil
+		return nil, err
+	}
+	return pkgManager, nil
+}
+
+func handleTasksResume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.TaskID = r.URL.Query().Get("taskId")
+	}
+
+	if req.TaskID == "" {
+		http.Error(w, "taskId is required", http.StatusBadRequest)
+		return
+	}
+
+	go func() {
+		db := memory.DB.RawDB()
+		if db == nil {
+			fmt.Fprintf(os.Stderr, "[Server Resume Error] Database not initialized\n")
+			return
+		}
+		var graphBytes string
+		err := db.QueryRow("SELECT raw_payload FROM disk_cache WHERE cache_id = ?", "graph_"+req.TaskID).Scan(&graphBytes)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[Server Resume Error] Failed to load cached graph: %v\n", err)
+			return
+		}
+		var graph compiler.ExecutionGraph
+		if err := json.Unmarshal([]byte(graphBytes), &graph); err != nil {
+			fmt.Fprintf(os.Stderr, "[Server Resume Error] Failed to unmarshal cached graph: %v\n", err)
+			return
+		}
+		levels, err := compiler.CompileAndSort(&graph)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[Server Resume Error] Failed to compile graph: %v\n", err)
+			return
+		}
+		proactivity.RegisterActiveUserTask(graph.TaskID)
+		defer proactivity.DeregisterActiveUserTask(graph.TaskID)
+		_ = executor.GlobalEngine.ExecuteGraph(context.Background(), &graph, levels)
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"success","message":"Task resume triggered"}`))
+}
+
+func handleTasksApprove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		TaskID string `json:"taskId"`
+		NodeID string `json:"nodeId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.TaskID = r.URL.Query().Get("taskId")
+		req.NodeID = r.URL.Query().Get("nodeId")
+	}
+
+	if req.TaskID == "" || req.NodeID == "" {
+		http.Error(w, "taskId and nodeId are required", http.StatusBadRequest)
+		return
+	}
+
+	notifs, err := memory.DB.GetNotifications("unread")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var target *memory.DurableNotification
+	for _, n := range notifs {
+		if n.TaskID == req.TaskID && n.TargetID == req.NodeID && n.Source == "human_approval" && n.Type == "approval_request" {
+			target = &n
+			break
+		}
+	}
+
+	if target == nil {
+		http.Error(w, "unread approval request not found", http.StatusNotFound)
+		return
+	}
+
+	if err := memory.DB.UpdateNotificationStatus(target.ID, "approved"); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	go func() {
+		db := memory.DB.RawDB()
+		if db == nil {
+			return
+		}
+		var graphBytes string
+		_ = db.QueryRow("SELECT raw_payload FROM disk_cache WHERE cache_id = ?", "graph_"+req.TaskID).Scan(&graphBytes)
+		var graph compiler.ExecutionGraph
+		if json.Unmarshal([]byte(graphBytes), &graph) == nil {
+			levels, _ := compiler.CompileAndSort(&graph)
+			proactivity.RegisterActiveUserTask(graph.TaskID)
+			defer proactivity.DeregisterActiveUserTask(graph.TaskID)
+			_ = executor.GlobalEngine.ExecuteGraph(context.Background(), &graph, levels)
+		}
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"success","message":"Task approved and resume triggered"}`))
+}
+
+func handleAppsInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ArchivePath string `json:"archivePath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.ArchivePath = r.URL.Query().Get("archivePath")
+	}
+
+	if req.ArchivePath == "" {
+		http.Error(w, "archivePath is required", http.StatusBadRequest)
+		return
+	}
+
+	mgr, err := getPkgManager()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	app, err := mgr.Install(req.ArchivePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(app)
+}
+
+func handleAppsUninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		AppID string `json:"appId"`
+		Purge bool   `json:"purge"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.AppID = r.URL.Query().Get("appId")
+		req.Purge = r.URL.Query().Get("purge") == "true"
+	}
+
+	if req.AppID == "" {
+		http.Error(w, "appId is required", http.StatusBadRequest)
+		return
+	}
+
+	mgr, err := getPkgManager()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if req.Purge {
+		err = mgr.Purge(req.AppID)
+	} else {
+		err = mgr.Uninstall(req.AppID)
+	}
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"success"}`))
+}
+
+func handleAppsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	mgr, err := getPkgManager()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	apps, err := mgr.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(apps)
+}
+
+func handleTasksRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Prompt string `json:"prompt"`
+		TaskID string `json:"taskId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Prompt == "" {
+		http.Error(w, "prompt is required", http.StatusBadRequest)
+		return
+	}
+	if req.TaskID == "" {
+		req.TaskID = fmt.Sprintf("task_%d", time.Now().Unix())
+	}
+
+	go func() {
+		_, _, _ = task.Execute(context.Background(), req.Prompt, task.ExecuteOptions{
+			TaskID:       req.TaskID,
+			IntentType:   "workflow",
+			IsForeground: true,
+		})
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"running","taskId":"%s"}`, req.TaskID)))
 }

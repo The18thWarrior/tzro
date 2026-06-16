@@ -4,6 +4,15 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-15T20:55:00-07:00] document | PRD: Dual-Audience Hardening
+
+- **Activity**: Published PRD for Dual-Audience Hardening to address four core gaps between framework capabilities and user promises (Fail-Local policy, MCP daemon delegation proxy, editor-native resume/approval tools, and Package Manager CLI/MCP integration).
+- **Files Created/Modified**:
+  - [NEW] [PRD.md](../../.scratch/dual-audience-hardening/PRD.md)
+  - [NEW] [dual-audience-hardening.md](features/dual-audience-hardening.md)
+  - [MODIFY] [index.md](index.md)
+  - [MODIFY] [log.md](log.md)
+
 ## [2026-06-14T22:10:00-07:00] implementation | Package Manager — TDD Implementation
 
 - **Activity**: Full TDD (red-green-refactor) implementation of the Agent App Package Manager. 15 vertical slices, 16 tests, all passing. `go build ./...` clean. `go vet` clean.
