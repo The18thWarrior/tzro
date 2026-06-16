@@ -132,7 +132,7 @@ if [ -d "$HOME/.config/opencode" ] || [ -f "$HOME/.opencode.json" ]; then
 fi
 
 # Antigravity IDE
-if [ -d "$HOME/.gemini/config/plugins" ]; then
+if [ -d "$HOME/.gemini/config/plugins" ] || [ -d "$HOME/.gemini/antigravity/plugins" ] || [ -d "$HOME/.gemini/antigravity-ide/plugins" ]; then
     IFACE_DETECTED[5]=true
 fi
 
@@ -450,7 +450,7 @@ elif [ -f "CLAUDE.md" ]; then
     FALLBACK_DONE=true
 else
     echo -e "  ${DIM}Neither AGENTS.md nor CLAUDE.md found.${NC}"
-    local create_agents=true
+    create_agents=true
     if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
         read -p "  Create AGENTS.md with tzro instructions? (y/n) " -n 1 -r
         echo
