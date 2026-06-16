@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "tzro": {
+      "command": "/Users/jp/Desktop/Repos/tzro/bin/tzro-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

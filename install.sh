@@ -178,7 +178,19 @@ EOF
     # Provision Tactician Model GGUF (~3.9 GB default Gemma 4 E4B)
     GGUF_PATH="${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
     GGUF_URL="https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf?download=true"
-    if [ ! -f "${GGUF_PATH}" ] || [ "$(cat "${GGUF_PATH}" 2>/dev/null)" = "tzro-model-gguf-placeholder" ]; then
+    
+    IS_PLACEHOLDER=false
+    if [ -f "${GGUF_PATH}" ]; then
+        # Only cat if the file size is small to prevent bash memory exhaustion
+        FILE_SIZE=$(wc -c < "${GGUF_PATH}" 2>/dev/null | tr -d '[:space:]' || echo 0)
+        if [ -n "${FILE_SIZE}" ] && [ "${FILE_SIZE}" -lt 1000 ]; then
+            if [ "$(cat "${GGUF_PATH}" 2>/dev/null)" = "tzro-model-gguf-placeholder" ]; then
+                IS_PLACEHOLDER=true
+            fi
+        fi
+    fi
+
+    if [ ! -f "${GGUF_PATH}" ] || [ "${IS_PLACEHOLDER}" = "true" ]; then
         echo -e "  Downloading default Gemma 4 E4B tactician model (~3.9 GB)..."
         echo -e "  ${DIM}Source: huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF${NC}"
         GGUF_TMP="${GGUF_PATH}.download"

@@ -1,0 +1,41 @@
+# tzro
+
+`tzro` is a zero-dependency, local-first agentic execution engine. It compiles natural language prompts into topologically-sorted DAG (Directed Acyclic Graph) workflows, executes them durably with checkpointing, and provides relational memory, knowledge graph, and micro-skill extraction.
+
+## Onboarding & Installation for Agents
+
+If you are an AI agent or assistant configured in a user's repository and need to install/bootstrap `tzro`:
+
+1. **Run the One-Line Bootstrapper**:
+   Execute the non-interactive automated script in the repository:
+   ```bash
+   ./.agents/skills/tzro-onboarding/scripts/onboard.sh
+   ```
+   Or if downloading from scratch:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/The18thWarrior/tzro/main/install.sh | bash
+   ```
+   This will automatically:
+   - Detect the OS (macOS, Linux) and architecture (arm64, amd64).
+   - Fetch static precompiled binaries for the CLI (`tzro`), MCP server (`tzro-mcp`), and static `llama-server` sidecar.
+   - Bootstraps the local SQLite database schema.
+
+2. **Configure Environment PATH**:
+   Add the binary directory to the active shell configuration (`~/.zshrc` or `~/.bashrc`):
+   ```bash
+   export PATH="$PATH:$HOME/.tzro"
+   ```
+
+3. **Reload Environment**:
+   Instruct the user to run `source ~/.zshrc` or restart their terminal.
+
+## Core Concepts
+
+- **Agent**: The entry point for configuration (models, tools, policies).
+- **Conversation**: Manages history, state, and context compaction.
+- **Connection**: Abstract interface handling transport to the local/cloud model backend.
+- **Probe Nodes**: Executed via the local model using a Thought Chain to explore directories and find files dynamically without wasting cloud tokens.
+
+## How to Delegate to tzro
+When executing tasks that don't require frontier reasoning (e.g. codebase exploration, log searches, web scraping), delegate to `tzro` via the `tzro_run` tool or CLI instead of running them in-context.
+- **Evaluation Trigger**: If about to make 3 or more sequential filesystem / external tool calls, delegate to `tzro`.
