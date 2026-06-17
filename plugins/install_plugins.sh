@@ -34,6 +34,10 @@ install_antigravity_ide() {
         mkdir -p "$HOME/.gemini/antigravity/plugins"
         target_dirs+=("$HOME/.gemini/antigravity/plugins/tzro-plugin")
     fi
+    if [ -d "$HOME/.gemini" ]; then
+        mkdir -p "$HOME/.gemini/plugins"
+        target_dirs+=("$HOME/.gemini/plugins/tzro-plugin")
+    fi
 
     if [ ${#target_dirs[@]} -eq 0 ]; then
         echo -e "  ${YELLOW}⚠ No Antigravity IDE plugins directories found.${NC}"

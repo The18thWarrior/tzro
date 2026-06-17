@@ -427,6 +427,9 @@ if [ "${IFACE_SELECTED[5]}" = "true" ]; then
     if [ -d "$HOME/.gemini/antigravity-ide" ]; then
         inject_mcp_config "$HOME/.gemini/antigravity-ide/mcp_config.json" "mcpServers" "Antigravity IDE"
     fi
+    if [ -d "$HOME/.gemini" ]; then
+        inject_mcp_config "$HOME/.gemini/mcp_config.json" "mcpServers" "Antigravity IDE"
+    fi
 
     # Plugin installation is handled separately
     echo -e "  ${DIM}Plugin: run ${CYAN}bash plugins/install_plugins.sh${NC} ${DIM}to install/update the IDE plugin${NC}"
