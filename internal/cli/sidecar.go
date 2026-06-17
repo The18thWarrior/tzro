@@ -71,8 +71,9 @@ var sidecarActionCmd = &cobra.Command{
 			serverAction = "erase_cache"
 		}
 
+		urlStr := getDaemonURL()
 		reqBody, _ := json.Marshal(map[string]string{"action": serverAction})
-		resp, err := http.Post(globalFlags.URL+"/api/sidecar", "application/json", bytes.NewBuffer(reqBody))
+		resp, err := http.Post(urlStr+"/api/sidecar", "application/json", bytes.NewBuffer(reqBody))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: connection failed: %v\n", err)
 			os.Exit(1)

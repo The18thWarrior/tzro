@@ -61,27 +61,37 @@ func initRootFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().BoolVarP(&globalFlags.JSONOut, "json", "j", false, "Output raw, minified JSON payload instead of styled tabular text")
 }
 
+// GetDaemonURL returns the resolved daemon endpoint URL, falling back to dynamic port discovery via the config file if the URL flag is left at its default value.
+func getDaemonURL() string {
+	if globalFlags.URL == "http://localhost:8080" {
+		return config.GetDaemonURL()
+	}
+	return globalFlags.URL
+}
+
 // GetClient resolves connected RESTClient or read-only DirectDBClient based on flags and daemon status.
 func GetClient() (tui.TZROClient, error) {
 	if globalFlags.Offline {
 		return NewDirectDBClient(globalFlags.DBPath), nil
 	}
 
+	urlStr := getDaemonURL()
+
 	// 100ms quick HTTP ping check to see if server is online
 	client := &http.Client{
 		Timeout: 100 * time.Millisecond,
 	}
-	resp, err := client.Get(globalFlags.URL + "/api/config")
+	resp, err := client.Get(urlStr + "/api/config")
 	if err == nil {
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
-			return NewRESTClient(globalFlags.URL), nil
+			return NewRESTClient(urlStr), nil
 		}
 	}
 
 	// Server is unreachable, print fallback warning to stderr (unless raw json output is requested)
 	if !globalFlags.JSONOut {
-		fmt.Fprintf(os.Stderr, "[Connected Warning] Cannot reach server daemon on %s. Falling back to offline database inspection mode.\n", globalFlags.URL)
+		fmt.Fprintf(os.Stderr, "[Connected Warning] Cannot reach server daemon on %s. Falling back to offline database inspection mode.\n", urlStr)
 	}
 
 	return NewDirectDBClient(globalFlags.DBPath), nil

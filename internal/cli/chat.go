@@ -26,8 +26,9 @@ var chatCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		urlStr := getDaemonURL()
 		reqBody, _ := json.Marshal(server.ChatRequest{Message: message})
-		resp, err := http.Post(globalFlags.URL+"/api/chat", "application/json", bytes.NewBuffer(reqBody))
+		resp, err := http.Post(urlStr+"/api/chat", "application/json", bytes.NewBuffer(reqBody))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: connection failed: %v\n", err)
 			os.Exit(1)
@@ -70,7 +71,7 @@ var chatCmd = &cobra.Command{
 			fmt.Println("--- LLM CONVERSATIONAL RESPONSE ---")
 
 			// Establish SSE connection to tail chunks live
-			eventsResp, err := http.Get(globalFlags.URL + "/api/events")
+			eventsResp, err := http.Get(urlStr + "/api/events")
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: failed to connect to live stream: %v\n", err)
 				return

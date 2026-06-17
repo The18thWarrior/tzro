@@ -21,7 +21,8 @@ var streamCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		resp, err := http.Get(globalFlags.URL + "/api/events")
+		urlStr := getDaemonURL()
+		resp, err := http.Get(urlStr + "/api/events")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: failed to connect to stream: %v\n", err)
 			os.Exit(1)
