@@ -157,7 +157,7 @@ func getPackageManager() (*packagemanager.Manager, func(), error) {
 		return nil, nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	appsDir := config.ResolvePath(".tzro/apps")
+	appsDir := config.ResolvePath("apps")
 	mgr := packagemanager.NewManager(db, mcp.GlobalRegistry, appsDir)
 
 	if err := mgr.InitSchema(); err != nil {

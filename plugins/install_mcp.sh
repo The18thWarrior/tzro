@@ -417,16 +417,17 @@ fi
 if [ "${IFACE_SELECTED[5]}" = "true" ]; then
     echo -e "\n  ${BOLD}${MAGENTA}Antigravity IDE${NC}"
 
-    # MCP config: inject into config directories
+    # MCP config: inject into ALL known config directories unconditionally
     echo -e "  ${DIM}MCP Config:${NC}"
+    mkdir -p "$HOME/.gemini/config"
     inject_mcp_config "$HOME/.gemini/config/mcp_config.json" "mcpServers" "Antigravity IDE"
 
-    if [ -d "$HOME/.gemini/antigravity" ]; then
-        inject_mcp_config "$HOME/.gemini/antigravity/mcp_config.json" "mcpServers" "Antigravity IDE"
-    fi
-    if [ -d "$HOME/.gemini/antigravity-ide" ]; then
-        inject_mcp_config "$HOME/.gemini/antigravity-ide/mcp_config.json" "mcpServers" "Antigravity IDE"
-    fi
+    mkdir -p "$HOME/.gemini/antigravity"
+    inject_mcp_config "$HOME/.gemini/antigravity/mcp_config.json" "mcpServers" "Antigravity IDE"
+
+    mkdir -p "$HOME/.gemini/antigravity-ide"
+    inject_mcp_config "$HOME/.gemini/antigravity-ide/mcp_config.json" "mcpServers" "Antigravity IDE"
+
     if [ -d "$HOME/.gemini" ]; then
         inject_mcp_config "$HOME/.gemini/mcp_config.json" "mcpServers" "Antigravity IDE"
     fi

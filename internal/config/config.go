@@ -139,14 +139,14 @@ var (
 		ExecutorLevelDelayMs: 500,
 	}
 	configMutex sync.RWMutex
-	configPath  = filepath.Join(".tzro", "config.json")
+	configPath  = "config.json"
 )
 
 func getConfigPath() string {
-	if configPath != filepath.Join(".tzro", "config.json") {
+	if configPath != "config.json" {
 		return configPath
 	}
-	return ResolvePath(filepath.Join(".tzro", "config.json"))
+	return ResolvePath("config.json")
 }
 
 // Load reads config settings from disk or sets defaults
@@ -283,8 +283,8 @@ func Get() EngineConfig {
 
 // defaultModelsDir returns the default models directory path (~/.tzro/models/).
 func defaultModelsDir() string {
-	resolved := ResolvePath(filepath.Join(".tzro", "models"))
-	if resolved != filepath.Join(".tzro", "models") {
+	resolved := ResolvePath("models")
+	if resolved != "models" {
 		return resolved
 	}
 	home, err := os.UserHomeDir()
@@ -529,7 +529,7 @@ func GetThermalCloudCooldownMinutes() int {
 // 2. The $PORT environment variable.
 // 3. Fallback to default "8080".
 func GetDaemonURL() string {
-	portFile := ResolvePath(filepath.Join(".tzro", ".daemon.port"))
+	portFile := ResolvePath(".daemon.port")
 	if data, err := os.ReadFile(portFile); err == nil {
 		portStr := strings.TrimSpace(string(data))
 		if portStr != "" {
@@ -544,13 +544,13 @@ func GetDaemonURL() string {
 
 // WriteDaemonPort writes the daemon port to .tzro/.daemon.port.
 func WriteDaemonPort(port int) error {
-	portFile := ResolvePath(filepath.Join(".tzro", ".daemon.port"))
+	portFile := ResolvePath(".daemon.port")
 	_ = os.MkdirAll(filepath.Dir(portFile), 0755)
 	return os.WriteFile(portFile, []byte(strconv.Itoa(port)), 0644)
 }
 
 // RemoveDaemonPort removes the daemon port file.
 func RemoveDaemonPort() {
-	portFile := ResolvePath(filepath.Join(".tzro", ".daemon.port"))
+	portFile := ResolvePath(".daemon.port")
 	_ = os.Remove(portFile)
 }

@@ -682,7 +682,7 @@ func NewCreateTaskTool() *BaseAgentTool {
 // ==========================================
 
 func autoProvisionDB(db *sql.DB, name string, forceID int) (string, error) {
-	dbDir := config.ResolvePath(filepath.Join(".tzro", "local_dbs"))
+	dbDir := config.ResolvePath("local_dbs")
 	_ = os.MkdirAll(dbDir, 0755)
 	path := filepath.Join(dbDir, name+".db")
 
@@ -848,7 +848,7 @@ func NewCreateDatabaseTool() *BaseAgentTool {
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`)
 
-			dbDir := config.ResolvePath(filepath.Join(".tzro", "local_dbs"))
+			dbDir := config.ResolvePath("local_dbs")
 			_ = os.MkdirAll(dbDir, 0755)
 			path := filepath.Join(dbDir, in.Name+".db")
 

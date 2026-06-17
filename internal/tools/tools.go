@@ -415,7 +415,7 @@ func Init(configPath string) error {
 // LoadWasmTools scans .tzro/wasm/ for compiled .wasm binaries alongside their json schemas,
 // registering each pair dynamically with the global registry.
 func LoadWasmTools() error {
-	wasmDir := config.ResolvePath(filepath.Join(".tzro", "wasm"))
+	wasmDir := config.ResolvePath("wasm")
 
 	// If wasm directory does not exist, create it or return nil (skip gracefully)
 	if _, err := os.Stat(wasmDir); os.IsNotExist(err) {
@@ -460,7 +460,7 @@ func LoadWasmTools() error {
 // their WASM tools with app-scoped namespacing ({appId}_{toolName}).
 // This is called on daemon startup to restore tools from previously installed apps.
 func LoadAppTools() error {
-	appsDir := config.ResolvePath(filepath.Join(".tzro", "apps"))
+	appsDir := config.ResolvePath("apps")
 
 	if _, err := os.Stat(appsDir); os.IsNotExist(err) {
 		return nil // No apps installed

@@ -53,7 +53,7 @@ func startDaemon() {
 	}
 
 	// Redirect stdout/stderr to daemon.log
-	logDir := config.ResolvePath(".tzro")
+	logDir := config.ResolvePath(".")
 	_ = os.MkdirAll(logDir, 0755)
 	logFilePath := filepath.Join(logDir, "daemon.log")
 	if daemonLog, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
@@ -88,7 +88,7 @@ func main() {
 	realStdout := os.NewFile(uintptr(realStdoutFd), "/dev/stdout")
 
 	// Determine log directory
-	logDir := config.ResolvePath(".tzro")
+	logDir := config.ResolvePath(".")
 
 	// Redirect stdout (fd 1) and stderr (fd 2) at the OS level to a log file
 	_ = os.MkdirAll(logDir, 0755)

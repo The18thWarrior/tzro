@@ -1382,7 +1382,7 @@ func getPkgManager() (*packagemanager.Manager, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
-	appsDir := config.ResolvePath(".tzro/apps")
+	appsDir := config.ResolvePath("apps")
 	pkgManager = packagemanager.NewManager(db, mcp.GlobalRegistry, appsDir)
 	if err := pkgManager.InitSchema(); err != nil {
 		pkgManager = nil

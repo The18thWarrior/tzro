@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"time"
 	"tzro/internal/config"
 	"tzro/internal/executor"
@@ -52,7 +51,7 @@ func main() {
 	}
 
 	// 4. Load MCP server configuration setting stdio hosts
-	configPath := config.ResolvePath(filepath.Join(".tzro", "mcp_config.json"))
+	configPath := config.ResolvePath("mcp_config.json")
 	fmt.Printf("[Init] Loading MCP configuration setting from %s...\n", configPath)
 	err = mcp.GlobalRegistry.LoadConfig(configPath)
 	if err != nil {
@@ -60,7 +59,7 @@ func main() {
 	}
 
 	// 4.5. Initialize Dynamic Tool Registry
-	toolSchemasPath := config.ResolvePath(filepath.Join(".tzro", "tool_schemas.json"))
+	toolSchemasPath := config.ResolvePath("tool_schemas.json")
 	fmt.Printf("[Init] Initializing dynamic Tool Registry from %s...\n", toolSchemasPath)
 	if err := tools.Init(toolSchemasPath); err != nil {
 		fmt.Printf("[Init Warning] Failed to initialize Tool Registry: %v\n", err)
@@ -195,7 +194,7 @@ func main() {
 	fmt.Println("[Init] Loading installed Agent Apps...")
 	db := memory.DB.RawDB()
 	if db != nil {
-		appsDir := config.ResolvePath(".tzro/apps")
+		appsDir := config.ResolvePath("apps")
 		mgr := packagemanager.NewManager(db, mcp.GlobalRegistry, appsDir)
 		if err := mgr.LoadInstalledApps(); err != nil {
 			fmt.Printf("[Init Warning] Failed to load installed apps: %v\n", err)

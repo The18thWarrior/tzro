@@ -386,7 +386,7 @@ type TzroConfigureToolsArgs struct {
 }
 
 func handleTzroConfigureTools(ctx context.Context, req *mcp.CallToolRequest, args TzroConfigureToolsArgs) (*mcp.CallToolResult, any, error) {
-	configPath := config.ResolvePath(filepath.Join(".tzro", "mcp_config.json"))
+	configPath := config.ResolvePath("mcp_config.json")
 
 	// Read existing config or initialize empty
 	var mcpCfg internalmcp.MCPConfig
@@ -410,7 +410,7 @@ func handleTzroConfigureTools(ctx context.Context, req *mcp.CallToolRequest, arg
 		return nil, nil, fmt.Errorf("failed to marshal merged config: %w", err)
 	}
 
-	_ = os.MkdirAll(".tzro", 0755)
+	_ = os.MkdirAll(filepath.Dir(configPath), 0755)
 	if err := os.WriteFile(configPath, mergedBytes, 0644); err != nil {
 		return nil, nil, fmt.Errorf("failed to write mcp_config.json: %w", err)
 	}
@@ -2099,7 +2099,7 @@ func getOrInitPackageManager() (*packagemanager.Manager, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
-	appsDir := config.ResolvePath(".tzro/apps")
+	appsDir := config.ResolvePath("apps")
 	mgr := packagemanager.NewManager(db, internalmcp.GlobalRegistry, appsDir)
 	if err := mgr.InitSchema(); err != nil {
 		return nil, fmt.Errorf("failed to initialize package manager schema: %w", err)

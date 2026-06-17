@@ -42,7 +42,7 @@ func ParsePDF(ctx context.Context, filePath string) (string, error) {
 	}
 
 	// 2. Setup temp directory for image extraction inside allowed paths (.tzro/cache)
-	cacheDir := config.ResolvePath(".tzro/cache")
+	cacheDir := config.ResolvePath("cache")
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return nativeText, fmt.Errorf("failed to create cache directory: %w", err)
 	}

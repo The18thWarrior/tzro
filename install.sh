@@ -176,14 +176,40 @@ else
         if command -v llama-server &>/dev/null; then
             cp "$(command -v llama-server)" "${INSTALL_DIR}/bin/llama-server"
         else
-            # Create a simple fallback bash wrapper that logs start parameters
-            echo -e "  Creating llama-server wrapper..."
+            # Create a fallback wrapper that exits immediately with a clear error
+            # so the sidecar manager detects the failure and falls back to cloud mode
+            echo -e "  ${YELLOW}⚠ No llama-server binary found. Creating placeholder wrapper.${NC}"
+            echo -e "  ${YELLOW}  Local inference will be unavailable until a real llama-server is installed.${NC}"
+            echo -e "  ${YELLOW}  The engine will default to cloud-only mode.${NC}"
             cat << 'EOF' > "${INSTALL_DIR}/bin/llama-server"
 #!/usr/bin/env bash
-echo "[Llama Sidecar Fallback] Running mocked server..."
-sleep 1
+echo "[Llama Sidecar Error] No real llama-server binary installed." >&2
+echo "[Llama Sidecar Error] Install llama.cpp or download via the tzro Settings panel." >&2
+echo "[Llama Sidecar Error] The engine will operate in cloud-only mode." >&2
+exit 1
 EOF
             chmod +x "${INSTALL_DIR}/bin/llama-server"
+
+            # Write config with sidecar disabled since no real binary exists
+            TZRO_CONFIG="${INSTALL_DIR}/config.json"
+            if [ ! -f "${TZRO_CONFIG}" ]; then
+                cat > "${TZRO_CONFIG}" << 'CONFIG_EOF'
+{
+  "modelMode": "cloud",
+  "cloudProvider": "google",
+  "cloudApiKey": "",
+  "cloudModel": "gemini-flash-latest",
+  "speedFloor": 5,
+  "sidecarEnabled": false,
+  "ggufModelPath": "models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+  "modelsDir": "",
+  "confidenceThreshold": 3,
+  "executorNodeDelayMs": 800,
+  "executorLevelDelayMs": 500
+}
+CONFIG_EOF
+                echo -e "  ${GREEN}✔ Default config written with sidecar disabled (cloud-only mode)${NC}"
+            fi
         fi
     fi
 

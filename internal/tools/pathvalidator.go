@@ -31,7 +31,7 @@ func GetAllowedPaths() []string {
 	}
 
 	// 1. Try reading allowedPaths from MCP config
-	mcpConfigPath := config.ResolvePath(filepath.Join(".tzro", "mcp_config.json"))
+	mcpConfigPath := config.ResolvePath("mcp_config.json")
 	if data, err := os.ReadFile(mcpConfigPath); err == nil {
 		var mcpCfg struct {
 			AllowedPaths []string `json:"allowedPaths"`
