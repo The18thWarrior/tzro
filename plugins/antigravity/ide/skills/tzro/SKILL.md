@@ -63,9 +63,12 @@ Before using tzro, verify the engine is running:
 1. **Check if the MCP server is available** — the tzro MCP tools (prefixed `mcp_tzro_`) should be in your tool list. If they are, you're ready.
 2. **If MCP is unavailable**, start the coordinator daemon:
    ```bash
+   # If installed globally:
+   tzrod
+   # If running from local repo:
    TZRO_DIR=$(pwd) ./bin/tzrod
    ```
-   Then use the CLI fallback: `./bin/tzro chat "your prompt"`
+   Then use the CLI fallback: `tzro chat "your prompt"` (or `./bin/tzro` in local repo).
 
 ## MCP Tool Taxonomy
 
@@ -190,11 +193,11 @@ Use tzro_kg_neighborhood to explore entity relationships starting from a known n
 If MCP tools are unavailable, use the CLI directly:
 
 ```bash
-# Submit a task
-./bin/tzro chat "Your detailed research or automation request"
+# Submit a task (use 'tzro' directly if installed globally, or './bin/tzro' in local repo)
+tzro chat "Your detailed research or automation request"
 
 # Check task status
-./bin/tzro task status <taskId> --offline
+tzro task status <taskId> --offline
 
 # Read final output from the terminal_synthesis node
 ```

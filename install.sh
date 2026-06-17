@@ -101,14 +101,16 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
         chmod +x "${INSTALL_DIR}/bin/tzro"
     fi
 else
-    # Compile tzro and tzro-mcp locally if Go is available, otherwise download pre-compiled binaries
+    # Compile tzro, tzro-mcp, and tzrod locally if Go is available, otherwise download pre-compiled binaries
     if command -v go &>/dev/null; then
         echo -e "  ${GREEN}✔ Go compiler detected. Building tzro binaries from source locally...${NC}"
-        rm -f "${INSTALL_DIR}/bin/tzro" "${INSTALL_DIR}/bin/tzro-mcp"
+        rm -f "${INSTALL_DIR}/bin/tzro" "${INSTALL_DIR}/bin/tzro-mcp" "${INSTALL_DIR}/bin/tzrod"
         go build -o "${INSTALL_DIR}/bin/tzro" ./cmd/tzro
         echo -e "  ${GREEN}✔ Built tzro CLI${NC}"
         go build -o "${INSTALL_DIR}/bin/tzro-mcp" ./cmd/tzro-mcp
         echo -e "  ${GREEN}✔ Built tzro-mcp server${NC}"
+        go build -o "${INSTALL_DIR}/bin/tzrod" ./cmd/tzrod
+        echo -e "  ${GREEN}✔ Built tzrod daemon${NC}"
     else
         echo -e "  ${YELLOW}⚠ Go compiler not found. Fetching pre-compiled release binaries...${NC}"
 
@@ -137,9 +139,19 @@ else
         else
             echo -e "  ${YELLOW}⚠ Could not download tzro-mcp. MCP server mode will be unavailable until built from source.${NC}"
         fi
+
+        # Download tzrod daemon
+        TZROD_URL="${RELEASE_BASE}/tzrod-${PLATFORM}-${ARCH_TYPE}"
+        echo -e "  Downloading tzrod daemon from ${TZROD_URL}..."
+        if curl -fSL -o "${INSTALL_DIR}/bin/tzrod" "${TZROD_URL}" 2>/dev/null; then
+            echo -e "  ${GREEN}✔ Downloaded tzrod daemon${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ Could not download tzrod daemon. Daemon background features will be unavailable.${NC}"
+        fi
     fi
     chmod +x "${INSTALL_DIR}/bin/tzro" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/bin/tzro-mcp" 2>/dev/null || true
+    chmod +x "${INSTALL_DIR}/bin/tzrod" 2>/dev/null || true
 
     # Downloading static precompiled llama-server
     # Real downloads target static platform binaries hosted on tzro CDN / GitHub Releases
@@ -240,6 +252,15 @@ EOF
     fi
 fi
 
+if [ "${OS}" = "Darwin" ]; then
+    echo -e "\n  ${BLUE}Bypassing macOS Gatekeeper quarantine on downloaded binaries...${NC}"
+    xattr -d com.apple.quarantine "${INSTALL_DIR}/bin/tzro" 2>/dev/null || true
+    xattr -d com.apple.quarantine "${INSTALL_DIR}/bin/tzro-mcp" 2>/dev/null || true
+    xattr -d com.apple.quarantine "${INSTALL_DIR}/bin/tzrod" 2>/dev/null || true
+    xattr -d com.apple.quarantine "${INSTALL_DIR}/bin/llama-server" 2>/dev/null || true
+    echo -e "  ${GREEN}✔ macOS Gatekeeper quarantine bypassed successfully${NC}"
+fi
+
 # 4. Initialize Local SQLite Databases & Apply Migration
 echo -e "\n${BLUE}[4/5] Initializing Local SQLite databases and schema...${NC}"
 DB_PATH="${INSTALL_DIR}/tzro.db"
@@ -268,6 +289,7 @@ echo -e "=========================================================="
 echo -e "  ${BOLD}Workspace Boundary:${NC}  ${INSTALL_DIR}"
 echo -e "  ${BOLD}Database Booted:${NC}     ${DB_PATH}"
 echo -e "  ${BOLD}Llama Sidecar:${NC}       ${INSTALL_DIR}/bin/llama-server"
+echo -e "  ${BOLD}Daemon:${NC}              ${INSTALL_DIR}/bin/tzrod"
 echo -e "  ${BOLD}MCP Server:${NC}          ${INSTALL_DIR}/bin/tzro-mcp"
 echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
 echo -e "  ${BOLD}Vision Projector:${NC}    ${INSTALL_DIR}/models/mmproj-gemma-4-E4B-it-Q8_0.gguf"

@@ -105,15 +105,24 @@ The Offload Policy applies to **external tool calls** — MCP data-plane tools (
 ### How to Delegate
 1. Ensure the coordinator daemon is running. If not, start it in the background:
    ```bash
+   # If installed globally:
+   tzrod
+   # If running from local repo:
    TZRO_DIR=$(pwd) ./bin/tzrod
    ```
 2. Submit the task prompt to the planner using the CLI:
    ```bash
+   # If installed globally:
+   tzro chat "Your detailed research or automation request"
+   # If running from local repo:
    ./bin/tzro chat "Your detailed research or automation request"
    ```
    Or call the MCP `tzro_run` tool.
 3. Monitor progress offline:
    ```bash
+   # If installed globally:
+   tzro task status <taskId> --offline
+   # If running from local repo:
    ./bin/tzro task status <taskId> --offline
    ```
 4. Read the final cohesive response from the `terminal_synthesis` node once all levels are completed.

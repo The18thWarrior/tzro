@@ -55,6 +55,14 @@ jobs:
         run: |
           go build -ldflags="-s -w" -o "tzro-mcp-${{ matrix.suffix }}" ./cmd/tzro-mcp
 
+      - name: Build tzrod daemon
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -ldflags="-s -w" -o "tzrod-${{ matrix.suffix }}" ./cmd/tzrod
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -62,6 +70,7 @@ jobs:
           path: |
             tzro-${{ matrix.suffix }}
             tzro-mcp-${{ matrix.suffix }}
+            tzrod-${{ matrix.suffix }}
 
   release:
     needs: build
@@ -94,3 +103,6 @@ jobs:
             tzro-mcp-darwin-arm64
             tzro-mcp-darwin-amd64
             tzro-mcp-linux-amd64
+            tzrod-darwin-arm64
+            tzrod-darwin-amd64
+            tzrod-linux-amd64
