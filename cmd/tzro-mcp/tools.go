@@ -26,6 +26,7 @@ import (
 	"tzro/internal/sentinel"
 	"tzro/internal/task"
 	"tzro/internal/tools"
+	"tzro/internal/workflow"
 )
 
 // tzro_run tool definition
@@ -1404,6 +1405,300 @@ func handleTzroSentinelWake(ctx context.Context, req *mcp.CallToolRequest, args 
 	}, nil, nil
 }
 
+// tzro_schedule tool definition
+
+// ScheduleTaskInput defines a single task step within a scheduled workflow.
+type ScheduleTaskInput struct {
+	ID           string `json:"id" jsonschema:"required,Unique task step identifier"`
+	Name         string `json:"name,omitempty" jsonschema:"Human-readable task name"`
+	Instructions string `json:"instructions" jsonschema:"required,Natural language instructions for this task step. Use {{tasks.<id>.output}} to reference upstream task outputs."`
+	Dependencies string `json:"dependencies,omitempty" jsonschema:"Comma-separated IDs of prerequisite task steps that must complete first"`
+}
+
+// TzroScheduleArgs defines inputs for the tzro_schedule tool.
+type TzroScheduleArgs struct {
+	Action      string              `json:"action" jsonschema:"required,Action to perform: create, list, toggle, delete, trigger"`
+	Name        string              `json:"name,omitempty" jsonschema:"Workflow name (required for create)"`
+	Description string              `json:"description,omitempty" jsonschema:"Human-readable workflow description"`
+	Cron        string              `json:"cron,omitempty" jsonschema:"Standard 5-field cron expression e.g. '0 8 * * *' for daily at 8am (required for create)"`
+	Tasks       []ScheduleTaskInput `json:"tasks,omitempty" jsonschema:"Array of task steps to execute on each trigger (required for create)"`
+	WorkflowID  string              `json:"workflowId,omitempty" jsonschema:"Workflow ID (required for toggle, delete, trigger)"`
+	Status      string              `json:"status,omitempty" jsonschema:"Set to active or paused (used with toggle action)"`
+}
+
+func handleTzroSchedule(ctx context.Context, req *mcp.CallToolRequest, args TzroScheduleArgs) (*mcp.CallToolResult, any, error) {
+	switch strings.ToLower(strings.TrimSpace(args.Action)) {
+	case "create":
+		return handleScheduleCreate(ctx, args)
+	case "list":
+		return handleScheduleList(ctx)
+	case "toggle":
+		return handleScheduleToggle(ctx, args)
+	case "delete":
+		return handleScheduleDelete(ctx, args)
+	case "trigger":
+		return handleScheduleTrigger(ctx, args)
+	default:
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "unknown action '%s'. Valid actions: create, list, toggle, delete, trigger"}`, args.Action)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+}
+
+func handleScheduleCreate(ctx context.Context, args TzroScheduleArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Name) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "name is required for create action"}`}},
+			IsError: true,
+		}, nil, nil
+	}
+	if strings.TrimSpace(args.Cron) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "cron expression is required for create action"}`}},
+			IsError: true,
+		}, nil, nil
+	}
+	if len(args.Tasks) == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "at least one task is required for create action"}`}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Validate cron expression by computing next run
+	now := time.Now()
+	nextRun := workflow.ParseCronNext(args.Cron, now)
+	if nextRun.IsZero() {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`{"error": "invalid cron expression: %s"}`, args.Cron)}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Validate task IDs are unique
+	taskIDs := make(map[string]bool, len(args.Tasks))
+	for _, t := range args.Tasks {
+		if strings.TrimSpace(t.ID) == "" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "all tasks must have a non-empty id"}`}},
+				IsError: true,
+			}, nil, nil
+		}
+		if strings.TrimSpace(t.Instructions) == "" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`{"error": "task '%s' must have non-empty instructions"}`, t.ID)}},
+				IsError: true,
+			}, nil, nil
+		}
+		if taskIDs[t.ID] {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`{"error": "duplicate task id: %s"}`, t.ID)}},
+				IsError: true,
+			}, nil, nil
+		}
+		taskIDs[t.ID] = true
+	}
+
+	wfID := fmt.Sprintf("wf_%d", time.Now().UnixNano())
+	nowUnix := now.Unix()
+
+	wf := memory.WorkflowDefinition{
+		ID:            wfID,
+		Name:          args.Name,
+		Description:   args.Description,
+		TriggerType:   "cron",
+		TriggerConfig: args.Cron,
+		Status:        "active",
+		NextRunAt:     nextRun.Unix(),
+		CreatedAt:     nowUnix,
+		UpdatedAt:     nowUnix,
+	}
+
+	var wfTasks []memory.WorkflowTask
+	for _, t := range args.Tasks {
+		wfTasks = append(wfTasks, memory.WorkflowTask{
+			WorkflowID:     wfID,
+			TaskTemplateID: t.ID,
+			Name:           t.Name,
+			Instructions:   t.Instructions,
+			Dependencies:   t.Dependencies,
+		})
+	}
+
+	if err := memory.DB.SaveWorkflow(wf, wfTasks); err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to save workflow: %s"}`, err.Error())}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	respMap := map[string]interface{}{
+		"status":     "created",
+		"workflowId": wfID,
+		"name":       args.Name,
+		"cron":       args.Cron,
+		"nextRunAt":  nextRun.Format(time.RFC3339),
+		"taskCount":  len(wfTasks),
+	}
+	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+func handleScheduleList(ctx context.Context) (*mcp.CallToolResult, any, error) {
+	defs, err := memory.DB.GetWorkflows()
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to list workflows: %s"}`, err.Error())}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	type WorkflowSummary struct {
+		ID            string              `json:"id"`
+		Name          string              `json:"name"`
+		Description   string              `json:"description"`
+		TriggerType   string              `json:"triggerType"`
+		TriggerConfig string              `json:"triggerConfig"`
+		Status        string              `json:"status"`
+		NextRunAt     string              `json:"nextRunAt,omitempty"`
+		Tasks         []memory.WorkflowTask `json:"tasks"`
+	}
+
+	var result []WorkflowSummary
+	for _, d := range defs {
+		tasks, _ := memory.DB.GetWorkflowTasks(d.ID)
+		var nextRunStr string
+		if d.NextRunAt > 0 {
+			nextRunStr = time.Unix(d.NextRunAt, 0).Format(time.RFC3339)
+		}
+		result = append(result, WorkflowSummary{
+			ID:            d.ID,
+			Name:          d.Name,
+			Description:   d.Description,
+			TriggerType:   d.TriggerType,
+			TriggerConfig: d.TriggerConfig,
+			Status:        d.Status,
+			NextRunAt:     nextRunStr,
+			Tasks:         tasks,
+		})
+	}
+
+	if result == nil {
+		result = []WorkflowSummary{}
+	}
+
+	respBytes, _ := json.MarshalIndent(map[string]interface{}{
+		"workflows": result,
+		"count":     len(result),
+	}, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+func handleScheduleToggle(ctx context.Context, args TzroScheduleArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.WorkflowID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "workflowId is required for toggle action"}`}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	status := strings.ToLower(strings.TrimSpace(args.Status))
+	if status != "active" && status != "paused" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "status must be 'active' or 'paused' for toggle action"}`}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Update next run time when activating
+	if status == "active" {
+		defs, _ := memory.DB.GetWorkflows()
+		for _, d := range defs {
+			if d.ID == args.WorkflowID {
+				if d.TriggerType == "cron" && d.TriggerConfig != "" {
+					next := workflow.ParseCronNext(d.TriggerConfig, time.Now())
+					if !next.IsZero() {
+						_ = memory.DB.UpdateWorkflowNextRun(args.WorkflowID, next.Unix())
+					}
+				}
+				break
+			}
+		}
+	} else {
+		_ = memory.DB.UpdateWorkflowNextRun(args.WorkflowID, 0)
+	}
+
+	if err := memory.DB.ToggleWorkflow(args.WorkflowID, status); err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to toggle workflow: %s"}`, err.Error())}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	respBytes, _ := json.MarshalIndent(map[string]string{
+		"status":     "success",
+		"workflowId": args.WorkflowID,
+		"newStatus":  status,
+	}, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+func handleScheduleDelete(ctx context.Context, args TzroScheduleArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.WorkflowID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "workflowId is required for delete action"}`}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	if err := memory.DB.DeleteWorkflow(args.WorkflowID); err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to delete workflow: %s"}`, err.Error())}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	respBytes, _ := json.MarshalIndent(map[string]string{
+		"status":     "deleted",
+		"workflowId": args.WorkflowID,
+	}, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
+func handleScheduleTrigger(ctx context.Context, args TzroScheduleArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.WorkflowID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: `{"error": "workflowId is required for trigger action"}`}},
+			IsError: true,
+		}, nil, nil
+	}
+
+	go func(id string) {
+		if err := workflow.ExecuteWorkflow(context.Background(), id); err != nil {
+			fmt.Fprintf(os.Stderr, "[tzro_schedule] Manual trigger failed for workflow %s: %v\n", id, err)
+		}
+	}(args.WorkflowID)
+
+	respBytes, _ := json.MarshalIndent(map[string]string{
+		"status":     "triggered",
+		"workflowId": args.WorkflowID,
+	}, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+	}, nil, nil
+}
+
 // tzro_workflow tool definition
 
 // WorkflowNodeInput defines a single node in a user-specified DAG workflow.
@@ -2089,6 +2384,16 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_apps_uninstall",
 		Description: "Uninstall an Agent App by its ID. Soft-disables the app by default (deregisters tools, preserves data). Set purge=true to permanently remove all data and tables.",
 	}, handleTzroAppsUninstall)
+
+	// Scheduled workflow management tool
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_schedule",
+		Description: "Create, list, toggle, delete, or manually trigger scheduled workflows. " +
+			"Scheduled workflows use standard 5-field cron expressions and run durably inside the tzro daemon — " +
+			"they persist across restarts and do not depend on any conversation or agent session. " +
+			"Actions: create (requires name, cron, tasks), list, toggle (requires workflowId, status), " +
+			"delete (requires workflowId), trigger (requires workflowId for manual immediate execution).",
+	}, handleTzroSchedule)
 }
 
 // --- Agent App Package Manager MCP tool handlers ---

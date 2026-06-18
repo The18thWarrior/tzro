@@ -28,6 +28,10 @@ NC='\033[0m'
 DRY_RUN="${TZRO_DRY_RUN:-false}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." && pwd)"
+REPLACE_BLOCK="${REPO_ROOT}/plugins/replace_block.sh"
+INSTRUCTION_MARKER="TZRO INSTRUCTIONS"
+
+# Default instructions source — updated by tier selection step
 INSTRUCTIONS_SOURCE="${REPO_ROOT}/plugins/mcp/tzro-agent-instructions.md"
 
 # Interface registry (parallel arrays — bash 3.2 compatible)
@@ -53,7 +57,7 @@ fi
 # ---------------------------------------------------------------------------
 # Step 1: Resolve tzro-mcp binary
 # ---------------------------------------------------------------------------
-echo -e "${BLUE}[1/4] Resolving tzro-mcp binary...${NC}"
+echo -e "${BLUE}[1/5] Resolving tzro-mcp binary...${NC}"
 
 TZRO_MCP_BIN=""
 CANDIDATES=(
@@ -89,7 +93,7 @@ echo -e "  ${GREEN}✔ Binary: ${BOLD}${TZRO_MCP_BIN}${NC}"
 # ---------------------------------------------------------------------------
 # Step 2: Check jq
 # ---------------------------------------------------------------------------
-echo -e "\n${BLUE}[2/4] Checking dependencies...${NC}"
+echo -e "\n${BLUE}[2/5] Checking dependencies...${NC}"
 
 HAS_JQ=false
 if command -v jq &>/dev/null; then
@@ -104,7 +108,7 @@ fi
 # ---------------------------------------------------------------------------
 # Step 3: Auto-detect interfaces
 # ---------------------------------------------------------------------------
-echo -e "\n${BLUE}[3/4] Detecting agentic interfaces...${NC}"
+echo -e "\n${BLUE}[3/5] Detecting agentic interfaces...${NC}"
 
 # Claude Code
 if [ -f "$HOME/.claude.json" ] || [ -d "$HOME/.claude" ]; then
@@ -196,6 +200,82 @@ if [ "${SELECTED_COUNT}" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Step 3.5: Integration Tier Selection
+# ---------------------------------------------------------------------------
+echo -e "\n${BLUE}[3.5/5] Selecting integration tier...${NC}"
+echo -e "  ${DIM}Controls how aggressively agents delegate work to tzro.${NC}"
+echo ""
+
+TIER=""
+if [ "${TZRO_NON_INTERACTIVE:-}" = "true" ]; then
+    TIER="${TZRO_DELEGATION_TIER:-balanced}"
+    echo -e "  ${GREEN}✔ Non-interactive: using '${TIER}' tier${NC}"
+else
+    echo -e "  ${BOLD}Select integration tier:${NC}"
+    echo ""
+    echo -e "    1) ${BOLD}Conservative${NC}"
+    echo -e "       ${DIM}Delegate only for significant cost savings on bulk operations.${NC}"
+    echo -e "       ${DIM}Triggers at 8+ sequential tool calls. Softer 'may delegate' language.${NC}"
+    echo ""
+    echo -e "    2) ${BOLD}Balanced${NC} ${GREEN}(recommended)${NC}"
+    echo -e "       ${DIM}Delegate when task doesn't require frontier model reasoning.${NC}"
+    echo -e "       ${DIM}Triggers at 3+ sequential tool calls. 'Must delegate' for known patterns.${NC}"
+    echo ""
+    echo -e "    3) ${BOLD}Aggressive${NC}"
+    echo -e "       ${DIM}Route everything possible through tzro for maximum local execution.${NC}"
+    echo -e "       ${DIM}Triggers at 2+ sequential tool calls. 'MUST delegate ALL' multi-step tasks.${NC}"
+    echo ""
+    read -p "  Enter 1-3 or press Enter for [2]: " TIER_INPUT
+    case "${TIER_INPUT}" in
+        1) TIER="conservative" ;;
+        3) TIER="aggressive" ;;
+        *) TIER="balanced" ;;
+    esac
+fi
+
+# Validate tier value
+case "${TIER}" in
+    conservative|balanced|aggressive) ;;
+    *)
+        echo -e "  ${YELLOW}⚠ Unknown tier '${TIER}', defaulting to balanced${NC}"
+        TIER="balanced"
+        ;;
+esac
+
+echo -e "  ${GREEN}✔ Integration tier: ${BOLD}${TIER}${NC}"
+
+# Set instructions source based on tier
+if [ "${TIER}" = "balanced" ]; then
+    INSTRUCTIONS_SOURCE="${REPO_ROOT}/plugins/mcp/tzro-agent-instructions.md"
+else
+    INSTRUCTIONS_SOURCE="${REPO_ROOT}/plugins/mcp/tzro-agent-instructions-${TIER}.md"
+fi
+
+if [ ! -f "${INSTRUCTIONS_SOURCE}" ]; then
+    echo -e "  ${YELLOW}⚠ Tier file not found: ${INSTRUCTIONS_SOURCE}${NC}"
+    echo -e "  ${YELLOW}  Falling back to balanced instructions${NC}"
+    INSTRUCTIONS_SOURCE="${REPO_ROOT}/plugins/mcp/tzro-agent-instructions.md"
+    TIER="balanced"
+fi
+
+# Write delegationMode to config.json
+INSTALL_DIR="${TZRO_INSTALL_DIR:-$HOME/.tzro}"
+TZRO_CONFIG="${INSTALL_DIR}/config.json"
+if [ "${HAS_JQ}" = "true" ] && [ "${DRY_RUN}" != "true" ]; then
+    if [ -f "${TZRO_CONFIG}" ]; then
+        local_tmp="${TZRO_CONFIG}.tzro_tier_tmp"
+        jq --arg mode "${TIER}" '.delegationMode = $mode' "${TZRO_CONFIG}" > "${local_tmp}" && mv "${local_tmp}" "${TZRO_CONFIG}"
+        echo -e "  ${GREEN}✔ Set delegationMode='${TIER}' in config.json${NC}"
+    else
+        echo -e "  ${DIM}config.json not found at ${TZRO_CONFIG} — delegationMode will be set on next config write${NC}"
+    fi
+elif [ "${DRY_RUN}" = "true" ]; then
+    echo -e "  ${DIM}[DRY RUN] Would set delegationMode='${TIER}' in config.json${NC}"
+else
+    echo -e "  ${DIM}jq not available — manually set \"delegationMode\": \"${TIER}\" in ${TZRO_CONFIG}${NC}"
+fi
+
+# ---------------------------------------------------------------------------
 # Helper: inject MCP config into a JSON file
 # ---------------------------------------------------------------------------
 inject_mcp_config() {
@@ -270,30 +350,28 @@ write_instructions() {
     local header="${2:-}"  # optional frontmatter/header to prepend
 
     if [ "${DRY_RUN}" = "true" ]; then
-        echo -e "    ${DIM}[DRY RUN] Would create ${target_file}${NC}"
+        echo -e "    ${DIM}[DRY RUN] Would write instructions to ${target_file}${NC}"
         return
     fi
 
     mkdir -p "$(dirname "${target_file}")"
 
-    if [ -f "${target_file}" ]; then
-        # Check if tzro instructions already present
-        if grep -q "tzro — Durable Execution Delegation" "${target_file}" 2>/dev/null; then
-            echo -e "    ${YELLOW}⚠ Instructions already present in ${target_file}${NC}"
-            return
-        fi
-    fi
-
+    # Build the content file (with optional header prepended)
+    local content_tmp="${target_file}.tzro_content_tmp"
     if [ -n "${header}" ]; then
         {
             printf '%s\n\n' "${header}"
             cat "${INSTRUCTIONS_SOURCE}"
-        } > "${target_file}"
+        } > "${content_tmp}"
     else
-        cp "${INSTRUCTIONS_SOURCE}" "${target_file}"
+        cp "${INSTRUCTIONS_SOURCE}" "${content_tmp}"
     fi
 
-    echo -e "    ${GREEN}✔ Instructions written to ${target_file}${NC}"
+    # For dedicated instruction files (not shared files like AGENTS.md),
+    # just overwrite the entire file with the content
+    mv "${content_tmp}" "${target_file}"
+
+    echo -e "    ${GREEN}✔ Instructions written to ${target_file} (tier: ${TIER})${NC}"
 }
 
 # ---------------------------------------------------------------------------
@@ -302,33 +380,14 @@ write_instructions() {
 append_instructions() {
     local target_file="$1"
 
-    if [ "${DRY_RUN}" = "true" ]; then
-        echo -e "    ${DIM}[DRY RUN] Would append tzro section to ${target_file}${NC}"
-        return
-    fi
-
-    # Check if already present
-    if grep -q "tzro — Durable Execution Delegation" "${target_file}" 2>/dev/null; then
-        echo -e "    ${YELLOW}⚠ tzro section already present in ${target_file}${NC}"
-        return
-    fi
-
-    {
-        echo ""
-        echo "<!-- BEGIN TZRO DELEGATION -->"
-        echo ""
-        cat "${INSTRUCTIONS_SOURCE}"
-        echo ""
-        echo "<!-- END TZRO DELEGATION -->"
-    } >> "${target_file}"
-
-    echo -e "    ${GREEN}✔ tzro section appended to ${target_file}${NC}"
+    # Use replace_block.sh for idempotent block replacement
+    bash "${REPLACE_BLOCK}" "${target_file}" "${INSTRUCTION_MARKER}" "${INSTRUCTIONS_SOURCE}"
 }
 
 # ---------------------------------------------------------------------------
 # Step 4: Install per-interface
 # ---------------------------------------------------------------------------
-echo -e "\n${BLUE}[4/4] Configuring selected interfaces...${NC}"
+echo -e "\n${BLUE}[4/5] Configuring selected interfaces...${NC}"
 
 # --- Claude Code (index 0) ---
 if [ "${IFACE_SELECTED[0]}" = "true" ]; then
@@ -440,7 +499,7 @@ fi
 # Universal fallback: AGENTS.md / CLAUDE.md
 # ---------------------------------------------------------------------------
 echo -e "\n  ${BOLD}${MAGENTA}Universal Fallback${NC}"
-echo -e "  ${DIM}Appending tzro delegation instructions to project instruction file...${NC}"
+echo -e "  ${DIM}Injecting tzro delegation instructions (tier: ${TIER})...${NC}"
 
 FALLBACK_DONE=false
 
@@ -463,12 +522,8 @@ else
         fi
     fi
     if [ "$create_agents" = "true" ]; then
-        if [ "${DRY_RUN}" = "true" ]; then
-            echo -e "    ${DIM}[DRY RUN] Would create AGENTS.md${NC}"
-        else
-            cp "${INSTRUCTIONS_SOURCE}" "AGENTS.md"
-            echo -e "    ${GREEN}✔ Created AGENTS.md with tzro instructions${NC}"
-        fi
+        # Use replace_block.sh to create the file with markers
+        bash "${REPLACE_BLOCK}" "AGENTS.md" "${INSTRUCTION_MARKER}" "${INSTRUCTIONS_SOURCE}"
         FALLBACK_DONE=true
     fi
 fi
@@ -489,7 +544,7 @@ for i in "${!IFACE_IDS[@]}"; do
 done
 
 if [ "${FALLBACK_DONE}" = "true" ]; then
-    echo -e "  ${GREEN}✔${NC} Project instructions updated"
+    echo -e "  ${GREEN}✔${NC} Project instructions updated (tier: ${TIER})"
 fi
 
 echo ""

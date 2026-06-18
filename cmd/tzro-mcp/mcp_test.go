@@ -166,6 +166,7 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 		"tzro_sentinel_alerts":       false,
 		"tzro_sentinel_wake":         false,
 		"tzro_workflow":              false,
+		"tzro_schedule":              false,
 	}
 
 	for _, toolItem := range tools {
@@ -1936,5 +1937,203 @@ func TestTzroAppsUninstall_RejectsUnknownApp(t *testing.T) {
 	text := result.Content[0].(*mcp.TextContent).Text
 	if !strings.Contains(text, "not installed") {
 		t.Errorf("expected 'not installed' error, got: %s", text)
+	}
+}
+
+// --- tzro_schedule unit tests ---
+
+func TestTzroSchedule_CRUD(t *testing.T) {
+	// Set up temp DB
+	tmpDir, err := os.MkdirTemp("", "tzro-schedule-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	dbPath := filepath.Join(tmpDir, "tzro.db")
+	memory.DB.SetDBPathForTesting(dbPath)
+	defer func() {
+		memory.DB.Close()
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init DB: %v", err)
+	}
+
+	ctx := context.TODO()
+
+	// --- Test validation errors ---
+
+	// Missing name
+	result, _, err := handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "create", Cron: "0 8 * * *", Tasks: []ScheduleTaskInput{{ID: "t1", Instructions: "do something"}}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error for missing name")
+	}
+
+	// Missing cron
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "create", Name: "test", Tasks: []ScheduleTaskInput{{ID: "t1", Instructions: "do something"}}})
+	if !result.IsError {
+		t.Fatal("expected error for missing cron")
+	}
+
+	// Missing tasks
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "create", Name: "test", Cron: "0 8 * * *"})
+	if !result.IsError {
+		t.Fatal("expected error for missing tasks")
+	}
+
+	// Duplicate task IDs
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{
+		Action: "create",
+		Name:   "test",
+		Cron:   "0 8 * * *",
+		Tasks:  []ScheduleTaskInput{{ID: "t1", Instructions: "a"}, {ID: "t1", Instructions: "b"}},
+	})
+	if !result.IsError {
+		t.Fatal("expected error for duplicate task IDs")
+	}
+
+	// Unknown action
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "foobar"})
+	if !result.IsError {
+		t.Fatal("expected error for unknown action")
+	}
+
+	// --- Test create ---
+
+	result, _, err = handleTzroSchedule(ctx, nil, TzroScheduleArgs{
+		Action:      "create",
+		Name:        "Daily AI News",
+		Description: "Summarize AI news each morning",
+		Cron:        "0 8 * * *",
+		Tasks: []ScheduleTaskInput{
+			{ID: "research", Name: "Research", Instructions: "Use web_search to find the latest AI news and trends"},
+			{ID: "summarize", Name: "Summarize", Instructions: "Compile findings into a structured summary and save to memory", Dependencies: "research"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("create returned error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "created") {
+		t.Errorf("expected 'created' status, got: %s", text)
+	}
+
+	// Extract workflow ID
+	var createResp map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &createResp); err != nil {
+		t.Fatalf("failed to parse create response: %v", err)
+	}
+	wfID, ok := createResp["workflowId"].(string)
+	if !ok || wfID == "" {
+		t.Fatalf("missing workflowId in create response: %s", text)
+	}
+
+	if !strings.Contains(text, "0 8 * * *") {
+		t.Errorf("expected cron expression in response, got: %s", text)
+	}
+
+	// --- Test list ---
+
+	result, _, err = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "list"})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("list returned error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+	listText := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(listText, "Daily AI News") {
+		t.Errorf("expected workflow name in list, got: %s", listText)
+	}
+	if !strings.Contains(listText, wfID) {
+		t.Errorf("expected workflow ID in list, got: %s", listText)
+	}
+	if !strings.Contains(listText, "research") || !strings.Contains(listText, "summarize") {
+		t.Errorf("expected task IDs in list, got: %s", listText)
+	}
+
+	// --- Test toggle (pause) ---
+
+	result, _, err = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "toggle", WorkflowID: wfID, Status: "paused"})
+	if err != nil {
+		t.Fatalf("toggle failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("toggle returned error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+	toggleText := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(toggleText, "paused") {
+		t.Errorf("expected paused status, got: %s", toggleText)
+	}
+
+	// Verify it's paused in list
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "list"})
+	if !strings.Contains(result.Content[0].(*mcp.TextContent).Text, `"status": "paused"`) {
+		t.Errorf("expected workflow to show as paused in list")
+	}
+
+	// --- Test toggle (reactivate) ---
+
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "toggle", WorkflowID: wfID, Status: "active"})
+	if result.IsError {
+		t.Fatalf("reactivate returned error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+
+	// --- Test toggle validation ---
+
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "toggle", WorkflowID: wfID, Status: "invalid"})
+	if !result.IsError {
+		t.Fatal("expected error for invalid toggle status")
+	}
+
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "toggle", Status: "active"})
+	if !result.IsError {
+		t.Fatal("expected error for missing workflowId in toggle")
+	}
+
+	// --- Test trigger ---
+
+	// Trigger won't actually execute (no tasks in executor), but should return success
+	result, _, err = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "trigger", WorkflowID: wfID})
+	if err != nil {
+		t.Fatalf("trigger failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("trigger returned error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+	triggerText := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(triggerText, "triggered") {
+		t.Errorf("expected 'triggered' status, got: %s", triggerText)
+	}
+
+	// --- Test delete ---
+
+	result, _, err = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "delete", WorkflowID: wfID})
+	if err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("delete returned error: %s", result.Content[0].(*mcp.TextContent).Text)
+	}
+	deleteText := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(deleteText, "deleted") {
+		t.Errorf("expected 'deleted' status, got: %s", deleteText)
+	}
+
+	// Verify it's gone from list
+	result, _, _ = handleTzroSchedule(ctx, nil, TzroScheduleArgs{Action: "list"})
+	listAfterDelete := result.Content[0].(*mcp.TextContent).Text
+	if strings.Contains(listAfterDelete, wfID) {
+		t.Errorf("expected workflow to be removed from list after delete, got: %s", listAfterDelete)
 	}
 }

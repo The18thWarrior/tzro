@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 	"tzro/internal/config"
 	"tzro/internal/executor"
@@ -13,6 +15,7 @@ import (
 	"tzro/internal/memory"
 	"tzro/internal/observer"
 	"tzro/internal/packagemanager"
+	"tzro/internal/pidlock"
 	"tzro/internal/proactivity"
 	"tzro/internal/sentinel"
 	"tzro/internal/server"
@@ -23,6 +26,21 @@ import (
 )
 
 func main() {
+	// Singleton guard: ensure only one tzrod per workspace
+	lockDir := config.ResolvePath(".")
+	_ = os.MkdirAll(lockDir, 0755)
+	lockPath := filepath.Join(lockDir, "daemon.lock")
+	unlock, lockErr := pidlock.Acquire(lockPath)
+	if lockErr != nil {
+		var alreadyRunning *pidlock.ErrAlreadyRunning
+		if errors.As(lockErr, &alreadyRunning) {
+			fmt.Printf("[tzrod] Another daemon is already running (PID %d). Exiting.\n", alreadyRunning.HolderPID)
+			os.Exit(0)
+		}
+		log.Fatalf("[tzrod] Failed to acquire daemon lockfile: %v", lockErr)
+	}
+	defer unlock()
+
 	fmt.Println("==========================================================")
 	fmt.Println("          tzro - Durable Agentic Execution Engine         ")
 	fmt.Println("==========================================================")

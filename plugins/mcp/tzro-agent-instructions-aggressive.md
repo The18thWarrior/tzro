@@ -1,7 +1,3 @@
----
-applyTo: "**/*"
----
-
 # tzro — Durable Local-First Execution Engine (Aggressive Integration)
 
 `tzro` compiles natural language prompts into topologically-sorted DAG (Directed Acyclic Graph) workflows, executes them durably with checkpointing, and provides relational memory, knowledge graph, and micro-skill extraction. This file contains **strict delegation rules** for AI coding agents — you MUST route all eligible work through `tzro` via MCP or CLI.

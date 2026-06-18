@@ -24,12 +24,41 @@ var version = "1.0.0"
 var mcpServer *mcp.Server
 
 func isDaemonRunning() bool {
-	daemonURL := config.GetDaemonURL()
-	url := fmt.Sprintf("%s/api/config", daemonURL)
 	client := &http.Client{
 		Timeout: 500 * time.Millisecond,
 	}
-	resp, err := client.Get(url)
+
+	// Try the port file URL first (most accurate when available)
+	daemonURL := config.GetDaemonURL()
+	if probeDaemon(client, daemonURL) {
+		return true
+	}
+
+	// Fall back to the default port — the surviving daemon may be on :8080
+	// while the port file is stale from a previous session.
+	defaultURL := "http://127.0.0.1:8080"
+	if defaultURL != daemonURL && probeDaemon(client, defaultURL) {
+		// Update the port file so GetDaemonURL returns the correct URL
+		_ = config.WriteDaemonPort(8080)
+		log.Printf("[tzro-mcp] Found existing daemon at %s (port file was stale)\n", defaultURL)
+		return true
+	}
+
+	return false
+}
+
+// probeDaemon sends a health check to the given daemon URL.
+func probeDaemon(client *http.Client, baseURL string) bool {
+	// Try /health first (lightweight, always 200 when healthy)
+	resp, err := client.Get(fmt.Sprintf("%s/health", baseURL))
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return true
+		}
+	}
+	// Fall back to /api/config for older daemons that might not have /health
+	resp, err = client.Get(fmt.Sprintf("%s/api/config", baseURL))
 	if err == nil {
 		resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
@@ -120,6 +149,16 @@ func main() {
 	// Check if daemon is running, if not start it
 	if !isDaemonRunning() {
 		startDaemon()
+		// Wait for the new daemon to become responsive (up to 5 seconds)
+		for i := 0; i < 10; i++ {
+			time.Sleep(500 * time.Millisecond)
+			if isDaemonRunning() {
+				log.Println("[tzro-mcp] Daemon is ready")
+				break
+			}
+		}
+	} else {
+		log.Println("[tzro-mcp] Reusing existing daemon at", config.GetDaemonURL())
 	}
 
 	// Bootstrap engine subsystems (config, memory DB, inference, tools, observer)

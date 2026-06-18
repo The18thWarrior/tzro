@@ -64,3 +64,9 @@ tzro_plugin
 
 superpowers
 .superpowers
+
+.daemon.port
+daemon.lock
+
+config.json
+mcp.lock
