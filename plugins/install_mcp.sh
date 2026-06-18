@@ -12,11 +12,24 @@
 
 set -euo pipefail
 
-# If stdin is not a terminal (e.g. parent was invoked via curl|bash),
-# reopen it from /dev/tty so interactive read prompts work.
-if [ ! -t 0 ] && [ -e /dev/tty ]; then
-    exec < /dev/tty
+# Detect if stdin is a terminal. If not (e.g. curl|bash), individual read
+# calls must redirect from /dev/tty. We avoid `exec < /dev/tty` because it
+# causes a malloc double-free crash in macOS bash 3.2 during exit cleanup.
+_STDIN_IS_TTY=true
+if [ ! -t 0 ]; then
+    _STDIN_IS_TTY=false
 fi
+
+# Wrapper: read from /dev/tty when stdin is not a terminal
+_tty_read() {
+    if [ "${_STDIN_IS_TTY}" = "true" ]; then
+        read "$@"
+    elif [ -e /dev/tty ]; then
+        read "$@" < /dev/tty
+    else
+        read "$@"
+    fi
+}
 
 # ---------------------------------------------------------------------------
 # ANSI colors
@@ -86,7 +99,7 @@ if [ -z "${TZRO_MCP_BIN}" ]; then
         echo -e "  ${RED}Error: Cannot auto-detect tzro-mcp binary in non-interactive mode.${NC}"
         exit 1
     fi
-    read -p "  Enter the absolute path to tzro-mcp: " TZRO_MCP_BIN
+    _tty_read -p "  Enter the absolute path to tzro-mcp: " TZRO_MCP_BIN
     TZRO_MCP_BIN="${TZRO_MCP_BIN/#\~/$HOME}"
     if [ ! -f "${TZRO_MCP_BIN}" ]; then
         echo -e "  ${RED}Error: '${TZRO_MCP_BIN}' does not exist.${NC}"
@@ -174,7 +187,7 @@ echo ""
 if [ "${TZRO_NON_INTERACTIVE:-}" = "true" ]; then
     SELECTION_INPUT=""
 else
-    read -p "  Enter numbers (e.g., 1 2 3) or press Enter for detected: " SELECTION_INPUT
+    _tty_read -p "  Enter numbers (e.g., 1 2 3) or press Enter for detected: " SELECTION_INPUT
 fi
 
 # Build selected list
@@ -231,7 +244,7 @@ else
     echo -e "       ${DIM}Route everything possible through tzro for maximum local execution.${NC}"
     echo -e "       ${DIM}Triggers at 2+ sequential tool calls. 'MUST delegate ALL' multi-step tasks.${NC}"
     echo ""
-    read -p "  Enter 1-3 or press Enter for [2]: " TIER_INPUT
+    _tty_read -p "  Enter 1-3 or press Enter for [2]: " TIER_INPUT
     case "${TIER_INPUT}" in
         1) TIER="conservative" ;;
         3) TIER="aggressive" ;;
@@ -534,7 +547,7 @@ else
     echo -e "  ${DIM}Neither AGENTS.md nor CLAUDE.md found.${NC}"
     create_agents=true
     if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
-        read -p "  Create AGENTS.md with tzro instructions? (y/n) " -n 1 -r
+        _tty_read -p "  Create AGENTS.md with tzro instructions? (y/n) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             create_agents=false

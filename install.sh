@@ -405,11 +405,9 @@ if [ -f "${MCP_INSTALLER}" ]; then
         export TZRO_NON_INTERACTIVE=true
         _run_mcp_installer
     elif [ -e /dev/tty ]; then
-        # stdin is a pipe (e.g. curl | bash) but a terminal exists — reopen it
-        # We redirect the entire sub-block from /dev/tty so child scripts
-        # (install_mcp.sh, install_plugins.sh) also inherit a real terminal.
-        exec 3<&0          # save original stdin
-        exec 0</dev/tty    # reopen stdin from terminal
+        # stdin is a pipe (e.g. curl | bash) but a terminal exists.
+        # Use command-level redirects (< /dev/tty) instead of exec to avoid
+        # a malloc double-free crash in macOS bash 3.2 during exit cleanup.
         echo
         echo -e "=========================================================="
         echo -e "${CYAN}${BOLD}  ⚙  AI Editor Configuration${NC}"
@@ -417,13 +415,11 @@ if [ -f "${MCP_INSTALLER}" ]; then
         echo -e "${DIM}  This will auto-detect Claude Code, Cursor, Windsurf, Copilot, etc.${NC}"
         echo -e "${DIM}  and wire up MCP tools + agent instructions.${NC}"
         echo
-        read -p "  $(echo -e "${BOLD}")Run the MCP installer? (y/n)$(echo -e "${NC}") " -n 1 -r
+        read -p "  $(echo -e "${BOLD}")Run the MCP installer? (y/n)$(echo -e "${NC}") " -n 1 -r < /dev/tty
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            _run_mcp_installer
+            _run_mcp_installer < /dev/tty
         fi
-        exec 0<&3           # restore original stdin
-        exec 3<&-           # close saved fd
     else
         # Truly headless (no TTY at all) — auto-run
         echo -e "${BLUE}No interactive terminal detected. Running MCP installer automatically...${NC}"

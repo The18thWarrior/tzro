@@ -3,11 +3,24 @@
 # tzro native plugin installer script
 set -euo pipefail
 
-# If stdin is not a terminal (e.g. parent was invoked via curl|bash),
-# reopen it from /dev/tty so interactive read prompts work.
-if [ ! -t 0 ] && [ -e /dev/tty ]; then
-    exec < /dev/tty
+# Detect if stdin is a terminal. If not (e.g. curl|bash), individual read
+# calls must redirect from /dev/tty. We avoid `exec < /dev/tty` because it
+# causes a malloc double-free crash in macOS bash 3.2 during exit cleanup.
+_STDIN_IS_TTY=true
+if [ ! -t 0 ]; then
+    _STDIN_IS_TTY=false
 fi
+
+# Wrapper: read from /dev/tty when stdin is not a terminal
+_tty_read() {
+    if [ "${_STDIN_IS_TTY}" = "true" ]; then
+        read "$@"
+    elif [ -e /dev/tty ]; then
+        read "$@" < /dev/tty
+    else
+        read "$@"
+    fi
+}
 
 # ANSI color codes for premium aesthetics
 GREEN='\033[0;32m'
@@ -57,7 +70,7 @@ install_antigravity_ide() {
             echo -e "  ${YELLOW}⚠ IDE plugin already installed at ${TARGET_DIR}${NC}"
             local overwrite=true
             if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
-                read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
+                _tty_read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
                 echo
                 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                     overwrite=false
@@ -114,7 +127,7 @@ install_antigravity_sdk() {
             return
         fi
     else
-        read -p "  Enter the absolute path to your Python project directory: " target_project
+        _tty_read -p "  Enter the absolute path to your Python project directory: " target_project
     fi
     
     # Resolve tilde
@@ -124,7 +137,7 @@ install_antigravity_sdk() {
         echo -e "  ${YELLOW}⚠ Target directory '${TARGET_PROJECT}' does not exist.${NC}"
         local create_dir=true
         if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
-            read -p "  Do you want to create it? (y/n) " -n 1 -r
+            _tty_read -p "  Do you want to create it? (y/n) " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 create_dir=false
@@ -174,7 +187,7 @@ install_hermes() {
         echo -e "  ${YELLOW}⚠ Hermes plugins directory not found at ${HERMES_PLUGINS_DIR}${NC}"
         local create_dir=true
         if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
-            read -p "  Do you want to create it? (y/n) " -n 1 -r
+            _tty_read -p "  Do you want to create it? (y/n) " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 create_dir=false
@@ -194,7 +207,7 @@ install_hermes() {
         echo -e "  ${YELLOW}⚠ Hermes plugin already installed at ${TARGET_TZRO}${NC}"
         local overwrite=true
         if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
-            read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
+            _tty_read -p "  Do you want to overwrite it? (y/n) " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 overwrite=false
@@ -240,7 +253,7 @@ if [ "${INSTALL_SDK}" != "true" ] && [ "${INSTALL_HERMES}" != "true" ] && [ "${T
     echo -e "  ${DIM}These are for developers who want to use tzro from Python or Hermes agents.${NC}"
     echo -e "  ${DIM}You can always run this installer again later.${NC}"
     echo
-    read -p "  Install SDK + Hermes plugins? (y/N) " -n 1 -r
+    _tty_read -p "  Install SDK + Hermes plugins? (y/N) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         INSTALL_SDK=true
