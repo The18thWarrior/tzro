@@ -378,7 +378,15 @@ MCP_INSTALLER="${INSTALL_DIR}/plugins/install_mcp.sh"
 PLUGINS_INSTALLER="${INSTALL_DIR}/plugins/install_plugins.sh"
 
 if [ -f "${MCP_INSTALLER}" ]; then
+    _run_mcp_installer() {
+        bash "${MCP_INSTALLER}"
+        if [ -f "${PLUGINS_INSTALLER}" ]; then
+            bash "${PLUGINS_INSTALLER}"
+        fi
+    }
+
     if [ -t 0 ]; then
+        # stdin is a terminal — prompt interactively
         echo
         echo -e "=========================================================="
         echo -e "${CYAN}${BOLD}  ⚙  AI Editor Configuration${NC}"
@@ -389,17 +397,31 @@ if [ -f "${MCP_INSTALLER}" ]; then
         read -p "  $(echo -e "${BOLD}")Run the MCP installer? (y/n)$(echo -e "${NC}") " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            bash "${MCP_INSTALLER}"
-            if [ -f "${PLUGINS_INSTALLER}" ]; then
-                bash "${PLUGINS_INSTALLER}"
-            fi
+            _run_mcp_installer
         fi
     elif [ "${TZRO_NON_INTERACTIVE:-}" = "true" ] || [ -n "${ANTIGRAVITY_AGENT:-}" ] || [ -n "${CLAUDE:-}" ] || [ -n "${CLAUDE_AGENT:-}" ]; then
+        # Explicitly non-interactive (agent or CI) — auto-run
         echo -e "${BLUE}Running MCP and plugin installers non-interactively...${NC}"
         export TZRO_NON_INTERACTIVE=true
-        bash "${MCP_INSTALLER}"
-        if [ -f "${PLUGINS_INSTALLER}" ]; then
-            bash "${PLUGINS_INSTALLER}"
+        _run_mcp_installer
+    elif [ -e /dev/tty ]; then
+        # stdin is a pipe (e.g. curl | bash) but a terminal exists — reopen it
+        echo
+        echo -e "=========================================================="
+        echo -e "${CYAN}${BOLD}  ⚙  AI Editor Configuration${NC}"
+        echo -e "=========================================================="
+        echo -e "${DIM}  This will auto-detect Claude Code, Cursor, Windsurf, Copilot, etc.${NC}"
+        echo -e "${DIM}  and wire up MCP tools + agent instructions.${NC}"
+        echo
+        read -p "  $(echo -e "${BOLD}")Run the MCP installer? (y/n)$(echo -e "${NC}") " -n 1 -r < /dev/tty
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            _run_mcp_installer
         fi
+    else
+        # Truly headless (no TTY at all) — auto-run
+        echo -e "${BLUE}No interactive terminal detected. Running MCP installer automatically...${NC}"
+        export TZRO_NON_INTERACTIVE=true
+        _run_mcp_installer
     fi
 fi
