@@ -364,6 +364,9 @@ else
         if [ -d "${TEMP_EXTRACT}/tzro-main/plugins" ]; then
             rm -rf "${INSTALL_DIR}/plugins"
             cp -r "${TEMP_EXTRACT}/tzro-main/plugins" "${INSTALL_DIR}/"
+            echo -e "  ${GREEN}✔ Plugins downloaded and installed successfully${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ Downloaded archive did not contain plugins directory. Skipping editor configuration.${NC}"
         fi
         rm -rf "${TEMP_ZIP}" "${TEMP_EXTRACT}"
     else
@@ -376,11 +379,14 @@ PLUGINS_INSTALLER="${INSTALL_DIR}/plugins/install_plugins.sh"
 
 if [ -f "${MCP_INSTALLER}" ]; then
     if [ -t 0 ]; then
-        echo -e "${CYAN}${BOLD}Want to configure tzro for your AI editors?${NC}"
+        echo
+        echo -e "=========================================================="
+        echo -e "${CYAN}${BOLD}  ⚙  AI Editor Configuration${NC}"
+        echo -e "=========================================================="
         echo -e "${DIM}  This will auto-detect Claude Code, Cursor, Windsurf, Copilot, etc.${NC}"
         echo -e "${DIM}  and wire up MCP tools + agent instructions.${NC}"
-        echo ""
-        read -p "  Run the MCP installer? (y/n) " -n 1 -r
+        echo
+        read -p "  $(echo -e "${BOLD}")Run the MCP installer? (y/n)$(echo -e "${NC}") " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             bash "${MCP_INSTALLER}"
