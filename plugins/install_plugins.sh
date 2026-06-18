@@ -226,11 +226,35 @@ install_hermes() {
     echo -e "  --------------------------------------------------------"
 }
 
-# Main installer flow
+# Main installer flow — IDE plugin always installs
 install_antigravity_ide
-install_antigravity_sdk
-install_hermes
+
+# SDK and Hermes are opt-in (advanced integrations)
+INSTALL_SDK="${TZRO_INSTALL_SDK:-false}"
+INSTALL_HERMES="${TZRO_INSTALL_HERMES:-false}"
+
+if [ "${INSTALL_SDK}" != "true" ] && [ "${INSTALL_HERMES}" != "true" ] && [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
+    echo
+    echo -e "  ${BOLD}Optional integrations:${NC}"
+    echo -e "  ${DIM}These are for developers who want to use tzro from Python or Hermes agents.${NC}"
+    echo -e "  ${DIM}You can always run this installer again later.${NC}"
+    echo
+    read -p "  Install SDK + Hermes plugins? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        INSTALL_SDK=true
+        INSTALL_HERMES=true
+    fi
+fi
+
+if [ "${INSTALL_SDK}" = "true" ]; then
+    install_antigravity_sdk
+fi
+
+if [ "${INSTALL_HERMES}" = "true" ]; then
+    install_hermes
+fi
 
 echo -e "\n${BOLD}${GREEN}==========================================================${NC}"
-echo -e "${BOLD}${GREEN}✔ INSTALLATION PROCESS COMPLETE${NC}"
+echo -e "${BOLD}${GREEN}✔ PLUGIN INSTALLATION COMPLETE${NC}"
 echo -e "${BOLD}${GREEN}==========================================================${NC}\n"
