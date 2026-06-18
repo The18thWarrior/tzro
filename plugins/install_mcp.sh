@@ -347,7 +347,20 @@ inject_mcp_config() {
        ".${json_key}.tzro = {\"command\": \$cmd, \"args\": [], \"env\": \$env}" \
        "${config_file}" > "${tmp_file}" 2>/dev/null; then
         mv "${tmp_file}" "${config_file}"
-        echo -e "    ${GREEN}✔ MCP config injected into ${config_file}${NC}"
+        # Verify the write actually persisted (detect external overwrites)
+        local verify
+        verify=$(jq -r ".${json_key}.tzro.command // empty" "${config_file}" 2>/dev/null || true)
+        if [ -n "${verify}" ]; then
+            echo -e "    ${GREEN}✔ MCP config injected into ${config_file}${NC}"
+        else
+            echo -e "    ${RED}✘ Write succeeded but verification failed — file was overwritten externally${NC}"
+            echo -e "    ${DIM}Current contents of ${config_file}:${NC}"
+            cat "${config_file}" 2>/dev/null | head -10 | while IFS= read -r line; do
+                echo -e "    ${DIM}  ${line}${NC}"
+            done
+            echo -e "    ${YELLOW}Hint: An IDE or editor may be watching this file and resetting it.${NC}"
+            echo -e "    ${YELLOW}Try closing Antigravity IDE / Gemini CLI before running the installer.${NC}"
+        fi
     else
         rm -f "${tmp_file}"
         echo -e "    ${RED}✘ Failed to inject MCP config into ${config_file}${NC}"
@@ -583,4 +596,57 @@ echo ""
 echo -e "  ${DIM}Agents will now discover tzro tools via MCP and know how${NC}"
 echo -e "  ${DIM}to delegate complex workflows using the injected instructions.${NC}"
 echo -e "${BOLD}${GREEN}══════════════════════════════════════════════════════════${NC}"
+
+# Final verification: confirm config files actually have tzro entries
+INSTALL_DIR="${TZRO_INSTALL_DIR:-$HOME/.tzro}"
+_CONFIG_FAILURES=0
+_verify_config() {
+    local f="$1"
+    if [ -f "$f" ]; then
+        local cmd
+        cmd=$(jq -r '.mcpServers.tzro.command // empty' "$f" 2>/dev/null || true)
+        if [ -n "$cmd" ]; then
+            echo -e "  ${GREEN}✔${NC} ${DIM}${f}${NC} → ${cmd}"
+        else
+            echo -e "  ${RED}✘${NC} ${f} — ${YELLOW}tzro entry missing or was overwritten${NC}"
+            echo -e "    ${DIM}$(cat "$f" 2>/dev/null | head -3)${NC}"
+            _CONFIG_FAILURES=$((_CONFIG_FAILURES + 1))
+        fi
+    fi
+}
+
 echo ""
+echo -e "  ${BOLD}Config Verification:${NC}"
+_verify_config "$HOME/.gemini/config/mcp_config.json"
+_verify_config "$HOME/.gemini/antigravity/mcp_config.json"
+_verify_config "$HOME/.gemini/antigravity-ide/mcp_config.json"
+_verify_config "$HOME/.gemini/mcp_config.json"
+
+if [ "${_CONFIG_FAILURES}" -gt 0 ]; then
+    echo ""
+    echo -e "  ${YELLOW}${BOLD}⚠ Some config files were overwritten by your IDE.${NC}"
+    echo -e "  ${DIM}Your editor likely reset the config. Paste the prompt below${NC}"
+    echo -e "  ${DIM}into your AI editor chat to fix it:${NC}"
+    echo ""
+    echo -e "  ${CYAN}─────────────── Copy below this line ───────────────${NC}"
+    echo ""
+    echo -e "  Add tzro as an MCP server to my mcp_config.json. Write this"
+    echo -e "  JSON to ~/.gemini/config/mcp_config.json, merging with any"
+    echo -e "  existing mcpServers entries (don't remove other servers):"
+    echo ""
+    echo -e "  ${BOLD}{${NC}"
+    echo -e "  ${BOLD}  \"mcpServers\": {${NC}"
+    echo -e "  ${BOLD}    \"tzro\": {${NC}"
+    echo -e "  ${BOLD}      \"command\": \"${TZRO_MCP_BIN}\",${NC}"
+    echo -e "  ${BOLD}      \"args\": [],${NC}"
+    echo -e "  ${BOLD}      \"env\": {${NC}"
+    echo -e "  ${BOLD}        \"TZRO_DIR\": \"${INSTALL_DIR}\"${NC}"
+    echo -e "  ${BOLD}      }${NC}"
+    echo -e "  ${BOLD}    }${NC}"
+    echo -e "  ${BOLD}  }${NC}"
+    echo -e "  ${BOLD}}${NC}"
+    echo ""
+    echo -e "  ${CYAN}─────────────── Copy above this line ───────────────${NC}"
+else
+    echo ""
+fi
