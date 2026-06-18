@@ -311,18 +311,7 @@ inject_mcp_config() {
     local existing
     existing=$(jq -r ".${json_key}.tzro // empty" "${config_file}" 2>/dev/null || true)
     if [ -n "${existing}" ]; then
-        echo -e "    ${YELLOW}⚠ tzro already configured in ${config_file}${NC}"
-        local overwrite=true
-        if [ "${TZRO_NON_INTERACTIVE:-}" != "true" ]; then
-            read -p "    Overwrite? (y/n) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                overwrite=false
-            fi
-        fi
-        if [ "$overwrite" = "false" ]; then
-            return
-        fi
+        echo -e "    ${DIM}Updating existing tzro entry in ${config_file}${NC}"
     fi
 
     # Build env object
@@ -340,12 +329,32 @@ inject_mcp_config() {
 
     # Inject the tzro MCP server entry
     local tmp_file="${config_file}.tzro_tmp"
-    jq --arg cmd "${TZRO_MCP_BIN}" \
+    if jq --arg cmd "${TZRO_MCP_BIN}" \
        --argjson env "${env_json}" \
        ".${json_key}.tzro = {\"command\": \$cmd, \"args\": [], \"env\": \$env}" \
-       "${config_file}" > "${tmp_file}" && mv "${tmp_file}" "${config_file}"
-
-    echo -e "    ${GREEN}✔ MCP config injected into ${config_file}${NC}"
+       "${config_file}" > "${tmp_file}" 2>/dev/null; then
+        mv "${tmp_file}" "${config_file}"
+        echo -e "    ${GREEN}✔ MCP config injected into ${config_file}${NC}"
+    else
+        rm -f "${tmp_file}"
+        echo -e "    ${RED}✘ Failed to inject MCP config into ${config_file}${NC}"
+        echo -e "    ${DIM}The file may contain invalid JSON. Contents:${NC}"
+        head -5 "${config_file}" 2>/dev/null | while IFS= read -r line; do
+            echo -e "    ${DIM}  ${line}${NC}"
+        done
+        echo -e "    ${YELLOW}Creating fresh config file and retrying...${NC}"
+        echo '{}' > "${config_file}"
+        if jq --arg cmd "${TZRO_MCP_BIN}" \
+           --argjson env "${env_json}" \
+           ".${json_key}.tzro = {\"command\": \$cmd, \"args\": [], \"env\": \$env}" \
+           "${config_file}" > "${tmp_file}" 2>/dev/null; then
+            mv "${tmp_file}" "${config_file}"
+            echo -e "    ${GREEN}✔ MCP config injected into ${config_file} (after reset)${NC}"
+        else
+            rm -f "${tmp_file}"
+            echo -e "    ${RED}✘ Retry also failed. Skipping ${config_file}${NC}"
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
