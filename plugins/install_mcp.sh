@@ -12,6 +12,12 @@
 
 set -euo pipefail
 
+# If stdin is not a terminal (e.g. parent was invoked via curl|bash),
+# reopen it from /dev/tty so interactive read prompts work.
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+    exec < /dev/tty
+fi
+
 # ---------------------------------------------------------------------------
 # ANSI colors
 # ---------------------------------------------------------------------------

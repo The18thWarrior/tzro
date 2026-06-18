@@ -406,6 +406,10 @@ if [ -f "${MCP_INSTALLER}" ]; then
         _run_mcp_installer
     elif [ -e /dev/tty ]; then
         # stdin is a pipe (e.g. curl | bash) but a terminal exists — reopen it
+        # We redirect the entire sub-block from /dev/tty so child scripts
+        # (install_mcp.sh, install_plugins.sh) also inherit a real terminal.
+        exec 3<&0          # save original stdin
+        exec 0</dev/tty    # reopen stdin from terminal
         echo
         echo -e "=========================================================="
         echo -e "${CYAN}${BOLD}  ⚙  AI Editor Configuration${NC}"
@@ -413,11 +417,13 @@ if [ -f "${MCP_INSTALLER}" ]; then
         echo -e "${DIM}  This will auto-detect Claude Code, Cursor, Windsurf, Copilot, etc.${NC}"
         echo -e "${DIM}  and wire up MCP tools + agent instructions.${NC}"
         echo
-        read -p "  $(echo -e "${BOLD}")Run the MCP installer? (y/n)$(echo -e "${NC}") " -n 1 -r < /dev/tty
+        read -p "  $(echo -e "${BOLD}")Run the MCP installer? (y/n)$(echo -e "${NC}") " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             _run_mcp_installer
         fi
+        exec 0<&3           # restore original stdin
+        exec 3<&-           # close saved fd
     else
         # Truly headless (no TTY at all) — auto-run
         echo -e "${BLUE}No interactive terminal detected. Running MCP installer automatically...${NC}"
