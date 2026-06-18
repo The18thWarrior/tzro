@@ -42,7 +42,7 @@ INSTRUCTIONS_SOURCE="${REPO_ROOT}/plugins/mcp/tzro-agent-instructions.md"
 
 # Interface registry (parallel arrays — bash 3.2 compatible)
 IFACE_IDS=(   claude        cursor        windsurf      copilot          opencode      antigravity)
-IFACE_NAMES=("Claude Code" "Cursor"      "Windsurf"    "GitHub Copilot" "OpenCode"    "Antigravity IDE")
+IFACE_NAMES=("Claude Code" "Cursor"      "Windsurf"    "GitHub Copilot" "OpenCode"    "Gemini / Antigravity IDE")
 IFACE_DETECTED=(false false false false false false)
 IFACE_SELECTED=(false false false false false false)
 
@@ -141,8 +141,8 @@ if [ -d "$HOME/.config/opencode" ] || [ -f "$HOME/.opencode.json" ]; then
     IFACE_DETECTED[4]=true
 fi
 
-# Antigravity IDE
-if [ -d "$HOME/.gemini/config" ] || [ -d "$HOME/.gemini/antigravity" ] || [ -d "$HOME/.gemini/antigravity-ide" ]; then
+# Gemini CLI / Antigravity IDE
+if [ -d "$HOME/.gemini" ] || [ -d "$HOME/.gemini/config" ] || [ -d "$HOME/.gemini/antigravity" ] || [ -d "$HOME/.gemini/antigravity-ide" ]; then
     IFACE_DETECTED[5]=true
 fi
 
@@ -487,21 +487,25 @@ if [ "${IFACE_SELECTED[4]}" = "true" ]; then
     write_instructions ".opencode/agents/tzro.md"
 fi
 
-# --- Antigravity IDE (index 5) ---
+# --- Antigravity IDE / Gemini CLI (index 5) ---
 if [ "${IFACE_SELECTED[5]}" = "true" ]; then
-    echo -e "\n  ${BOLD}${MAGENTA}Antigravity IDE${NC}"
+    echo -e "\n  ${BOLD}${MAGENTA}Antigravity IDE / Gemini CLI${NC}"
 
     # MCP config: inject into ALL known config directories unconditionally
     echo -e "  ${DIM}MCP Config:${NC}"
+
+    # Gemini CLI standard config path
     mkdir -p "$HOME/.gemini/config"
     inject_mcp_config "$HOME/.gemini/config/mcp_config.json" "mcpServers" "Antigravity IDE"
 
+    # Antigravity IDE paths
     mkdir -p "$HOME/.gemini/antigravity"
     inject_mcp_config "$HOME/.gemini/antigravity/mcp_config.json" "mcpServers" "Antigravity IDE"
 
     mkdir -p "$HOME/.gemini/antigravity-ide"
     inject_mcp_config "$HOME/.gemini/antigravity-ide/mcp_config.json" "mcpServers" "Antigravity IDE"
 
+    # Root .gemini fallback
     if [ -d "$HOME/.gemini" ]; then
         inject_mcp_config "$HOME/.gemini/mcp_config.json" "mcpServers" "Antigravity IDE"
     fi
