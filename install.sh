@@ -379,10 +379,13 @@ PLUGINS_INSTALLER="${INSTALL_DIR}/plugins/install_plugins.sh"
 
 if [ -f "${MCP_INSTALLER}" ]; then
     _run_mcp_installer() {
-        bash "${MCP_INSTALLER}"
+        # Install plugins FIRST — copying files to the IDE's plugins/ directory
+        # can trigger a config reload that would overwrite mcp_config.json.
+        # By installing plugins first, the reload happens before we write our config.
         if [ -f "${PLUGINS_INSTALLER}" ]; then
             bash "${PLUGINS_INSTALLER}"
         fi
+        bash "${MCP_INSTALLER}"
     }
 
     if [ -t 0 ]; then
