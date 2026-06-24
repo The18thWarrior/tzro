@@ -4,6 +4,10 @@ set -e
 # Ensure output directory exists
 mkdir -p bin
 
+# Build Dashboard frontend -> static/
+echo "==> Building Dashboard frontend..."
+(cd dashboard && npm install --silent && npm run build)
+
 echo "==> Building tzro CLI (cmd/tzro) -> bin/tzro..."
 go build -o bin/tzro ./cmd/tzro
 

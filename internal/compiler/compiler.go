@@ -6,14 +6,15 @@ import (
 
 type GraphNode struct {
 	ID              string                 `json:"id"`
-	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe"
-	Action          string                 `json:"action"`              // Target tool name
+	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe" | "sub_dag"
+	Action          string                 `json:"action"`              // Target tool name or Sub-DAG template name
 	Instructions    string                 `json:"instructions"`        // Core step instruction
 	AllowedTools    []string               `json:"allowedTools"`        // Whitelist of permitted tools
+	Inputs          map[string]interface{} `json:"inputs,omitempty"`    // Inputs for sub_dag macro nodes
 	Condition       string                 `json:"condition,omitempty"` // For logical branch nodes
 	DefaultTarget   string                 `json:"defaultTarget,omitempty"`
 	SuggestedSkills []string               `json:"suggestedSkillIds,omitempty"` // Injected micro-skills
-	Status          string                 `json:"status"`                      // "pending" | "running" | "completed" | "failed" | "skipped"
+	Status          string                 `json:"status"`                      // "pending" | "running" | "waiting_on_child" | "completed" | "failed" | "skipped"
 	Output          string                 `json:"output,omitempty"`
 	OutputSchema    string                 `json:"outputSchema,omitempty"`    // Added for bridge nodes (GBNF grammar)
 	StaticArgs      string                 `json:"staticArgs,omitempty"`      // Added for pre-known arguments
@@ -43,7 +44,9 @@ type GraphEdge struct {
 
 type ExecutionGraph struct {
 	TaskID         string          `json:"taskId"`
-	GoalPrompt     string          `json:"goalPrompt,omitempty"` // Original user prompt for downstream context
+	ParentTaskID   string          `json:"parentTaskId,omitempty"` // ID of the parent task if this is a sub-DAG
+	ParentNodeID   string          `json:"parentNodeId,omitempty"` // ID of the sub_dag node in the parent task
+	GoalPrompt     string          `json:"goalPrompt,omitempty"`   // Original user prompt for downstream context
 	Nodes          []GraphNode     `json:"nodes"`
 	Edges          []GraphEdge     `json:"edges"`
 	MaxCycles      int             `json:"maxCycles"`

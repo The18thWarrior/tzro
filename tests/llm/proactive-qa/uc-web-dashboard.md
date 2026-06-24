@@ -32,9 +32,15 @@ A developer wants a visual observability surface to monitor active tasks, inspec
 - [ ] Dashboard shows a loading skeleton while fetching the spec, not a blank screen.
 - [ ] User can view notifications from the notification system.
 - [ ] Dashboard gracefully handles a missing spec (404) with a clear empty state and regenerate prompt.
+- [ ] User can view a DAG visualization of a task's execution graph with nodes and edges rendered correctly.
+- [ ] User can click a node in the DAG view to see its details (instructions, output, status) in a spotlight panel.
+- [ ] DAG node status badges update to reflect completed, running, pending, and failed states.
+- [ ] User can view a workflow monitor showing real-time task progress with spotlight details.
+- [ ] Sidecar status indicator displays the current state of the local model inference engine.
 
 ## Edge Cases to Probe
 
+- Clicking a DAG node while another node's detail panel is already open to verify clean transition.
 - Starting the dashboard when the backend is offline and verifying clean error messaging.
 - Triggering spec regeneration while the dashboard is already displaying data.
 - Refreshing the browser while a task is in progress to verify the spec re-fetch is seamless.

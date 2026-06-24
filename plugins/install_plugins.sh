@@ -41,23 +41,24 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")/.." && pwd)"
 install_antigravity_ide() {
     echo -e "\n${BLUE}[1/3] Installing Antigravity IDE plugin...${NC}"
     
-    local target_dirs=()
+    # Resolve ONE canonical plugins directory.
+    # Priority: ~/.gemini/config (where the IDE reads) > antigravity-ide > antigravity > root .gemini
+    # Installing to multiple locations causes duplicate plugin loading.
+    local target_dir=""
     if [ -d "$HOME/.gemini/config" ]; then
+        target_dir="$HOME/.gemini/config/plugins/tzro-plugin"
+    elif [ -d "$HOME/.gemini/antigravity-ide" ]; then
+        target_dir="$HOME/.gemini/antigravity-ide/plugins/tzro-plugin"
+    elif [ -d "$HOME/.gemini/antigravity" ]; then
+        target_dir="$HOME/.gemini/antigravity/plugins/tzro-plugin"
+    elif [ -d "$HOME/.gemini" ]; then
+        target_dir="$HOME/.gemini/plugins/tzro-plugin"
+    else
         mkdir -p "$HOME/.gemini/config/plugins"
-        target_dirs+=("$HOME/.gemini/config/plugins/tzro-plugin")
+        target_dir="$HOME/.gemini/config/plugins/tzro-plugin"
     fi
-    if [ -d "$HOME/.gemini/antigravity-ide" ]; then
-        mkdir -p "$HOME/.gemini/antigravity-ide/plugins"
-        target_dirs+=("$HOME/.gemini/antigravity-ide/plugins/tzro-plugin")
-    fi
-    if [ -d "$HOME/.gemini/antigravity" ]; then
-        mkdir -p "$HOME/.gemini/antigravity/plugins"
-        target_dirs+=("$HOME/.gemini/antigravity/plugins/tzro-plugin")
-    fi
-    if [ -d "$HOME/.gemini" ]; then
-        mkdir -p "$HOME/.gemini/plugins"
-        target_dirs+=("$HOME/.gemini/plugins/tzro-plugin")
-    fi
+
+    local target_dirs=("${target_dir}")
 
     if [ ${#target_dirs[@]} -eq 0 ]; then
         echo -e "  ${YELLOW}⚠ No Antigravity IDE plugins directories found.${NC}"

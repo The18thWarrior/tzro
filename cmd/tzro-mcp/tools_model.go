@@ -43,6 +43,7 @@ func handleTzroModelList(ctx context.Context, req *mcp.CallToolRequest, args Tzr
 		LocalPath      string `json:"localPath,omitempty"`
 		VisionReady    bool   `json:"visionReady"`
 		VisionProjPath string `json:"visionProjPath,omitempty"`
+		MTPReady       bool   `json:"mtpReady"`
 	}
 
 	catalog := inference.GetCatalog()
@@ -77,6 +78,14 @@ func handleTzroModelList(ctx context.Context, req *mcp.CallToolRequest, args Tzr
 			if _, err := os.Stat(mmProjPath); err == nil {
 				le.VisionReady = true
 				le.VisionProjPath = mmProjPath
+			}
+		}
+
+		// Check companion MTP draft model download status
+		if entry.CompanionMTP != nil {
+			mtpPath := filepath.Join(modelsDir, entry.CompanionMTP.Filename)
+			if _, err := os.Stat(mtpPath); err == nil {
+				le.MTPReady = true
 			}
 		}
 
@@ -373,6 +382,9 @@ func activateModel(ctx context.Context, oldModelPath, newModelPath, modelsDir st
 	// 5. Auto-download companion mmproj if the activated model has one
 	go downloadCompanionMMProjIfNeeded(newModelPath, modelsDir)
 
+	// 6. Auto-download companion MTP draft model if the activated model has one
+	go downloadCompanionMTPIfNeeded(newModelPath, modelsDir)
+
 	return ModelSwapResult{
 		Status:       "success",
 		Message:      "Model swapped and sidecar restarted successfully.",
@@ -481,4 +493,107 @@ func downloadCompanionMMProjIfNeeded(modelPath, modelsDir string) {
 
 	fmt.Fprintf(os.Stderr, "[Vision Projector] Successfully downloaded %s — vision capabilities now available\n", companion.Filename)
 	fmt.Fprintf(os.Stderr, "[Vision Projector] Restart the sidecar to activate vision (will auto-detect on next start)\n")
+}
+
+// downloadCompanionMTPIfNeeded checks if the activated model has a companion
+// MTP (Multi-Token Prediction) draft model in the catalog. If found and not
+// already downloaded, it downloads the MTP GGUF to the models directory.
+// This enables MTP speculative decoding for faster inference automatically.
+func downloadCompanionMTPIfNeeded(modelPath, modelsDir string) {
+	// Find which catalog entry matches the activated model
+	catalog := inference.GetCatalog()
+	var companion *inference.CompanionFile
+	for _, entry := range catalog {
+		if entry.CompanionMTP == nil {
+			continue
+		}
+		candidatePath := filepath.Join(modelsDir, entry.Filename)
+		if candidatePath == modelPath {
+			companion = entry.CompanionMTP
+			break
+		}
+	}
+
+	if companion == nil {
+		return // No companion MTP for this model
+	}
+
+	// Check if already downloaded
+	mtpPath := filepath.Join(modelsDir, companion.Filename)
+	if _, err := os.Stat(mtpPath); err == nil {
+		fmt.Fprintf(os.Stderr, "[MTP Draft] MTP draft model already downloaded: %s\n", companion.Filename)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[MTP Draft] Downloading companion MTP draft model (%s, %s)...\n", companion.Filename, companion.SizeLabel)
+
+	tmpPath := mtpPath + ".downloading"
+	httpReq, err := http.NewRequest("GET", companion.DownloadURL, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[MTP Draft] Failed to create request: %v\n", err)
+		return
+	}
+	httpReq.Header.Set("User-Agent", "tzro-engine/1.0")
+
+	client := &http.Client{}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[MTP Draft] HTTP request failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "[MTP Draft] Server returned status %s\n", resp.Status)
+		return
+	}
+
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[MTP Draft] Failed to create temp file: %v\n", err)
+		return
+	}
+
+	buf := make([]byte, 32*1024)
+	var downloaded int64
+	totalSize := resp.ContentLength
+
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			_, writeErr := tmpFile.Write(buf[:n])
+			if writeErr != nil {
+				fmt.Fprintf(os.Stderr, "[MTP Draft] Write error: %v\n", writeErr)
+				tmpFile.Close()
+				_ = os.Remove(tmpPath)
+				return
+			}
+			downloaded += int64(n)
+			if totalSize > 0 {
+				pct := int(downloaded * 100 / totalSize)
+				if pct%10 == 0 {
+					fmt.Fprintf(os.Stderr, "[MTP Draft] Download progress: %d%%\n", pct)
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "[MTP Draft] Read error: %v\n", readErr)
+			tmpFile.Close()
+			_ = os.Remove(tmpPath)
+			return
+		}
+	}
+	tmpFile.Close()
+
+	if err := os.Rename(tmpPath, mtpPath); err != nil {
+		fmt.Fprintf(os.Stderr, "[MTP Draft] Failed to rename temp file: %v\n", err)
+		_ = os.Remove(tmpPath)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[MTP Draft] Successfully downloaded %s — MTP speculative decoding now available\n", companion.Filename)
+	fmt.Fprintf(os.Stderr, "[MTP Draft] Restart the sidecar to activate MTP (will auto-detect on next start)\n")
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"tzro/internal/cache"
 	"tzro/internal/config"
 	"tzro/internal/executor"
 	"tzro/internal/inference"
@@ -51,6 +52,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("[Init Error] Failed to start database: %v\n", err)
 	}
+
+	// Wire durable metrics persistence — inference TPS and cache hit rate
+	// now survive daemon restarts via SQLite instead of ephemeral in-memory atomics.
+	inference.SetMetricsPersister(func(prompt, completion int, durationSec float64) {
+		_ = memory.DB.RecordInferenceSample(prompt, completion, durationSec)
+	})
+	inference.SetMetricsQuerier(func(windowSeconds int64) float64 {
+		return memory.DB.GetAverageTPS(windowSeconds)
+	})
+	cache.SetCacheEventPersister(func(hit bool) {
+		_ = memory.DB.RecordCacheEvent(hit)
+	})
+	cache.SetCacheHitRateQuerier(func(windowSeconds int64) float64 {
+		return memory.DB.GetDBCacheHitRate(windowSeconds)
+	})
+	fmt.Println("[Init] Durable metrics persistence wired (inference TPS + cache hit rate).")
 
 	// 2. Load persistent global configurations
 	fmt.Println("[Init] Loading global persistent settings...")

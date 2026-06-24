@@ -10,6 +10,10 @@
   /* Dark mode by default */
   --bg-color: #080c14;
   --fg-color: #f1f5f9;
+  --heading-color: #ffffff;
+  --nested-bg: rgba(0, 0, 0, 0.25);
+  --code-bg: rgba(0, 0, 0, 0.3);
+  --code-fg: #818cf8;
   --glass-bg: rgba(10, 16, 28, 0.65);
   --glass-border: rgba(255, 255, 255, 0.06);
   --glass-border-hover: rgba(255, 255, 255, 0.12);
@@ -26,6 +30,10 @@
 :root.light {
   --bg-color: #f8fafc;
   --fg-color: #0f172a;
+  --heading-color: #0f172a;
+  --nested-bg: rgba(0, 0, 0, 0.03);
+  --code-bg: rgba(0, 0, 0, 0.05);
+  --code-fg: #4f46e5;
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-border: rgba(0, 0, 0, 0.08);
   --glass-border-hover: rgba(0, 0, 0, 0.15);
@@ -101,4 +109,51 @@ body {
 
 .glow-danger {
   box-shadow: 0 0 20px 0 rgba(239, 68, 68, 0.15);
+}
+
+/* Regeneration progress bar shimmer */
+@keyframes regen-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.regen-progress-shimmer {
+  background-size: 200% 100%;
+  animation: regen-shimmer 2s linear infinite;
+}
+
+/* Reload button gentle pulse */
+@keyframes reload-pulse {
+  0%, 100% { box-shadow: 0 0 20px 0 rgba(16, 185, 129, 0.15); }
+  50% { box-shadow: 0 0 28px 4px rgba(16, 185, 129, 0.3); }
+}
+
+.regen-reload-pulse {
+  animation: reload-pulse 2s ease-in-out infinite;
+}
+
+/* Spotlight side panel slide-in */
+@keyframes spotlight-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.spotlight-slide-in {
+  animation: spotlight-slide-in 0.3s ease-out both;
+}
+
+/* Generic fade-in */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.25s ease-out both;
 }

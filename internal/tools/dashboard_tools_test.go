@@ -109,26 +109,42 @@ func TestDashboardTools(t *testing.T) {
 		t.Error("Expected 'workflows' key in gather_workflows output")
 	}
 
-	// 5. Test compose_layout tool
+	// 5. Test compose_layout tool (flat element schema → deterministic layout assembly)
 	composeTool := &ComposeLayoutTool{}
-	args := map[string]interface{}{
-		"version":     1.0,
-		"generatedAt": float64(now),
-		"ttlSeconds":  14400.0,
-		"layout": map[string]interface{}{
-			"type": "Stack",
-			"children": []interface{}{
-				map[string]interface{}{
-					"type": "MetricCard",
-					"props": map[string]interface{}{
-						"label": "Total Tasks",
-						"value": "100",
-					},
+	composeArgs := map[string]interface{}{
+		"elements": []interface{}{
+			map[string]interface{}{
+				"type": "MetricCard",
+				"props": map[string]interface{}{
+					"label": "Total Tasks",
+					"value": "100",
+					"trend": "up",
 				},
 			},
+			map[string]interface{}{
+				"type": "MetricCard",
+				"props": map[string]interface{}{
+					"label": "Success Rate",
+					"value": "85%",
+					"trend": "stable",
+				},
+			},
+			map[string]interface{}{
+				"type":  "TaskTable",
+				"props": map[string]interface{}{},
+			},
+			map[string]interface{}{
+				"type":  "ConfigPanel",
+				"props": map[string]interface{}{},
+			},
+			map[string]interface{}{
+				"type":  "SidecarStatus",
+				"props": map[string]interface{}{},
+			},
 		},
+		"theme": "Subtle Glass",
 	}
-	composeRes, err := composeTool.Call(ctx, args)
+	composeRes, err := composeTool.Call(ctx, composeArgs)
 	if err != nil {
 		t.Fatalf("compose_layout Call failed: %v", err)
 	}
@@ -136,14 +152,36 @@ func TestDashboardTools(t *testing.T) {
 	if err := json.Unmarshal([]byte(composeRes), &composeOutput); err != nil {
 		t.Fatalf("Failed to unmarshal compose_layout output: %v", err)
 	}
+	// Verify deterministic assembly produced expected structure
 	if composeOutput["version"].(float64) != 1.0 {
 		t.Errorf("Expected version 1.0, got %v", composeOutput["version"])
 	}
+	layout, ok := composeOutput["layout"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected 'layout' key in compose output")
+	}
+	if layout["type"].(string) != "Stack" {
+		t.Errorf("Expected layout type 'Stack', got '%v'", layout["type"])
+	}
+	layoutChildren, ok := layout["children"].([]interface{})
+	if !ok || len(layoutChildren) == 0 {
+		t.Fatal("Expected non-empty children in layout Stack")
+	}
+	// First child should be the MetricCard grid section
+	firstSection, ok := layoutChildren[0].(map[string]interface{})
+	if !ok || firstSection["type"].(string) != "Section" {
+		t.Errorf("Expected first child to be Section, got %v", firstSection["type"])
+	}
+	// Count total primitives
+	primCount := countPrimitives(layout)
+	if primCount < 5 {
+		t.Errorf("Expected at least 5 primitives, got %d", primCount)
+	}
 
-	// 6. Test terminal_synthesis tool
+	// 6. Test terminal_synthesis tool — should succeed with valid spec
 	terminalTool := &TerminalSynthesisTool{}
 	terminalArgs := map[string]interface{}{
-		"spec": args,
+		"spec": composeOutput,
 	}
 	terminalRes, err := terminalTool.Call(ctx, terminalArgs)
 	if err != nil {
@@ -157,7 +195,24 @@ func TestDashboardTools(t *testing.T) {
 		t.Errorf("Expected status 'completed', got '%v'", terminalOutput["status"])
 	}
 
-	// Verify that the spec is indeed saved in database
+	// 7. Test terminal_synthesis minimum-element validation gate
+	emptySpec := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"version":     1.0,
+			"generatedAt": float64(time.Now().Unix()),
+			"ttlSeconds":  14400.0,
+			"layout": map[string]interface{}{
+				"type": "Stack",
+				// No children — this should be rejected
+			},
+		},
+	}
+	_, err = terminalTool.Call(ctx, emptySpec)
+	if err == nil {
+		t.Error("Expected terminal_synthesis to reject empty spec, but it succeeded")
+	}
+
+	// Verify that the valid spec is indeed saved in database
 	savedSpec, err := memory.DB.GetLatestDashboardSpec()
 	if err != nil {
 		t.Fatalf("Failed to query latest spec from database: %v", err)

@@ -374,6 +374,13 @@ func compact(ctx context.Context, payload string, stepInstruction string) (strin
 		// Layer 3: KV Line formatting
 		var lines []string
 		for k, v := range flattened {
+			switch v.(type) {
+			case []interface{}, map[string]interface{}:
+				if b, err := json.Marshal(v); err == nil {
+					lines = append(lines, fmt.Sprintf("%s: %s", k, string(b)))
+					continue
+				}
+			}
 			lines = append(lines, fmt.Sprintf("%s: %v", k, v))
 		}
 		return strings.Join(lines, "\n"), len(payload) > 12000

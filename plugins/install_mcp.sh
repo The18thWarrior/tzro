@@ -517,24 +517,48 @@ fi
 if [ "${IFACE_SELECTED[5]}" = "true" ]; then
     echo -e "\n  ${BOLD}${MAGENTA}Antigravity IDE / Gemini CLI${NC}"
 
-    # MCP config: inject into ALL known config directories unconditionally
+    # MCP config: resolve ONE canonical config directory.
+    # Priority: ~/.gemini/config (where the IDE actually reads) > antigravity-ide > antigravity > root .gemini
+    # Writing to multiple locations causes duplicate MCP server spawns.
     echo -e "  ${DIM}MCP Config:${NC}"
 
-    # Gemini CLI standard config path
-    mkdir -p "$HOME/.gemini/config"
-    inject_mcp_config "$HOME/.gemini/config/mcp_config.json" "mcpServers" "Antigravity IDE"
-
-    # Antigravity IDE paths
-    mkdir -p "$HOME/.gemini/antigravity"
-    inject_mcp_config "$HOME/.gemini/antigravity/mcp_config.json" "mcpServers" "Antigravity IDE"
-
-    mkdir -p "$HOME/.gemini/antigravity-ide"
-    inject_mcp_config "$HOME/.gemini/antigravity-ide/mcp_config.json" "mcpServers" "Antigravity IDE"
-
-    # Root .gemini fallback
-    if [ -d "$HOME/.gemini" ]; then
-        inject_mcp_config "$HOME/.gemini/mcp_config.json" "mcpServers" "Antigravity IDE"
+    GEMINI_MCP_DIR=""
+    if [ -d "$HOME/.gemini/config" ]; then
+        GEMINI_MCP_DIR="$HOME/.gemini/config"
+    elif [ -d "$HOME/.gemini/antigravity-ide" ]; then
+        GEMINI_MCP_DIR="$HOME/.gemini/antigravity-ide"
+    elif [ -d "$HOME/.gemini/antigravity" ]; then
+        GEMINI_MCP_DIR="$HOME/.gemini/antigravity"
+    elif [ -d "$HOME/.gemini" ]; then
+        GEMINI_MCP_DIR="$HOME/.gemini"
+    else
+        # Create the canonical path as a fresh install
+        mkdir -p "$HOME/.gemini/config"
+        GEMINI_MCP_DIR="$HOME/.gemini/config"
     fi
+
+    inject_mcp_config "${GEMINI_MCP_DIR}/mcp_config.json" "mcpServers" "Antigravity IDE"
+    echo -e "  ${DIM}Config location: ${GEMINI_MCP_DIR}/mcp_config.json${NC}"
+
+    # Clean up stale configs in OTHER locations to prevent duplicate spawns.
+    # Only remove the tzro entry (not the whole file) if other servers exist.
+    for stale_dir in "$HOME/.gemini/config" "$HOME/.gemini/antigravity" "$HOME/.gemini/antigravity-ide" "$HOME/.gemini"; do
+        stale_file="${stale_dir}/mcp_config.json"
+        # Skip the canonical location we just wrote to
+        [ "${stale_dir}" = "${GEMINI_MCP_DIR}" ] && continue
+        if [ -f "${stale_file}" ]; then
+            # Check if tzro is the only server — if so, remove the whole file
+            server_count=$(jq '.mcpServers | length' "${stale_file}" 2>/dev/null || echo 0)
+            if [ "${server_count}" -le 1 ]; then
+                rm -f "${stale_file}"
+                echo -e "  ${DIM}Removed stale config: ${stale_file}${NC}"
+            elif [ "${HAS_JQ}" = "true" ]; then
+                # Remove just the tzro entry, keep other servers
+                jq 'del(.mcpServers.tzro)' "${stale_file}" > "${stale_file}.tmp" && mv "${stale_file}.tmp" "${stale_file}"
+                echo -e "  ${DIM}Removed tzro from stale config: ${stale_file}${NC}"
+            fi
+        fi
+    done
 
     # Plugin installation is handled separately
     echo -e "  ${DIM}Plugin: run ${CYAN}bash plugins/install_plugins.sh${NC} ${DIM}to install/update the IDE plugin${NC}"
@@ -617,10 +641,24 @@ _verify_config() {
 
 echo ""
 echo -e "  ${BOLD}Config Verification:${NC}"
-_verify_config "$HOME/.gemini/config/mcp_config.json"
-_verify_config "$HOME/.gemini/antigravity/mcp_config.json"
-_verify_config "$HOME/.gemini/antigravity-ide/mcp_config.json"
-_verify_config "$HOME/.gemini/mcp_config.json"
+
+# Verify the canonical config location
+if [ -n "${GEMINI_MCP_DIR:-}" ]; then
+    _verify_config "${GEMINI_MCP_DIR}/mcp_config.json"
+fi
+
+# Warn about any remaining stale configs in non-canonical locations
+for check_dir in "$HOME/.gemini/config" "$HOME/.gemini/antigravity" "$HOME/.gemini/antigravity-ide" "$HOME/.gemini"; do
+    [ "${check_dir}" = "${GEMINI_MCP_DIR:-}" ] && continue
+    check_file="${check_dir}/mcp_config.json"
+    if [ -f "${check_file}" ]; then
+        stale_cmd=$(jq -r '.mcpServers.tzro.command // empty' "${check_file}" 2>/dev/null || true)
+        if [ -n "${stale_cmd}" ]; then
+            echo -e "  ${YELLOW}⚠${NC} ${DIM}${check_file}${NC} — ${YELLOW}stale tzro entry (may cause duplicate spawns)${NC}"
+            _CONFIG_FAILURES=$((_CONFIG_FAILURES + 1))
+        fi
+    fi
+done
 
 if [ "${_CONFIG_FAILURES}" -gt 0 ]; then
     echo ""

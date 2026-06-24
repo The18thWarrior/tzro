@@ -187,15 +187,39 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		return fmt.Errorf("GGUF model file not found at %s — download a model from the Settings panel", m.GGUFModelPath)
 	}
 
-	// 8. Resolve MTP draft model path — use draft-mtp if assistant GGUF is present, else fall back to ngram-simple
+	// 8. Resolve MTP draft model path — dynamically check catalog for CompanionMTP
 	modelsDir := config.GetModelsDir()
-	mtpDraftModelPath := filepath.Join(modelsDir, "gemma-4-E4B-it-qat-assistant-q4_k_m.gguf")
+	activeModelDir := filepath.Dir(m.GGUFModelPath)
 	useMTP := false
-	if _, err := os.Stat(mtpDraftModelPath); err == nil {
-		useMTP = true
-		fmt.Fprintf(os.Stderr, "[Llama Sidecar] MTP draft model found: %s\n", mtpDraftModelPath)
-	} else {
-		fmt.Fprintln(os.Stderr, "[Llama Sidecar] MTP draft model not found, falling back to ngram-simple speculative decoding")
+	mtpDraftModelPath := ""
+
+	// Look up the active model in the catalog by filename to find its MTP companion
+	activeFilename := filepath.Base(m.GGUFModelPath)
+	catalogEntry := FindModelByFilename(activeFilename)
+	if catalogEntry != nil && catalogEntry.CompanionMTP != nil {
+		entry := catalogEntry
+		// Check candidate paths: configured modelsDir first, then the active model's directory
+		candidatePaths := []string{
+			filepath.Join(modelsDir, entry.CompanionMTP.Filename),
+		}
+		if activeModelDir != modelsDir {
+			candidatePaths = append(candidatePaths, filepath.Join(activeModelDir, entry.CompanionMTP.Filename))
+		}
+		for _, candidatePath := range candidatePaths {
+			if _, err := os.Stat(candidatePath); err == nil {
+				useMTP = true
+				mtpDraftModelPath = candidatePath
+				fmt.Fprintf(os.Stderr, "[Llama Sidecar] MTP draft model found: %s\n", candidatePath)
+				break
+			}
+		}
+		if !useMTP {
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] MTP draft model listed in catalog but not found in %s or %s\n", modelsDir, activeModelDir)
+		}
+	}
+
+	if !useMTP {
+		fmt.Fprintln(os.Stderr, "[Llama Sidecar] No MTP draft model available, falling back to ngram-simple speculative decoding")
 	}
 
 	// Optimized launch args (12 resolved decisions from sidecar optimization session)
@@ -322,6 +346,62 @@ func (m *LocalModelManager) getInferenceClient() *http.Client {
 		return m.inferenceClient
 	}
 	return http.DefaultClient
+}
+
+// SidecarHealth represents the result of an HTTP health probe against the sidecar.
+type SidecarHealth int
+
+const (
+	// SidecarHealthReady — /health returned 200, server is up and has available slots.
+	SidecarHealthReady SidecarHealth = iota
+	// SidecarHealthBusy — /health returned 503 (no slot available), server is alive
+	// but all inference slots are occupied by another request.
+	SidecarHealthBusy
+	// SidecarHealthDead — connection refused or other fatal error. Process is not running.
+	SidecarHealthDead
+)
+
+// ProbeHealth checks the actual HTTP /health endpoint of the sidecar process,
+// independent of the cached m.Status field. This catches the case where m.Status
+// was pessimistically set to "Stopped" by a transient inference error (timeout,
+// context cancellation) while the sidecar process is still running and healthy.
+//
+// The llama.cpp /health endpoint returns:
+//   - 200 OK when the server is healthy and has available slots
+//   - 503 Service Unavailable when the server is alive but all slots are occupied
+//   - Connection refused when the process is not running
+func (m *LocalModelManager) ProbeHealth(ctx context.Context) SidecarHealth {
+	m.mutex.Lock()
+	port := m.ActivePort
+	m.mutex.Unlock()
+
+	if port == 0 {
+		return SidecarHealthDead
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	healthURL := fmt.Sprintf("http://localhost:%d/health", port)
+	req, err := http.NewRequestWithContext(probeCtx, "GET", healthURL, nil)
+	if err != nil {
+		return SidecarHealthDead
+	}
+
+	resp, err := m.getHealthClient().Do(req)
+	if err != nil {
+		return SidecarHealthDead
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		return SidecarHealthReady
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		// 503 means the server is alive but all slots are occupied
+		return SidecarHealthBusy
+	}
+	return SidecarHealthDead
 }
 
 // EraseSlot clears prompt context for a specific slot to prevent memory leakage
@@ -609,9 +689,19 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	// Q10: Use inferenceClient (no fixed timeout) instead of healthClient (3s timeout)
 	resp, err := m.getInferenceClient().Do(req)
 	if err != nil {
-		m.mutex.Lock()
-		m.Status = "Stopped"
-		m.mutex.Unlock()
+		// Don't blindly set Status to "Stopped" — the sidecar process may still
+		// be alive but transiently unreachable (busy slot, connection reset, etc.).
+		// Probe health with a fresh context before deciding the final status.
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		probeResult := m.ProbeHealth(probeCtx)
+		probeCancel()
+		if probeResult == SidecarHealthDead {
+			m.mutex.Lock()
+			m.Status = "Stopped"
+			m.mutex.Unlock()
+		} else {
+			fmt.Fprintf(os.Stderr, "[Inference] HTTP request failed but sidecar health probe returned %v. Preserving status.\n", probeResult)
+		}
 		return nil, fmt.Errorf("local model HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -747,9 +837,19 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	startTime := time.Now()
 	resp, err := m.getInferenceClient().Do(req)
 	if err != nil {
-		m.mutex.Lock()
-		m.Status = "Stopped"
-		m.mutex.Unlock()
+		// Don't blindly set Status to "Stopped" — the sidecar process may still
+		// be alive but transiently unreachable (busy slot, connection reset, etc.).
+		// Probe health with a fresh context before deciding the final status.
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		probeResult := m.ProbeHealth(probeCtx)
+		probeCancel()
+		if probeResult == SidecarHealthDead {
+			m.mutex.Lock()
+			m.Status = "Stopped"
+			m.mutex.Unlock()
+		} else {
+			fmt.Fprintf(os.Stderr, "[Inference] Stream HTTP request failed but sidecar health probe returned %v. Preserving status.\n", probeResult)
+		}
 		return nil, fmt.Errorf("local model stream HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()

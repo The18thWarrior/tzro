@@ -157,12 +157,28 @@ func (d *SqliteDialect) SchemaInitQueries() []string {
 			action_payload TEXT,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS inference_samples (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			prompt_tokens INTEGER NOT NULL,
+			completion_tokens INTEGER NOT NULL,
+			duration_us INTEGER NOT NULL,
+			recorded_at INTEGER NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS cache_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			is_hit INTEGER NOT NULL,
+			recorded_at INTEGER NOT NULL
+		);`,
 	}
 }
 
 func (d *SqliteDialect) UpsertNodeStateQuery() string {
-	return `INSERT OR REPLACE INTO node_states (task_id, node_id, status, output, completed_at)
-		VALUES (?, ?, ?, ?, ?)`
+	return `INSERT INTO node_states (task_id, node_id, status, output, completed_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(task_id, node_id) DO UPDATE SET
+		status=excluded.status,
+		output=excluded.output,
+		completed_at=excluded.completed_at`
 }
 
 func (d *SqliteDialect) UpsertNotificationQuery() string {

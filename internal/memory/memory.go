@@ -305,6 +305,18 @@ func (sdb *SqliteDatabase) createTables() error {
 			generator_task_id TEXT,
 			ttl_seconds INTEGER NOT NULL DEFAULT 14400
 		);`,
+		`CREATE TABLE IF NOT EXISTS inference_samples (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			prompt_tokens INTEGER NOT NULL,
+			completion_tokens INTEGER NOT NULL,
+			duration_us INTEGER NOT NULL,
+			recorded_at INTEGER NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS cache_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			is_hit INTEGER NOT NULL,
+			recorded_at INTEGER NOT NULL
+		);`,
 	}
 
 	for _, query := range queries {

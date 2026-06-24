@@ -273,80 +273,196 @@ func (g *GatherWorkflowsTool) Call(ctx context.Context, args map[string]interfac
 // ==========================================
 // 5. compose_layout tool
 // ==========================================
+// Refactored: The local model now produces a flat array of element descriptors
+// (type + props). Deterministic Go code assembles them into the nested layout
+// tree. This avoids the 4-level recursive GBNF schema that overwhelmed the
+// local model, causing it to emit empty specs.
 
 type ComposeLayoutTool struct{}
 
 func (g *ComposeLayoutTool) Name() string { return "compose_layout" }
 func (g *ComposeLayoutTool) GetSchema() (string, error) {
-	// Enforce non-recursive, flat depth-4 layout specification
-	level4Schema := map[string]interface{}{
+	// Flat element descriptor — the model just picks component types and fills props.
+	// No nesting, no children arrays, no recursive depth.
+	elementSchema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"type":  map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation"}},
+			"type": map[string]interface{}{
+				"type": "string",
+				"enum": []string{
+					"MetricCard", "TaskTable", "EventFeed",
+					"ConfigPanel", "SidecarStatus", "NotificationList",
+					"WorkflowMonitor", "Annotation",
+				},
+			},
 			"props": map[string]interface{}{"type": "object"},
 		},
 		"required": []string{"type"},
 	}
 
-	level3Schema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"type":    map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
-			"columns": map[string]interface{}{"type": "integer"},
-			"props":   map[string]interface{}{"type": "object"},
-			"children": map[string]interface{}{
-				"type":  "array",
-				"items": level4Schema,
-			},
-		},
-		"required": []string{"type"},
-	}
-
-	level2Schema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"type":    map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
-			"columns": map[string]interface{}{"type": "integer"},
-			"props":   map[string]interface{}{"type": "object"},
-			"children": map[string]interface{}{
-				"type":  "array",
-				"items": level3Schema,
-			},
-		},
-		"required": []string{"type"},
-	}
-
-	componentSchema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"type":    map[string]interface{}{"type": "string", "enum": []string{"MetricCard", "TaskTable", "EventFeed", "ConfigPanel", "SidecarStatus", "NotificationList", "WorkflowMonitor", "TaskSpotlight", "WorkflowSpotlight", "Annotation", "Stack", "Grid", "Section"}},
-			"columns": map[string]interface{}{"type": "integer"},
-			"props":   map[string]interface{}{"type": "object"},
-			"children": map[string]interface{}{
-				"type":  "array",
-				"items": level2Schema,
-			},
-		},
-		"required": []string{"type"},
-	}
-
 	dashboardSpecSchema := map[string]interface{}{
-		"version":     map[string]interface{}{"type": "integer"},
-		"generatedAt": map[string]interface{}{"type": "integer"},
-		"ttlSeconds":  map[string]interface{}{"type": "integer"},
-		"layout":      componentSchema,
+		"elements": map[string]interface{}{
+			"type":  "array",
+			"items": elementSchema,
+		},
+		"theme": map[string]interface{}{"type": "string"},
 	}
 
-	requiredKeys := []string{"version", "generatedAt", "ttlSeconds", "layout"}
+	requiredKeys := []string{"elements"}
 	return GetToolGBNFSchema(dashboardSpecSchema, requiredKeys), nil
 }
+
 func (g *ComposeLayoutTool) Call(ctx context.Context, args map[string]interface{}) (string, error) {
-	// The LLM writes output into the tool arguments. We simply marshal and return it.
-	resBytes, err := json.Marshal(args)
+	// Deterministic layout assembly: take the flat element list from the LLM
+	// and build the nested layout tree that the dashboard frontend expects.
+	spec := assembleDashboardSpec(args)
+
+	// Validate minimum complexity — reject specs with too few primitives.
+	// Empty specs (just a bare Stack wrapper with no children) are a known
+	// local model failure mode.
+	primCount := countPrimitives(spec["layout"])
+	if primCount < 3 {
+		return "", fmt.Errorf("dashboard spec has only %d primitives (minimum 3 required) — layout is likely empty", primCount)
+	}
+
+	resBytes, err := json.Marshal(spec)
 	if err != nil {
 		return "", err
 	}
+
+	// Persist spec to dashboard_specs table as a side-effect.
+	// This eliminates the need for a separate terminal_synthesis node in the DAG,
+	// avoiding the unreliable JSON-in-JSON copy that the local model struggles with.
+	specID := fmt.Sprintf("spec_%d", time.Now().UnixNano())
+	generatedAt := spec["generatedAt"].(int64)
+	ttlSeconds := int64(14400)
+	if ttl, ok := spec["ttlSeconds"].(int); ok {
+		ttlSeconds = int64(ttl)
+	}
+
+	taskID := "task_system_gen"
+	if ctxTaskID := ctx.Value("taskID"); ctxTaskID != nil {
+		taskID = fmt.Sprintf("%v", ctxTaskID)
+	}
+
+	if saveErr := memory.DB.SaveDashboardSpec(specID, string(resBytes), generatedAt, taskID, ttlSeconds); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "[ComposeLayout] Warning: failed to persist spec to DB: %v\n", saveErr)
+		// Don't fail the node — the spec is still returned for downstream consumption
+	}
+
 	return string(resBytes), nil
+}
+
+// assembleDashboardSpec takes the flat element descriptors from the LLM and
+// assembles a properly nested dashboard spec with Sections, Grids, and Stacks.
+func assembleDashboardSpec(args map[string]interface{}) map[string]interface{} {
+	now := time.Now().Unix()
+
+	theme := "Subtle Glass"
+	if t, ok := args["theme"].(string); ok && t != "" {
+		theme = t
+	}
+
+	// Extract elements from the flat list
+	var elements []map[string]interface{}
+	if elems, ok := args["elements"].([]interface{}); ok {
+		for _, e := range elems {
+			if m, ok := e.(map[string]interface{}); ok {
+				elements = append(elements, m)
+			}
+		}
+	}
+
+	// Separate MetricCards from other components
+	var metricCards []interface{}
+	var otherComponents []interface{}
+
+	for _, elem := range elements {
+		elemType, _ := elem["type"].(string)
+		props, _ := elem["props"].(map[string]interface{})
+		if props == nil {
+			props = map[string]interface{}{}
+		}
+
+		node := map[string]interface{}{
+			"type":  elemType,
+			"props": props,
+		}
+
+		if elemType == "MetricCard" {
+			metricCards = append(metricCards, node)
+		} else {
+			otherComponents = append(otherComponents, node)
+		}
+	}
+
+	// Assemble the layout tree
+	var topChildren []interface{}
+
+	// Group MetricCards into a Grid section
+	if len(metricCards) > 0 {
+		cols := len(metricCards)
+		if cols > 5 {
+			cols = 5
+		}
+		topChildren = append(topChildren, map[string]interface{}{
+			"type": "Section",
+			"props": map[string]interface{}{
+				"title":    "System Overview",
+				"subtitle": "Real-time metrics",
+			},
+			"children": []interface{}{
+				map[string]interface{}{
+					"type":     "Grid",
+					"columns":  cols,
+					"children": metricCards,
+				},
+			},
+		})
+	}
+
+	// Wrap remaining components in individual sections or a 2-column grid
+	if len(otherComponents) > 0 {
+		// Pair components that benefit from side-by-side layout
+		var paired []interface{}
+		var standalone []interface{}
+		for _, comp := range otherComponents {
+			cm := comp.(map[string]interface{})
+			t := cm["type"].(string)
+			// Full-width components
+			if t == "TaskTable" || t == "WorkflowMonitor" {
+				standalone = append(standalone, comp)
+			} else {
+				paired = append(paired, comp)
+			}
+		}
+
+		// Render paired components in a 2-column grid
+		if len(paired) > 0 {
+			topChildren = append(topChildren, map[string]interface{}{
+				"type":     "Grid",
+				"columns":  2,
+				"children": paired,
+			})
+		}
+
+		// Render standalone (full-width) components
+		for _, comp := range standalone {
+			topChildren = append(topChildren, comp)
+		}
+	}
+
+	return map[string]interface{}{
+		"version":     1,
+		"generatedAt": now,
+		"ttlSeconds":  14400,
+		"layout": map[string]interface{}{
+			"type":     "Stack",
+			"columns":  1,
+			"props":    map[string]interface{}{"theme": theme},
+			"children": topChildren,
+		},
+	}
 }
 
 // ==========================================
@@ -387,6 +503,26 @@ func (g *TerminalSynthesisTool) Call(ctx context.Context, args map[string]interf
 	}
 	if _, ok := parsed["layout"]; !ok {
 		return "", fmt.Errorf("missing layout tree in spec")
+	}
+
+	// Minimum-element validation gate: reject specs with too few primitives.
+	// Empty specs (just a bare Stack wrapper with no children) are a known
+	// local model failure mode — catch them here so the executor can retry.
+	primCount := countPrimitives(parsed["layout"])
+	if primCount < 3 {
+		return "", fmt.Errorf("dashboard spec has only %d primitives (minimum 3 required) — layout is likely empty", primCount)
+	}
+
+	// Timestamp sanity check: reject specs with obviously hallucinated timestamps.
+	// The local model sometimes emits placeholder values like 1700000000 (Nov 2023).
+	nowUnix := time.Now().Unix()
+	if genAt, ok := parsed["generatedAt"].(float64); ok {
+		if int64(genAt) < nowUnix-7200 || int64(genAt) > nowUnix+3600 {
+			fmt.Fprintf(os.Stderr, "[TerminalSynthesis] Correcting hallucinated generatedAt %v -> %v\n", int64(genAt), nowUnix)
+			parsed["generatedAt"] = float64(nowUnix)
+			// Re-serialize with corrected timestamp
+			specBytes, _ = json.Marshal(parsed)
+		}
 	}
 
 	// Extract generator task ID from context if possible, or fallback

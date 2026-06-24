@@ -178,6 +178,36 @@ func GetToolGBNFSchema(properties map[string]interface{}, required []string) str
 	return string(bytes)
 }
 
+// IsZeroArgSchema returns true if the GBNF schema has no required properties
+// and no defined properties in tool_arguments, meaning the tool can be called
+// with empty args and inference can be skipped entirely.
+func IsZeroArgSchema(schema string) bool {
+	if schema == "" {
+		return false // No schema at all — can't assume zero-arg
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(schema), &raw); err != nil {
+		return false
+	}
+
+	if props, ok := raw["properties"].(map[string]interface{}); ok {
+		if toolArgs, ok := props["tool_arguments"].(map[string]interface{}); ok {
+			taProps, _ := toolArgs["properties"].(map[string]interface{})
+			taReq, _ := toolArgs["required"].([]interface{})
+			return len(taProps) == 0 && len(taReq) == 0
+		}
+		if len(props) > 0 {
+			return false
+		}
+	}
+
+	if req, ok := raw["required"].([]interface{}); ok && len(req) > 0 {
+		return false
+	}
+
+	return true
+}
+
 // NewWebSearchTool instantiates the web_search tool structure.
 // Uses the multi-engine metasearch strategy: Startpage + Brave (parallel),
 // Bing (sequential fallback), DuckDuckGo (last resort).
@@ -759,6 +789,17 @@ var (
 	localConnectionPool   = make(map[string]*sql.DB)
 	localConnectionPoolMu sync.RWMutex
 )
+
+// ClearLocalConnectionPool closes all cached local database connections and clears the pool.
+// Exposed primarily for unit testing isolation.
+func ClearLocalConnectionPool() {
+	localConnectionPoolMu.Lock()
+	defer localConnectionPoolMu.Unlock()
+	for path, conn := range localConnectionPool {
+		_ = conn.Close()
+		delete(localConnectionPool, path)
+	}
+}
 
 func getCachedLocalDB(path string) (*sql.DB, error) {
 	localConnectionPoolMu.RLock()

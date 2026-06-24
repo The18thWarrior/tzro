@@ -1559,13 +1559,13 @@ func handleScheduleList(ctx context.Context) (*mcp.CallToolResult, any, error) {
 	}
 
 	type WorkflowSummary struct {
-		ID            string              `json:"id"`
-		Name          string              `json:"name"`
-		Description   string              `json:"description"`
-		TriggerType   string              `json:"triggerType"`
-		TriggerConfig string              `json:"triggerConfig"`
-		Status        string              `json:"status"`
-		NextRunAt     string              `json:"nextRunAt,omitempty"`
+		ID            string                `json:"id"`
+		Name          string                `json:"name"`
+		Description   string                `json:"description"`
+		TriggerType   string                `json:"triggerType"`
+		TriggerConfig string                `json:"triggerConfig"`
+		Status        string                `json:"status"`
+		NextRunAt     string                `json:"nextRunAt,omitempty"`
 		Tasks         []memory.WorkflowTask `json:"tasks"`
 	}
 
@@ -2031,6 +2031,9 @@ func handleTzroWorkflow(ctx context.Context, req *mcp.CallToolRequest, args Tzro
 type TzroDashboardArgs struct{}
 
 func handleTzroDashboard(ctx context.Context, req *mcp.CallToolRequest, args TzroDashboardArgs) (*mcp.CallToolResult, any, error) {
+	// Check for a running dashboard via lock file
+	lock := config.ReadDashboardLock()
+
 	spec, err := memory.DB.GetLatestDashboardSpec()
 	if err != nil {
 		respBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
@@ -2040,11 +2043,7 @@ func handleTzroDashboard(ctx context.Context, req *mcp.CallToolRequest, args Tzr
 		}, nil, nil
 	}
 
-	port := "8080"
-	if envPort := os.Getenv("PORT"); envPort != "" {
-		port = envPort
-	}
-	url := fmt.Sprintf("http://localhost:%s/dashboard/", port)
+	url := config.GetDaemonURL() + "/dashboard/"
 
 	if spec == nil {
 		// Trigger initial generation in the background
@@ -2057,27 +2056,39 @@ func handleTzroDashboard(ctx context.Context, req *mcp.CallToolRequest, args Tzr
 			})
 		}()
 
-		respBytes, _ := json.Marshal(map[string]interface{}{
-			"url":     url,
-			"status":  "generating",
-			"message": "No dashboard spec found. Triggered initial generation. Please check back shortly.",
-			"taskId":  taskID,
-		})
+		resp := map[string]interface{}{
+			"url":              url,
+			"status":           "generating",
+			"message":          "No dashboard spec found. Triggered initial generation. Please check back shortly.",
+			"taskId":           taskID,
+			"dashboardRunning": lock != nil,
+		}
+		if lock != nil {
+			resp["dashboardPid"] = lock.PID
+			resp["dashboardPort"] = lock.Port
+		}
+		respBytes, _ := json.Marshal(resp)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
 		}, nil, nil
 	}
 
 	ageSeconds := time.Now().Unix() - spec.GeneratedAt
-	respBytes, _ := json.Marshal(map[string]interface{}{
-		"url":             url,
-		"status":          "active",
-		"specId":          spec.ID,
-		"generatedAt":     spec.GeneratedAt,
-		"ageSeconds":      ageSeconds,
-		"generatorTaskId": spec.GeneratorTaskID,
-		"ttlSeconds":      spec.TTLSeconds,
-	})
+	resp := map[string]interface{}{
+		"url":              url,
+		"status":           "active",
+		"specId":           spec.ID,
+		"generatedAt":      spec.GeneratedAt,
+		"ageSeconds":       ageSeconds,
+		"generatorTaskId":  spec.GeneratorTaskID,
+		"ttlSeconds":       spec.TTLSeconds,
+		"dashboardRunning": lock != nil,
+	}
+	if lock != nil {
+		resp["dashboardPid"] = lock.PID
+		resp["dashboardPort"] = lock.Port
+	}
+	respBytes, _ := json.Marshal(resp)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
 	}, nil, nil
@@ -2120,8 +2131,13 @@ func handleTzroDashboardRegenerate(ctx context.Context, req *mcp.CallToolRequest
 		}
 
 		nodeSucceeded := false
+		// Find the terminal node (no outgoing edges) and check its status
+		hasOutgoing := make(map[string]bool)
+		for _, edge := range graph.Edges {
+			hasOutgoing[edge.SourceID] = true
+		}
 		for _, node := range graph.Nodes {
-			if node.Action == "terminal_synthesis" {
+			if !hasOutgoing[node.ID] {
 				state, ok := memory.DB.GetNodeState(taskID, node.ID)
 				if ok && state.Status == "completed" {
 					nodeSucceeded = true
@@ -2394,6 +2410,16 @@ func registerTools(server *mcp.Server) {
 			"Actions: create (requires name, cron, tasks), list, toggle (requires workflowId, status), " +
 			"delete (requires workflowId), trigger (requires workflowId for manual immediate execution).",
 	}, handleTzroSchedule)
+
+	// Daemon lifecycle management
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_restart",
+		Description: "Restart the tzro daemon (tzrod) in-place using process re-exec. " +
+			"The daemon replaces itself with a fresh copy of the same binary, preserving the PID and pidlock. " +
+			"In-flight tasks are interrupted and recovered automatically on boot. " +
+			"The inference sidecar survives via process adoption. " +
+			"Returns the restart status and previous uptime. Proactivity Level: L3 (Reversible Action).",
+	}, handleTzroRestart)
 }
 
 // --- Agent App Package Manager MCP tool handlers ---
@@ -2519,6 +2545,85 @@ func handleTzroAppsUninstall(ctx context.Context, req *mcp.CallToolRequest, args
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// --- Daemon Restart MCP tool handler ---
+
+// TzroRestartArgs defines inputs for tzro_restart.
+type TzroRestartArgs struct {
+	Reason string `json:"reason,omitempty" jsonschema:"Optional reason for the restart (logged for audit). Example: config change, binary upgrade, stuck sidecar"`
+}
+
+func handleTzroRestart(ctx context.Context, req *mcp.CallToolRequest, args TzroRestartArgs) (*mcp.CallToolResult, any, error) {
+	// Build request body
+	body := map[string]string{}
+	if args.Reason != "" {
+		body["reason"] = args.Reason
+	}
+
+	// POST to daemon — this triggers the re-exec after responding
+	respBytes, err := proxyToDaemon("/api/restart", http.MethodPost, body)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"status":"error","message":"failed to send restart request: %v"}`, err)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Parse the pre-restart response to capture uptime
+	var restartResp struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+		Uptime string `json:"uptime"`
+	}
+	_ = json.Unmarshal(respBytes, &restartResp)
+
+	// Fire-and-verify: wait for the daemon to come back up
+	// The re-exec happens ~100ms after the response, so wait a bit first
+	time.Sleep(300 * time.Millisecond)
+
+	daemonURL := config.GetDaemonURL()
+	healthClient := &http.Client{Timeout: 2 * time.Second}
+	verified := false
+
+	for attempt := range 5 {
+		healthReq, err := http.NewRequestWithContext(ctx, http.MethodGet, daemonURL+"/health", nil)
+		if err != nil {
+			break
+		}
+		resp, err := healthClient.Do(healthReq)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			verified = true
+			break
+		}
+		if attempt < 4 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
+	if !verified {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"status":"error","message":"daemon did not respond after restart","previousUptime":%q}`, restartResp.Uptime)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	result := map[string]string{
+		"status":         "restarted",
+		"previousUptime": restartResp.Uptime,
+		"reason":         restartResp.Reason,
+	}
+	resultBytes, _ := json.MarshalIndent(result, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(resultBytes)},
 		},
 	}, nil, nil
 }

@@ -161,11 +161,19 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			}
 		}
 
-		// If backend is starting, block and wait for it to become active/adopted
-		if status == "starting" {
-			fmt.Fprintln(os.Stderr, "[Inference Backend] Backend is currently starting. Waiting for it to become active...")
+		// If backend is in any non-active state (starting, unavailable, or other
+		// transient states), block and wait for it to become active/adopted.
+		// This closes a gap where transient states silently fell through to the
+		// terminal "sidecar is inactive" error without any retry.
+		if status != "active" && status != "adopted" && status != "stopped" {
+			fmt.Fprintf(os.Stderr, "[Inference Backend] Backend is in transient state %q. Waiting up to 30s for it to become active...\n", status)
+			nodeID := ""
+			if req.StreamMeta != nil {
+				nodeID = req.StreamMeta.NodeID
+			}
+			telemetry.Default.PublishEvent("inference_wait", req.TaskID, nodeID, fmt.Sprintf("Backend in transient state %q. Waiting for recovery.", status))
 			startWait := time.Now()
-			for time.Since(startWait) < 60*time.Second {
+			for time.Since(startWait) < 30*time.Second {
 				time.Sleep(500 * time.Millisecond)
 				if ActiveBackend != nil {
 					status = strings.ToLower(ActiveBackend.Status())
@@ -177,6 +185,74 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 					fmt.Fprintf(os.Stderr, "[Inference Backend] Backend became active after %v. Proceeding with local execution.\n", time.Since(startWait))
 					break
 				}
+				if status == "stopped" {
+					// Transitioned to stopped — break out and let it fall through
+					// to heuristics/cloud rather than waiting the full timeout.
+					fmt.Fprintln(os.Stderr, "[Inference Backend] Backend transitioned to stopped during wait. Abandoning local execution.")
+					break
+				}
+			}
+		}
+
+		// Pre-flight health probe: If status is still not active after all
+		// recovery attempts (auto-start, transient wait), probe the actual
+		// HTTP /health endpoint. This catches the case where m.Status was
+		// pessimistically set to "Stopped" by a transient inference error
+		// (e.g., timeout, context cancellation, slot contention) while the
+		// sidecar process is still running and healthy.
+		if status != "active" && status != "adopted" {
+			health := m.ProbeHealth(ctx)
+			switch health {
+			case SidecarHealthReady:
+				// Sidecar is alive and has a free slot — re-adopt.
+				m.mutex.Lock()
+				m.Status = "Adopted"
+				m.mutex.Unlock()
+				status = "adopted"
+
+				nodeID := ""
+				if req.StreamMeta != nil {
+					nodeID = req.StreamMeta.NodeID
+				}
+				fmt.Fprintf(os.Stderr, "[Inference Routing] Pre-flight probe: sidecar alive and ready on port %d. Re-adopted from stale %q status.\n", m.ActivePort, "Stopped")
+				telemetry.Default.PublishEvent("sidecar_readopted", req.TaskID, nodeID, "Pre-flight health probe detected live sidecar with stale Stopped status. Re-adopted.")
+
+			case SidecarHealthBusy:
+				// Sidecar is alive but all slots are occupied by another inference.
+				// Wait for the current request to finish rather than failing outright.
+				nodeID := ""
+				if req.StreamMeta != nil {
+					nodeID = req.StreamMeta.NodeID
+				}
+				fmt.Fprintf(os.Stderr, "[Inference Routing] Pre-flight probe: sidecar alive but busy (all slots occupied). Waiting for slot availability...\n")
+				telemetry.Default.PublishEvent("sidecar_slot_wait", req.TaskID, nodeID, "Sidecar alive but busy. Waiting for inference slot.")
+
+				startWait := time.Now()
+				slotWaitTimeout := 30 * time.Second
+				for time.Since(startWait) < slotWaitTimeout {
+					time.Sleep(1 * time.Second)
+					probeResult := m.ProbeHealth(ctx)
+					if probeResult == SidecarHealthReady {
+						m.mutex.Lock()
+						m.Status = "Adopted"
+						m.mutex.Unlock()
+						status = "adopted"
+						fmt.Fprintf(os.Stderr, "[Inference Routing] Slot became available after %v. Re-adopted.\n", time.Since(startWait).Round(time.Millisecond))
+						telemetry.Default.PublishEvent("sidecar_readopted", req.TaskID, nodeID, fmt.Sprintf("Slot wait resolved after %v. Re-adopted.", time.Since(startWait).Round(time.Millisecond)))
+						break
+					}
+					if probeResult == SidecarHealthDead {
+						fmt.Fprintf(os.Stderr, "[Inference Routing] Sidecar died during slot wait after %v. Abandoning.\n", time.Since(startWait).Round(time.Millisecond))
+						break
+					}
+					// Still busy — continue waiting
+				}
+				if status != "adopted" {
+					fmt.Fprintf(os.Stderr, "[Inference Routing] Slot wait timed out after %v. Falling through.\n", slotWaitTimeout)
+				}
+
+			case SidecarHealthDead:
+				// Process is truly dead — leave status as-is, fall through to heuristics/cloud.
 			}
 		}
 

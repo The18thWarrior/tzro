@@ -37,6 +37,7 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 	// 2. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	// Create pipes
 	stdin, err := cmd.StdinPipe()
@@ -115,6 +116,7 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 	// 4. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 5. Send tools/list request
 	listReq := `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`
@@ -167,6 +169,7 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 		"tzro_sentinel_wake":         false,
 		"tzro_workflow":              false,
 		"tzro_schedule":              false,
+		"tzro_restart":               false,
 	}
 
 	for _, toolItem := range tools {
@@ -377,6 +380,7 @@ func TestMCPServer_ApprovalHookAndResume(t *testing.T) {
 	// 4. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	// Create pipes
 	stdin, err := cmd.StdinPipe()
@@ -454,6 +458,7 @@ func TestMCPServer_ApprovalHookAndResume(t *testing.T) {
 	// 6. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 7. Send tzro_resume to trigger background execution of cached graph
 	resumeReq := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tzro_resume","arguments":{"taskId":"task-test-approval"}}}`
@@ -563,6 +568,7 @@ func TestMCPServer_ClientToolDispatch(t *testing.T) {
 	// 4. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	// Create pipes
 	stdin, err := cmd.StdinPipe()
@@ -640,6 +646,7 @@ func TestMCPServer_ClientToolDispatch(t *testing.T) {
 	// 6. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 7. Register the client-side tool
 	registerReq := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tzro_register_client_tools","arguments":{"tools":[{"name":"send_slack","description":"Send a message to a slack channel","inputSchema":{"type":"object","properties":{"channel":{"type":"string"},"message":{"type":"string"}},"required":["channel","message"]}}]}}}`
@@ -714,6 +721,7 @@ func TestMCPServer_ResourceTemplatesList(t *testing.T) {
 	// 2. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -779,6 +787,7 @@ func TestMCPServer_ResourceTemplatesList(t *testing.T) {
 	// 4. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 5. Send resources/templates/list request
 	listReq := `{"jsonrpc":"2.0","id":2,"method":"resources/templates/list","params":{}}`
@@ -834,6 +843,7 @@ func TestMCPServer_ResourceReadCompact(t *testing.T) {
 	// 4. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -899,6 +909,7 @@ func TestMCPServer_ResourceReadCompact(t *testing.T) {
 	// 6. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 7. Read task output resource (compact by default)
 	readTaskReq := `{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"tzro://tasks/task-test-read/output"}}`
@@ -959,6 +970,7 @@ func TestMCPServer_ResourceReadRaw(t *testing.T) {
 	// 4. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -1024,6 +1036,7 @@ func TestMCPServer_ResourceReadRaw(t *testing.T) {
 	// 6. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 7. Read task output resource with format=raw
 	readTaskReq := `{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"tzro://tasks/task-test-raw/output?format=raw"}}`
@@ -1061,6 +1074,7 @@ func TestMCPServer_ResourceSubscribe(t *testing.T) {
 	// 2. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -1126,6 +1140,7 @@ func TestMCPServer_ResourceSubscribe(t *testing.T) {
 	// 4. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 5. Send resources/subscribe request
 	subReq := `{"jsonrpc":"2.0","id":2,"method":"resources/subscribe","params":{"uri":"tzro://tasks/task-test-sub/output"}}`
@@ -1190,7 +1205,7 @@ func TestMCPServer_ResourceSubscribeEventBridge(t *testing.T) {
 	// 2. Start the binary, passing TZRO_DAEMON_URL pointing to the mock server
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
-	cmd.Env = append(os.Environ(), "TZRO_DAEMON_URL="+mockServer.URL)
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_DAEMON_URL="+mockServer.URL, "TZRO_TESTING=true")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -1256,6 +1271,7 @@ func TestMCPServer_ResourceSubscribeEventBridge(t *testing.T) {
 	// 4. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// 5. Send resources/subscribe request
 	subReq := `{"jsonrpc":"2.0","id":2,"method":"resources/subscribe","params":{"uri":"tzro://tasks/task-test-bridge/output"}}`
@@ -1313,6 +1329,7 @@ func TestMCPServer_EdgeCases(t *testing.T) {
 	// 2. Start the binary
 	cmd := exec.Command(binPath)
 	cmd.Dir = tmpDir
+	cmd.Env = append(os.Environ(), "TZRO_DIR="+tmpDir, "TZRO_TESTING=true")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -1377,6 +1394,7 @@ func TestMCPServer_EdgeCases(t *testing.T) {
 	// 4. Send initialized notification
 	initializedNotification := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
 	_, _ = stdin.Write([]byte(initializedNotification + "\n"))
+	time.Sleep(500 * time.Millisecond)
 
 	// Helper to assert validation failure
 	assertValidationFail := func(id int, toolName string, argsJSON string, expectedError string) {
@@ -1409,98 +1427,6 @@ func TestMCPServer_EdgeCases(t *testing.T) {
 	assertValidationFail(17, "tzro_classification", `{"input": "text", "categories": ["A"]}`, "at least 2 categories are required")
 	assertValidationFail(18, "tzro_client_tool_submit", `{"taskId": "", "nodeId": ""}`, "must provide either requestId or both taskId and nodeId")
 	assertValidationFail(19, "tzro_web_search", `{"query": ""}`, "query cannot be empty")
-}
-
-func TestMCPServer_SingletonGuard_DualSpawnRejection(t *testing.T) {
-	// 1. Build the binary
-	tmpDir, err := os.MkdirTemp("", "tzro-mcp-test-singleton-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	binPath := filepath.Join(tmpDir, "tzro-mcp")
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
-	if err := buildCmd.Run(); err != nil {
-		t.Fatalf("failed to build tzro-mcp binary: %v", err)
-	}
-
-	// 2. Start instance 1 — should acquire the lock and stay running
-	cmd1 := exec.Command(binPath)
-	cmd1.Dir = tmpDir
-	cmd1.Env = append(os.Environ(), "TZRO_DIR="+tmpDir)
-
-	stdin1, err := cmd1.StdinPipe()
-	if err != nil {
-		t.Fatalf("failed to get stdin pipe for instance 1: %v", err)
-	}
-	stdout1, err := cmd1.StdoutPipe()
-	if err != nil {
-		t.Fatalf("failed to get stdout pipe for instance 1: %v", err)
-	}
-	stderr1, err := cmd1.StderrPipe()
-	if err != nil {
-		t.Fatalf("failed to get stderr pipe for instance 1: %v", err)
-	}
-
-	if err := cmd1.Start(); err != nil {
-		t.Fatalf("failed to start instance 1: %v", err)
-	}
-
-	go func() { _, _ = io.Copy(io.Discard, stderr1) }()
-	go func() { _, _ = io.Copy(io.Discard, stdout1) }()
-
-	defer func() {
-		_ = stdin1.Close()
-		_ = cmd1.Process.Kill()
-		_ = cmd1.Wait()
-	}()
-
-	// Give instance 1 time to acquire the lock and start listening
-	time.Sleep(1 * time.Second)
-
-	// Verify instance 1 is still alive
-	if cmd1.ProcessState != nil && cmd1.ProcessState.Exited() {
-		t.Fatal("instance 1 should still be running, but it exited")
-	}
-
-	// 3. Start instance 2 against the same workspace — should exit with code 0
-	cmd2 := exec.Command(binPath)
-	cmd2.Dir = tmpDir
-	cmd2.Env = append(os.Environ(), "TZRO_DIR="+tmpDir)
-
-	var stderr2Buf strings.Builder
-	cmd2.Stderr = &stderr2Buf
-
-	err = cmd2.Run()
-
-	// Instance 2 should exit with code 0 (not an error)
-	if err != nil {
-		t.Errorf("instance 2 should exit cleanly (code 0), got error: %v", err)
-	}
-
-	if cmd2.ProcessState == nil {
-		t.Fatal("instance 2 ProcessState should be available after Run")
-	}
-
-	if code := cmd2.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("instance 2 exit code = %d, want 0", code)
-	}
-
-	// 4. Verify the lock file contains instance 1's PID
-	lockPath := filepath.Join(tmpDir, ".tzro", "mcp.lock")
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		t.Fatalf("lockfile should exist: %v", err)
-	}
-
-	lockPIDStr := strings.TrimSpace(string(data))
-	lockPID := 0
-	fmt.Sscanf(lockPIDStr, "%d", &lockPID)
-
-	if lockPID != cmd1.Process.Pid {
-		t.Errorf("lockfile PID = %d, want instance 1 PID %d", lockPID, cmd1.Process.Pid)
-	}
 }
 
 // --- tzro_workflow unit tests ---

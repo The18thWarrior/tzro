@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tzro/internal/config"
-	"tzro/internal/pidlock"
 )
 
 var version = "1.0.0"
@@ -23,7 +21,15 @@ var version = "1.0.0"
 // that need to create SubagentChannels (e.g., handleTzroRun, handleTzroWorkflow).
 var mcpServer *mcp.Server
 
+// engineReady is closed once bootstrapEngine() completes in the background goroutine.
+// Tool handlers that need engine subsystems should call <-engineReady before proceeding.
+var engineReady = make(chan struct{})
+
 func isDaemonRunning() bool {
+	if os.Getenv("TZRO_TESTING") == "true" {
+		return false
+	}
+
 	client := &http.Client{
 		Timeout: 500 * time.Millisecond,
 	}
@@ -67,6 +73,10 @@ func probeDaemon(client *http.Client, baseURL string) bool {
 }
 
 func startDaemon() {
+	if os.Getenv("TZRO_TESTING") == "true" {
+		return
+	}
+
 	tzrodPath := config.FindBinary("tzrod")
 
 	if tzrodPath == "" {
@@ -133,49 +143,51 @@ func main() {
 		}
 	}
 
-	// Singleton guard: ensure only one tzro-mcp per workspace
-	lockPath := filepath.Join(logDir, "mcp.lock")
-	unlock, lockErr := pidlock.Acquire(lockPath)
-	if lockErr != nil {
-		var alreadyRunning *pidlock.ErrAlreadyRunning
-		if errors.As(lockErr, &alreadyRunning) {
-			log.Printf("[tzro-mcp] Another instance is already running (PID %d). Exiting.\n", alreadyRunning.HolderPID)
-			os.Exit(0)
-		}
-		log.Fatalf("[tzro-mcp] Failed to acquire lockfile: %v", lockErr)
-	}
-	defer unlock()
+	// NOTE: No singleton guard here — each IDE connection spawns its own
+	// stdio transport process. The daemon itself is already singleton-guarded
+	// via daemon.lock, so multiple MCP bridges are safe to coexist.
 
-	// Check if daemon is running, if not start it
-	if !isDaemonRunning() {
-		startDaemon()
-		// Wait for the new daemon to become responsive (up to 5 seconds)
-		for i := 0; i < 10; i++ {
-			time.Sleep(500 * time.Millisecond)
-			if isDaemonRunning() {
-				log.Println("[tzro-mcp] Daemon is ready")
-				break
-			}
-		}
-	} else {
-		log.Println("[tzro-mcp] Reusing existing daemon at", config.GetDaemonURL())
-	}
-
-	// Bootstrap engine subsystems (config, memory DB, inference, tools, observer)
-	bootstrapEngine()
-
-	// Initialize MCP server implementation
+	// Initialize MCP server and register tools FIRST so the stdio transport
+	// can start accepting the IDE's initialize handshake immediately.
+	// Heavy subsystem bootstrap (daemon discovery, inference, observer, etc.)
+	// runs in a background goroutine to avoid exceeding the IDE's connection timeout.
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "tzro",
 		Version: version,
 	}, getResourcesServerOptions())
 	mcpServer = server
 
-	// Register tzro-specific Phase 1 tools
+	// Register tzro-specific tools (handlers will block on engineReady if needed)
 	registerTools(server)
 
 	// Register dynamic MCP resources
 	registerResources(server)
+
+	// Background: daemon discovery + engine bootstrap
+	go func() {
+		if !isDaemonRunning() {
+			startDaemon()
+			if os.Getenv("TZRO_TESTING") != "true" {
+				// Wait for the new daemon to become responsive (up to 5 seconds)
+				for i := 0; i < 10; i++ {
+					time.Sleep(500 * time.Millisecond)
+					if isDaemonRunning() {
+						log.Println("[tzro-mcp] Daemon is ready")
+						break
+					}
+				}
+			}
+		} else {
+			log.Println("[tzro-mcp] Reusing existing daemon at", config.GetDaemonURL())
+		}
+
+		// Bootstrap engine subsystems (config, memory DB, inference, tools, observer)
+		bootstrapEngine()
+
+		// Signal that the engine is fully initialized
+		close(engineReady)
+		log.Println("[tzro-mcp] Engine bootstrap complete")
+	}()
 
 	// Run standard stdio transport (blocks until stdin EOF)
 	log.Println("[tzro-mcp] Server is listening on stdin/stdout...")

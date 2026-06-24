@@ -113,7 +113,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 
 	for _, node := range sctNodes {
-		if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe") && !isSourceMap[node.ID] {
+		if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "sub_dag") && !isSourceMap[node.ID] {
 			sctEdges = append(sctEdges, GraphEdge{
 				SourceID: node.ID,
 				TargetID: synthID,

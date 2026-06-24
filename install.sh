@@ -84,9 +84,8 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
     echo "echo 'mock llama-server'" >> "${INSTALL_DIR}/bin/llama-server"
     chmod +x "${INSTALL_DIR}/bin/llama-server"
 
-    echo "mock model content" > "${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
-    echo "mock mmproj" > "${INSTALL_DIR}/models/mmproj-gemma-4-E4B-it-Q8_0.gguf"
-    echo "mock mtp drafter" > "${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
+    echo "mock model content" > "${INSTALL_DIR}/models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"
+    echo "mock mmproj" > "${INSTALL_DIR}/models/mmproj-F32.gguf"
     
     echo "#!/bin/sh" > "${INSTALL_DIR}/bin/tzro-mcp"
     echo "echo 'mock tzro-mcp'" >> "${INSTALL_DIR}/bin/tzro-mcp"
@@ -201,7 +200,7 @@ EOF
   "cloudModel": "gemini-flash-latest",
   "speedFloor": 5,
   "sidecarEnabled": false,
-  "ggufModelPath": "models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+  "ggufModelPath": "models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
   "modelsDir": "",
   "confidenceThreshold": 3,
   "executorNodeDelayMs": 800,
@@ -213,9 +212,9 @@ CONFIG_EOF
         fi
     fi
 
-    # Provision Tactician Model GGUF (~3.9 GB default Gemma 4 E4B)
-    GGUF_PATH="${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
-    GGUF_URL="https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf?download=true"
+    # Provision Tactician Model GGUF (~2.8 GB default Qwopus 3.5 4B MTP)
+    GGUF_PATH="${INSTALL_DIR}/models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"
+    GGUF_URL="https://huggingface.co/Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF/resolve/main/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"
     
     IS_PLACEHOLDER=false
     if [ -f "${GGUF_PATH}" ]; then
@@ -229,8 +228,8 @@ CONFIG_EOF
     fi
 
     if [ ! -f "${GGUF_PATH}" ] || [ "${IS_PLACEHOLDER}" = "true" ]; then
-        echo -e "  Downloading default Gemma 4 E4B tactician model (~3.9 GB)..."
-        echo -e "  ${DIM}Source: huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF${NC}"
+        echo -e "  Downloading default Qwopus 3.5 4B tactician model (~2.8 GB)..."
+        echo -e "  ${DIM}Source: huggingface.co/Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF${NC}"
         GGUF_TMP="${GGUF_PATH}.download"
         if curl -fSL --progress-bar -o "${GGUF_TMP}" "${GGUF_URL}"; then
             mv "${GGUF_TMP}" "${GGUF_PATH}"
@@ -244,8 +243,8 @@ CONFIG_EOF
     fi
 
     # Provision Multimodal Vision Projector (~534 MB companion for PDF OCR & image analysis)
-    MMPROJ_PATH="${INSTALL_DIR}/models/mmproj-gemma-4-E4B-it-Q8_0.gguf"
-    MMPROJ_URL="https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/mmproj-gemma-4-E4B-it-Q8_0.gguf"
+    MMPROJ_PATH="${INSTALL_DIR}/models/mmproj-F32.gguf"
+    MMPROJ_URL="https://huggingface.co/Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF/resolve/main/mmproj-F32.gguf"
     if [ ! -f "${MMPROJ_PATH}" ]; then
         echo -e "  Downloading vision projector (~534 MB) for local PDF OCR & image analysis..."
         MMPROJ_TMP="${MMPROJ_PATH}.download"
@@ -258,23 +257,6 @@ CONFIG_EOF
         fi
     else
         echo -e "  ${GREEN}✔ Vision projector already present${NC}"
-    fi
-
-    # Provision MTP Draft Assistant Model (~74MB lightweight 4-layer drafter for speculative decoding)
-    MTP_DRAFT_PATH="${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
-    MTP_DRAFT_URL="https://huggingface.co/cascade-tech/gemma-4-E4B-it-qat-q4_0-unquantized-assistant-gguf/resolve/main/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
-    if [ ! -f "${MTP_DRAFT_PATH}" ]; then
-        echo -e "  Downloading MTP draft assistant model (~74MB) for speculative decoding..."
-        MTP_TMP="${MTP_DRAFT_PATH}.download"
-        if curl -fSL --progress-bar -o "${MTP_TMP}" "${MTP_DRAFT_URL}"; then
-            mv "${MTP_TMP}" "${MTP_DRAFT_PATH}"
-            echo -e "  ${GREEN}✔ MTP draft assistant model downloaded${NC}"
-        else
-            rm -f "${MTP_TMP}"
-            echo -e "  ${YELLOW}⚠ MTP draft model download failed. Sidecar will use ngram-simple fallback.${NC}"
-        fi
-    else
-        echo -e "  ${GREEN}✔ MTP draft assistant model already present${NC}"
     fi
 fi
 
@@ -317,9 +299,8 @@ echo -e "  ${BOLD}Database Booted:${NC}     ${DB_PATH}"
 echo -e "  ${BOLD}Llama Sidecar:${NC}       ${INSTALL_DIR}/bin/llama-server"
 echo -e "  ${BOLD}Daemon:${NC}              ${INSTALL_DIR}/bin/tzrod"
 echo -e "  ${BOLD}MCP Server:${NC}          ${INSTALL_DIR}/bin/tzro-mcp"
-echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"
-echo -e "  ${BOLD}Vision Projector:${NC}    ${INSTALL_DIR}/models/mmproj-gemma-4-E4B-it-Q8_0.gguf"
-echo -e "  ${BOLD}MTP Draft Model:${NC}     ${INSTALL_DIR}/models/gemma-4-E4B-it-qat-assistant-q4_k_m.gguf"
+echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"
+echo -e "  ${BOLD}Vision Projector:${NC}    ${INSTALL_DIR}/models/mmproj-F32.gguf"
 echo -e "=========================================================="
 
 if [ "$PATH_OK" = "true" ]; then

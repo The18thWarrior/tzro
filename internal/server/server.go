@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"tzro/internal/channel"
 	"tzro/internal/classifier"
@@ -46,8 +47,9 @@ type ChatResponse struct {
 }
 
 var (
-	activeGraphs = make(map[string]*compiler.ExecutionGraph)
-	graphsMutex  sync.RWMutex
+	activeGraphs    = make(map[string]*compiler.ExecutionGraph)
+	graphsMutex     sync.RWMutex
+	DaemonStartTime = time.Now()
 )
 
 // StartServer starts the HTTP router on the specified port.
@@ -97,6 +99,9 @@ func StartServer(addr string) error {
 	mux.HandleFunc("/api/apps/uninstall", corsHandler(handleAppsUninstall))
 	mux.HandleFunc("/api/apps", corsHandler(handleAppsList))
 
+	// Daemon lifecycle
+	mux.HandleFunc("/api/restart", corsHandler(handleRestart))
+
 	// Workflows routing
 	mux.HandleFunc("/api/workflows", corsHandler(handleWorkflows))
 	mux.HandleFunc("/api/workflows/toggle", corsHandler(handleWorkflowToggle))
@@ -108,29 +113,25 @@ func StartServer(addr string) error {
 	mux.HandleFunc("/api/dashboard/spec", corsHandler(handleDashboardSpec))
 	mux.HandleFunc("/api/dashboard/regenerate", corsHandler(handleDashboardRegenerate))
 
-	// Serve Dashboard static files with SPA routing fallback
-	dashboardDir := "./static/dashboard"
-	dashboardHandler := corsHandler(func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/dashboard")
-		p = path.Clean(p)
-		if p == "" || p == "/" || p == "." {
+	// Serve Dashboard static files at root with SPA routing fallback
+	staticDir := "./static"
+	mux.HandleFunc("/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		p := path.Clean(r.URL.Path)
+		if p == "/" || p == "." {
 			p = "index.html"
+		} else {
+			p = strings.TrimPrefix(p, "/")
 		}
 
-		fullPath := filepath.Join(dashboardDir, p)
+		fullPath := filepath.Join(staticDir, p)
 		info, err := os.Stat(fullPath)
 		if err != nil || info.IsDir() {
 			// SPA fallback
-			http.ServeFile(w, r, filepath.Join(dashboardDir, "index.html"))
+			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
 			return
 		}
 		http.ServeFile(w, r, fullPath)
-	})
-	mux.HandleFunc("/dashboard/", dashboardHandler)
-
-	// Serve GUI static files
-	fileServer := http.FileServer(http.Dir("./static"))
-	mux.Handle("/", fileServer)
+	}))
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -149,6 +150,9 @@ func StartServer(addr string) error {
 
 	_ = config.WriteDaemonPort(actualPort)
 	defer config.RemoveDaemonPort()
+
+	_ = config.WriteDashboardLock(os.Getpid(), actualPort)
+	defer config.RemoveDashboardLock()
 
 	fmt.Printf("[Server] Unified HTTP Router listening on http://127.0.0.1:%d...\n", actualPort)
 	return http.Serve(listener, mux)
@@ -310,30 +314,116 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 	defer graphsMutex.RUnlock()
 
 	type TaskStateItem struct {
-		TaskID    string                   `json:"taskId"`
-		Graph     *compiler.ExecutionGraph `json:"graph"`
-		States    map[string]interface{}   `json:"states"`
-		CreatedAt int64                    `json:"createdAt"`
+		TaskID     string                   `json:"taskId"`
+		Graph      *compiler.ExecutionGraph `json:"graph,omitempty"`
+		States     map[string]interface{}   `json:"states,omitempty"`
+		CreatedAt  int64                    `json:"createdAt"`
+		Prompt     string                   `json:"prompt"`
+		IntentType string                   `json:"intentType"`
+		Status     string                   `json:"status"`
+		NodeCount  int                      `json:"nodeCount"`
 	}
 
+	seen := make(map[string]bool)
 	var list []TaskStateItem
+
+	// 1. Active in-memory graphs (currently running tasks)
 	for taskID, g := range activeGraphs {
 		statesMap := make(map[string]interface{})
+		derivedStatus := "running"
+		hasFailed := false
+		allCompleted := true
 		for _, node := range g.Nodes {
 			state, ok := memory.DB.GetNodeState(taskID, node.ID)
 			if ok {
 				statesMap[node.ID] = state
+				if state.Status == "failed" {
+					hasFailed = true
+				}
+				if state.Status != "completed" {
+					allCompleted = false
+				}
 			} else {
 				statesMap[node.ID] = map[string]string{"status": "pending", "output": ""}
+				allCompleted = false
 			}
+		}
+		if hasFailed {
+			derivedStatus = "failed"
+		} else if allCompleted && len(g.Nodes) > 0 {
+			derivedStatus = "completed"
 		}
 
 		list = append(list, TaskStateItem{
-			TaskID:    taskID,
-			Graph:     g,
-			States:    statesMap,
-			CreatedAt: g.CreatedAt,
+			TaskID:     taskID,
+			Graph:      g,
+			States:     statesMap,
+			CreatedAt:  g.CreatedAt,
+			Prompt:     g.GoalPrompt,
+			IntentType: "task",
+			Status:     derivedStatus,
+			NodeCount:  len(g.Nodes),
 		})
+		seen[taskID] = true
+	}
+
+	// 2. Historical tasks from SQLite (recently completed/failed)
+	historical, err := memory.DB.GetRecentTasks(20, "all")
+	if err == nil {
+		for _, ht := range historical {
+			if seen[ht.TaskID] {
+				continue // Active graph takes priority
+			}
+
+			// Reconstruct a minimal graph and states map from persisted node_states
+			// so the DAG view can render node tiles even for completed/historical tasks.
+			nodeStates := memory.DB.GetAllNodeStates(ht.TaskID)
+			var reconstructedGraph *compiler.ExecutionGraph
+			statesMap := make(map[string]interface{})
+
+			if len(nodeStates) > 0 {
+				var nodes []compiler.GraphNode
+				for _, ns := range nodeStates {
+					nodes = append(nodes, compiler.GraphNode{
+						ID:     ns.NodeID,
+						Type:   "action",
+						Status: ns.Status,
+						Output: ns.Output,
+					})
+					statesMap[ns.NodeID] = map[string]string{
+						"status": ns.Status,
+						"output": ns.Output,
+					}
+				}
+				reconstructedGraph = &compiler.ExecutionGraph{
+					TaskID:    ht.TaskID,
+					Nodes:     nodes,
+					Edges:     []compiler.GraphEdge{}, // Edges are not persisted
+					CreatedAt: ht.CreatedAt,
+				}
+			}
+
+			list = append(list, TaskStateItem{
+				TaskID:     ht.TaskID,
+				Graph:      reconstructedGraph,
+				States:     statesMap,
+				CreatedAt:  ht.CreatedAt,
+				Prompt:     "", // Historical tasks don't retain the prompt in node_states
+				IntentType: "task",
+				Status:     ht.Status,
+				NodeCount:  ht.NodeCount,
+			})
+			seen[ht.TaskID] = true
+		}
+	}
+
+	// Sort descending by createdAt
+	for i := 0; i < len(list); i++ {
+		for j := i + 1; j < len(list); j++ {
+			if list[j].CreatedAt > list[i].CreatedAt {
+				list[i], list[j] = list[j], list[i]
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1312,8 +1402,13 @@ func handleDashboardRegenerate(w http.ResponseWriter, r *http.Request) {
 		}
 
 		nodeSucceeded := false
+		// Find the terminal node (no outgoing edges) and check its status
+		hasOutgoing := make(map[string]bool)
+		for _, edge := range graph.Edges {
+			hasOutgoing[edge.SourceID] = true
+		}
 		for _, node := range graph.Nodes {
-			if node.Action == "terminal_synthesis" {
+			if !hasOutgoing[node.ID] {
 				state, ok := memory.DB.GetNodeState(taskID, node.ID)
 				if ok && state.Status == "completed" {
 					nodeSucceeded = true
@@ -1640,4 +1735,69 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"running","taskId":"%s"}`, req.TaskID)))
+}
+
+// handleRestart handles POST /api/restart — triggers an immediate in-place
+// daemon re-exec via syscall.Exec (ADR-0033). Responds before the re-exec
+// so the caller receives a clean 200. The inference sidecar survives via
+// process adoption on the new boot cycle.
+func handleRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if body.Reason == "" {
+		body.Reason = "user-requested"
+	}
+
+	uptime := time.Since(DaemonStartTime).Truncate(time.Second).String()
+
+	// Emit audit event to StreamBus so Observer/Sentinel/dashboard see it
+	stream.GlobalBus.Publish(stream.StreamChunk{
+		Source:  "system",
+		Type:    "daemon_restart",
+		Content: fmt.Sprintf("Daemon restart initiated (reason: %s, uptime: %s)", body.Reason, uptime),
+	})
+
+	// Respond before the re-exec so the caller gets a clean 200
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"restarting","reason":%q,"uptime":%q}`, body.Reason, uptime)))
+
+	// Flush the response to the wire before scheduling the re-exec
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	// Schedule re-exec after a short delay to ensure the HTTP response is fully sent
+	time.AfterFunc(100*time.Millisecond, execSelfRestart)
+}
+
+// execSelfRestart replaces the current process with a fresh copy of the same
+// binary using syscall.Exec. The PID is preserved, so the pidlock in
+// daemon.lock stays valid and the inference sidecar is adopted on reboot.
+func execSelfRestart() {
+	executable, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Restart] Failed to resolve executable path: %v\n", err)
+		return
+	}
+	// Resolve symlinks so we exec the real binary (handles install-in-place upgrades)
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Restart] Failed to resolve symlinks: %v\n", err)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[Restart] Re-executing %s ...\n", executable)
+	if err := syscall.Exec(executable, os.Args, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "[Restart] syscall.Exec failed: %v\n", err)
+	}
 }

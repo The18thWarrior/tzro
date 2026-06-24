@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"tzro/internal/cache"
+	"tzro/internal/config"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 )
@@ -273,12 +274,19 @@ func TestDynamicMCPDiscovery(t *testing.T) {
 }
 
 func TestWasmDynamicRegistration(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tzro-wasm-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	t.Setenv("TZRO_DIR", tmpDir)
+
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
-	memory.DB.SetDBPathForTesting("tzro_tools_wasm_test.db")
+	memory.DB.SetDBPathForTesting(filepath.Join(tmpDir, "tzro_tools_wasm_test.db"))
 	defer func() {
 		memory.DB.Close()
-		os.Remove("tzro_tools_wasm_test.db")
+		ClearLocalConnectionPool()
 		memory.DB.SetDBPathForTesting(oldDBPath)
 	}()
 
@@ -286,11 +294,8 @@ func TestWasmDynamicRegistration(t *testing.T) {
 		t.Fatalf("failed to init DB: %v", err)
 	}
 
-	// Create .tzro/wasm directory as an absolute path
-	wasmDir, err := filepath.Abs(filepath.Join(".tzro", "wasm"))
-	if err != nil {
-		t.Fatalf("failed to resolve absolute path for wasm dir: %v", err)
-	}
+	// Create wasm directory as resolved by config
+	wasmDir := config.ResolvePath("wasm")
 	if err := os.MkdirAll(wasmDir, 0755); err != nil {
 		t.Fatalf("failed to create wasm dir: %v", err)
 	}
@@ -310,11 +315,11 @@ func TestWasmDynamicRegistration(t *testing.T) {
 	}
 
 	// Compile a tiny WASM binary
-	tmpDir, err := os.MkdirTemp("", "tzro-dyn-wasm-*")
+	buildDir, err := os.MkdirTemp("", "tzro-dyn-wasm-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(buildDir)
 
 	goCode := `
 package main
@@ -341,14 +346,14 @@ func main() {
 	json.NewEncoder(os.Stdout).Encode(&out)
 }
 `
-	srcPath := filepath.Join(tmpDir, "main.go")
+	srcPath := filepath.Join(buildDir, "main.go")
 	if err := os.WriteFile(srcPath, []byte(goCode), 0644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
 
 	wasmPath := filepath.Join(wasmDir, "test_dyn_skill.wasm")
 	cmd := exec.Command("go", "build", "-o", wasmPath, "main.go")
-	cmd.Dir = tmpDir
+	cmd.Dir = buildDir
 	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to compile WASM: %v, output: %s", err, string(output))

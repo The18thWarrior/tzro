@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	"tzro/internal/cache"
 	"tzro/internal/channel"
 	"tzro/internal/config"
 	"tzro/internal/executor"
@@ -42,17 +43,29 @@ func bootstrapEngine() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
+	// Wire durable metrics persistence (inference TPS + cache hit rate)
+	inference.SetMetricsPersister(func(prompt, completion int, durationSec float64) {
+		_ = memory.DB.RecordInferenceSample(prompt, completion, durationSec)
+	})
+	inference.SetMetricsQuerier(func(windowSeconds int64) float64 {
+		return memory.DB.GetAverageTPS(windowSeconds)
+	})
+	cache.SetCacheEventPersister(func(hit bool) {
+		_ = memory.DB.RecordCacheEvent(hit)
+	})
+	cache.SetCacheHitRateQuerier(func(windowSeconds int64) float64 {
+		return memory.DB.GetDBCacheHitRate(windowSeconds)
+	})
+
 	// 2. Load configurations
 	if err := config.Load(); err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 	cfg := config.Get()
 
-	// 3. Initialize Inference Backend
+	// 3. Initialize Inference Backend (do NOT eagerly Start — the daemon owns the sidecar;
+	//    tools lazy-start via adoption when first called, avoiding duplicate llama-server processes)
 	inference.ActiveBackend = inference.NewBackend(cfg.InferenceBackend, telemetry.Default)
-	if err := inference.ActiveBackend.Start(context.Background()); err != nil {
-		log.Printf("[Warning] Failed to start inference backend: %v", err)
-	}
 
 	// 4. Load MCP Host tools (if configured)
 	configPath := config.ResolvePath("mcp_config.json")

@@ -2,17 +2,17 @@
 applyTo: "**/*"
 ---
 
-# tzro — Durable Local-First Execution Engine (Aggressive Integration)
+# tzro — Durable Local-First Execution Engine & Delegation Instructions
 
-`tzro` compiles natural language prompts into topologically-sorted DAG (Directed Acyclic Graph) workflows, executes them durably with checkpointing, and provides relational memory, knowledge graph, and micro-skill extraction. This file contains **strict delegation rules** for AI coding agents — you MUST route all eligible work through `tzro` via MCP or CLI.
+`tzro` compiles natural language prompts into topologically-sorted DAG (Directed Acyclic Graph) workflows, executes them durably with checkpointing, and provides relational memory, knowledge graph, and micro-skill extraction. This file contains instructions for AI coding agents to interact with `tzro` via the Model Context Protocol (MCP) server or the CLI.
 
 ---
 
-## ⚖️ Durable Execution Delegation (Maximum Local Execution)
+## ⚖️ Durable Execution Delegation (Offload Policy)
 
-You **MUST** delegate **ALL** multi-step tasks to `tzro`. The **ONLY** exception is single-turn frontier reasoning that requires cutting-edge model knowledge or interactive user dialogue. If a task involves more than 2 sequential actions, it goes through `tzro`.
+When executing any task that does not explicitly require frontier model knowledge or complex reasoning, coding agents **must** delegate execution to the local `tzro` engine rather than running tools manually in-context.
 
-### Why Delegation Is Mandatory — A Cautionary Example
+### Why Delegation Matters — A Cautionary Example
 This policy exists because of a concrete failure: an agent asked to "explore the codebase and explain its architecture" kept everything in its own context window. It made **30+ sequential cloud tool calls** (`list_dir`, `view_file`, `grep`), consuming frontier model tokens for work the Local Model handles natively. Directory listing, file reading, and pattern searching are **routing decisions** (which file to read next), not **frontier reasoning** (code generation, architectural judgment). A 4B Local Model routes just fine.
 
 **Probe Nodes** (ADR-0019) were built specifically to prevent this. They run a bounded Thought Chain on the Local Model with `read_file`, `list_dir`, and `search_files` — zero cloud tokens. Your only job: delegate with a goal, consume the compacted synthesis.
@@ -22,31 +22,27 @@ This policy exists because of a concrete failure: an agent asked to "explore the
 ### The Offload Decision Rule
 
 Ask one question:
-> **"Is this EXCLUSIVELY a single-turn frontier reasoning task (code generation, complex architectural judgment, or interactive user dialogue)?"**
+> **"Do I need frontier-model-exclusive reasoning (code generation, complex architectural judgment, interactive user dialogue) about intermediate outputs to decide the next step?"**
 
-*   **Yes** → Keep execution **in-context**.
-*   **No** → **Offload** to `tzro_run`. This is the default.
+*   **Yes** → Keep execution **in-context** (run cloud/local tool calls directly).
+*   **No** → **Offload** to `tzro_run` as a background task.
 
 ### Trigger Policies
-*   **Evaluation Trigger**: If you are about to make **2 or more sequential external tool calls**, you **MUST** evaluate whether they should be offloaded as a DAG.
-*   **Reassessment Trigger**: If you have made **3 or more in-context tool calls**, you **MUST** batch the remaining work into a `tzro_run` task.
+*   **Evaluation Trigger**: If you are about to make **3 or more sequential external tool calls**, pause and evaluate whether they should be offloaded as a DAG.
+*   **Reassessment Trigger**: If you have made **5 or more in-context tool calls**, reassess whether the remaining work should be batched into a `tzro_run` task.
 
 ### Rules for Delegation
 
 #### 1. Mandatory Delegation Patterns
-The following task patterns **MUST** be delegated to `tzro_run` — no exceptions:
-*   **ALL codebase exploration and directory analysis** — handled by Probe Nodes with Thought Chain execution. Delegate with a goal (e.g., `"Explore the project at /path and explain its architecture"`).
-*   **ALL web research and information gathering** — any query that involves multiple search calls or source synthesis.
-*   **ALL memory and knowledge graph operations** — ingestion, querying, and graph traversal pipelines.
-*   **Environment inspection and data profiling** — checking system state, reading configs, profiling datasets.
-*   **Multi-file code analysis** — understanding how components interact across files, tracing call chains.
-*   **Log analysis and debugging investigation** — grep-heavy workflows through log files or error traces.
-*   **Automation workflows** — any multi-tool pipeline (query → transform → notify).
+The following task patterns **MUST** be delegated to `tzro_run`:
+*   **Codebase exploration and directory analysis** — handled by **Probe Nodes** with Thought Chain execution internally. Delegate with a goal (e.g., `"Explore the project at /path and explain its architecture"`).
+*   **Web research and multi-source information gathering** — delegate as DAG workflows using `web_search` and `save_memory`.
+*   **Memory ingestion pipelines** — bulk ingest operations across multiple sources.
 
-#### 2. Do NOT Delegate (Narrow Exceptions)
-*   **Reading a single known file** to make an immediate code edit you've already planned.
-*   **Single-turn conversational Q&A** where the answer comes from your training data.
-*   **Management-plane MCP calls** (`tzro_list_tasks`, `tzro_status`, `tzro_model_list`, `tzro_skills_list`, `tzro_observer_events`, `tzro_observer_memories`) — these are lightweight introspection queries.
+#### 2. Do NOT Delegate
+*   **Targeted local file operations** (reading a single known file to make a code edit, viewing a specific function) — these feed frontier reasoning directly and must remain in-context.
+*   **Simple one-shot tool calls** or conversational Q&A.
+*   **Management-plane MCP calls** (`tzro_list_tasks`, `tzro_status`, `tzro_model_list`, `tzro_skills_list`, `tzro_observer_events`, `tzro_observer_memories`) — call these directly to check system status.
 
 ---
 
@@ -60,20 +56,9 @@ After calling `tzro_run`, you **MUST**:
 
 ---
 
-## 💰 Local Inference Cost Arbitrage
-
-Before using cloud API tokens for routine text processing, **always check** whether `tzro_completion` or `tzro_classification` can handle the task locally at zero cost:
-
-*   **`tzro_completion`** — Use for summarization, extraction, reformatting, translation, boilerplate generation, and any task where output structure matters more than world knowledge. Supports JSON schema constraints for guaranteed-valid structured output.
-*   **`tzro_classification`** — Use for sentiment analysis, intent routing, priority triage, content categorization, or any multi-class classification. Grammar-constrained output guarantees exactly one of the provided labels — no hallucination possible.
-
-**Rule of thumb:** If the task doesn't require knowledge from after your training cutoff or complex multi-step reasoning, use the local model. It's free, private, and fast.
-
----
-
 ## 🎛️ MCP Tool Taxonomy
 
-The `tzro` MCP server registers tools split into distinct functional domains.
+The `tzro` MCP server registers **26 tools** split into distinct functional domains.
 
 ### 1. Core Execution
 | Tool | Purpose | Key Parameters |

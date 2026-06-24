@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  Play, Loader2, RefreshCw, Moon, Sun, Layout, Activity 
+  Play, Loader2, RefreshCw, Moon, Sun, Layout, Activity, RotateCcw 
 } from 'lucide-react';
-import { renderLayoutNode } from './adapter/json-to-openui';
+import { renderLayoutWithFallback } from './adapter/json-to-openui';
 import type { RenderContext } from './adapter/json-to-openui';
 
 interface DashboardSpec {
@@ -32,6 +32,14 @@ export default function App() {
   const [regenerating, setRegenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Regeneration progress tracking
+  const regenTaskIdRef = useRef<string | null>(null);
+  const [regenProgress, setRegenProgress] = useState(0);
+  const [regenNodeLabel, setRegenNodeLabel] = useState('');
+  const [regenComplete, setRegenComplete] = useState(false);
+  const [regenFailed, setRegenFailed] = useState(false);
+  const completedNodesRef = useRef<Set<string>>(new Set());
+
   const [tasks, setTasks] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [config, setConfig] = useState<any>(null);
@@ -39,6 +47,7 @@ export default function App() {
   const [downloadedModels, setDownloadedModels] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [workflows, setWorkflows] = useState<any[]>([]);
+  const [workflowExecutions, setWorkflowExecutions] = useState<any[]>([]);
   
   // Spotlight state
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(undefined);
@@ -124,6 +133,13 @@ export default function App() {
         const wfData = await wfRes.json();
         setWorkflows(wfData || []);
       }
+
+      // 7. Fetch Workflow Executions (run history)
+      const wfExecRes = await fetch('/api/workflows/executions');
+      if (wfExecRes.ok) {
+        const wfExecData = await wfExecRes.json();
+        setWorkflowExecutions(wfExecData || []);
+      }
     } catch (err) {
       console.error("Telemetry fetch failed", err);
     }
@@ -151,6 +167,28 @@ export default function App() {
     fetchTaskDetails(taskId);
   };
 
+  // Handle closing spotlight
+  const handleCloseSpotlight = () => {
+    setSelectedTaskId(undefined);
+    setSelectedTaskDetails(null);
+  };
+
+  // Human-readable labels for dashboard generation nodes
+  const nodeLabels: Record<string, string> = {
+    'gather_metrics': 'Gathering system metrics',
+    'gather_metrics_exec': 'Collecting metrics data',
+    'gather_tasks': 'Gathering task history',
+    'gather_tasks_exec': 'Collecting task data',
+    'gather_config': 'Gathering configuration',
+    'gather_config_exec': 'Collecting config data',
+    'gather_workflows': 'Gathering workflows',
+    'gather_workflows_exec': 'Collecting workflow data',
+    'compose_layout': 'Composing layout',
+    'compose_layout_exec': 'Generating layout spec',
+  };
+  // Total expected nodes for the dashboard generation DAG (5 base + 5 SCT exec = 10)
+  const TOTAL_REGEN_NODES = 10;
+
   // SSE stream connection
   useEffect(() => {
     const sse = new EventSource('/api/events');
@@ -172,9 +210,39 @@ export default function App() {
             return list;
           });
 
+          // Track regeneration progress via SSE events
+          if (regenTaskIdRef.current && chunk.taskId === regenTaskIdRef.current) {
+            if (chunk.type === 'node_started' && chunk.nodeId) {
+              const label = nodeLabels[chunk.nodeId] || chunk.nodeId;
+              setRegenNodeLabel(label);
+            }
+            if (chunk.type === 'node_completed' && chunk.nodeId) {
+              completedNodesRef.current.add(chunk.nodeId);
+              const completed = completedNodesRef.current.size;
+              const pct = Math.min(Math.round((completed / TOTAL_REGEN_NODES) * 100), 100);
+              setRegenProgress(pct);
+              const label = nodeLabels[chunk.nodeId] || chunk.nodeId;
+              setRegenNodeLabel(`${label} ✓`);
+            }
+            if (chunk.type === 'task_completed') {
+              setRegenProgress(100);
+              setRegenComplete(true);
+              setRegenerating(false);
+              setRegenNodeLabel('Dashboard ready');
+            }
+            if (chunk.type === 'task_failed') {
+              setRegenFailed(true);
+              setRegenerating(false);
+              setRegenNodeLabel('Generation failed');
+            }
+          }
+
           // Refresh spec or task status dynamically on critical events
-          if (chunk.type === 'node_completed' && chunk.nodeId === 'terminal_synthesis_tool_exec') {
-            fetchSpec();
+          if (chunk.type === 'node_completed' && chunk.nodeId === 'compose_layout_exec') {
+            // Don't auto-refresh spec during regen — let the reload button handle it
+            if (!regenTaskIdRef.current || chunk.taskId !== regenTaskIdRef.current) {
+              fetchSpec();
+            }
           }
           if (chunk.type === 'node_completed' || chunk.type === 'node_started') {
             fetchTelemetry();
@@ -197,57 +265,44 @@ export default function App() {
     };
   }, [selectedTaskId]);
 
-  // Initial and polling data fetch
+  // Initial data fetch (SSE handles live updates — no polling needed)
   useEffect(() => {
     fetchSpec();
     fetchTelemetry();
+  }, []);
 
-    const interval = setInterval(() => {
-      fetchTelemetry();
-      if (selectedTaskId) {
-        fetchTaskDetails(selectedTaskId);
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [selectedTaskId]);
-
-  // Trigger Dashboard Regeneration
+  // Trigger Dashboard Regeneration (non-blocking, SSE-driven progress)
   const triggerRegenerate = async () => {
+    // Reset regen state
     setRegenerating(true);
+    setRegenProgress(0);
+    setRegenNodeLabel('Initializing...');
+    setRegenComplete(false);
+    setRegenFailed(false);
+    completedNodesRef.current = new Set();
+
     try {
-      const res = await fetch('/api/dashboard/regenerate?wait=true', { method: 'POST' });
+      const res = await fetch('/api/dashboard/regenerate?wait=false', { method: 'POST' });
       if (!res.ok) throw new Error("Failed to trigger regeneration");
       const data = await res.json();
-      if (data.status === 'completed') {
-        await fetchSpec();
-      } else {
-        // Fallback polling for status
-        let attempts = 0;
-        const checkInterval = setInterval(async () => {
-          attempts++;
-          const statusRes = await fetch(`/api/tasks`);
-          if (statusRes.ok) {
-            const list = await statusRes.json();
-            const genTask = list.find((t: any) => t.taskId === data.taskId);
-            const isDone = genTask && Object.values(genTask.states || {}).some(
-              (s: any) => s.nodeId === 'terminal_synthesis_tool' && s.status === 'completed'
-            );
-            if (isDone || attempts > 12) {
-              clearInterval(checkInterval);
-              await fetchSpec();
-              setRegenerating(false);
-            }
-          }
-        }, 2500);
-        return;
-      }
+      regenTaskIdRef.current = data.taskId;
+      // Progress is now tracked via SSE events in the useEffect above
     } catch (err) {
       console.error(err);
-    } finally {
       setRegenerating(false);
+      setRegenFailed(true);
+      setRegenNodeLabel('Failed to start');
     }
   };
+
+  // Reload page to show newly generated dashboard
+  const handleReloadDashboard = useCallback(async () => {
+    setRegenComplete(false);
+    regenTaskIdRef.current = null;
+    setRegenProgress(0);
+    setRegenNodeLabel('');
+    await fetchSpec();
+  }, []);
 
   // Trigger arbitrary Workflow
   const handleTriggerWorkflow = async (wfId: string) => {
@@ -270,8 +325,10 @@ export default function App() {
     downloadedModels: downloadedModels.map(m => m.id),
     notifications,
     workflows,
+    workflowExecutions,
     selectedTaskId,
     onSelectTask: handleSelectTask,
+    onCloseSpotlight: handleCloseSpotlight,
     selectedWorkflowExecution,
     selectedWorkflowTasks,
     onTriggerWorkflow: handleTriggerWorkflow,
@@ -293,7 +350,7 @@ export default function App() {
               <Activity size={20} className="animate-pulse" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-1.5">
+              <h1 className="text-xl font-bold tracking-tight text-[var(--heading-color)] flex items-center gap-1.5">
                 tzro <span className="text-xs font-mono text-indigo-400 font-semibold border border-indigo-500/20 px-1.5 py-0.5 rounded bg-indigo-500/5">Dashboard</span>
               </h1>
               <p className="text-[10px] text-[var(--muted-color)] tracking-wide">DURABLE AGENTIC OBSERVABILITY ENGINE</p>
@@ -301,7 +358,8 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            {spec && (
+            {/* Spec freshness indicator (hidden during regen) */}
+            {spec && !regenerating && !regenComplete && (
               <div className="hidden md:flex items-center gap-2 text-xs">
                 <span className={`w-2 h-2 rounded-full ${isStale ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`}></span>
                 <span className="text-[var(--muted-color)]">
@@ -310,25 +368,64 @@ export default function App() {
               </div>
             )}
 
-            <button 
-              onClick={triggerRegenerate}
-              disabled={regenerating}
-              className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer glow-accent"
-            >
-              {regenerating ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" /> Regenerating...
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={14} /> Regenerate Layout
-                </>
-              )}
-            </button>
+            {/* Progress bar during regeneration */}
+            {(regenerating || regenComplete) && (
+              <div className="hidden md:flex items-center gap-3 min-w-[280px]">
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-semibold text-[var(--muted-color)] uppercase tracking-wider">
+                      {regenComplete ? 'Generation complete' : regenFailed ? 'Generation failed' : 'Regenerating'}
+                    </span>
+                    <span className="text-[10px] font-mono text-indigo-400">{regenProgress}%</span>
+                  </div>
+                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden border border-[var(--glass-border)]">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${
+                        regenComplete 
+                          ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+                          : regenFailed
+                            ? 'bg-rose-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'
+                            : 'bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.4)] regen-progress-shimmer'
+                      }`}
+                      style={{ width: `${regenProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-[9px] text-[var(--muted-color)] mt-0.5 truncate max-w-[260px]">
+                    {regenNodeLabel}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Reload button appears when regeneration completes */}
+            {regenComplete ? (
+              <button
+                onClick={handleReloadDashboard}
+                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer glow-success regen-reload-pulse"
+              >
+                <RotateCcw size={14} /> Reload Dashboard
+              </button>
+            ) : (
+              <button 
+                onClick={triggerRegenerate}
+                disabled={regenerating}
+                className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer glow-accent"
+              >
+                {regenerating ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" /> Regenerating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} /> Regenerate Layout
+                  </>
+                )}
+              </button>
+            )}
 
             <button 
               onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-              className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-slate-300 transition-all cursor-pointer border border-[var(--glass-border)]"
+              className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-[var(--fg-color)] transition-all cursor-pointer border border-[var(--glass-border)]"
             >
               {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>
@@ -351,14 +448,14 @@ export default function App() {
         ) : spec ? (
           <div className="space-y-6">
             {/* Dynamic UI Render mapping tree */}
-            {renderLayoutNode(spec.spec?.layout, renderContext)}
+            {renderLayoutWithFallback(spec.spec?.layout, renderContext)}
           </div>
         ) : (
           <div className="glass-panel p-12 text-center max-w-2xl mx-auto mt-12 border border-indigo-500/10">
             <div className="p-4 bg-indigo-500/10 rounded-full text-indigo-400 inline-block mb-4 border border-indigo-500/20 glow-accent">
               <Layout size={40} />
             </div>
-            <h2 className="text-2xl font-bold text-white tracking-tight">No Observability Dashboard Compiled</h2>
+            <h2 className="text-2xl font-bold text-[var(--heading-color)] tracking-tight">No Observability Dashboard Compiled</h2>
             <p className="text-sm text-[var(--muted-color)] mt-3 leading-relaxed">
               The agentic dashboard layout specification has not been built yet. 
               The Strategic Planner compiles system state, telemetry statistics, sidecar processes, 

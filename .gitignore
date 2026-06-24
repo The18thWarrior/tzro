@@ -33,6 +33,9 @@ __pycache__/
 # Agent scratch workspace
 .scratch/
 
+# Benchmark run output (machine-specific)
+helpers/benchmark_results*.json
+
 # macOS
 .DS_Store
 
@@ -58,15 +61,20 @@ gorilla-main
 longbench
 *.zip
 
-.agents/*
-tzro_plugin/*
-tzro_plugin
+# Agent workspace — ignore local MCP config, keep skills
+.agents/mcp_config.json
+tzro_plugin/
 
-superpowers
-.superpowers
+# Superpowers (local runtime)
+/superpowers
+/.superpowers
 
 .daemon.port
 daemon.lock
 
 config.json
 mcp.lock
+.dashboard.lock
+*.db
+
+models/*

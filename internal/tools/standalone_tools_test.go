@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -428,13 +429,19 @@ func TestLocalDatabaseCRUD(t *testing.T) {
 }
 
 func TestLocalDatabaseConcurrency(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tzro-db-concurrency-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	t.Setenv("TZRO_DIR", tmpDir)
+
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
-	memory.DB.SetDBPathForTesting("tzro_db_concurrency_test.db")
+	memory.DB.SetDBPathForTesting(filepath.Join(tmpDir, "tzro_db_concurrency_test.db"))
 	defer func() {
 		memory.DB.Close()
-		os.Remove("tzro_db_concurrency_test.db")
-		os.RemoveAll(".tzro/local_dbs")
+		ClearLocalConnectionPool()
 		memory.DB.SetDBPathForTesting(oldDBPath)
 	}()
 
@@ -534,8 +541,15 @@ func TestLocalDatabaseConcurrency(t *testing.T) {
 }
 
 func TestLocalConnectionCachingAndSeeding(t *testing.T) {
-	path := "tzro_caching_test.db"
-	defer os.Remove(path)
+	tmpDir, err := os.MkdirTemp("", "tzro-db-caching-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	t.Setenv("TZRO_DIR", tmpDir)
+
+	path := filepath.Join(tmpDir, "tzro_caching_test.db")
+	defer ClearLocalConnectionPool()
 
 	// Fetch cached database connection
 	conn1, err := getCachedLocalDB(path)
@@ -585,13 +599,19 @@ func TestLocalConnectionCachingAndSeeding(t *testing.T) {
 }
 
 func TestLocalDatabaseSelfHealing(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tzro-db-self-healing-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	t.Setenv("TZRO_DIR", tmpDir)
+
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
-	memory.DB.SetDBPathForTesting("tzro_db_self_healing_test.db")
+	memory.DB.SetDBPathForTesting(filepath.Join(tmpDir, "tzro_db_self_healing_test.db"))
 	defer func() {
 		memory.DB.Close()
-		os.Remove("tzro_db_self_healing_test.db")
-		os.RemoveAll(".tzro/local_dbs")
+		ClearLocalConnectionPool()
 		memory.DB.SetDBPathForTesting(oldDBPath)
 	}()
 
@@ -715,13 +735,19 @@ func TestLocalDatabaseSelfHealing(t *testing.T) {
 }
 
 func TestLocalDatabaseAutoSerialization(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tzro-db-serialization-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	t.Setenv("TZRO_DIR", tmpDir)
+
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
-	memory.DB.SetDBPathForTesting("tzro_db_serialization_test.db")
+	memory.DB.SetDBPathForTesting(filepath.Join(tmpDir, "tzro_db_serialization_test.db"))
 	defer func() {
 		memory.DB.Close()
-		os.Remove("tzro_db_serialization_test.db")
-		os.RemoveAll(".tzro/local_dbs")
+		ClearLocalConnectionPool()
 		memory.DB.SetDBPathForTesting(oldDBPath)
 	}()
 
@@ -736,7 +762,7 @@ func TestLocalDatabaseAutoSerialization(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Create table
-	_, err := Call(ctx, "local_db_create_table", map[string]interface{}{
+	_, err = Call(ctx, "local_db_create_table", map[string]interface{}{
 		"dbId":      "serialization_sandbox",
 		"tableName": "payloads",
 		"columns": []interface{}{

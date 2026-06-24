@@ -2,11 +2,13 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -126,13 +128,13 @@ func FindBinary(name string) string {
 var (
 	detectedDir  = detectTzroDir()
 	GlobalConfig = &EngineConfig{
-		ModelMode:            "cooperative",
+		ModelMode:            "local",
 		CloudProvider:        "google",
 		CloudAPIKey:          "",
 		CloudModel:           "gemini-flash-latest",
 		SpeedFloor:           5.0,
 		SidecarEnabled:       true,
-		GGUFModelPath:        "models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+		GGUFModelPath:        "models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
 		ModelsDir:            defaultModelsDir(),
 		ConfidenceThreshold:  3,
 		ExecutorNodeDelayMs:  800,
@@ -553,4 +555,59 @@ func WriteDaemonPort(port int) error {
 func RemoveDaemonPort() {
 	portFile := ResolvePath(".daemon.port")
 	_ = os.Remove(portFile)
+}
+
+// DashboardLock represents a running dashboard process tracked via a lock file.
+type DashboardLock struct {
+	PID  int `json:"pid"`
+	Port int `json:"port"`
+}
+
+// WriteDashboardLock writes the dashboard lock file with the given PID and port.
+func WriteDashboardLock(pid, port int) error {
+	lockFile := ResolvePath(".dashboard.lock")
+	_ = os.MkdirAll(filepath.Dir(lockFile), 0755)
+	data, err := json.Marshal(DashboardLock{PID: pid, Port: port})
+	if err != nil {
+		return fmt.Errorf("marshal dashboard lock: %w", err)
+	}
+	return os.WriteFile(lockFile, data, 0644)
+}
+
+// ReadDashboardLock reads the dashboard lock file and validates PID liveness.
+// Returns nil if the lock file is missing, malformed, or the process is no longer alive.
+func ReadDashboardLock() *DashboardLock {
+	lockFile := ResolvePath(".dashboard.lock")
+	data, err := os.ReadFile(lockFile)
+	if err != nil {
+		return nil
+	}
+
+	var lock DashboardLock
+	if err := json.Unmarshal(data, &lock); err != nil {
+		// Malformed lock file — remove it
+		_ = os.Remove(lockFile)
+		return nil
+	}
+
+	if lock.PID <= 0 {
+		_ = os.Remove(lockFile)
+		return nil
+	}
+
+	// Probe whether the PID is still alive (signal 0 tests existence without
+	// actually sending a signal).
+	if err := syscall.Kill(lock.PID, 0); err != nil {
+		// Process is gone — stale lock
+		_ = os.Remove(lockFile)
+		return nil
+	}
+
+	return &lock
+}
+
+// RemoveDashboardLock removes the dashboard lock file.
+func RemoveDashboardLock() {
+	lockFile := ResolvePath(".dashboard.lock")
+	_ = os.Remove(lockFile)
 }

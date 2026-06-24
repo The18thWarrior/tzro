@@ -17,6 +17,11 @@ type ModelEntry struct {
 	// When non-nil, this projector is auto-downloaded alongside the base model to enable
 	// local vision features (PDF OCR, image analysis) without external dependencies.
 	CompanionMMProj *CompanionFile `json:"companionMmproj,omitempty"`
+
+	// CompanionMTP is the optional Multi-Token Prediction draft model.
+	// When non-nil, this model is auto-downloaded alongside the base model and used
+	// for MTP speculative decoding (--spec-type draft-mtp) for faster inference.
+	CompanionMTP *CompanionFile `json:"companionMtp,omitempty"`
 }
 
 // CompanionFile describes an auxiliary GGUF file that accompanies a base model.
@@ -38,10 +43,64 @@ var modelCatalog = []ModelEntry{
 		Filename:     "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
 		Description:  "Default Gemma 4 E4B model with QAT calibration",
 		ToolCallTier: "excellent",
-		IsDefault:    true,
+		IsDefault:    false,
 		CompanionMMProj: &CompanionFile{
 			DownloadURL: "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main/mmproj-gemma-4-E4B-it-Q8_0.gguf",
 			Filename:    "mmproj-gemma-4-E4B-it-Q8_0.gguf",
+			SizeBytes:   559874528,
+			SizeLabel:   "~534 MB",
+		},
+	},
+	{
+		ID:           "gemma4-12b-agentic-fable5",
+		DisplayName:  "Gemma 4 12B Agentic Fable5",
+		Params:       "12B",
+		SizeBytes:    6087086624,
+		SizeLabel:    "~5.7 GB",
+		DownloadURL:  "https://huggingface.co/yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF/resolve/main/gemma4-v2-Q4_K_M.gguf",
+		Filename:     "gemma4-v2-Q4_K_M.gguf",
+		Description:  "Gemma 4 12B fine-tuned for agentic coding, tool-use, and reasoning",
+		ToolCallTier: "excellent",
+		IsDefault:    false,
+		CompanionMTP: &CompanionFile{
+			DownloadURL: "https://huggingface.co/yuxinlu1/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF/resolve/main/MTP/gemma-4-12B-it-MTP-Q8_0.gguf",
+			Filename:    "gemma-4-12B-it-MTP-Q8_0.gguf",
+			SizeBytes:   1073741824,
+			SizeLabel:   "~1.0 GB",
+		},
+	},
+	{
+		ID:           "qwythos-9b",
+		DisplayName:  "Qwythos 9B Claude Mythos",
+		Params:       "9B",
+		SizeBytes:    5887668160,
+		SizeLabel:    "~5.5 GB",
+		DownloadURL:  "https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF/resolve/main/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M.gguf",
+		Filename:     "Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M.gguf",
+		Description:  "Qwen 3.5 based 9B model with built-in MTP, 1M context, reasoning, function calling, and vision",
+		ToolCallTier: "excellent",
+		IsDefault:    false,
+		CompanionMMProj: &CompanionFile{
+			DownloadURL: "https://huggingface.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF/resolve/main/mmproj-Qwythos-9B-Claude-Mythos-5-1M-F16.gguf",
+			Filename:    "mmproj-Qwythos-9B-Claude-Mythos-5-1M-F16.gguf",
+			SizeBytes:   918165472,
+			SizeLabel:   "~876 MB",
+		},
+	},
+	{
+		ID:           "qwopus-3.5-4b-mtp",
+		DisplayName:  "Qwopus 3.5 4B Coder MTP",
+		Params:       "4B",
+		SizeBytes:    2985000000,
+		SizeLabel:    "~2.8 GB",
+		DownloadURL:  "https://huggingface.co/Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF/resolve/main/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
+		Filename:     "Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
+		Description:  "Qwen 3.5 4B optimized for agentic coding and multi-turn tool-calling with distilled Claude Opus traces and native MTP speculative decoding",
+		ToolCallTier: "excellent",
+		IsDefault:    true,
+		CompanionMMProj: &CompanionFile{
+			DownloadURL: "https://huggingface.co/Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF/resolve/main/mmproj-F32.gguf",
+			Filename:    "mmproj-F32.gguf",
 			SizeBytes:   559874528,
 			SizeLabel:   "~534 MB",
 		},
@@ -168,6 +227,16 @@ func GetCatalog() []ModelEntry {
 func FindModelByID(id string) *ModelEntry {
 	for i := range modelCatalog {
 		if modelCatalog[i].ID == id {
+			return &modelCatalog[i]
+		}
+	}
+	return nil
+}
+
+// FindModelByFilename looks up a model by its GGUF filename. Returns nil if not found.
+func FindModelByFilename(filename string) *ModelEntry {
+	for i := range modelCatalog {
+		if modelCatalog[i].Filename == filename {
 			return &modelCatalog[i]
 		}
 	}

@@ -24,6 +24,10 @@ import (
 
 type HookAction string
 
+type SubTaskSpawner func(ctx context.Context, action string, inputs map[string]interface{}, parentTaskID, parentNodeID string) (string, error)
+
+var SpawnSubTask SubTaskSpawner
+
 const (
 	ActionContinue HookAction = "continue"
 	ActionSkip     HookAction = "skip"
@@ -897,6 +901,87 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		return nil
 	}
 
+	// 1.5 Sub-DAG node: spawn an isolated child task via SubTaskSpawner
+	if node.Type == "sub_dag" {
+		_ = memory.DB.SetNodeState(taskID, node.ID, "waiting_on_child", "")
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, fmt.Sprintf("Spawning child task for Sub-DAG '%s'", node.Action))
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "waiting_on_child", "output": ""}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+
+		if SpawnSubTask == nil {
+			return fmt.Errorf("SpawnSubTask is not initialized; cannot execute sub_dag node")
+		}
+
+		// Inject dynamic bindings into inputs if present
+		finalInputs := make(map[string]interface{})
+		for k, v := range node.Inputs {
+			finalInputs[k] = v
+		}
+		if len(node.DynamicBindings) > 0 {
+			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+			for paramName, rb := range resolved {
+				if rb.Value != "" && rb.Value != "null" {
+					finalInputs[paramName] = rb.Value
+				}
+			}
+		}
+
+		output, err := SpawnSubTask(ctx, node.Action, finalInputs, taskID, node.ID)
+		if err != nil {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
+			return fmt.Errorf("sub_dag node '%s' execution failed: %w", node.Action, err)
+		}
+
+		// Run AfterNode hooks
+		var nodeAfterAction HookAction = ActionContinue
+		for _, h := range activeHooks {
+			action, err := h.AfterNode(ctx, taskID, node, &output)
+			if err != nil {
+				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
+			}
+			if action == ActionAbort {
+				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
+			}
+			if action == ActionPause {
+				nodeAfterAction = ActionPause
+			}
+		}
+
+		if nodeAfterAction == ActionPause {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
+			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
+			return ErrTaskPaused
+		}
+
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
+
+		nodeStatus := fmt.Sprintf("[SubDAG] %s", output)
+		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
+		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+		return nil
+	}
+
 	// 1.4 Synthesis node: final summary compilation ONLY
 	if node.Type == "synthesis" {
 		// Update node state to running
@@ -988,6 +1073,68 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	if schemaErr != nil {
 		fmt.Fprintf(os.Stderr, "[Executor Warning] Failed to get GBNF schema for action %s: %v. Using fallback.\n", node.Action, schemaErr)
 		schemaStr = ""
+	}
+
+	// Fast path: if the tool has no required arguments (empty schema), skip inference
+	// entirely and call the tool directly with empty args. This avoids unnecessary
+	// sidecar load from parallel zero-arg tool calls (e.g., gather_* dashboard tools)
+	// which can poison global sidecar status for subsequent inference-dependent nodes.
+	if tools.IsZeroArgSchema(schemaStr) {
+		fmt.Fprintf(os.Stderr, "[Executor] Zero-arg tool '%s' — skipping inference, calling directly.\n", node.Action)
+		output, callErr := tools.Call(ctx, node.Action, map[string]interface{}{})
+		if callErr != nil {
+			return fmt.Errorf("tool '%s' execution failed: %w", node.Action, callErr)
+		}
+
+		// Run AfterNode hooks
+		var nodeAfterAction HookAction = ActionContinue
+		for _, h := range activeHooks {
+			action, hookErr := h.AfterNode(ctx, taskID, node, &output)
+			if hookErr != nil {
+				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, hookErr)
+			}
+			if action == ActionAbort {
+				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
+			}
+			if action == ActionPause {
+				nodeAfterAction = ActionPause
+			}
+		}
+		if nodeAfterAction == ActionPause {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
+			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
+			return ErrTaskPaused
+		}
+
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
+
+		compactedOutput, cacheID, compactErr := cache.Process(ctx, output, interpolatedPrompt)
+		if compactErr != nil {
+			fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", compactErr)
+		} else if cacheID != "" {
+			e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
+		}
+
+		if nodeDelay > 0 {
+			time.Sleep(nodeDelay)
+		}
+
+		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
+		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+
+		fmt.Fprintf(os.Stderr, "[Executor] Completed Zero-Arg Action Node: %s -> Status: Completed\n", node.ID)
+		return nil
 	}
 
 	// Fetch Graph-RAG context for matched entities

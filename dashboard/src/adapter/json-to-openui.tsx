@@ -1,9 +1,9 @@
 import React from 'react';
 import { 
-  Stack, Grid, Section, MetricCard, TaskTable, EventFeed, 
+  Stack, Grid, Section, MetricCard, EventFeed, 
   ConfigPanel, SidecarStatus, NotificationList, WorkflowMonitor, 
-  TaskSpotlight, WorkflowSpotlight, Annotation 
-} from '../components/Primitives';
+  TaskTableWithSpotlight, WorkflowSpotlight, Annotation 
+} from '../components';
 
 export interface RenderContext {
   tasks: any[];
@@ -13,8 +13,10 @@ export interface RenderContext {
   downloadedModels: any[];
   notifications: any[];
   workflows: any[];
+  workflowExecutions: any[];
   selectedTaskId: string | undefined;
   onSelectTask: (taskId: string) => void;
+  onCloseSpotlight: () => void;
   selectedWorkflowExecution: any;
   selectedWorkflowTasks: any[];
   onTriggerWorkflow: (wfId: string) => void;
@@ -81,11 +83,13 @@ export const renderLayoutNode = (node: any, ctx: RenderContext): React.ReactNode
     // Live components
     case 'TaskTable':
       return (
-        <TaskTable 
+        <TaskTableWithSpotlight 
           key={node.id || Math.random().toString()} 
           tasks={ctx.tasks} 
           onSelectTask={ctx.onSelectTask} 
-          selectedTaskId={ctx.selectedTaskId} 
+          selectedTaskId={ctx.selectedTaskId}
+          selectedTaskDetails={ctx.selectedTaskDetails}
+          onCloseSpotlight={ctx.onCloseSpotlight}
         />
       );
     case 'EventFeed':
@@ -115,16 +119,14 @@ export const renderLayoutNode = (node: any, ctx: RenderContext): React.ReactNode
         <WorkflowMonitor 
           key={node.id || Math.random().toString()} 
           workflows={ctx.workflows} 
+          executions={ctx.workflowExecutions}
           onTrigger={ctx.onTriggerWorkflow} 
         />
       );
     case 'TaskSpotlight':
-      return (
-        <TaskSpotlight 
-          key={node.id || Math.random().toString()} 
-          task={ctx.selectedTaskDetails} 
-        />
-      );
+      // Standalone TaskSpotlight nodes are now absorbed into TaskTable's side panel.
+      // Render nothing — the composite TaskTableWithSpotlight handles it.
+      return null;
     case 'WorkflowSpotlight':
       return (
         <WorkflowSpotlight 
@@ -141,4 +143,58 @@ export const renderLayoutNode = (node: any, ctx: RenderContext): React.ReactNode
         </div>
       );
   }
+};
+
+// Check if a component type exists anywhere in the layout tree
+const layoutContains = (node: any, targetType: string): boolean => {
+  if (!node) return false;
+  if (node.type === targetType) return true;
+  const children = node.children || [];
+  return children.some((child: any) => layoutContains(child, targetType));
+};
+
+/**
+ * Renders the layout tree with automatic fallback injection.
+ * If the LLM-generated spec omits TaskTable or WorkflowMonitor,
+ * they are appended as a fallback section to ensure visibility.
+ */
+export const renderLayoutWithFallback = (layout: any, ctx: RenderContext): React.ReactNode => {
+  const mainContent = renderLayoutNode(layout, ctx);
+
+  // Determine which critical components are missing from the layout
+  const hasTaskTable = layoutContains(layout, 'TaskTable');
+  const hasWorkflowMonitor = layoutContains(layout, 'WorkflowMonitor');
+
+  const fallbacks: React.ReactNode[] = [];
+
+  if (!hasTaskTable && ctx.tasks.length > 0) {
+    fallbacks.push(
+      <Section key="fallback-tasks" title="Recent Tasks" subtitle="Auto-included — not in generated layout">
+        <TaskTableWithSpotlight
+          tasks={ctx.tasks}
+          onSelectTask={ctx.onSelectTask}
+          selectedTaskId={ctx.selectedTaskId}
+          selectedTaskDetails={ctx.selectedTaskDetails}
+          onCloseSpotlight={ctx.onCloseSpotlight}
+        />
+      </Section>
+    );
+  }
+
+  if (!hasWorkflowMonitor && (ctx.workflows.length > 0 || ctx.workflowExecutions.length > 0)) {
+    fallbacks.push(
+      <Section key="fallback-workflows" title="Workflow Runs" subtitle="Auto-included — not in generated layout">
+        <WorkflowMonitor workflows={ctx.workflows} executions={ctx.workflowExecutions} onTrigger={ctx.onTriggerWorkflow} />
+      </Section>
+    );
+  }
+
+  if (fallbacks.length === 0) return mainContent;
+
+  return (
+    <>
+      {mainContent}
+      {fallbacks}
+    </>
+  );
 };

@@ -13,6 +13,7 @@ import (
 	"tzro/internal/config"
 	"tzro/internal/executor"
 	"tzro/internal/inference"
+	"tzro/internal/macronodes"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 	"tzro/internal/proactivity"
@@ -24,9 +25,72 @@ import (
 // ExecuteOptions represents configuration settings for a specific task execution run.
 type ExecuteOptions struct {
 	TaskID       string
+	ParentTaskID string   // ID of the parent task
+	ParentNodeID string   // ID of the parent node
 	IntentType   string   // Optional: e.g., "workflow", "heartbeat", "research"
 	IsForeground bool     // Set to true for user-initiated tasks
 	ActivePaths  []string // File/directory paths from active workspace context
+}
+
+func init() {
+	executor.SpawnSubTask = func(ctx context.Context, action string, inputs map[string]interface{}, parentTaskID, parentNodeID string) (string, error) {
+		graph, err := macronodes.BuildSubDAG(ctx, action, "", inputs)
+		if err != nil {
+			return "", err
+		}
+
+		if graph == nil {
+			templatePath := fmt.Sprintf("./skills/%s.json", action)
+			data, err := os.ReadFile(templatePath)
+			if err != nil {
+				return "", fmt.Errorf("macro-node template '%s' not found natively or in ./skills/", action)
+			}
+			graph = &compiler.ExecutionGraph{}
+			if err := json.Unmarshal(data, graph); err != nil {
+				return "", fmt.Errorf("failed to parse JSON template for '%s': %w", action, err)
+			}
+		}
+
+		childTaskID := fmt.Sprintf("%s_%s_child", parentTaskID, parentNodeID)
+		graph.TaskID = childTaskID
+		graph.ParentTaskID = parentTaskID
+		graph.ParentNodeID = parentNodeID
+		graph.CreatedAt = time.Now().Unix()
+
+		expanded, err := compiler.ExpandToSCTGraph(graph, tools.GetSchema)
+		if err != nil {
+			return "", fmt.Errorf("failed to expand child task graph: %w", err)
+		}
+
+		levels, err := compiler.CompileAndSort(expanded)
+		if err != nil {
+			return "", fmt.Errorf("failed to compile child task graph: %w", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "[Task] Spawning isolated child task %s (Parent: %s, Node: %s)\n", childTaskID, parentTaskID, parentNodeID)
+
+		err = executor.GlobalEngine.ExecuteGraph(ctx, expanded, levels)
+		if err != nil {
+			return "", fmt.Errorf("child task execution failed: %w", err)
+		}
+
+		var output string
+		for _, node := range expanded.Nodes {
+			if node.Type == "synthesis" || node.ID == "terminal_synthesis" {
+				if state, ok := memory.DB.GetNodeState(childTaskID, node.ID); ok {
+					output = state.RawOutput
+					if output == "" {
+						output = state.Output
+					}
+				}
+			}
+		}
+
+		if output == "" {
+			return "Sub-DAG completed without synthesis output", nil
+		}
+		return output, nil
+	}
 }
 
 // Execute is the deep Task Engine interface seam.
@@ -100,16 +164,8 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 					ID:           "compose_layout",
 					Type:         "action",
 					Action:       "compose_layout",
-					Instructions: "Generate a beautifully styled system dashboard layout JSON using the gathered information. Organize it using components (Stack, Grid, Section) and leaf primitives (MetricCard, TaskTable, EventFeed, ConfigPanel, SidecarStatus, NotificationList, WorkflowMonitor, TaskSpotlight, WorkflowSpotlight, Annotation) following the Subtle Glass theme design rules.\n\nIMPORTANT: You must nest layout nodes correctly up to 4 levels. A Section must wrap a Grid or Stack inside its 'children' array, and a Grid or Stack must wrap leaf primitives (like MetricCards) inside its 'children' array. Do not output layout containers as flat sibling elements of their children.\n\nMetrics data: {{nodes.gather_metrics_exec.output}}\nTasks data: {{nodes.gather_tasks_exec.output}}\nConfig data: {{nodes.gather_config_exec.output}}\nWorkflows data: {{nodes.gather_workflows_exec.output}}",
+					Instructions: "Select which dashboard components to display based on the gathered data. Output a flat list of elements — the layout engine will handle arrangement.\n\nAvailable component types:\n- MetricCard: requires props.label (string) and props.value (string), optional props.trend (\"up\"|\"down\"|\"stable\") and props.trendValue (string like \"+12%\")\n- TaskTable: shows recent tasks (no props needed)\n- EventFeed: shows observer events (no props needed)\n- ConfigPanel: shows sidecar/model config (no props needed)\n- SidecarStatus: shows sidecar health (no props needed)\n- WorkflowMonitor: shows workflow executions (no props needed)\n- NotificationList: shows notifications (no props needed)\n- Annotation: requires props.type and props.message\n\nCreate one MetricCard for EACH metric from the metrics data. Include TaskTable, ConfigPanel, SidecarStatus, and WorkflowMonitor.\n\nMetrics data: {{nodes.gather_metrics_exec.output}}\nTasks data: {{nodes.gather_tasks_exec.output}}\nConfig data: {{nodes.gather_config_exec.output}}\nWorkflows data: {{nodes.gather_workflows_exec.output}}",
 					AllowedTools: []string{"compose_layout"},
-					Status:       "pending",
-				},
-				{
-					ID:           "terminal_synthesis_tool",
-					Type:         "action",
-					Action:       "terminal_synthesis",
-					Instructions: "Save the generated dashboard layout spec JSON to the database and validate it.\n\nInput spec: {{nodes.compose_layout_exec.output}}",
-					AllowedTools: []string{"terminal_synthesis"},
 					Status:       "pending",
 				},
 			},
@@ -118,9 +174,10 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 				{SourceID: "gather_tasks", TargetID: "compose_layout"},
 				{SourceID: "gather_config", TargetID: "compose_layout"},
 				{SourceID: "gather_workflows", TargetID: "compose_layout"},
-				{SourceID: "compose_layout", TargetID: "terminal_synthesis_tool"},
 			},
 		}
+		graph.ParentTaskID = opts.ParentTaskID
+		graph.ParentNodeID = opts.ParentNodeID
 		return graph, nil
 	}
 
@@ -185,6 +242,9 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 		}
 		return nil, err
 	}
+
+	graph.ParentTaskID = opts.ParentTaskID
+	graph.ParentNodeID = opts.ParentNodeID
 
 	// 6. Compile strategic planner graph into fine-grained SCT execution graph
 	expanded, err := compiler.ExpandToSCTGraph(graph, tools.GetSchema)
