@@ -1,656 +1,524 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>tzro — The Jumpdrive for AI Agents | Agentic Operating System</title>
-    <meta
-      name="description"
-      content="tzro is a portable agentic operating system — a self-contained runtime that gives any AI agent a kernel, scheduler, persistent memory, and self-improving inference. Plug it in via MCP or embed the Go framework."
-    />
 
-    <!-- Modern Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;1,400&family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tzro — The Jumpdrive for AI Agents | Agentic Operating System</title>
+  <meta name="description"
+    content="tzro is a portable agentic operating system — a self-contained runtime that gives any AI agent a kernel, scheduler, persistent memory, and self-improving inference. Plug it in via MCP or embed the Go framework." />
 
-    <link rel="stylesheet" href="styles.css" />
-    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  </head>
-  <body class="verdant-synth" data-mode="user">
-    <!-- Universal Header -->
-    <header class="tzro-header">
-      <div class="header-container">
-        <a href="#" class="logo-area">
-          <svg
-            class="tzro-logo"
-            viewBox="0 0 512 512"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <rect width="512" height="512" rx="128" fill="#0A110D" />
-            <g filter="drop-shadow(0px 8px 16px rgba(182, 255, 0, 0.15))">
-              <path
-                d="M 256,160 L 256,360"
-                stroke="#5C6B62"
-                stroke-width="48"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M 160,160 L 352,160 L 160,352 L 352,352"
-                stroke="#5C6B62"
-                stroke-width="48"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                fill="none"
-              />
-              <path
-                d="M 256,184 L 256,336"
-                stroke="#B6FF00"
-                stroke-width="8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M 184,160 L 328,160 L 184,352 L 328,352"
-                stroke="#B6FF00"
-                stroke-width="8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                fill="none"
-              />
-            </g>
-          </svg>
-          <span class="logo-text">tzro</span>
-        </a>
-        <!-- Mode Toggle -->
-        <div class="mode-toggle" id="mode-toggle-desktop">
-          <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
-          <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
-        </div>
-        <nav class="header-nav">
-          <!-- User mode nav -->
-          <a href="#use-cases" class="nav-link" data-audience="user">Use Cases</a>
-          <a href="#how-it-works" class="nav-link" data-audience="user">How It Works</a>
-          <a href="#get-started" class="nav-link" data-audience="user">Install</a>
-          <!-- Developer mode nav -->
-          <a href="#architecture" class="nav-link" data-audience="developer">Architecture</a>
-          <a href="#get-started" class="nav-link" data-audience="developer">Get Started</a>
-          <a href="#playgrounds" class="nav-link" data-audience="developer">Playgrounds</a>
-          <a href="#under-the-hood" class="nav-link" data-audience="developer">Under the Hood</a>
-          <a href="#quickstart" class="nav-link" data-audience="developer">Quickstart</a>
-          <a
-            href="https://github.com/The18thWarrior/tzro"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="github-btn"
-            id="github-link"
-          >
-            <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
-              <path
-                fill-rule="evenodd"
-                clip-rule="evenodd"
-                d="M12 2C6.477 2 2 6.477 2 12C2 16.42 4.87 20.17 8.85 21.5C9.35 21.58 9.53 21.28 9.53 21.02C9.53 20.78 9.52 19.98 9.52 19.14C7 19.58 6.35 18.52 6.15 17.96C6.04 17.68 5.56 16.8 5.14 16.56C4.79 16.37 4.29 15.91 5.13 15.9C5.92 15.89 6.48 16.63 6.67 16.93C7.57 18.45 9.02 18.02 9.59 17.76C9.68 17.11 9.94 16.67 10.23 16.42C7.97 16.16 5.6 15.28 5.6 11.39C5.6 10.28 5.99 9.37 6.64 8.66C6.54 8.4 6.19 7.37 6.74 5.98C6.74 5.98 7.59 5.71 9.52 7.02C10.33 6.79 11.19 6.68 12.05 6.68C12.91 6.68 13.77 6.79 14.58 7.02C16.51 5.7 17.36 5.98 17.36 5.98C17.91 7.37 17.56 8.4 17.46 8.66C18.11 9.37 18.5 10.27 18.5 11.39C18.5 15.29 16.12 16.16 13.86 16.41C14.23 16.73 14.55 17.35 14.55 18.31C14.55 19.69 14.54 20.8 14.54 21.02C14.54 21.28 14.72 21.59 15.23 21.49C19.21 20.16 22 16.42 22 12C22 6.477 17.52 2 12 2Z"
-              />
-            </svg>
-            <span>GitHub</span>
-          </a>
-        </nav>
-        <button
-          class="hamburger-btn"
-          id="mobile-menu-toggle"
-          aria-label="Toggle Navigation"
-          aria-expanded="false"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="24"
-            height="24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          >
-            <line x1="4" y1="6" x2="20" y2="6" class="line-top"></line>
-            <line x1="4" y1="12" x2="20" y2="12" class="line-mid"></line>
-            <line x1="4" y1="18" x2="20" y2="18" class="line-bot"></line>
-          </svg>
-        </button>
+  <!-- Modern Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;1,400&family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+</head>
+
+<body class="verdant-synth" data-mode="user">
+  <!-- Universal Header -->
+  <header class="tzro-header">
+    <div class="header-container">
+      <a href="#" class="logo-area">
+        <svg class="tzro-logo" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="512" height="512" rx="128" fill="#0A110D" />
+          <g filter="drop-shadow(0px 8px 16px rgba(182, 255, 0, 0.15))">
+            <path d="M 256,160 L 256,360" stroke="#5C6B62" stroke-width="48" stroke-linecap="round"
+              stroke-linejoin="round" />
+            <path d="M 160,160 L 352,160 L 160,352 L 352,352" stroke="#5C6B62" stroke-width="48" stroke-linecap="round"
+              stroke-linejoin="round" fill="none" />
+            <path d="M 256,184 L 256,336" stroke="#B6FF00" stroke-width="8" stroke-linecap="round"
+              stroke-linejoin="round" />
+            <path d="M 184,160 L 328,160 L 184,352 L 328,352" stroke="#B6FF00" stroke-width="8" stroke-linecap="round"
+              stroke-linejoin="round" fill="none" />
+          </g>
+        </svg>
+        <span class="logo-text">tzro</span>
+      </a>
+      <!-- Mode Toggle -->
+      <div class="mode-toggle" id="mode-toggle-desktop">
+        <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
+        <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
       </div>
-    </header>
-
-    <!-- Mobile Navigation Drawer -->
-    <div class="mobile-nav-drawer" id="mobile-nav-drawer">
-      <div class="mobile-mode-toggle">
-        <div class="mode-toggle" id="mode-toggle-mobile">
-          <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
-          <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
-        </div>
-      </div>
-      <nav class="mobile-nav-content">
+      <nav class="header-nav">
         <!-- User mode nav -->
-        <a href="#use-cases" class="mobile-nav-link" data-audience="user">Use Cases</a>
-        <a href="#how-it-works" class="mobile-nav-link" data-audience="user">How It Works</a>
-        <a href="#get-started" class="mobile-nav-link" data-audience="user">Install</a>
+        <a href="#use-cases" class="nav-link" data-audience="user">Use Cases</a>
+        <a href="#how-it-works" class="nav-link" data-audience="user">How It Works</a>
+        <a href="#get-started" class="nav-link" data-audience="user">Install</a>
         <!-- Developer mode nav -->
-        <a href="#architecture" class="mobile-nav-link" data-audience="developer">Architecture</a>
-        <a href="#get-started" class="mobile-nav-link" data-audience="developer">Get Started</a>
-        <a href="#playgrounds" class="mobile-nav-link" data-audience="developer">Playgrounds</a>
-        <a href="#under-the-hood" class="mobile-nav-link" data-audience="developer">Under the Hood</a>
-        <a href="#quickstart" class="mobile-nav-link" data-audience="developer">Quickstart</a>
-        <a
-          href="https://github.com/The18thWarrior/tzro"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="github-btn mobile-github-btn"
-        >
-          <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M12 2C6.477 2 2 6.477 2 12C2 16.42 4.87 20.17 8.85 21.5C9.35 21.58 9.53 21.28 9.53 21.02C9.53 20.78 9.52 19.98 9.52 19.14C7 19.58 6.35 18.52 6.15 17.96C6.04 17.68 5.56 16.8 5.14 16.56C4.79 16.37 4.29 15.91 5.13 15.9C5.92 15.89 6.48 16.63 6.67 16.93C7.57 18.45 9.02 18.02 9.59 17.76C9.68 17.11 9.94 16.67 10.23 16.42C7.97 16.16 5.6 15.28 5.6 11.39C5.6 10.28 5.99 9.37 6.64 8.66C6.54 8.4 6.19 7.37 6.74 5.98C6.74 5.98 7.59 5.71 9.52 7.02C10.33 6.79 11.19 6.68 12.05 6.68C12.91 6.68 13.77 6.79 14.58 7.02C16.51 5.7 17.36 5.98 17.36 5.98C17.91 7.37 17.56 8.4 17.46 8.66C18.11 9.37 18.5 10.27 18.5 11.39C18.5 15.29 16.12 16.16 13.86 16.41C14.23 16.73 14.55 17.35 14.55 18.31C14.55 19.69 14.54 20.8 14.54 21.02C14.54 21.28 14.72 21.59 15.23 21.49C19.21 20.16 22 16.42 22 12C22 6.477 17.52 2 12 2Z"
-            />
-          </svg>
-          <span>GitHub</span>
-        </a>
+        <a href="#architecture" class="nav-link" data-audience="developer">Architecture</a>
+        <a href="#get-started" class="nav-link" data-audience="developer">Get Started</a>
+        <a href="#playgrounds" class="nav-link" data-audience="developer">Playgrounds</a>
+        <a href="#under-the-hood" class="nav-link" data-audience="developer">Under the Hood</a>
+        <a href="#quickstart" class="nav-link" data-audience="developer">Quickstart</a>
       </nav>
+      <button class="hamburger-btn" id="mobile-menu-toggle" aria-label="Toggle Navigation" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round">
+          <line x1="4" y1="6" x2="20" y2="6" class="line-top"></line>
+          <line x1="4" y1="12" x2="20" y2="12" class="line-mid"></line>
+          <line x1="4" y1="18" x2="20" y2="18" class="line-bot"></line>
+        </svg>
+      </button>
     </div>
+  </header>
 
-    <!-- Grounded Bio-Synthetic Backdrops -->
-    <div class="cyber-grid"></div>
-    <div class="horizon-pulse-line" id="vA-horizon-pulse"></div>
+  <!-- Mobile Navigation Drawer -->
+  <div class="mobile-nav-drawer" id="mobile-nav-drawer">
+    <div class="mobile-mode-toggle">
+      <div class="mode-toggle" id="mode-toggle-mobile">
+        <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
+        <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
+      </div>
+    </div>
+    <nav class="mobile-nav-content">
+      <!-- User mode nav -->
+      <a href="#use-cases" class="mobile-nav-link" data-audience="user">Use Cases</a>
+      <a href="#how-it-works" class="mobile-nav-link" data-audience="user">How It Works</a>
+      <a href="#get-started" class="mobile-nav-link" data-audience="user">Install</a>
+      <!-- Developer mode nav -->
+      <a href="#architecture" class="mobile-nav-link" data-audience="developer">Architecture</a>
+      <a href="#get-started" class="mobile-nav-link" data-audience="developer">Get Started</a>
+      <a href="#playgrounds" class="mobile-nav-link" data-audience="developer">Playgrounds</a>
+      <a href="#under-the-hood" class="mobile-nav-link" data-audience="developer">Under the Hood</a>
+      <a href="#quickstart" class="mobile-nav-link" data-audience="developer">Quickstart</a>
+    </nav>
+  </div>
 
-    <!-- MAIN LANDING FLOW -->
-    <main class="landing-main">
-      <!-- ============================================================ -->
-      <!-- HERO SECTION -->
-      <!-- ============================================================ -->
-      <section class="hero-section">
-        <div class="hero-container">
-          <!-- Developer mode hero -->
-          <div data-audience="developer">
-            <div class="hero-badge">AGENTIC OPERATING SYSTEM</div>
-            <h1 class="hero-title text-balance">
-              <span class="glow-text">tzro</span> — The Jumpdrive for AI Agents
-            </h1>
-            <p class="hero-desc text-pretty">
-              Your agent has a brain. What it's missing is a body — a portable
-              runtime with a kernel, scheduler, persistent memory, and
-              self-improving reflexes. Plug in tzro and your agent goes from
-              stateless to fully autonomous.
+  <!-- Grounded Bio-Synthetic Backdrops -->
+  <div class="cyber-grid"></div>
+  <div class="horizon-pulse-line" id="vA-horizon-pulse"></div>
+
+  <!-- MAIN LANDING FLOW -->
+  <main class="landing-main">
+    <!-- ============================================================ -->
+    <!-- HERO SECTION -->
+    <!-- ============================================================ -->
+    <section class="hero-section">
+      <div class="hero-container">
+        <!-- Developer mode hero -->
+        <div data-audience="developer">
+          <div class="hero-badge">AGENTIC OPERATING SYSTEM</div>
+          <h1 class="hero-title text-balance">
+            <span class="glow-text">tzro</span> — The Jumpdrive for AI Agents
+          </h1>
+          <p class="hero-desc text-pretty">
+            Your agent has a brain. What it's missing is a body — a portable
+            runtime with a kernel, scheduler, persistent memory, and
+            self-improving reflexes. Plug in tzro and your agent goes from
+            stateless to fully autonomous.
+          </p>
+          <div class="hero-ctas">
+            <a href="#get-started" class="hero-cta-primary">Get Started</a>
+            <a href="#architecture" class="hero-cta-secondary">Explore the OS</a>
+          </div>
+        </div>
+        <!-- User mode hero -->
+        <div data-audience="user">
+          <div class="hero-badge">WORKS WITH CLAUDE, CURSOR &amp; ANY MCP AGENT</div>
+          <h1 class="hero-title text-balance">
+            Stop babysitting <span class="glow-text">your AI agents</span>
+          </h1>
+          <p class="hero-desc text-pretty">
+            Your agent loses context mid-task. It can't pick up where it left
+            off. It racks up cloud API costs on every step. tzro fixes all of
+            that — it runs agent tasks locally, saves progress, remembers past
+            work, and only calls the cloud when it actually needs to think.
+          </p>
+          <div class="hero-ctas">
+            <a href="#use-cases" class="hero-cta-primary">See Use Cases</a>
+            <a href="#get-started" class="hero-cta-secondary">Install in 60 Seconds</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- USER MODE: WHAT CAN I DO WITH TZRO? (User only) -->
+    <!-- ============================================================ -->
+    <section class="use-cases-section" id="use-cases" data-audience="user">
+      <div class="hero-container">
+        <span class="glass-badge">What Can I Do With tzro?</span>
+        <h2 class="section-title text-balance">
+          Real work, not demos
+        </h2>
+        <p class="section-desc text-pretty">
+          Here's what people actually use tzro for.
+        </p>
+
+        <div class="use-case-grid">
+          <div class="use-case-card">
+            <div class="use-case-card-icon">🔍</div>
+            <h3>Run deep research while you sleep</h3>
+            <p>
+              Ask an agent to research 50 companies overnight. It breaks the
+              work into steps, saves progress, and gives you a structured
+              summary in the morning.
             </p>
-            <div class="hero-ctas">
-              <a href="#get-started" class="hero-cta-primary">Get Started</a>
-              <a href="#architecture" class="hero-cta-secondary">Explore the OS</a>
-            </div>
           </div>
-          <!-- User mode hero -->
-          <div data-audience="user">
-            <div class="hero-badge">WORKS WITH CLAUDE, CURSOR &amp; ANY MCP AGENT</div>
-            <h1 class="hero-title text-balance">
-              Stop babysitting <span class="glow-text">your AI agents</span>
-            </h1>
-            <p class="hero-desc text-pretty">
-              Your agent loses context mid-task. It can't pick up where it left
-              off. It racks up cloud API costs on every step. tzro fixes all of
-              that — it runs agent tasks locally, saves progress, remembers past
-              work, and only calls the cloud when it actually needs to think.
+
+          <div class="use-case-card">
+            <div class="use-case-card-icon">🔒</div>
+            <h3>Process sensitive documents locally</h3>
+            <p>
+              Run document-processing workflows without sending raw contracts,
+              medical records, or financial data to cloud APIs. Everything
+              stays on your machine.
             </p>
-            <div class="hero-ctas">
-              <a href="#use-cases" class="hero-cta-primary">See Use Cases</a>
-              <a href="#get-started" class="hero-cta-secondary">Install in 60 Seconds</a>
+          </div>
+
+          <div class="use-case-card">
+            <div class="use-case-card-icon">🌙</div>
+            <h3>Queue up work. Come back to results.</h3>
+            <p>
+              Set up a multi-step workflow before you leave. Come back to
+              results — not a "session expired" error. If anything fails,
+              it resumes instead of starting over.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- WHY NOT JUST CLOUD? COMPARISON -->
+    <!-- ============================================================ -->
+    <section class="comparison-section" id="comparison">
+      <div class="hero-container">
+        <span class="glass-badge">Why Not Just Cloud?</span>
+        <h2 class="section-title text-balance">
+          Your agent deserves an operating system, not another API bill
+        </h2>
+
+        <div class="comparison-grid">
+          <div class="comparison-header">
+            <div class="comparison-label"></div>
+            <div class="comparison-col-header cloud-col">
+              <span class="col-icon">☁️</span>
+              <span>Cloud-Only Agents</span>
+            </div>
+            <div class="comparison-col-header tzro-col">
+              <span class="col-icon">⚡</span>
+              <span>tzro AgenticOS</span>
+            </div>
+          </div>
+
+          <div class="comparison-row">
+            <div class="comparison-dimension">API Cost</div>
+            <div class="comparison-cell cloud-cell">
+              <span data-audience="developer">Linear growth — every tool call is a cloud round-trip</span>
+              <span data-audience="user">Every step costs money — costs grow with every task</span>
+            </div>
+            <div class="comparison-cell tzro-cell">
+              <span data-audience="developer">Cloud called <strong>once</strong> for planning; execution runs locally at
+                zero marginal cost</span>
+              <span data-audience="user">Cloud called <strong>once</strong> for planning; execution runs locally for
+                free</span>
+            </div>
+          </div>
+
+          <div class="comparison-row">
+            <div class="comparison-dimension">Data Privacy</div>
+            <div class="comparison-cell cloud-cell">
+              <span data-audience="developer">All raw data shipped to third-party cloud APIs</span>
+              <span data-audience="user">Your data gets sent to third-party servers</span>
+            </div>
+            <div class="comparison-cell tzro-cell">
+              <span data-audience="developer">Data stays within local POSIX loopback boundary
+                (<code>127.0.0.1</code>)</span>
+              <span data-audience="user">Your data stays on your machine or server</span>
+            </div>
+          </div>
+
+          <div class="comparison-row">
+            <div class="comparison-dimension">Execution Latency</div>
+            <div class="comparison-cell cloud-cell">
+              <span data-audience="developer">200–500ms network round-trip per tool call</span>
+              <span data-audience="user">200–500ms wait for each step (network round-trip)</span>
+            </div>
+            <div class="comparison-cell tzro-cell">
+              <span data-audience="developer">Sub-10ms — hardware-pinned local model generates tool calls
+                natively</span>
+              <span data-audience="user">Near-instant — runs on your hardware, no network needed</span>
+            </div>
+          </div>
+
+          <div class="comparison-row">
+            <div class="comparison-dimension">Self-Improvement</div>
+            <div class="comparison-cell cloud-cell">
+              <span data-audience="developer">None — same behavior every run</span>
+              <span data-audience="user">Same behavior every run — learns nothing</span>
+            </div>
+            <div class="comparison-cell tzro-cell">
+              <span data-audience="developer">Procedural &amp; Corrective Micro-Skills auto-extracted from
+                trajectories</span>
+              <span data-audience="user">Remembers successful procedures and reuses them automatically</span>
+            </div>
+          </div>
+
+          <div class="comparison-row">
+            <div class="comparison-dimension">Crash Recovery</div>
+            <div class="comparison-cell cloud-cell">
+              <span data-audience="developer">Restart from scratch</span>
+              <span data-audience="user">If something fails, start over from scratch</span>
+            </div>
+            <div class="comparison-cell tzro-cell">
+              <span data-audience="developer">Durable checkpointing — resume from exact failing step across
+                crashes</span>
+              <span data-audience="user">If something fails, it resumes from exactly where it stopped</span>
             </div>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- ============================================================ -->
-      <!-- USER MODE: WHAT CAN I DO WITH TZRO? (User only) -->
-      <!-- ============================================================ -->
-      <section class="use-cases-section" id="use-cases" data-audience="user">
-        <div class="hero-container">
-          <span class="glass-badge">What Can I Do With tzro?</span>
-          <h2 class="section-title text-balance">
-            Real work, not demos
-          </h2>
-          <p class="section-desc text-pretty">
-            Here's what people actually use tzro for.
-          </p>
+    <!-- ============================================================ -->
+    <!-- USER MODE: HOW IT WORKS PIPELINE (User only) -->
+    <!-- ============================================================ -->
+    <section class="pipeline-section" id="how-it-works" data-audience="user">
+      <div class="hero-container">
+        <span class="glass-badge">How It Works</span>
+        <h2 class="section-title text-balance">
+          Cloud plans. Your machine executes.
+        </h2>
+        <p class="section-desc text-pretty">
+          tzro calls the cloud once to break your goal into steps. Everything
+          else runs locally — fast, private, and crash-proof.
+        </p>
 
-          <div class="use-case-grid">
-            <div class="use-case-card">
-              <div class="use-case-card-icon">🔍</div>
-              <h3>Run deep research while you sleep</h3>
-              <p>
-                Ask an agent to research 50 companies overnight. It breaks the
-                work into steps, saves progress, and gives you a structured
-                summary in the morning.
-              </p>
-            </div>
-
-            <div class="use-case-card">
-              <div class="use-case-card-icon">🔒</div>
-              <h3>Process sensitive documents locally</h3>
-              <p>
-                Run document-processing workflows without sending raw contracts,
-                medical records, or financial data to cloud APIs. Everything
-                stays on your machine.
-              </p>
-            </div>
-
-            <div class="use-case-card">
-              <div class="use-case-card-icon">🌙</div>
-              <h3>Queue up work. Come back to results.</h3>
-              <p>
-                Set up a multi-step workflow before you leave. Come back to
-                results — not a "session expired" error. If anything fails,
-                it resumes instead of starting over.
-              </p>
-            </div>
+        <div class="pipeline-flow">
+          <div class="pipeline-step">
+            <div class="pipeline-step-icon">🎯</div>
+            <div class="pipeline-step-title">1. You give a goal</div>
+            <div class="pipeline-step-desc">"Research these 30 companies"</div>
+          </div>
+          <div class="pipeline-arrow">→</div>
+          <div class="pipeline-step">
+            <div class="pipeline-step-icon">🧠</div>
+            <div class="pipeline-step-title">2. Cloud plans it</div>
+            <div class="pipeline-step-desc">One smart API call breaks the goal into steps</div>
+          </div>
+          <div class="pipeline-arrow">→</div>
+          <div class="pipeline-step">
+            <div class="pipeline-step-icon">⚡</div>
+            <div class="pipeline-step-title">3. Local executes</div>
+            <div class="pipeline-step-desc">Steps run on your machine — fast, free, private</div>
+          </div>
+          <div class="pipeline-arrow">→</div>
+          <div class="pipeline-step">
+            <div class="pipeline-step-icon">💾</div>
+            <div class="pipeline-step-title">4. Progress saves</div>
+            <div class="pipeline-step-desc">Every step checkpointed. Crashes resume, not restart</div>
+          </div>
+          <div class="pipeline-arrow">→</div>
+          <div class="pipeline-step">
+            <div class="pipeline-step-icon">📋</div>
+            <div class="pipeline-step-title">5. Results delivered</div>
+            <div class="pipeline-step-desc">Clean summary. Agent remembers for next time.</div>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- ============================================================ -->
-      <!-- WHY NOT JUST CLOUD? COMPARISON -->
-      <!-- ============================================================ -->
-      <section class="comparison-section" id="comparison">
-        <div class="hero-container">
-          <span class="glass-badge">Why Not Just Cloud?</span>
-          <h2 class="section-title text-balance">
-            Your agent deserves an operating system, not another API bill
-          </h2>
+    <!-- ============================================================ -->
+    <!-- INTERACTIVE OS ARCHITECTURE DIAGRAM (Developer only) -->
+    <!-- ============================================================ -->
+    <section class="architecture-section" id="architecture" data-audience="developer">
+      <div class="hero-container">
+        <span class="glass-badge">System Architecture</span>
+        <h2 class="section-title text-balance">
+          Every OS primitive, implemented for AI agents
+        </h2>
+        <p class="section-desc text-pretty">
+          tzro maps every classical operating system concept to an agentic
+          equivalent. Click any block to explore.
+        </p>
 
-          <div class="comparison-grid">
-            <div class="comparison-header">
-              <div class="comparison-label"></div>
-              <div class="comparison-col-header cloud-col">
-                <span class="col-icon">☁️</span>
-                <span>Cloud-Only Agents</span>
-              </div>
-              <div class="comparison-col-header tzro-col">
-                <span class="col-icon">⚡</span>
-                <span>tzro AgenticOS</span>
-              </div>
-            </div>
+        <div class="os-diagram" id="os-diagram">
+          <!-- Row 1: Core -->
+          <div class="os-block os-block-kernel" data-target="#playgrounds" data-label="tzrod coordinator daemon">
+            <div class="os-block-os-name">Kernel</div>
+            <div class="os-block-tzro-name">tzrod</div>
+          </div>
+          <div class="os-block os-block-scheduler" data-target="#playground-scheduler"
+            data-label="Kahn Compiler + event-driven ready queue">
+            <div class="os-block-os-name">Process Scheduler</div>
+            <div class="os-block-tzro-name">Kahn Compiler</div>
+          </div>
+          <div class="os-block os-block-processes" data-target="#playground-scheduler"
+            data-label="Tasks & Workflows with lifecycle states">
+            <div class="os-block-os-name">Processes</div>
+            <div class="os-block-tzro-name">Tasks &amp; Workflows</div>
+          </div>
+          <div class="os-block os-block-vmem" data-target="#playground-vmem"
+            data-label="5-layer compaction + Disk-Backed JQ Cache">
+            <div class="os-block-os-name">Virtual Memory</div>
+            <div class="os-block-tzro-name">Context Compaction</div>
+          </div>
 
-            <div class="comparison-row">
-              <div class="comparison-dimension">API Cost</div>
-              <div class="comparison-cell cloud-cell">
-                <span data-audience="developer">Linear growth — every tool call is a cloud round-trip</span>
-                <span data-audience="user">Every step costs money — costs grow with every task</span>
-              </div>
-              <div class="comparison-cell tzro-cell">
-                <span data-audience="developer">Cloud called <strong>once</strong> for planning; execution runs locally at zero marginal cost</span>
-                <span data-audience="user">Cloud called <strong>once</strong> for planning; execution runs locally for free</span>
-              </div>
-            </div>
+          <!-- Row 2: Storage & IPC -->
+          <div class="os-block os-block-fs" data-target="#hood-card-vector"
+            data-label="SQLite — entire 'disk' is a single portable file">
+            <div class="os-block-os-name">Filesystem</div>
+            <div class="os-block-tzro-name">SQLite</div>
+          </div>
+          <div class="os-block os-block-ipc" data-target="#hood-card-vector"
+            data-label="StreamBus, DAG edges, Durable Notifications">
+            <div class="os-block-os-name">IPC</div>
+            <div class="os-block-tzro-name">StreamBus</div>
+          </div>
+          <div class="os-block os-block-drivers" data-target="#hood-card-gbnf"
+            data-label="Builtin, WASM, OpenAPI, MCP Host tool sources">
+            <div class="os-block-os-name">Device Drivers</div>
+            <div class="os-block-tzro-name">Tool Registry</div>
+          </div>
+          <div class="os-block os-block-bus" data-target="#hood-card-gbnf"
+            data-label="MCP, SSE, and Plugin adapters with concurrency safety">
+            <div class="os-block-os-name">System Bus</div>
+            <div class="os-block-tzro-name">SubagentChannel</div>
+          </div>
 
-            <div class="comparison-row">
-              <div class="comparison-dimension">Data Privacy</div>
-              <div class="comparison-cell cloud-cell">
-                <span data-audience="developer">All raw data shipped to third-party cloud APIs</span>
-                <span data-audience="user">Your data gets sent to third-party servers</span>
-              </div>
-              <div class="comparison-cell tzro-cell">
-                <span data-audience="developer">Data stays within local POSIX loopback boundary (<code>127.0.0.1</code>)</span>
-                <span data-audience="user">Your data stays on your machine or server</span>
-              </div>
-            </div>
+          <!-- Row 3: Services & Intelligence -->
+          <div class="os-block os-block-daemons" data-target="#hood-card-background"
+            data-label="Observer, Sentinel, Attention Scheduler">
+            <div class="os-block-os-name">System Daemons</div>
+            <div class="os-block-tzro-name">Background Agents</div>
+          </div>
+          <div class="os-block os-block-permissions" data-target="#get-started"
+            data-label="Proactivity Ladder (L0–L4), Tool Proactivity Levels">
+            <div class="os-block-os-name">Permissions</div>
+            <div class="os-block-tzro-name">Proactivity Ladder</div>
+          </div>
+          <div class="os-block os-block-cpu" data-target="#hood-card-inference"
+            data-label="Pluggable Inference Backend (embedded, Ollama, vLLM)">
+            <div class="os-block-os-name">CPU</div>
+            <div class="os-block-tzro-name">Inference Backend</div>
+          </div>
+          <div class="os-block os-block-dma" data-target="#hood-card-inference"
+            data-label="Cloud Model escalation via Confidence Tier">
+            <div class="os-block-os-name">DMA / Offload</div>
+            <div class="os-block-tzro-name">Cloud Escalation</div>
+          </div>
 
-            <div class="comparison-row">
-              <div class="comparison-dimension">Execution Latency</div>
-              <div class="comparison-cell cloud-cell">
-                <span data-audience="developer">200–500ms network round-trip per tool call</span>
-                <span data-audience="user">200–500ms wait for each step (network round-trip)</span>
-              </div>
-              <div class="comparison-cell tzro-cell">
-                <span data-audience="developer">Sub-10ms — hardware-pinned local model generates tool calls natively</span>
-                <span data-audience="user">Near-instant — runs on your hardware, no network needed</span>
-              </div>
-            </div>
-
-            <div class="comparison-row">
-              <div class="comparison-dimension">Self-Improvement</div>
-              <div class="comparison-cell cloud-cell">
-                <span data-audience="developer">None — same behavior every run</span>
-                <span data-audience="user">Same behavior every run — learns nothing</span>
-              </div>
-              <div class="comparison-cell tzro-cell">
-                <span data-audience="developer">Procedural &amp; Corrective Micro-Skills auto-extracted from trajectories</span>
-                <span data-audience="user">Remembers successful procedures and reuses them automatically</span>
-              </div>
-            </div>
-
-            <div class="comparison-row">
-              <div class="comparison-dimension">Crash Recovery</div>
-              <div class="comparison-cell cloud-cell">
-                <span data-audience="developer">Restart from scratch</span>
-                <span data-audience="user">If something fails, start over from scratch</span>
-              </div>
-              <div class="comparison-cell tzro-cell">
-                <span data-audience="developer">Durable checkpointing — resume from exact failing step across crashes</span>
-                <span data-audience="user">If something fails, it resumes from exactly where it stopped</span>
-              </div>
-            </div>
+          <!-- Row 4: User-facing -->
+          <div class="os-block os-block-shell" data-target="#quickstart" data-label="CLI + MCP Server Mode tools">
+            <div class="os-block-os-name">Shell</div>
+            <div class="os-block-tzro-name">CLI &amp; MCP</div>
+          </div>
+          <div class="os-block os-block-gui" data-target="#hood-card-dashboard"
+            data-label="Generative UI — agent composes the layout from 15 primitives">
+            <div class="os-block-os-name">GUI / Window Manager</div>
+            <div class="os-block-tzro-name">Generative Dashboard</div>
+          </div>
+          <div class="os-block os-block-boot" data-target="#quickstart"
+            data-label="One-line curl installer (install.sh)">
+            <div class="os-block-os-name">Boot Loader</div>
+            <div class="os-block-tzro-name">install.sh</div>
+          </div>
+          <div class="os-block os-block-portability" data-target="#quickstart"
+            data-label="Copy binary + tzro.db = perfect clone of the agent's brain">
+            <div class="os-block-os-name">Portable Disk</div>
+            <div class="os-block-tzro-name">tzro.db</div>
           </div>
         </div>
-      </section>
 
-      <!-- ============================================================ -->
-      <!-- USER MODE: HOW IT WORKS PIPELINE (User only) -->
-      <!-- ============================================================ -->
-      <section class="pipeline-section" id="how-it-works" data-audience="user">
-        <div class="hero-container">
-          <span class="glass-badge">How It Works</span>
-          <h2 class="section-title text-balance">
-            Cloud plans. Your machine executes.
-          </h2>
-          <p class="section-desc text-pretty">
-            tzro calls the cloud once to break your goal into steps. Everything
-            else runs locally — fast, private, and crash-proof.
-          </p>
-
-          <div class="pipeline-flow">
-            <div class="pipeline-step">
-              <div class="pipeline-step-icon">🎯</div>
-              <div class="pipeline-step-title">1. You give a goal</div>
-              <div class="pipeline-step-desc">"Research these 30 companies"</div>
-            </div>
-            <div class="pipeline-arrow">→</div>
-            <div class="pipeline-step">
-              <div class="pipeline-step-icon">🧠</div>
-              <div class="pipeline-step-title">2. Cloud plans it</div>
-              <div class="pipeline-step-desc">One smart API call breaks the goal into steps</div>
-            </div>
-            <div class="pipeline-arrow">→</div>
-            <div class="pipeline-step">
-              <div class="pipeline-step-icon">⚡</div>
-              <div class="pipeline-step-title">3. Local executes</div>
-              <div class="pipeline-step-desc">Steps run on your machine — fast, free, private</div>
-            </div>
-            <div class="pipeline-arrow">→</div>
-            <div class="pipeline-step">
-              <div class="pipeline-step-icon">💾</div>
-              <div class="pipeline-step-title">4. Progress saves</div>
-              <div class="pipeline-step-desc">Every step checkpointed. Crashes resume, not restart</div>
-            </div>
-            <div class="pipeline-arrow">→</div>
-            <div class="pipeline-step">
-              <div class="pipeline-step-icon">📋</div>
-              <div class="pipeline-step-title">5. Results delivered</div>
-              <div class="pipeline-step-desc">Clean summary. Agent remembers for next time.</div>
-            </div>
-          </div>
+        <!-- Tooltip overlay for OS blocks -->
+        <div class="os-tooltip" id="os-tooltip">
+          <span class="os-tooltip-text" id="os-tooltip-text"></span>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- ============================================================ -->
-      <!-- INTERACTIVE OS ARCHITECTURE DIAGRAM (Developer only) -->
-      <!-- ============================================================ -->
-      <section class="architecture-section" id="architecture" data-audience="developer">
-        <div class="hero-container">
-          <span class="glass-badge">System Architecture</span>
-          <h2 class="section-title text-balance">
-            Every OS primitive, implemented for AI agents
-          </h2>
-          <p class="section-desc text-pretty">
-            tzro maps every classical operating system concept to an agentic
-            equivalent. Click any block to explore.
-          </p>
+    <!-- ============================================================ -->
+    <!-- GET STARTED: TWO-ONRAMP SECTION -->
+    <!-- ============================================================ -->
+    <section class="playground-section" id="get-started">
+      <div class="hero-container">
+        <span class="glass-badge" data-audience="developer">Get Started</span>
+        <span class="glass-badge" data-audience="user">Install</span>
+        <h2 class="section-title text-balance" data-audience="developer">
+          Two ways to give your agent an operating system
+        </h2>
+        <h2 class="section-title text-balance" data-audience="user">
+          Up and running in 60 seconds
+        </h2>
+        <p class="section-desc text-pretty" data-audience="developer">
+          Plug the jumpdrive into an existing agent via MCP, or embed the
+          framework directly into your Go application.
+        </p>
+        <p class="section-desc text-pretty" data-audience="user">
+          Install tzro, paste one config block, and your agent gets memory,
+          checkpoints, and local execution.
+        </p>
 
-          <div class="os-diagram" id="os-diagram">
-            <!-- Row 1: Core -->
-            <div
-              class="os-block os-block-kernel"
-              data-target="#playgrounds"
-              data-label="tzrod coordinator daemon"
-            >
-              <div class="os-block-os-name">Kernel</div>
-              <div class="os-block-tzro-name">tzrod</div>
-            </div>
-            <div
-              class="os-block os-block-scheduler"
-              data-target="#playground-scheduler"
-              data-label="Kahn Compiler + event-driven ready queue"
-            >
-              <div class="os-block-os-name">Process Scheduler</div>
-              <div class="os-block-tzro-name">Kahn Compiler</div>
-            </div>
-            <div
-              class="os-block os-block-processes"
-              data-target="#playground-scheduler"
-              data-label="Tasks & Workflows with lifecycle states"
-            >
-              <div class="os-block-os-name">Processes</div>
-              <div class="os-block-tzro-name">Tasks &amp; Workflows</div>
-            </div>
-            <div
-              class="os-block os-block-vmem"
-              data-target="#playground-vmem"
-              data-label="5-layer compaction + Disk-Backed JQ Cache"
-            >
-              <div class="os-block-os-name">Virtual Memory</div>
-              <div class="os-block-tzro-name">Context Compaction</div>
-            </div>
-
-            <!-- Row 2: Storage & IPC -->
-            <div
-              class="os-block os-block-fs"
-              data-target="#hood-card-vector"
-              data-label="SQLite — entire 'disk' is a single portable file"
-            >
-              <div class="os-block-os-name">Filesystem</div>
-              <div class="os-block-tzro-name">SQLite</div>
-            </div>
-            <div
-              class="os-block os-block-ipc"
-              data-target="#hood-card-vector"
-              data-label="StreamBus, DAG edges, Durable Notifications"
-            >
-              <div class="os-block-os-name">IPC</div>
-              <div class="os-block-tzro-name">StreamBus</div>
-            </div>
-            <div
-              class="os-block os-block-drivers"
-              data-target="#hood-card-gbnf"
-              data-label="Builtin, WASM, OpenAPI, MCP Host tool sources"
-            >
-              <div class="os-block-os-name">Device Drivers</div>
-              <div class="os-block-tzro-name">Tool Registry</div>
-            </div>
-            <div
-              class="os-block os-block-bus"
-              data-target="#hood-card-gbnf"
-              data-label="MCP, SSE, and Plugin adapters with concurrency safety"
-            >
-              <div class="os-block-os-name">System Bus</div>
-              <div class="os-block-tzro-name">SubagentChannel</div>
-            </div>
-
-            <!-- Row 3: Services & Intelligence -->
-            <div
-              class="os-block os-block-daemons"
-              data-target="#hood-card-background"
-              data-label="Observer, Sentinel, Attention Scheduler"
-            >
-              <div class="os-block-os-name">System Daemons</div>
-              <div class="os-block-tzro-name">Background Agents</div>
-            </div>
-            <div
-              class="os-block os-block-permissions"
-              data-target="#get-started"
-              data-label="Proactivity Ladder (L0–L4), Tool Proactivity Levels"
-            >
-              <div class="os-block-os-name">Permissions</div>
-              <div class="os-block-tzro-name">Proactivity Ladder</div>
-            </div>
-            <div
-              class="os-block os-block-cpu"
-              data-target="#hood-card-inference"
-              data-label="Pluggable Inference Backend (embedded, Ollama, vLLM)"
-            >
-              <div class="os-block-os-name">CPU</div>
-              <div class="os-block-tzro-name">Inference Backend</div>
-            </div>
-            <div
-              class="os-block os-block-dma"
-              data-target="#hood-card-inference"
-              data-label="Cloud Model escalation via Confidence Tier"
-            >
-              <div class="os-block-os-name">DMA / Offload</div>
-              <div class="os-block-tzro-name">Cloud Escalation</div>
-            </div>
-
-            <!-- Row 4: User-facing -->
-            <div
-              class="os-block os-block-shell"
-              data-target="#quickstart"
-              data-label="CLI + MCP Server Mode tools"
-            >
-              <div class="os-block-os-name">Shell</div>
-              <div class="os-block-tzro-name">CLI &amp; MCP</div>
-            </div>
-            <div
-              class="os-block os-block-gui"
-              data-target="#hood-card-dashboard"
-              data-label="Generative UI — agent composes the layout from 15 primitives"
-            >
-              <div class="os-block-os-name">GUI / Window Manager</div>
-              <div class="os-block-tzro-name">Generative Dashboard</div>
-            </div>
-            <div
-              class="os-block os-block-boot"
-              data-target="#quickstart"
-              data-label="One-line curl installer (install.sh)"
-            >
-              <div class="os-block-os-name">Boot Loader</div>
-              <div class="os-block-tzro-name">install.sh</div>
-            </div>
-            <div
-              class="os-block os-block-portability"
-              data-target="#quickstart"
-              data-label="Copy binary + tzro.db = perfect clone of the agent's brain"
-            >
-              <div class="os-block-os-name">Portable Disk</div>
-              <div class="os-block-tzro-name">tzro.db</div>
-            </div>
-          </div>
-
-          <!-- Tooltip overlay for OS blocks -->
-          <div class="os-tooltip" id="os-tooltip">
-            <span class="os-tooltip-text" id="os-tooltip-text"></span>
-          </div>
+        <!-- Onramp Tab Bar -->
+        <div class="onramp-tab-bar" id="onramp-tab-bar">
+          <button class="onramp-tab-btn active" data-onramp="mcp" type="button">
+            ⚡ Plug In (MCP)
+          </button>
+          <button class="onramp-tab-btn" data-onramp="framework" type="button" data-audience="developer">
+            🔧 Build On (Framework)
+          </button>
         </div>
-      </section>
 
-      <!-- ============================================================ -->
-      <!-- GET STARTED: TWO-ONRAMP SECTION -->
-      <!-- ============================================================ -->
-      <section class="playground-section" id="get-started">
-        <div class="hero-container">
-          <span class="glass-badge" data-audience="developer">Get Started</span>
-          <span class="glass-badge" data-audience="user">Install</span>
-          <h2 class="section-title text-balance" data-audience="developer">
-            Two ways to give your agent an operating system
-          </h2>
-          <h2 class="section-title text-balance" data-audience="user">
-            Up and running in 60 seconds
-          </h2>
-          <p class="section-desc text-pretty" data-audience="developer">
-            Plug the jumpdrive into an existing agent via MCP, or embed the
-            framework directly into your Go application.
-          </p>
-          <p class="section-desc text-pretty" data-audience="user">
-            Install tzro, paste one config block, and your agent gets memory,
-            checkpoints, and local execution.
-          </p>
-
-          <!-- Onramp Tab Bar -->
-          <div class="onramp-tab-bar" id="onramp-tab-bar">
-            <button
-              class="onramp-tab-btn active"
-              data-onramp="mcp"
-              type="button"
-            >
-              ⚡ Plug In (MCP)
-            </button>
-            <button class="onramp-tab-btn" data-onramp="framework" type="button" data-audience="developer">
-              🔧 Build On (Framework)
-            </button>
-          </div>
-
-          <!-- ======================== -->
-          <!-- MCP ONRAMP TAB -->
-          <!-- ======================== -->
-          <div class="onramp-panel active" id="onramp-mcp">
-            <div class="mcp-setup-grid premium-border">
-              <div class="mcp-steps-panel">
+        <!-- ======================== -->
+        <!-- MCP ONRAMP TAB -->
+        <!-- ======================== -->
+        <div class="onramp-panel active" id="onramp-mcp">
+          <div class="mcp-setup-grid premium-border">
+            <div class="mcp-steps-panel">
               <div class="mcp-step" data-audience="developer">
-                  <div class="step-num">1</div>
-                  <div class="step-text">
-                    <h3>Build the MCP Server Binary</h3>
-                    <p>
-                      Compile the server binary target from the root repository
-                      directory:
-                    </p>
-                    <pre
-                      class="monospace"
-                    ><code>go build -o bin/tzro-mcp ./cmd/tzro-mcp</code></pre>
-                  </div>
+                <div class="step-num">1</div>
+                <div class="step-text">
+                  <h3>Build the MCP Server Binary</h3>
+                  <p>
+                    Compile the server binary target from the root repository
+                    directory:
+                  </p>
+                  <pre class="monospace"><code>go build -o bin/tzro-mcp ./cmd/tzro-mcp</code></pre>
                 </div>
+              </div>
 
-                <div class="mcp-step" data-audience="user">
-                  <div class="step-num">1</div>
-                  <div class="step-text">
-                    <h3>Install tzro</h3>
-                    <p>Run this in your terminal:</p>
-                    <pre class="monospace"><code>curl -sSL https://tzro.network/install.sh | bash</code></pre>
-                  </div>
+              <div class="mcp-step" data-audience="user">
+                <div class="step-num">1</div>
+                <div class="step-text">
+                  <h3>Install tzro</h3>
+                  <p>Run this in your terminal:</p>
+                  <pre
+                    class="monospace"><code>curl -sSL https://s3.us-west-2.amazonaws.com/tzro-app/install.sh | bash</code></pre>
                 </div>
+              </div>
 
-                <div class="mcp-step">
-                  <div class="step-num">2</div>
-                  <div class="step-text">
-                    <h3 data-audience="developer">Register in Client Configuration</h3>
-                    <h3 data-audience="user">Add to your agent</h3>
-                    <p data-audience="developer">
-                      Select your agent host to get the config block:
-                    </p>
-                    <p data-audience="user">
-                      Paste this into your agent's config file and restart.
-                    </p>
+              <div class="mcp-step">
+                <div class="step-num">2</div>
+                <div class="step-text">
+                  <h3 data-audience="developer">Register in Client Configuration</h3>
+                  <h3 data-audience="user">Add to your agent</h3>
+                  <p data-audience="developer">
+                    Select your agent host to get the config block:
+                  </p>
+                  <p data-audience="user">
+                    Paste this into your agent's config file and restart.
+                  </p>
 
-                    <div class="mcp-tab-bar">
-                      <button
-                        class="mcp-tab-btn active"
-                        data-client="claude"
-                        type="button"
-                      >
-                        Claude Desktop
-                      </button>
-                      <button
-                        class="mcp-tab-btn"
-                        data-client="cursor"
-                        type="button"
-                      >
-                        Cursor Settings
-                      </button>
-                      <button
-                        class="mcp-tab-btn"
-                        data-client="agy"
-                        type="button"
-                      >
-                        Antigravity Config
-                      </button>
-                    </div>
+                  <div class="mcp-tab-bar">
+                    <button class="mcp-tab-btn active" data-client="claude" type="button">
+                      Claude Desktop
+                    </button>
+                    <button class="mcp-tab-btn" data-client="cursor" type="button">
+                      Cursor Settings
+                    </button>
+                    <button class="mcp-tab-btn" data-client="agy" type="button">
+                      Antigravity Config
+                    </button>
+                  </div>
 
-                    <div class="mcp-config-box">
-                      <pre class="monospace"><code id="mcp-config-display">{
+                  <div class="mcp-config-box">
+                    <pre class="monospace"><code id="mcp-config-display">{
   "mcpServers": {
     "tzro": {
       "command": "/absolute/path/to/tzro/bin/tzro-mcp",
@@ -661,24 +529,24 @@
     }
   }
 }</code></pre>
-                    </div>
                   </div>
                 </div>
+              </div>
 
-                <div class="mcp-step" data-audience="developer">
-                  <div class="step-num">3</div>
-                  <div class="step-text">
-                    <h3>Verify the Handshake</h3>
-                    <p>
-                      Test the server from the terminal to verify JSON-RPC
-                      framing:
-                    </p>
-                    <pre class="monospace"><code>./bin/tzro-mcp</code></pre>
-                    <p class="step-subtext">
-                      Paste this initialization payload and press
-                      <code>Enter</code>:
-                    </p>
-                    <pre class="monospace"><code>{
+              <div class="mcp-step" data-audience="developer">
+                <div class="step-num">3</div>
+                <div class="step-text">
+                  <h3>Verify the Handshake</h3>
+                  <p>
+                    Test the server from the terminal to verify JSON-RPC
+                    framing:
+                  </p>
+                  <pre class="monospace"><code>./bin/tzro-mcp</code></pre>
+                  <p class="step-subtext">
+                    Paste this initialization payload and press
+                    <code>Enter</code>:
+                  </p>
+                  <pre class="monospace"><code>{
   "jsonrpc": "2.0",
   "id": 1,
   "method": "initialize",
@@ -688,819 +556,757 @@
     "clientInfo": { "name": "test-client", "version": "1.0.0" }
   }
 }</code></pre>
-                  </div>
-                </div>
-              </div>
-
-              <!-- User mode: simplified step 3 -->
-              <div class="mcp-step" data-audience="user">
-                <div class="step-num">3</div>
-                <div class="step-text">
-                  <h3>Start using it</h3>
-                  <p>
-                    Your agent can now run long tasks, save memory, and recover
-                    from crashes. Try asking it to research a topic or process
-                    a batch of documents.
-                  </p>
                 </div>
               </div>
             </div>
 
-              <div class="mcp-tools-panel" data-audience="developer">
-                <h3>Exposed OS Tools</h3>
+            <!-- User mode: simplified step 3 -->
+            <div class="mcp-step" data-audience="user">
+              <div class="step-num">3</div>
+              <div class="step-text">
+                <h3>Start using it</h3>
                 <p>
-                  Once registered, your agent gains access to the full OS
-                  capability surface:
+                  Your agent can now run long tasks, save memory, and recover
+                  from crashes. Try asking it to research a topic or process
+                  a batch of documents.
                 </p>
-                <ul class="mcp-tools-list monospace">
+              </div>
+            </div>
+          </div>
+
+          <div class="mcp-tools-panel" data-audience="developer">
+            <h3>Exposed OS Tools</h3>
+            <p>
+              Once registered, your agent gains access to the full OS
+              capability surface:
+            </p>
+            <ul class="mcp-tools-list monospace">
+              <li>
+                <strong>tzro_run</strong>: Run durable DAG workflows from
+                natural language
+              </li>
+              <li>
+                <strong>tzro_status</strong>: Inspect status and outcomes of a
+                specific task
+              </li>
+              <li>
+                <strong>tzro_list_tasks</strong>: List recent planning and
+                execution tasks
+              </li>
+              <li>
+                <strong>tzro_configure_tools</strong>: Dynamically register
+                third-party stdio MCP daemons
+              </li>
+              <li>
+                <strong>tzro_memory_query</strong>: Query memory graphs and
+                facts semantically
+              </li>
+              <li>
+                <strong>tzro_memory_ingest</strong>: Store memories in the
+                SQLite vector database
+              </li>
+              <li>
+                <strong>tzro_kg_neighborhood</strong>: Multi-hop graph
+                traversal starting from an entity
+              </li>
+              <li>
+                <strong>tzro_kg_add_entity</strong>: Create/update nodes and
+                edge relationships
+              </li>
+              <li>
+                <strong>tzro_rag_context</strong>: Retrieve graph-RAG context
+                for prompting
+              </li>
+              <li>
+                <strong>tzro_skills_add</strong>: Sync custom procedural
+                micro-skills (SOPs)
+              </li>
+              <li>
+                <strong>tzro_sentinel_alerts</strong>: Retrieve proactive
+                intelligence from the Sentinel Agent
+              </li>
+              <li>
+                <strong>tzro_dashboard</strong>: Serve the generative agentic
+                dashboard
+              </li>
+              <li>
+                <strong>tzro_workflow</strong>: Spawn dynamic multi-task
+                orchestrations
+              </li>
+              <li>
+                <strong>tzro_model_list</strong>: List downloaded &amp; active
+                local models
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- AGENT DELEGATION & OFFLOAD POLICY (Developer only) -->
+        <div class="agent-policy-grid premium-border" data-audience="developer">
+          <div class="policy-header">
+            <span class="glass-badge">Agent Integration</span>
+            <h2>Autonomous Agent Delegation &amp; Wait Protocol</h2>
+            <p>
+              To avoid high-latency cloud context slot thrashing, agents
+              delegate non-reasoning tasks to the local durable OS.
+            </p>
+          </div>
+
+          <div class="policy-columns">
+            <div class="policy-card">
+              <h3>The Delegation Rule</h3>
+              <div class="decision-box">
+                <div class="question">
+                  "Do I need frontier-model-exclusive reasoning (code
+                  generation, complex architectural judgment, interactive
+                  human dialog) about intermediate outputs to decide the next
+                  step?"
+                </div>
+                <div class="branches">
+                  <div class="branch yes">
+                    <strong>YES</strong>
+                    <span>Keep execution in-context (Frontier cloud
+                      reasoning)</span>
+                  </div>
+                  <div class="branch no">
+                    <strong>NO</strong>
+                    <span>Delegate to <code>tzro_run</code> (Local durable OS
+                      executor)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="policy-rules">
+                <h4>Mandatory Delegation Areas</h4>
+                <ul>
                   <li>
-                    <strong>tzro_run</strong>: Run durable DAG workflows from
-                    natural language
+                    <strong>Codebase Exploration &amp; Analysis:</strong>
+                    Delegate with a goal and let the OS dynamically spawn
+                    exploration nodes via
+                    <strong>Activation Thresholds</strong>.
                   </li>
                   <li>
-                    <strong>tzro_status</strong>: Inspect status and outcomes of a
-                    specific task
+                    <strong>Multi-Source Web Research:</strong> Batching web
+                    searches, scraping, and compiling findings.
                   </li>
                   <li>
-                    <strong>tzro_list_tasks</strong>: List recent planning and
-                    execution tasks
-                  </li>
-                  <li>
-                    <strong>tzro_configure_tools</strong>: Dynamically register
-                    third-party stdio MCP daemons
-                  </li>
-                  <li>
-                    <strong>tzro_memory_query</strong>: Query memory graphs and
-                    facts semantically
-                  </li>
-                  <li>
-                    <strong>tzro_memory_ingest</strong>: Store memories in the
-                    SQLite vector database
-                  </li>
-                  <li>
-                    <strong>tzro_kg_neighborhood</strong>: Multi-hop graph
-                    traversal starting from an entity
-                  </li>
-                  <li>
-                    <strong>tzro_kg_add_entity</strong>: Create/update nodes and
-                    edge relationships
-                  </li>
-                  <li>
-                    <strong>tzro_rag_context</strong>: Retrieve graph-RAG context
-                    for prompting
-                  </li>
-                  <li>
-                    <strong>tzro_skills_add</strong>: Sync custom procedural
-                    micro-skills (SOPs)
-                  </li>
-                  <li>
-                    <strong>tzro_sentinel_alerts</strong>: Retrieve proactive
-                    intelligence from the Sentinel Agent
-                  </li>
-                  <li>
-                    <strong>tzro_dashboard</strong>: Serve the generative agentic
-                    dashboard
-                  </li>
-                  <li>
-                    <strong>tzro_workflow</strong>: Spawn dynamic multi-task
-                    orchestrations
-                  </li>
-                  <li>
-                    <strong>tzro_model_list</strong>: List downloaded &amp; active
-                    local models
+                    <strong>Memory Ingestion Pipelines:</strong> Bulk storing
+                    memories and vector representations.
                   </li>
                 </ul>
               </div>
             </div>
 
-            <!-- AGENT DELEGATION & OFFLOAD POLICY (Developer only) -->
-            <div class="agent-policy-grid premium-border" data-audience="developer">
-              <div class="policy-header">
-                <span class="glass-badge">Agent Integration</span>
-                <h2>Autonomous Agent Delegation &amp; Wait Protocol</h2>
-                <p>
-                  To avoid high-latency cloud context slot thrashing, agents
-                  delegate non-reasoning tasks to the local durable OS.
-                </p>
+            <div class="policy-card">
+              <h3>Wait Protocol &amp; Prompts</h3>
+              <div class="wait-protocol">
+                <h4>The Wait Protocol</h4>
+                <ol>
+                  <li>
+                    <strong>Stop In-Context Execution:</strong> Do not call
+                    tools or execute parallel steps in the client session.
+                  </li>
+                  <li>
+                    <strong>Set One-Shot Timer:</strong> Schedule a wakeup
+                    reminder using the client's timer tool.
+                  </li>
+                  <li>
+                    <strong>Verify Complete:</strong> Check task status via
+                    <code>tzro_status</code>; resume when status returns
+                    <code>completed</code>.
+                  </li>
+                  <li>
+                    <strong>Consume Synthesized State:</strong> Read only the
+                    <code>terminal_synthesis</code> outcome.
+                  </li>
+                </ol>
               </div>
 
-              <div class="policy-columns">
-                <div class="policy-card">
-                  <h3>The Delegation Rule</h3>
-                  <div class="decision-box">
-                    <div class="question">
-                      "Do I need frontier-model-exclusive reasoning (code
-                      generation, complex architectural judgment, interactive
-                      human dialog) about intermediate outputs to decide the next
-                      step?"
-                    </div>
-                    <div class="branches">
-                      <div class="branch yes">
-                        <strong>YES</strong>
-                        <span
-                          >Keep execution in-context (Frontier cloud
-                          reasoning)</span
-                        >
-                      </div>
-                      <div class="branch no">
-                        <strong>NO</strong>
-                        <span
-                          >Delegate to <code>tzro_run</code> (Local durable OS
-                          executor)</span
-                        >
-                      </div>
-                    </div>
-                  </div>
+              <div class="prompt-templates">
+                <h4>Suggested Prompt Templates</h4>
 
-                  <div class="policy-rules">
-                    <h4>Mandatory Delegation Areas</h4>
-                    <ul>
-                      <li>
-                        <strong>Codebase Exploration &amp; Analysis:</strong>
-                        Delegate with a goal and let the OS dynamically spawn
-                        exploration nodes via
-                        <strong>Activation Thresholds</strong>.
-                      </li>
-                      <li>
-                        <strong>Multi-Source Web Research:</strong> Batching web
-                        searches, scraping, and compiling findings.
-                      </li>
-                      <li>
-                        <strong>Memory Ingestion Pipelines:</strong> Bulk storing
-                        memories and vector representations.
-                      </li>
-                    </ul>
-                  </div>
+                <div class="template-item">
+                  <h5>A. Research &amp; Ingestion</h5>
+                  <pre
+                    class="monospace"><code>"Use web_search to find the latest changes and trends in the AI orchestration space, compile the findings, and save the final structured summary to memory using the save_memory tool."</code></pre>
                 </div>
 
-                <div class="policy-card">
-                  <h3>Wait Protocol &amp; Prompts</h3>
-                  <div class="wait-protocol">
-                    <h4>The Wait Protocol</h4>
-                    <ol>
-                      <li>
-                        <strong>Stop In-Context Execution:</strong> Do not call
-                        tools or execute parallel steps in the client session.
-                      </li>
-                      <li>
-                        <strong>Set One-Shot Timer:</strong> Schedule a wakeup
-                        reminder using the client's timer tool.
-                      </li>
-                      <li>
-                        <strong>Verify Complete:</strong> Check task status via
-                        <code>tzro_status</code>; resume when status returns
-                        <code>completed</code>.
-                      </li>
-                      <li>
-                        <strong>Consume Synthesized State:</strong> Read only the
-                        <code>terminal_synthesis</code> outcome.
-                      </li>
-                    </ol>
-                  </div>
+                <div class="template-item">
+                  <h5>B. Multi-System Automation</h5>
+                  <pre
+                    class="monospace"><code>"Execute a workflow to query recent lead records using salesforce_query, run deduplication check with postgres_insert, and post the execution report to the slack_message tool."</code></pre>
+                </div>
 
-                  <div class="prompt-templates">
-                    <h4>Suggested Prompt Templates</h4>
-
-                    <div class="template-item">
-                      <h5>A. Research &amp; Ingestion</h5>
-                      <pre
-                        class="monospace"
-                      ><code>"Use web_search to find the latest changes and trends in the AI orchestration space, compile the findings, and save the final structured summary to memory using the save_memory tool."</code></pre>
-                    </div>
-
-                    <div class="template-item">
-                      <h5>B. Multi-System Automation</h5>
-                      <pre
-                        class="monospace"
-                      ><code>"Execute a workflow to query recent lead records using salesforce_query, run deduplication check with postgres_insert, and post the execution report to the slack_message tool."</code></pre>
-                    </div>
-
-                    <div class="template-item">
-                      <h5>C. Codebase Exploration</h5>
-                      <pre
-                        class="monospace"
-                      ><code>"Explore the project at /path/to/repo. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary. Use read_file, list_dir, and search_files. Set activationThreshold to 0.8 and mutationBudget to 15."</code></pre>
-                    </div>
-                  </div>
+                <div class="template-item">
+                  <h5>C. Codebase Exploration</h5>
+                  <pre
+                    class="monospace"><code>"Explore the project at /path/to/repo. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary. Use read_file, list_dir, and search_files. Set activationThreshold to 0.8 and mutationBudget to 15."</code></pre>
                 </div>
               </div>
             </div>
           </div>
+        </div>
+      </div>
 
-          <!-- ======================== -->
-          <!-- FRAMEWORK ONRAMP TAB -->
-          <!-- ======================== -->
-          <div class="onramp-panel" id="onramp-framework" data-audience="developer">
-            <div class="dx-showcase-grid">
-              <!-- Left: Code Snippet Browser -->
-              <div class="dx-nav-panel">
-                <div class="dx-nav-title">Framework Integration Guides</div>
-                <button class="dx-nav-btn active" data-tab="config">
-                  1. Configuration &amp; Env Secrets
-                </button>
-                <button class="dx-nav-btn" data-tab="tools">
-                  2. Stdio MCP &amp; WASM Tool Registry
-                </button>
-                <button class="dx-nav-btn" data-tab="compile">
-                  3. Kahn Sorting &amp; Compilation
-                </button>
-                <button class="dx-nav-btn" data-tab="telemetry">
-                  4. Telemetry StreamBus Sync
-                </button>
-                <button class="dx-nav-btn" data-tab="hooks">
-                  5. Synchronous Middleware Hooks
-                </button>
-              </div>
+      <!-- ======================== -->
+      <!-- FRAMEWORK ONRAMP TAB -->
+      <!-- ======================== -->
+      <div class="onramp-panel" id="onramp-framework" data-audience="developer">
+        <div class="dx-showcase-grid">
+          <!-- Left: Code Snippet Browser -->
+          <div class="dx-nav-panel">
+            <div class="dx-nav-title">Framework Integration Guides</div>
+            <button class="dx-nav-btn active" data-tab="config">
+              1. Configuration &amp; Env Secrets
+            </button>
+            <button class="dx-nav-btn" data-tab="tools">
+              2. Stdio MCP &amp; WASM Tool Registry
+            </button>
+            <button class="dx-nav-btn" data-tab="compile">
+              3. Kahn Sorting &amp; Compilation
+            </button>
+            <button class="dx-nav-btn" data-tab="telemetry">
+              4. Telemetry StreamBus Sync
+            </button>
+            <button class="dx-nav-btn" data-tab="hooks">
+              5. Synchronous Middleware Hooks
+            </button>
+          </div>
 
-              <!-- Middle: Visual Code Editor -->
-              <div class="dx-editor-panel">
-                <div class="editor-header">
-                  <span class="file-name" id="dx-filename">config.go</span>
-                  <span class="lang-tag">Go</span>
-                </div>
-                <div class="editor-body">
-                  <pre class="monospace"><code id="dx-code-display">
+          <!-- Middle: Visual Code Editor -->
+          <div class="dx-editor-panel">
+            <div class="editor-header">
+              <span class="file-name" id="dx-filename">config.go</span>
+              <span class="lang-tag">Go</span>
+            </div>
+            <div class="editor-body">
+              <pre class="monospace"><code id="dx-code-display">
 // Loading snippet...
                 </code></pre>
-                </div>
-              </div>
-
-              <!-- Right: Interactive Hook Sandbox -->
-              <div class="dx-interactive-sandbox">
-                <h3>Synchronous Hook Playground</h3>
-                <p>
-                  Inject custom Go middleware hooks into the active DAG loop to
-                  intercept executions dynamically.
-                </p>
-
-                <div class="toggles-list">
-                  <div class="toggle-row">
-                    <div class="toggle-text">
-                      <label for="hook-pii">PII Sanitization Hook</label>
-                      <span
-                        >Redacts credentials and SSN values inside
-                        <code>AfterNode</code></span
-                      >
-                    </div>
-                    <label class="switch">
-                      <input type="checkbox" id="hook-pii" />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-
-                  <div class="toggle-row">
-                    <div class="toggle-text">
-                      <label for="hook-guard"
-                        >Destructive Safety Guardrail</label
-                      >
-                      <span
-                        >Intercepts and skips
-                        <code>delete_all_records</code> tool nodes</span
-                      >
-                    </div>
-                    <label class="switch">
-                      <input type="checkbox" id="hook-guard" />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-
-                  <div class="toggle-row">
-                    <div class="toggle-text">
-                      <label for="hook-hitl"
-                        >Human-in-the-Loop Gateway</label
-                      >
-                      <span
-                        >Pauses compiled tasks at Level 1 to prompt supervisor
-                        checks</span
-                      >
-                    </div>
-                    <label class="switch">
-                      <input type="checkbox" id="hook-hitl" />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                </div>
-
-                <button id="vC-run-btn" class="dx-run-trigger">
-                  Execute Hooked Runtime
-                </button>
-
-                <!-- Hook Console Log -->
-                <div class="dx-console monospace" id="dx-console">
-                  <div class="console-line text-muted">
-                    Initialize the pipeline configuration to run...
-                  </div>
-                </div>
-
-                <!-- HITL Gateway Prompt -->
-                <div class="hitl-prompt" id="hitl-prompt" style="display: none">
-                  <div class="prompt-text">
-                    ⚠️ TASK PAUSED: ErrTaskPaused. Manual approval required
-                    before Level 1 tool dispatch.
-                  </div>
-                  <div class="prompt-actions">
-                    <button id="hitl-approve-btn" class="prompt-btn approve">
-                      Approve Level 1 Run
-                    </button>
-                    <button id="hitl-abort-btn" class="prompt-btn abort">
-                      Abort Task
-                    </button>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
-        </div>
-      </section>
 
-      <!-- ============================================================ -->
-      <!-- PLAYGROUNDS -->
-      <!-- ============================================================ -->
-      <section class="playground-section" id="playgrounds" data-audience="developer">
-        <div class="hero-container">
-          <span class="glass-badge">Interactive Playgrounds</span>
-          <h2 class="section-title">See the OS in action</h2>
-          <p class="section-desc">
-            Explore the core subsystems that power the agentic operating system.
-          </p>
-        </div>
-      </section>
+          <!-- Right: Interactive Hook Sandbox -->
+          <div class="dx-interactive-sandbox">
+            <h3>Synchronous Hook Playground</h3>
+            <p>
+              Inject custom Go middleware hooks into the active DAG loop to
+              intercept executions dynamically.
+            </p>
 
-      <!-- PLAYGROUND 1: PROCESS SCHEDULER (Kahn Simulator) -->
-      <section class="playground-section" id="playground-scheduler" data-audience="developer">
-        <div class="hero-container">
-          <span class="glass-badge">Process Scheduler</span>
-          <h2 class="section-title">
-            1. Kahn Compiler &amp; Neural Edge Traversal
-          </h2>
-          <p class="section-desc">
-            Watch how the OS schedules processes. The Kahn Compiler sorts tasks
-            topologically and executes independent steps in parallel. When goal
-            confidence drops below threshold, the OS dynamically spawns new
-            nodes — like a neural network firing.
-          </p>
-
-          <div class="dashboard-grid">
-            <!-- Left: Subsystem Terminal -->
-            <div class="terminal-card">
-              <div class="terminal-header">
-                <span class="dot red"></span>
-                <span class="dot yellow"></span>
-                <span class="dot green"></span>
-                <span class="terminal-title">tzro_daemon_monitor.sh</span>
+            <div class="toggles-list">
+              <div class="toggle-row">
+                <div class="toggle-text">
+                  <label for="hook-pii">PII Sanitization Hook</label>
+                  <span>Redacts credentials and SSN values inside
+                    <code>AfterNode</code></span>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="hook-pii" />
+                  <span class="slider"></span>
+                </label>
               </div>
-              <div class="terminal-body monospace">
-                <div class="line"><span class="cyan">$</span> tzro status</div>
-                <div class="line success">
-                  [OK] SQLite Persistence Layer Initialized:
-                  ~/.tzro/data/tzro.db
+
+              <div class="toggle-row">
+                <div class="toggle-text">
+                  <label for="hook-guard">Destructive Safety Guardrail</label>
+                  <span>Intercepts and skips
+                    <code>delete_all_records</code> tool nodes</span>
                 </div>
-                <div class="line success">
-                  [OK] Local Tactician Linked: port 36888 [Active Slots: 1]
+                <label class="switch">
+                  <input type="checkbox" id="hook-guard" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="toggle-row">
+                <div class="toggle-text">
+                  <label for="hook-hitl">Human-in-the-Loop Gateway</label>
+                  <span>Pauses compiled tasks at Level 1 to prompt supervisor
+                    checks</span>
                 </div>
-                <div class="line success">
-                  [OK] Cloud Strategist Adapter Ready: mode = cooperative
-                </div>
-                <div class="line">
-                  <span class="cyan">$</span> tzro list-subsystems
-                </div>
-                <div class="line active-subsystems">
-                  <table>
-                    <tr>
-                      <th>ID</th>
-                      <th>Subsystem</th>
-                      <th>Engine</th>
-                    </tr>
-                    <tr>
-                      <td>01</td>
-                      <td>Durable Execution</td>
-                      <td>SQLite Checkpoints</td>
-                    </tr>
-                    <tr>
-                      <td>02</td>
-                      <td>Kahn Graph Compiler</td>
-                      <td>DAG Topological Sorter</td>
-                    </tr>
-                    <tr>
-                      <td>03</td>
-                      <td>Relational Memory</td>
-                      <td>FTS5 Vector ONNX</td>
-                    </tr>
-                    <tr>
-                      <td>04</td>
-                      <td>WASM Micro-Skills</td>
-                      <td>Isolated Sandbox Wasmtime</td>
-                    </tr>
-                    <tr>
-                      <td>05</td>
-                      <td>Stdio MCP Gateway</td>
-                      <td>Process Host Auto-Healing</td>
-                    </tr>
-                  </table>
-                </div>
-                <div class="line">
-                  <span class="cyan">$</span> <span class="blink">_</span>
-                </div>
+                <label class="switch">
+                  <input type="checkbox" id="hook-hitl" />
+                  <span class="slider"></span>
+                </label>
               </div>
             </div>
 
-            <!-- Right: Kahn Compiler Simulator Card -->
-            <div class="simulator-card">
-              <div class="card-header-vA">
-                <h3>Process Scheduling Pipeline</h3>
-                <p>
-                  Watch how tasks compile into dependency levels, execute in
-                  parallel, and dynamically spawn new nodes when goal confidence
-                  is insufficient.
-                </p>
-              </div>
-
-              <div class="sim-controls">
-                <button id="vA-start-btn" class="sim-btn glow-btn">
-                  Compile &amp; Run Task
-                </button>
-                <button id="vA-reset-btn" class="sim-btn secondary-btn">
-                  Reset Pipeline
-                </button>
-              </div>
-
-              <!-- Visual Graph Levels -->
-              <div class="graph-visualizer">
-                <div class="level-column" id="level-strat">
-                  <span class="level-label">1. Cloud Plan</span>
-                  <div class="sim-node planner" id="node-planner">
-                    <div class="node-id">Strategist</div>
-                    <div class="node-action">Goal Intent Routing</div>
-                  </div>
-                </div>
-
-                <div class="level-arrow">⟶</div>
-
-                <div class="level-column" id="level-0">
-                  <span class="level-label">2. Level 0 (Parallel)</span>
-                  <div class="sim-node pending" id="node-01">
-                    <div class="node-id">node_01 [Go]</div>
-                    <div class="node-action">archive_files</div>
-                  </div>
-                  <div class="sim-node pending" id="node-02">
-                    <div class="node-id">node_02 [WASM]</div>
-                    <div class="node-action">fetch_user_details</div>
-                  </div>
-                </div>
-
-                <div class="level-arrow">⟶</div>
-
-                <div class="level-column" id="level-edge">
-                  <span class="level-label"
-                    >3. Edge Thought
-                    <span class="edge-thought-indicator" id="edge-thought-badge"
-                      >θ</span
-                    ></span
-                  >
-                  <div
-                    class="sim-node edge-thought-node hidden"
-                    id="node-edge-thought"
-                  >
-                    <div class="node-id">Edge Thought</div>
-                    <div class="node-action">
-                      Confidence: <span id="edge-confidence">—</span>
-                    </div>
-                  </div>
-                  <!-- Dynamically spawned node -->
-                  <div
-                    class="sim-node spawned-node hidden"
-                    id="node-spawned"
-                  >
-                    <div class="node-id">node_03a [Spawned]</div>
-                    <div class="node-action">enrich_user_data</div>
-                  </div>
-                </div>
-
-                <div class="level-arrow">⟶</div>
-
-                <div class="level-column" id="level-1">
-                  <span class="level-label">4. Level 1 (Dependent)</span>
-                  <div class="sim-node pending" id="node-03">
-                    <div class="node-id">node_03 [MCP]</div>
-                    <div class="node-action">send_team_alert</div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Terminal Output Log -->
-              <div class="sim-log-console monospace" id="vA-console">
-                <div class="log-line text-muted">
-                  Awaiting topological compilation triggers...
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- PLAYGROUND 2: VIRTUAL MEMORY (Compaction) -->
-      <section class="playground-section" id="playground-vmem" data-audience="developer">
-        <div class="hero-container">
-          <span class="glass-badge">Virtual Memory</span>
-          <h2 class="section-title">
-            2. Context Compaction &amp; SQLite Cache
-          </h2>
-          <p class="section-desc">
-            Like virtual memory manages physical RAM, the OS compresses tool
-            outputs on-device — saving up to 85% of attention space — or pages
-            massive datasets to a local SQLite cache.
-          </p>
-
-          <div class="compactor-container premium-border">
-            <div class="compactor-header">
-              <h2>Virtual Memory Compaction Pipeline</h2>
-              <p>
-                Select raw tool data outputs and watch how the OS compresses
-                them into clean, structured context before returning them to
-                your agent.
-              </p>
-            </div>
-
-            <div class="compactor-grid">
-              <div class="compactor-controls">
-                <label>Select Sample Dataset Payload</label>
-                <div class="preset-buttons">
-                  <button class="preset-btn active" data-preset="crm">
-                    homogeneous CRM Array [22.4KB]
-                  </button>
-                  <button class="preset-btn" data-preset="logs">
-                    System Exception Logs [48.1KB]
-                  </button>
-                  <button class="preset-btn" data-preset="scraped">
-                    Web Scraped HTML [80.6KB]
-                  </button>
-                </div>
-
-                <div class="compaction-pipeline-visual">
-                  <div class="pipeline-step-item" id="step-0">
-                    <span>Layer 0: Binary Pruning</span
-                    ><span class="status">Idle</span>
-                  </div>
-                  <div class="pipeline-step-item" id="step-1">
-                    <span>Layer 1: HTML-to-Markdown</span
-                    ><span class="status">Idle</span>
-                  </div>
-                  <div class="pipeline-step-item" id="step-2">
-                    <span>Layer 2: TSV Tabular Hoisting</span
-                    ><span class="status">Idle</span>
-                  </div>
-                  <div class="pipeline-step-item" id="step-3">
-                    <span>Layer 3: KV Flattening</span
-                    ><span class="status">Idle</span>
-                  </div>
-                  <div class="pipeline-step-item" id="step-4">
-                    <span>Layer 4: Dot-Notation Compressor</span
-                    ><span class="status">Idle</span>
-                  </div>
-                </div>
-
-                <button id="vB-compress-btn" class="compress-trigger">
-                  Run Compaction Pipeline
-                </button>
-              </div>
-
-              <!-- Mobile Tab Switcher -->
-              <div class="compactor-mobile-tabs" id="compactor-mobile-tabs">
-                <button
-                  class="compactor-tab-btn active"
-                  data-target="raw"
-                  type="button"
-                >
-                  Raw Input (<span id="raw-size-tab">22.4</span> KB)
-                </button>
-                <button
-                  class="compactor-tab-btn"
-                  data-target="compacted"
-                  type="button"
-                >
-                  Compacted (<span id="compacted-size-tab">0.0</span> KB)
-                </button>
-              </div>
-
-              <!-- Side-by-side Payload Views -->
-              <div class="payload-visuals">
-                <div class="payload-box active" id="compactor-raw-panel">
-                  <div class="box-tag">
-                    Raw Data Input (<span id="raw-size">22.4</span> KB)
-                  </div>
-                  <textarea
-                    id="raw-payload-display"
-                    readonly
-                    class="monospace"
-                  ></textarea>
-                </div>
-
-                <div class="payload-box" id="compactor-compacted-panel">
-                  <div class="box-tag">
-                    Compacted Context Output (<span id="compacted-size"
-                      >0.0</span
-                    >
-                    KB)
-                  </div>
-                  <div class="compacted-output-wrapper">
-                    <pre
-                      id="compacted-payload-display"
-                      class="monospace text-success"
-                    ></pre>
-
-                    <!-- Disk Cache Banner -->
-                    <div
-                      class="disk-cache-banner"
-                      id="disk-cache-banner"
-                      style="display: none"
-                    >
-                      <div class="banner-title">
-                        ⚠️ Payload exceeds 12KB threshold! Triggering SQLite
-                        Cache.
-                      </div>
-                      <p>
-                        Raw values written securely to local disk. Returns
-                        lightweight Cache Envelope with local JQ Exploration
-                        guide.
-                      </p>
-                      <div class="cache-json-output monospace">
-                        { "cache_envelope_id": "env_8c3b7a", "records": 150,
-                        "jq_query_tool": "jq_cached_data" }
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              class="compactor-metrics"
-              id="compactor-metrics"
-              style="display: none"
-            >
-              <div class="metric-circle">
-                <span class="percent" id="metric-saving">0%</span>
-                <span class="label">Tokens Saved</span>
-              </div>
-              <div class="metric-stats">
-                <div>
-                  <span>Initial Size:</span>
-                  <strong id="metric-initial">22.4 KB</strong>
-                </div>
-                <div>
-                  <span>Compressed Size:</span>
-                  <strong id="metric-final">2.8 KB</strong>
-                </div>
-                <div>
-                  <span>Context Slot Saving:</span>
-                  <strong id="metric-ratio">8:1 Reduction</strong>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ============================================================ -->
-      <!-- UNDER THE HOOD: NON-DEMOED MOATS -->
-      <!-- ============================================================ -->
-      <section class="playground-section" id="under-the-hood" data-audience="developer">
-        <div class="hero-container">
-          <span class="glass-badge">Under the Hood</span>
-          <h2 class="section-title text-balance">
-            What else ships inside the jumpdrive
-          </h2>
-          <p class="section-desc text-pretty">
-            Six more proprietary subsystems — all implemented, tested, and
-            shipping.
-          </p>
-
-          <div class="hood-card-grid">
-            <div class="hood-card" id="hood-card-gbnf">
-              <div class="hood-card-icon">🛡️</div>
-              <h3>Zero Syntax Failures</h3>
-              <p class="hood-card-subtitle">
-                GBNF Grammar + Semantic Validator
-              </p>
-              <p>
-                The Local Model generates high-speed XML under shallow GBNF
-                structural constraints, then a deterministic Semantic Validator
-                coerces it into strict JSON tool parameters. Type coercion,
-                default imputation, fuzzy matching — all in one boundary seam.
-                <strong>0% syntax failure rate</strong> for tool arguments.
-              </p>
-            </div>
-
-            <div class="hood-card" id="hood-card-kv">
-              <div class="hood-card-icon">⚡</div>
-              <h3>Zero Chat Latency</h3>
-              <p class="hood-card-subtitle">
-                Priority KV Cache Preemption
-              </p>
-              <p>
-                When a user sends a chat message, the OS dumps the running
-                background task's KV attention state to disk, erases the slot,
-                and processes the chat instantly — sub-450ms time-to-first-token.
-                When chat completes, background state restores from disk without
-                re-evaluating historical tokens.
-              </p>
-            </div>
-
-            <div class="hood-card" id="hood-card-vector">
-              <div class="hood-card-icon">🧠</div>
-              <h3>Pure Local Memory</h3>
-              <p class="hood-card-subtitle">
-                Hybrid Vector Search &amp; Knowledge Graph
-              </p>
-              <p>
-                Zero cloud dependencies for long-term recall. SQLite FTS5
-                keyword pre-filtering → ONNX cosine similarity ranking →
-                Neighborhood Multi-Hop traversal across a relational knowledge
-                graph. Rich, contextual subgraphs injected directly into the
-                model.
-              </p>
-            </div>
-
-            <div class="hood-card" id="hood-card-inference">
-              <div class="hood-card-icon">🔄</div>
-              <h3>Self-Improving Inference</h3>
-              <p class="hood-card-subtitle">
-                Dual Micro-Skill Extraction
-              </p>
-              <p>
-                Successful trajectories synthesize Procedural Micro-Skills.
-                Failed-then-succeeded pairs extract Corrective Micro-Skills —
-                teaching the local model to self-correct on specific failure
-                patterns without weight updates. The OS gets better the more you
-                use it.
-              </p>
-            </div>
-
-            <div class="hood-card" id="hood-card-background">
-              <div class="hood-card-icon">👁️</div>
-              <h3>Background Intelligence</h3>
-              <p class="hood-card-subtitle">
-                Observer + Sentinel + Attention Scheduler
-              </p>
-              <p>
-                Three background agents form an autonomous nervous system. The
-                Observer reflects on completed tasks. The Sentinel proactively
-                correlates workspace activity. The Attention Scheduler enforces
-                preemption, safety gates (L0–L4), and resource budgets.
-              </p>
-            </div>
-
-            <div class="hood-card" id="hood-card-dashboard">
-              <div class="hood-card-icon">🖥️</div>
-              <h3>Generative Dashboard</h3>
-              <p class="hood-card-subtitle">
-                Agent-Composed Observability
-              </p>
-              <p>
-                The dashboard isn't a static monitoring page — it's a Generative
-                UI surface where the Local Model analyzes system state and
-                composes the layout from 15 primitives. The agent decides panel
-                ordering, emphasis, and which tasks deserve spotlight attention.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ============================================================ -->
-      <!-- TABBED QUICKSTART -->
-      <!-- ============================================================ -->
-      <section class="quickstart-section" id="quickstart">
-        <div class="hero-container">
-          <h2>Quickstart</h2>
-          <p class="section-desc">
-            Get the jumpdrive running in under a minute.
-          </p>
-
-          <div class="quickstart-tab-bar" id="quickstart-tab-bar">
-            <button
-              class="quickstart-tab-btn active"
-              data-qs="mcp"
-              type="button"
-            >
-              ⚡ MCP Path
+            <button id="vC-run-btn" class="dx-run-trigger">
+              Execute Hooked Runtime
             </button>
-            <button class="quickstart-tab-btn" data-qs="framework" type="button" data-audience="developer">
-              🔧 Framework Path
-            </button>
+
+            <!-- Hook Console Log -->
+            <div class="dx-console monospace" id="dx-console">
+              <div class="console-line text-muted">
+                Initialize the pipeline configuration to run...
+              </div>
+            </div>
+
+            <!-- HITL Gateway Prompt -->
+            <div class="hitl-prompt" id="hitl-prompt" style="display: none">
+              <div class="prompt-text">
+                ⚠️ TASK PAUSED: ErrTaskPaused. Manual approval required
+                before Level 1 tool dispatch.
+              </div>
+              <div class="prompt-actions">
+                <button id="hitl-approve-btn" class="prompt-btn approve">
+                  Approve Level 1 Run
+                </button>
+                <button id="hitl-abort-btn" class="prompt-btn abort">
+                  Abort Task
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- PLAYGROUNDS -->
+    <!-- ============================================================ -->
+    <section class="playground-section" id="playgrounds" data-audience="developer">
+      <div class="hero-container">
+        <span class="glass-badge">Interactive Playgrounds</span>
+        <h2 class="section-title">See the OS in action</h2>
+        <p class="section-desc">
+          Explore the core subsystems that power the agentic operating system.
+        </p>
+      </div>
+    </section>
+
+    <!-- PLAYGROUND 1: PROCESS SCHEDULER (Kahn Simulator) -->
+    <section class="playground-section" id="playground-scheduler" data-audience="developer">
+      <div class="hero-container">
+        <span class="glass-badge">Process Scheduler</span>
+        <h2 class="section-title">
+          1. Kahn Compiler &amp; Neural Edge Traversal
+        </h2>
+        <p class="section-desc">
+          Watch how the OS schedules processes. The Kahn Compiler sorts tasks
+          topologically and executes independent steps in parallel. When goal
+          confidence drops below threshold, the OS dynamically spawns new
+          nodes — like a neural network firing.
+        </p>
+
+        <div class="dashboard-grid">
+          <!-- Left: Subsystem Terminal -->
+          <div class="terminal-card">
+            <div class="terminal-header">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+              <span class="terminal-title">tzro_daemon_monitor.sh</span>
+            </div>
+            <div class="terminal-body monospace">
+              <div class="line"><span class="cyan">$</span> tzro status</div>
+              <div class="line success">
+                [OK] SQLite Persistence Layer Initialized:
+                ~/.tzro/data/tzro.db
+              </div>
+              <div class="line success">
+                [OK] Local Tactician Linked: port 36888 [Active Slots: 1]
+              </div>
+              <div class="line success">
+                [OK] Cloud Strategist Adapter Ready: mode = cooperative
+              </div>
+              <div class="line">
+                <span class="cyan">$</span> tzro list-subsystems
+              </div>
+              <div class="line active-subsystems">
+                <table>
+                  <tr>
+                    <th>ID</th>
+                    <th>Subsystem</th>
+                    <th>Engine</th>
+                  </tr>
+                  <tr>
+                    <td>01</td>
+                    <td>Durable Execution</td>
+                    <td>SQLite Checkpoints</td>
+                  </tr>
+                  <tr>
+                    <td>02</td>
+                    <td>Kahn Graph Compiler</td>
+                    <td>DAG Topological Sorter</td>
+                  </tr>
+                  <tr>
+                    <td>03</td>
+                    <td>Relational Memory</td>
+                    <td>FTS5 Vector ONNX</td>
+                  </tr>
+                  <tr>
+                    <td>04</td>
+                    <td>WASM Micro-Skills</td>
+                    <td>Isolated Sandbox Wasmtime</td>
+                  </tr>
+                  <tr>
+                    <td>05</td>
+                    <td>Stdio MCP Gateway</td>
+                    <td>Process Host Auto-Healing</td>
+                  </tr>
+                </table>
+              </div>
+              <div class="line">
+                <span class="cyan">$</span> <span class="blink">_</span>
+              </div>
+            </div>
           </div>
 
-          <div class="quickstart-panel active" id="qs-mcp">
-            <div class="commands-row">
-              <div class="code-box">
-                <div class="code-box-header">1. Install the OS</div>
-                <pre
-                  class="monospace"
-                ><code>curl -sSL https://tzro.network/install.sh | bash</code></pre>
+          <!-- Right: Kahn Compiler Simulator Card -->
+          <div class="simulator-card">
+            <div class="card-header-vA">
+              <h3>Process Scheduling Pipeline</h3>
+              <p>
+                Watch how tasks compile into dependency levels, execute in
+                parallel, and dynamically spawn new nodes when goal confidence
+                is insufficient.
+              </p>
+            </div>
+
+            <div class="sim-controls">
+              <button id="vA-start-btn" class="sim-btn glow-btn">
+                Compile &amp; Run Task
+              </button>
+              <button id="vA-reset-btn" class="sim-btn secondary-btn">
+                Reset Pipeline
+              </button>
+            </div>
+
+            <!-- Visual Graph Levels -->
+            <div class="graph-visualizer">
+              <div class="level-column" id="level-strat">
+                <span class="level-label">1. Cloud Plan</span>
+                <div class="sim-node planner" id="node-planner">
+                  <div class="node-id">Strategist</div>
+                  <div class="node-action">Goal Intent Routing</div>
+                </div>
               </div>
-              <div class="code-box">
-                <div class="code-box-header">2. Add to your agent's MCP config</div>
-                <pre class="monospace"><code>{
+
+              <div class="level-arrow">⟶</div>
+
+              <div class="level-column" id="level-0">
+                <span class="level-label">2. Level 0 (Parallel)</span>
+                <div class="sim-node pending" id="node-01">
+                  <div class="node-id">node_01 [Go]</div>
+                  <div class="node-action">archive_files</div>
+                </div>
+                <div class="sim-node pending" id="node-02">
+                  <div class="node-id">node_02 [WASM]</div>
+                  <div class="node-action">fetch_user_details</div>
+                </div>
+              </div>
+
+              <div class="level-arrow">⟶</div>
+
+              <div class="level-column" id="level-edge">
+                <span class="level-label">3. Edge Thought
+                  <span class="edge-thought-indicator" id="edge-thought-badge">θ</span></span>
+                <div class="sim-node edge-thought-node hidden" id="node-edge-thought">
+                  <div class="node-id">Edge Thought</div>
+                  <div class="node-action">
+                    Confidence: <span id="edge-confidence">—</span>
+                  </div>
+                </div>
+                <!-- Dynamically spawned node -->
+                <div class="sim-node spawned-node hidden" id="node-spawned">
+                  <div class="node-id">node_03a [Spawned]</div>
+                  <div class="node-action">enrich_user_data</div>
+                </div>
+              </div>
+
+              <div class="level-arrow">⟶</div>
+
+              <div class="level-column" id="level-1">
+                <span class="level-label">4. Level 1 (Dependent)</span>
+                <div class="sim-node pending" id="node-03">
+                  <div class="node-id">node_03 [MCP]</div>
+                  <div class="node-action">send_team_alert</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminal Output Log -->
+            <div class="sim-log-console monospace" id="vA-console">
+              <div class="log-line text-muted">
+                Awaiting topological compilation triggers...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PLAYGROUND 2: VIRTUAL MEMORY (Compaction) -->
+    <section class="playground-section" id="playground-vmem" data-audience="developer">
+      <div class="hero-container">
+        <span class="glass-badge">Virtual Memory</span>
+        <h2 class="section-title">
+          2. Context Compaction &amp; SQLite Cache
+        </h2>
+        <p class="section-desc">
+          Like virtual memory manages physical RAM, the OS compresses tool
+          outputs on-device — saving up to 85% of attention space — or pages
+          massive datasets to a local SQLite cache.
+        </p>
+
+        <div class="compactor-container premium-border">
+          <div class="compactor-header">
+            <h2>Virtual Memory Compaction Pipeline</h2>
+            <p>
+              Select raw tool data outputs and watch how the OS compresses
+              them into clean, structured context before returning them to
+              your agent.
+            </p>
+          </div>
+
+          <div class="compactor-grid">
+            <div class="compactor-controls">
+              <label>Select Sample Dataset Payload</label>
+              <div class="preset-buttons">
+                <button class="preset-btn active" data-preset="crm">
+                  homogeneous CRM Array [22.4KB]
+                </button>
+                <button class="preset-btn" data-preset="logs">
+                  System Exception Logs [48.1KB]
+                </button>
+                <button class="preset-btn" data-preset="scraped">
+                  Web Scraped HTML [80.6KB]
+                </button>
+              </div>
+
+              <div class="compaction-pipeline-visual">
+                <div class="pipeline-step-item" id="step-0">
+                  <span>Layer 0: Binary Pruning</span><span class="status">Idle</span>
+                </div>
+                <div class="pipeline-step-item" id="step-1">
+                  <span>Layer 1: HTML-to-Markdown</span><span class="status">Idle</span>
+                </div>
+                <div class="pipeline-step-item" id="step-2">
+                  <span>Layer 2: TSV Tabular Hoisting</span><span class="status">Idle</span>
+                </div>
+                <div class="pipeline-step-item" id="step-3">
+                  <span>Layer 3: KV Flattening</span><span class="status">Idle</span>
+                </div>
+                <div class="pipeline-step-item" id="step-4">
+                  <span>Layer 4: Dot-Notation Compressor</span><span class="status">Idle</span>
+                </div>
+              </div>
+
+              <button id="vB-compress-btn" class="compress-trigger">
+                Run Compaction Pipeline
+              </button>
+            </div>
+
+            <!-- Mobile Tab Switcher -->
+            <div class="compactor-mobile-tabs" id="compactor-mobile-tabs">
+              <button class="compactor-tab-btn active" data-target="raw" type="button">
+                Raw Input (<span id="raw-size-tab">22.4</span> KB)
+              </button>
+              <button class="compactor-tab-btn" data-target="compacted" type="button">
+                Compacted (<span id="compacted-size-tab">0.0</span> KB)
+              </button>
+            </div>
+
+            <!-- Side-by-side Payload Views -->
+            <div class="payload-visuals">
+              <div class="payload-box active" id="compactor-raw-panel">
+                <div class="box-tag">
+                  Raw Data Input (<span id="raw-size">22.4</span> KB)
+                </div>
+                <textarea id="raw-payload-display" readonly class="monospace"></textarea>
+              </div>
+
+              <div class="payload-box" id="compactor-compacted-panel">
+                <div class="box-tag">
+                  Compacted Context Output (<span id="compacted-size">0.0</span>
+                  KB)
+                </div>
+                <div class="compacted-output-wrapper">
+                  <pre id="compacted-payload-display" class="monospace text-success"></pre>
+
+                  <!-- Disk Cache Banner -->
+                  <div class="disk-cache-banner" id="disk-cache-banner" style="display: none">
+                    <div class="banner-title">
+                      ⚠️ Payload exceeds 12KB threshold! Triggering SQLite
+                      Cache.
+                    </div>
+                    <p>
+                      Raw values written securely to local disk. Returns
+                      lightweight Cache Envelope with local JQ Exploration
+                      guide.
+                    </p>
+                    <div class="cache-json-output monospace">
+                      { "cache_envelope_id": "env_8c3b7a", "records": 150,
+                      "jq_query_tool": "jq_cached_data" }
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="compactor-metrics" id="compactor-metrics" style="display: none">
+            <div class="metric-circle">
+              <span class="percent" id="metric-saving">0%</span>
+              <span class="label">Tokens Saved</span>
+            </div>
+            <div class="metric-stats">
+              <div>
+                <span>Initial Size:</span>
+                <strong id="metric-initial">22.4 KB</strong>
+              </div>
+              <div>
+                <span>Compressed Size:</span>
+                <strong id="metric-final">2.8 KB</strong>
+              </div>
+              <div>
+                <span>Context Slot Saving:</span>
+                <strong id="metric-ratio">8:1 Reduction</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- UNDER THE HOOD: NON-DEMOED MOATS -->
+    <!-- ============================================================ -->
+    <section class="playground-section" id="under-the-hood" data-audience="developer">
+      <div class="hero-container">
+        <span class="glass-badge">Under the Hood</span>
+        <h2 class="section-title text-balance">
+          What else ships inside the jumpdrive
+        </h2>
+        <p class="section-desc text-pretty">
+          Six more proprietary subsystems — all implemented, tested, and
+          shipping.
+        </p>
+
+        <div class="hood-card-grid">
+          <div class="hood-card" id="hood-card-gbnf">
+            <div class="hood-card-icon">🛡️</div>
+            <h3>Zero Syntax Failures</h3>
+            <p class="hood-card-subtitle">
+              GBNF Grammar + Semantic Validator
+            </p>
+            <p>
+              The Local Model generates high-speed XML under shallow GBNF
+              structural constraints, then a deterministic Semantic Validator
+              coerces it into strict JSON tool parameters. Type coercion,
+              default imputation, fuzzy matching — all in one boundary seam.
+              <strong>0% syntax failure rate</strong> for tool arguments.
+            </p>
+          </div>
+
+          <div class="hood-card" id="hood-card-kv">
+            <div class="hood-card-icon">⚡</div>
+            <h3>Zero Chat Latency</h3>
+            <p class="hood-card-subtitle">
+              Priority KV Cache Preemption
+            </p>
+            <p>
+              When a user sends a chat message, the OS dumps the running
+              background task's KV attention state to disk, erases the slot,
+              and processes the chat instantly — sub-450ms time-to-first-token.
+              When chat completes, background state restores from disk without
+              re-evaluating historical tokens.
+            </p>
+          </div>
+
+          <div class="hood-card" id="hood-card-vector">
+            <div class="hood-card-icon">🧠</div>
+            <h3>Pure Local Memory</h3>
+            <p class="hood-card-subtitle">
+              Hybrid Vector Search &amp; Knowledge Graph
+            </p>
+            <p>
+              Zero cloud dependencies for long-term recall. SQLite FTS5
+              keyword pre-filtering → ONNX cosine similarity ranking →
+              Neighborhood Multi-Hop traversal across a relational knowledge
+              graph. Rich, contextual subgraphs injected directly into the
+              model.
+            </p>
+          </div>
+
+          <div class="hood-card" id="hood-card-inference">
+            <div class="hood-card-icon">🔄</div>
+            <h3>Self-Improving Inference</h3>
+            <p class="hood-card-subtitle">
+              Dual Micro-Skill Extraction
+            </p>
+            <p>
+              Successful trajectories synthesize Procedural Micro-Skills.
+              Failed-then-succeeded pairs extract Corrective Micro-Skills —
+              teaching the local model to self-correct on specific failure
+              patterns without weight updates. The OS gets better the more you
+              use it.
+            </p>
+          </div>
+
+          <div class="hood-card" id="hood-card-background">
+            <div class="hood-card-icon">👁️</div>
+            <h3>Background Intelligence</h3>
+            <p class="hood-card-subtitle">
+              Observer + Sentinel + Attention Scheduler
+            </p>
+            <p>
+              Three background agents form an autonomous nervous system. The
+              Observer reflects on completed tasks. The Sentinel proactively
+              correlates workspace activity. The Attention Scheduler enforces
+              preemption, safety gates (L0–L4), and resource budgets.
+            </p>
+          </div>
+
+          <div class="hood-card" id="hood-card-dashboard">
+            <div class="hood-card-icon">🖥️</div>
+            <h3>Generative Dashboard</h3>
+            <p class="hood-card-subtitle">
+              Agent-Composed Observability
+            </p>
+            <p>
+              The dashboard isn't a static monitoring page — it's a Generative
+              UI surface where the Local Model analyzes system state and
+              composes the layout from 15 primitives. The agent decides panel
+              ordering, emphasis, and which tasks deserve spotlight attention.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- TABBED QUICKSTART -->
+    <!-- ============================================================ -->
+    <section class="quickstart-section" id="quickstart">
+      <div class="hero-container">
+        <h2>Quickstart</h2>
+        <p class="section-desc">
+          Get the jumpdrive running in under a minute.
+        </p>
+
+        <div class="quickstart-tab-bar" id="quickstart-tab-bar">
+          <button class="quickstart-tab-btn active" data-qs="mcp" type="button">
+            ⚡ MCP Path
+          </button>
+          <button class="quickstart-tab-btn" data-qs="framework" type="button" data-audience="developer">
+            🔧 Framework Path
+          </button>
+        </div>
+
+        <div class="quickstart-panel active" id="qs-mcp">
+          <div class="commands-row">
+            <div class="code-box">
+              <div class="code-box-header">1. Install the OS</div>
+              <pre
+                class="monospace"><code>curl -sSL https://s3.us-west-2.amazonaws.com/tzro-app/install.sh | bash</code></pre>
+            </div>
+            <div class="code-box">
+              <div class="code-box-header">2. Add to your agent's MCP config</div>
+              <pre class="monospace"><code>{
   "mcpServers": {
     "tzro": {
       "command": "tzro-mcp",
@@ -1508,58 +1314,53 @@
     }
   }
 }</code></pre>
-              </div>
-              <div class="code-box">
-                <div class="code-box-header">3. Start delegating</div>
-                <pre class="monospace"><code>// Your agent can now call tzro_run, tzro_memory_query, etc.
+            </div>
+            <div class="code-box">
+              <div class="code-box-header">3. Start delegating</div>
+              <pre class="monospace"><code>// Your agent can now call tzro_run, tzro_memory_query, etc.
 // The jumpdrive is active.</code></pre>
-              </div>
             </div>
           </div>
+        </div>
 
-          <div class="quickstart-panel" id="qs-framework" data-audience="developer">
-            <div class="commands-row">
-              <div class="code-box">
-                <div class="code-box-header">1. Add the dependency</div>
-                <pre class="monospace"><code>go get github.com/The18thWarrior/tzro</code></pre>
-              </div>
-              <div class="code-box">
-                <div class="code-box-header">2. Initialize the engine</div>
-                <pre class="monospace"><code>cfg := config.Get()
+        <div class="quickstart-panel" id="qs-framework" data-audience="developer">
+          <div class="commands-row">
+            <div class="code-box">
+              <div class="code-box-header">1. Add the dependency</div>
+              <pre class="monospace"><code>go get github.com/The18thWarrior/tzro (currently private beta)</code></pre>
+            </div>
+            <div class="code-box">
+              <div class="code-box-header">2. Initialize the engine</div>
+              <pre class="monospace"><code>cfg := config.Get()
 engine := executor.New(cfg)
 engine.RegisterHook(&YourCustomHook{})
 tools.Register(&YourTool{})</code></pre>
-              </div>
-              <div class="code-box">
-                <div class="code-box-header">3. Run a task</div>
-                <pre class="monospace"><code>result, err := engine.RunTask(ctx, "Your goal here")
+            </div>
+            <div class="code-box">
+              <div class="code-box-header">3. Run a task</div>
+              <pre class="monospace"><code>result, err := engine.RunTask(ctx, "Your goal here")
 fmt.Println(result.Synthesis)</code></pre>
-              </div>
             </div>
           </div>
         </div>
-      </section>
-    </main>
-
-    <!-- Universal Footer -->
-    <footer class="tzro-footer">
-      <div class="footer-container">
-        <p>&copy; 2026 tzro Project. Released under Apache-2.0 License.</p>
-        <div class="footer-links">
-          <a
-            href="https://github.com/The18thWarrior/tzro"
-            target="_blank"
-            rel="noopener noreferrer"
-            >GitHub Codebase</a
-          >
-          <a href="#use-cases" data-audience="user">Use Cases</a>
-          <a href="#get-started" data-audience="user">Install</a>
-          <a href="#architecture" data-audience="developer">Architecture</a>
-          <a href="#get-started" data-audience="developer">Get Started</a>
-        </div>
       </div>
-    </footer>
+    </section>
+  </main>
 
-    <script src="app.js"></script>
-  </body>
+  <!-- Universal Footer -->
+  <footer class="tzro-footer">
+    <div class="footer-container">
+      <p>&copy; 2026 tzro Project. Released under Apache-2.0 License.</p>
+      <div class="footer-links">
+        <a href="#use-cases" data-audience="user">Use Cases</a>
+        <a href="#get-started" data-audience="user">Install</a>
+        <a href="#architecture" data-audience="developer">Architecture</a>
+        <a href="#get-started" data-audience="developer">Get Started</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+
 </html>
