@@ -76,6 +76,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -90,19 +93,30 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "tzro ${{ steps.tag.outputs.tag }}"
-          generate_release_notes: true
-          files: |
-            tzro-darwin-arm64
-            tzro-darwin-amd64
-            tzro-linux-amd64
-            tzro-mcp-darwin-arm64
-            tzro-mcp-darwin-amd64
-            tzro-mcp-linux-amd64
-            tzrod-darwin-arm64
-            tzrod-darwin-amd64
-            tzrod-linux-amd64
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Archive Plugins
+        run: zip -r plugins.zip plugins/
+
+      - name: Upload to S3
+        env:
+          S3_BUCKET: tzro-app
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          
+          # Upload binaries and plugins to tagged release and latest
+          for file in tzro-* tzro-mcp-* tzrod-* plugins.zip; do
+            aws s3 cp "$file" "s3://$S3_BUCKET/releases/$TAG/"
+            aws s3 cp "$file" "s3://$S3_BUCKET/releases/latest/"
+          done
+          
+          # Upload install script
+          aws s3 cp install.sh "s3://$S3_BUCKET/install.sh"
+          
+          # Upload release notes
+          aws s3 cp docs/release-notes/ "s3://$S3_BUCKET/release-notes/" --recursive

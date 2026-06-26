@@ -114,7 +114,8 @@ else
         echo -e "  ${YELLOW}⚠ Go compiler not found. Fetching pre-compiled release binaries...${NC}"
 
         # Determine release download URL base
-        RELEASE_BASE="https://github.com/The18thWarrior/tzro/releases/latest/download"
+        TZRO_S3_BUCKET="${TZRO_S3_BUCKET:-tzro-app}"
+        RELEASE_BASE="https://${TZRO_S3_BUCKET}.s3.amazonaws.com/releases/latest"
 
         # Download tzro CLI
         if [ -f "./tzro_engine" ]; then
@@ -337,21 +338,22 @@ else
     TEMP_EXTRACT="/tmp/tzro-extract"
     rm -rf "${TEMP_ZIP}" "${TEMP_EXTRACT}"
     
-    # Download main branch zip from GitHub
-    if curl -fSL -o "${TEMP_ZIP}" "https://github.com/The18thWarrior/tzro/archive/refs/heads/main.zip" 2>/dev/null; then
+    # Download plugins.zip from S3
+    TZRO_S3_BUCKET="${TZRO_S3_BUCKET:-tzro-app}"
+    PLUGINS_URL="https://${TZRO_S3_BUCKET}.s3.amazonaws.com/releases/latest/plugins.zip"
+    if curl -fSL -o "${TEMP_ZIP}" "${PLUGINS_URL}" 2>/dev/null; then
         mkdir -p "${TEMP_EXTRACT}"
         unzip -q "${TEMP_ZIP}" -d "${TEMP_EXTRACT}"
-        # The zip extracts into a folder named tzro-main
-        if [ -d "${TEMP_EXTRACT}/tzro-main/plugins" ]; then
+        if [ -d "${TEMP_EXTRACT}/plugins" ]; then
             rm -rf "${INSTALL_DIR}/plugins"
-            cp -r "${TEMP_EXTRACT}/tzro-main/plugins" "${INSTALL_DIR}/"
+            cp -r "${TEMP_EXTRACT}/plugins" "${INSTALL_DIR}/"
             echo -e "  ${GREEN}✔ Plugins downloaded and installed successfully${NC}"
         else
             echo -e "  ${YELLOW}⚠ Downloaded archive did not contain plugins directory. Skipping editor configuration.${NC}"
         fi
         rm -rf "${TEMP_ZIP}" "${TEMP_EXTRACT}"
     else
-        echo -e "  ${YELLOW}⚠ Failed to download plugins from GitHub. Skipping editor configuration.${NC}"
+        echo -e "  ${YELLOW}⚠ Failed to download plugins from S3. Skipping editor configuration.${NC}"
     fi
 fi
 
