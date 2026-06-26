@@ -234,7 +234,7 @@ export const DAGView: React.FC<{
 
           <div className="flex items-center gap-3">
             <h4 className="text-base font-bold text-[var(--heading-color)] font-mono">{selectedNode.action || selectedNode.id || "synthesis"}</h4>
-            <StatusBadge status={selectedNode.state.status} />
+            <StatusBadge status={selectedNode.state?.status ?? 'pending'} />
           </div>
 
           <div className="mt-4 space-y-3">
@@ -254,11 +254,11 @@ export const DAGView: React.FC<{
               </div>
             )}
 
-            {selectedNode.state.output && (
+            {selectedNode.state?.output && (
               <div>
                 <div className="text-[10px] uppercase font-bold text-[var(--muted-color)]">Outputs / Telemetry Logs</div>
                 <pre className="text-xs font-mono bg-[var(--code-bg)] text-[var(--fg-color)] p-2.5 rounded border border-[var(--glass-border)] overflow-x-auto mt-1 max-h-48">
-                  {selectedNode.state.output}
+                  {selectedNode.state?.output}
                 </pre>
               </div>
             )}

@@ -8,7 +8,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"unicode/utf8"
+
+	ignore "github.com/sabhiram/go-gitignore"
 )
 
 // NewReadFileTool creates the read_file tool.
@@ -148,8 +152,8 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 
 			selectedLines := allLines[startIdx:endIdx]
 
-			// Cap at 200 lines
-			const maxLines = 200
+			// Cap at 100 lines
+			const maxLines = 100
 			truncated := false
 			if len(selectedLines) > maxLines {
 				selectedLines = selectedLines[:maxLines]
@@ -180,11 +184,14 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 }
 
 // NewListDirTool creates the list_dir tool.
-// Lists directory contents with metadata (name, size, type).
+// Lists directory contents with noise filtering, statistical profiling, and pagination.
+// Noisy entries (node_modules, .git, OS clutter) are hidden to prevent the local model
+// from premature anchoring on misleading signals. A file-type profile is computed from
+// all visible entries before truncation so the model gets mathematical grounding.
 func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 	return &BaseAgentTool{
 		name:        "list_dir",
-		description: "List directory contents with metadata (name, size, type).",
+		description: "List directory contents with file-type profile and metadata. Noisy entries (node_modules, .git, OS files) are hidden automatically.",
 		schema: GetToolGBNFSchema(map[string]interface{}{
 			"path": map[string]interface{}{"type": "string"},
 		}, []string{"path"}),
@@ -198,8 +205,9 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 
 			resolvedPath, err := validator.ValidatePath(in.Path)
 			if err != nil {
-				// Fallback: if path is empty, default to first allowed root
-				if in.Path == "" {
+				// Fallback: if path is empty or ".", default to first allowed root (project dir).
+				// The local model commonly emits "." or "" to mean "list the project root".
+				if in.Path == "" || in.Path == "." || in.Path == "./" {
 					roots := validator.resolveRoots()
 					if len(roots) > 0 {
 						resolvedPath = roots[0]
@@ -207,17 +215,75 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 					}
 				}
 				if err != nil {
+					if strings.Contains(err.Error(), "does not exist") {
+						return ToolError(fmt.Sprintf("path '%s' does not exist. Do not guess directory names. Use search_files to find what you are looking for.", in.Path)), nil
+					}
 					return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
 				}
 			}
 
-			entries, err := os.ReadDir(resolvedPath)
+			rawEntries, err := os.ReadDir(resolvedPath)
 			if err != nil {
+				info, statErr := os.Stat(resolvedPath)
+				if statErr == nil && !info.IsDir() {
+					contentBytes, readErr := os.ReadFile(resolvedPath)
+					if readErr != nil {
+						return ToolError(fmt.Sprintf("path is a file, but failed to read: %v", readErr)), nil
+					}
+
+					if !utf8.Valid(contentBytes) {
+						return ToolError("path is a binary file. Do not use list_dir on files. Use peek_file for text files."), nil
+					}
+
+					allLines := strings.Split(string(contentBytes), "\n")
+					totalLines := len(allLines)
+					const maxLines = 200
+					truncated := false
+					if len(allLines) > maxLines {
+						allLines = allLines[:maxLines]
+						truncated = true
+					}
+					content := strings.Join(allLines, "\n")
+					if len(allLines) > 0 && !strings.HasSuffix(content, "\n") {
+						content += "\n"
+					}
+
+					result := ToolSuccess(map[string]interface{}{
+						"content":    content,
+						"path":       resolvedPath,
+						"lineCount":  len(allLines),
+						"totalLines": totalLines,
+						"startLine":  1,
+						"endLine":    len(allLines),
+					})
+					result.Hint = "Path was a file instead of a directory. Gracefully degraded to read_file behavior."
+					if truncated {
+						result.Hint += fmt.Sprintf(" Output truncated at %d lines.", maxLines)
+					}
+					return result, nil
+				}
 				return ToolError(fmt.Sprintf("failed to read directory: %v", err)), nil
 			}
 
+			// Load gitignore if available
+			var matcher *ignore.GitIgnore
+			roots := validator.resolveRoots()
+			if len(roots) > 0 {
+				if m, err := ignore.CompileIgnoreFile(filepath.Join(roots[0], ".gitignore")); err == nil {
+					matcher = m
+				}
+			}
+
+			// L0: Filter noisy entries to prevent premature anchoring
 			var items []map[string]interface{}
-			for _, entry := range entries {
+			hiddenCount := 0
+			for _, entry := range rawEntries {
+				entryPath := filepath.Join(resolvedPath, entry.Name())
+				if isNoisyEntry(entry.Name(), entryPath, matcher) {
+					hiddenCount++
+					continue
+				}
+
 				info, err := entry.Info()
 				if err != nil {
 					continue
@@ -231,10 +297,10 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 				}
 
 				items = append(items, map[string]interface{}{
-					"name":     entry.Name(),
-					"type":     entryType,
-					"size":     info.Size(),
-					"modified": info.ModTime().Unix(),
+					"name":   filepath.ToSlash(entryPath),
+					"type":   entryType,
+					"isDir":  entry.IsDir(),
+					"isFile": !entry.IsDir(),
 				})
 			}
 
@@ -242,11 +308,40 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 				items = []map[string]interface{}{}
 			}
 
-			return ToolSuccess(map[string]interface{}{
-				"path":       resolvedPath,
-				"entries":    items,
-				"entryCount": len(items),
-			}), nil
+			// L2: Compute directory profile from all visible entries (before truncation)
+			profile := computeDirProfile(items)
+			totalVisible := len(items)
+
+			// L1: Pagination — truncate if too many entries
+			const maxDirEntries = 20
+			truncated := false
+			if len(items) > maxDirEntries {
+				items = items[:maxDirEntries]
+				truncated = true
+			}
+
+			result := ToolSuccess(map[string]interface{}{
+				"path":        resolvedPath,
+				"profile":     profile,
+				"entries":     items,
+				"entryCount":  len(items),
+				"totalCount":  totalVisible,
+				"hiddenCount": hiddenCount,
+			})
+
+			// Build combined hint from active filters
+			var hints []string
+			if hiddenCount > 0 {
+				hints = append(hints, fmt.Sprintf("%d noisy entries hidden (node_modules, .git, OS files, etc).", hiddenCount))
+			}
+			if truncated {
+				hints = append(hints, fmt.Sprintf("Showing first %d of %d entries. Use search_files to find specific files, or list_dir on a subdirectory.", maxDirEntries, totalVisible))
+			}
+			if len(hints) > 0 {
+				result.Hint = strings.Join(hints, " ")
+			}
+
+			return result, nil
 		},
 	}
 }
@@ -274,27 +369,55 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 
 			resolvedPath, err := validator.ValidatePath(in.Path)
 			if err != nil {
-				// Fallback: if path is empty, default to first allowed root
-				if in.Path == "" {
-					roots := validator.resolveRoots()
-					if len(roots) > 0 {
-						resolvedPath = roots[0]
-						err = nil
-					}
+				// The local model commonly puts its search term in the path field.
+				if in.Pattern == "" && in.Path != "" && in.Path != "." && in.Path != "./" {
+					in.Pattern = filepath.Base(in.Path)
 				}
+
+				// Rescue to project root
+				roots := validator.resolveRoots()
+				if len(roots) > 0 {
+					resolvedPath = roots[0]
+					err = nil
+				}
+
 				if err != nil {
 					return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
 				}
 			}
 
-			maxResults := 50
+			if in.Pattern == "" {
+				return ToolError("The 'pattern' parameter is missing. You must provide a 'pattern' (string) to search for."), nil
+			}
+
+			maxResults := 15
 			if in.MaxResults != nil && *in.MaxResults > 0 {
 				maxResults = *in.MaxResults
 			}
 
+			// Load gitignore if available
+			var matcher *ignore.GitIgnore
+			roots := validator.resolveRoots()
+			if len(roots) > 0 {
+				if m, err := ignore.CompileIgnoreFile(filepath.Join(roots[0], ".gitignore")); err == nil {
+					matcher = m
+				}
+			}
+
 			var matches []interface{}
 			_ = filepath.WalkDir(resolvedPath, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
+				if err != nil {
+					return nil
+				}
+				// L0: Skip noisy files and directories
+				if isNoisyEntry(d.Name(), path, matcher) {
+					if d.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+
+				if d.IsDir() {
 					return nil
 				}
 				if len(matches) >= maxResults {
@@ -365,4 +488,169 @@ func isBinaryExtension(ext string) bool {
 		return true
 	}
 	return false
+}
+
+// isNoisyEntry returns true for filesystem entries that are OS clutter,
+// build artifacts, or vendored dependency directories that should be
+// hidden from the local model to prevent premature anchoring.
+// Used by list_dir (hides entries) and search_files (skips files/directories).
+func isNoisyEntry(name string, path string, matcher *ignore.GitIgnore) bool {
+	if matcher != nil && matcher.MatchesPath(path) {
+		return true
+	}
+
+	switch name {
+	// OS clutter
+	case ".DS_Store", "Thumbs.db", ".Trash", "desktop.ini",
+		".Spotlight-V100", ".fseventsd":
+		return true
+	// Vendored / build directories that mislead project identification
+	case "node_modules", ".git", "__pycache__", ".tox",
+		"dist", "build", ".next", ".nuxt", ".output",
+		"target", "vendor":
+		return true
+	}
+	// Temp files: ~$*.docx, .#* (Emacs), *.swp/*.swo (Vim)
+	if strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".#") {
+		return true
+	}
+	if strings.HasSuffix(name, ".swp") || strings.HasSuffix(name, ".swo") {
+		return true
+	}
+	// Ensure log and db files are ignored in case gitignore doesn't catch them
+	if strings.HasSuffix(name, ".log") || strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".db-journal") {
+		return true
+	}
+	return false
+}
+
+// computeDirProfile summarizes a directory's composition by file extension.
+// Returns a human-readable string like "45 .go, 3 .mod, 2 .sum, 8 directories".
+// Computed from the full visible entry list (after noise filtering, before pagination)
+// so the model gets mathematical grounding that resists semantic anchoring.
+func computeDirProfile(items []map[string]interface{}) string {
+	extCounts := make(map[string]int)
+	dirCount := 0
+	for _, item := range items {
+		itemType, _ := item["type"].(string)
+		if itemType == "directory" {
+			dirCount++
+			continue
+		}
+		name, _ := item["name"].(string)
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext == "" {
+			ext = "(no ext)"
+		}
+		extCounts[ext]++
+	}
+
+	// Sort extensions by count descending, take top 6
+	type extEntry struct {
+		ext   string
+		count int
+	}
+	var sorted []extEntry
+	for ext, count := range extCounts {
+		sorted = append(sorted, extEntry{ext, count})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].count != sorted[j].count {
+			return sorted[i].count > sorted[j].count
+		}
+		return sorted[i].ext < sorted[j].ext // stable tie-break
+	})
+	if len(sorted) > 6 {
+		sorted = sorted[:6]
+	}
+
+	var parts []string
+	for _, e := range sorted {
+		parts = append(parts, fmt.Sprintf("%d %s", e.count, e.ext))
+	}
+	if dirCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d directories", dirCount))
+	}
+
+	if len(parts) == 0 {
+		return "empty directory"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// NewPeekFileTool creates the peek_file tool.
+// Returns the first 20 lines of a file — a low-cost sampling tool designed
+// to encourage the local model to ground its hypotheses in actual file content
+// rather than directory names. The name "peek" signals cheapness, making the
+// model more likely to call it than read_file (which it perceives as expensive).
+func NewPeekFileTool(validator *PathValidator) *BaseAgentTool {
+	return &BaseAgentTool{
+		name:        "peek_file",
+		description: "Quick peek: returns the first 20 lines of a file. Use to verify what a file actually contains before drawing conclusions.",
+		schema: GetToolGBNFSchema(map[string]interface{}{
+			"path": map[string]interface{}{"type": "string"},
+		}, []string{"path"}),
+		executeFn: func(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
+			var in struct {
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal(input, &in); err != nil {
+				return nil, err
+			}
+
+			if in.Path == "" {
+				return ToolError("path is required: specify the file path to peek"), nil
+			}
+
+			resolvedPath, err := validator.ValidatePath(in.Path)
+			if err != nil {
+				return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
+			}
+
+			// Reject directories — peek_file is only for files
+			info, err := os.Stat(resolvedPath)
+			if err != nil {
+				return ToolError(fmt.Sprintf("failed to stat path: %v", err)), nil
+			}
+			if info.IsDir() {
+				return ToolError(fmt.Sprintf("path '%s' is a directory, not a file. Use list_dir to explore directories.", in.Path)), nil
+			}
+
+			file, err := os.Open(resolvedPath)
+			if err != nil {
+				return ToolError(fmt.Sprintf("failed to open file '%s': %v", in.Path, err)), nil
+			}
+			defer file.Close()
+
+			const peekLines = 20
+			scanner := bufio.NewScanner(file)
+			var lines []string
+			for scanner.Scan() {
+				lines = append(lines, scanner.Text())
+				if len(lines) >= peekLines {
+					break
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				return ToolError(fmt.Sprintf("failed to read file: %v", err)), nil
+			}
+
+			content := strings.Join(lines, "\n")
+			if len(lines) > 0 {
+				content += "\n"
+			}
+
+			result := ToolSuccess(map[string]interface{}{
+				"content":   content,
+				"path":      resolvedPath,
+				"lineCount": len(lines),
+			})
+
+			if len(lines) >= peekLines {
+				result.Hint = "File continues beyond 20 lines. Use read_file with startLine/endLine to see more."
+			}
+
+			return result, nil
+		},
+	}
 }

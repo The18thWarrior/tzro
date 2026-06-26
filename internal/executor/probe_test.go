@@ -23,7 +23,7 @@ type MockProbeInference struct {
 func (m *MockProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
 	if m.CallCount >= len(m.Responses) {
 		// Default: synthesize immediately
-		return `{"action":"synthesize","nextThought":"done","confidence":1.0,"synthesis":"default synthesis"}`, nil
+		return `{"synthesis":"default synthesis"}`, nil
 	}
 	response := m.Responses[m.CallCount]
 	m.CallCount++
@@ -73,9 +73,13 @@ func TestRunProbe_ExecutesToolCallsAndReturns(t *testing.T) {
 	mock := &MockProbeInference{
 		Responses: []string{
 			// Step 1: tool call
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Let me explore the directory","confidence":0.3}`,
-			// Step 2: synthesize
-			`{"action":"synthesize","nextThought":"Found the structure","confidence":0.95,"synthesis":"The project contains a main.go file with a simple hello program."}`,
+			`Let me explore the directory
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			// Step 2: synthesize ready
+			`Found the structure
+<SYNTHESIZE_READY>`,
+			// Pass 2: synthesis
+			`{"synthesis":"The project contains a main.go file with a simple hello program."}`,
 		},
 	}
 
@@ -95,8 +99,8 @@ func TestRunProbe_ExecutesToolCallsAndReturns(t *testing.T) {
 		t.Errorf("unexpected synthesis result: %s", result)
 	}
 
-	if mock.CallCount != 2 {
-		t.Errorf("expected 2 inference calls, got %d", mock.CallCount)
+	if mock.CallCount != 3 {
+		t.Errorf("expected 3 inference calls, got %d", mock.CallCount)
 	}
 }
 
@@ -107,9 +111,13 @@ func TestRunProbe_PersistsThoughtSteps(t *testing.T) {
 
 	mock := &MockProbeInference{
 		Responses: []string{
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Exploring directory","confidence":0.2}`,
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Looking deeper","confidence":0.5}`,
-			`{"action":"synthesize","nextThought":"Got enough info","confidence":0.95,"synthesis":"All done"}`,
+			`Exploring directory
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			`Looking deeper
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			`Got enough info
+<SYNTHESIZE_READY>`,
+			`{"synthesis":"All done"}`,
 		},
 	}
 
@@ -137,13 +145,13 @@ func TestRunProbe_PersistsThoughtSteps(t *testing.T) {
 		t.Fatalf("expected 3 persisted steps, got %d", len(steps))
 	}
 
-	if steps[0].Thought != "Exploring directory" {
+	if steps[0].Thought != "Exploring directory\n<ACTION>{\"tool\":\"list_dir\",\"arguments\":{\"path\":\".\"}}</ACTION>" {
 		t.Errorf("step 1 thought mismatch: %s", steps[0].Thought)
 	}
 	if steps[0].ToolName != "list_dir" {
 		t.Errorf("step 1 tool name mismatch: %s", steps[0].ToolName)
 	}
-	if steps[1].Thought != "Looking deeper" {
+	if steps[1].Thought != "Looking deeper\n<ACTION>{\"tool\":\"list_dir\",\"arguments\":{\"path\":\".\"}}</ACTION>" {
 		t.Errorf("step 2 thought mismatch: %s", steps[1].Thought)
 	}
 }
@@ -156,12 +164,17 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 	// Set up 4 steps — compaction should trigger at step 3 (compactEvery=3)
 	mock := &MockProbeInference{
 		Responses: []string{
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Step 1","confidence":0.1}`,
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Step 2","confidence":0.2}`,
+			`Step 1
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			`Step 2
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
 			// Step 3 triggers compaction. The mock needs an extra response for the compaction inference call.
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Step 3","confidence":0.3}`,
+			`Step 3
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
 			"Compacted summary of steps 1-3", // This is the compaction inference response
-			`{"action":"synthesize","nextThought":"Done","confidence":0.95,"synthesis":"Final synthesis after compaction"}`,
+			`Done
+<SYNTHESIZE_READY>`,
+			`{"synthesis":"Final synthesis after compaction"}`,
 		},
 	}
 
@@ -200,10 +213,12 @@ func TestRunProbe_ConvergesOnHighConfidence(t *testing.T) {
 	defer cleanup()
 	setupProbeTestTools(t)
 
-	// Step 1 returns synthesize with high confidence — should terminate immediately
+	// Step 1 returns synthesize ready immediately
 	mock := &MockProbeInference{
 		Responses: []string{
-			`{"action":"synthesize","nextThought":"I already know the answer","confidence":0.95,"synthesis":"Immediate convergence result"}`,
+			`I already know the answer
+<SYNTHESIZE_READY>`,
+			`{"synthesis":"Immediate convergence result"}`,
 		},
 	}
 
@@ -222,8 +237,8 @@ func TestRunProbe_ConvergesOnHighConfidence(t *testing.T) {
 	if result != "Immediate convergence result" {
 		t.Errorf("unexpected result: %s", result)
 	}
-	if mock.CallCount != 1 {
-		t.Errorf("expected 1 inference call (immediate convergence), got %d", mock.CallCount)
+	if mock.CallCount != 2 {
+		t.Errorf("expected 2 inference calls (1 introspect, 1 synthesis), got %d", mock.CallCount)
 	}
 }
 
@@ -232,14 +247,17 @@ func TestRunProbe_BudgetExhaustionForcesSynthesis(t *testing.T) {
 	defer cleanup()
 	setupProbeTestTools(t)
 
-	// All steps return tool calls with low confidence — never converges
+	// All steps return tool calls — never converges
 	mock := &MockProbeInference{
 		Responses: []string{
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Step 1","confidence":0.1}`,
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Step 2","confidence":0.2}`,
-			`{"action":"tool_call","tool":"list_dir","arguments":"{\"path\":\".\"}", "nextThought":"Step 3","confidence":0.3}`,
+			`Step 1
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			`Step 2
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			`Step 3
+<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
 			// Budget exhausted (stepBudget=3), forced synthesis inference call:
-			"Forced synthesis: explored 3 steps but couldn't converge",
+			`{"synthesis":"Forced synthesis: explored 3 steps but couldn't converge"}`,
 		},
 	}
 
@@ -268,8 +286,11 @@ func TestRunProbe_RejectsDisallowedTools(t *testing.T) {
 	// Try to use a tool that's not in the allowed list
 	mock := &MockProbeInference{
 		Responses: []string{
-			`{"action":"tool_call","tool":"web_search","arguments":"{\"query\":\"hack\"}", "nextThought":"Trying disallowed tool","confidence":0.1}`,
-			`{"action":"synthesize","nextThought":"Done","confidence":0.95,"synthesis":"Tool was rejected"}`,
+			`Trying disallowed tool
+<ACTION>{"tool":"web_search","arguments":{"query":"hack"}}</ACTION>`,
+			`Done
+<SYNTHESIZE_READY>`,
+			`{"synthesis":"Tool was rejected"}`,
 		},
 	}
 

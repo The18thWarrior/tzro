@@ -101,7 +101,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	sctNodes = append(sctNodes, GraphNode{
 		ID:           synthID,
 		Type:         "synthesis",
-		Instructions: "Summarize and compile all prior action outputs into a final cohesive response.",
+		Instructions: "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details.",
 		Status:       "pending",
 	})
 

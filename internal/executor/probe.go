@@ -133,37 +133,7 @@ func RunProbe(
 		allowedToolSet[t] = true
 	}
 
-	// Build dynamic GBNF schema for thought step
-	var toolEnum string
-	if len(config.AllowedTools) > 0 {
-		var toolNames []string
-		for _, t := range config.AllowedTools {
-			toolNames = append(toolNames, fmt.Sprintf("%q", t))
-		}
-		toolEnum = fmt.Sprintf(`"type": "string", "enum": [%s]`, strings.Join(toolNames, ", "))
-	} else {
-		toolEnum = `"type": "string"`
-	}
-
-	stepSchema := fmt.Sprintf(`{
-		"type": "object",
-		"properties": {
-			"action": {
-				"type": "string",
-				"enum": ["tool_call", "synthesize"]
-			},
-			"tool": { %s },
-			"arguments": { "type": "string" },
-			"nextThought": { "type": "string" },
-			"confidence": { "type": "number" },
-			"synthesis": { "type": "string" }
-		},
-		"required": ["action", "nextThought", "confidence"]
-	}`, toolEnum)
-
 	var lastToolOutput string
-
-	// Loop detection: track recent tool calls to detect degenerate retries
 	type recentCall struct {
 		tool string
 		args string
@@ -171,58 +141,72 @@ func RunProbe(
 	var recentCalls []recentCall
 	const maxConsecutiveRepeats = 3
 
+	// Pass 1: High-Entropy Tool Loop
 	for step := 1; step <= stepBudget; step++ {
-		// 1. Build the prompt context
 		systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools)
 		userPrompt, err := buildProbeUserPrompt(probeID, step, lastToolOutput)
 		if err != nil {
 			return "", fmt.Errorf("failed to build probe prompt at step %d: %w", step, err)
 		}
 
-		// 2. Call Local Model with GBNF constraint
-		rawResponse, err := engine.Infer(ctx, systemPrompt, userPrompt, stepSchema)
+		// Call Local Model WITHOUT constraint
+		rawResponse, err := engine.Infer(ctx, systemPrompt, userPrompt, "")
 		if err != nil {
 			return "", fmt.Errorf("probe inference failed at step %d: %w", step, err)
 		}
 
-		// 3. Parse the structured response
-		var chainStep ThoughtChainStep
-		if err := json.Unmarshal([]byte(rawResponse), &chainStep); err != nil {
-			return "", fmt.Errorf("failed to parse probe step %d response: %w", step, err)
-		}
-
-		// 4. Execute tool call if requested
+		var isSynthesisReady bool
 		toolOutput := ""
 		var toolArgsStr string
-		if chainStep.Action == "tool_call" && chainStep.Tool != "" {
-			// Sanitize tool name: the 4B model sometimes concatenates reasoning
-			// into the tool field (e.g. "list_dir_dir_contents_path_or_file...").
-			// Try to recover by prefix-matching against allowed tools.
-			if !allowedToolSet[chainStep.Tool] {
-				sanitized := sanitizeToolName(chainStep.Tool, allowedToolSet)
+		var toolName string
+		var chainStep ThoughtChainStep
+		chainStep.NextThought = rawResponse
+
+		if strings.Contains(rawResponse, "<SYNTHESIZE_READY>") {
+			fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis readiness at step %d\n", probeID, step)
+			isSynthesisReady = true
+			chainStep.Action = "synthesize"
+		} else {
+			// Extract <ACTION> tag
+			actionRe := regexp.MustCompile("(?s)<ACTION>(.*?)</ACTION>")
+			matches := actionRe.FindStringSubmatch(rawResponse)
+			if len(matches) > 1 {
+				var parsed struct {
+					Tool      string                 `json:"tool"`
+					Arguments map[string]interface{} `json:"arguments"`
+				}
+				if err := json.Unmarshal([]byte(matches[1]), &parsed); err == nil {
+					toolName = parsed.Tool
+					chainStep.Action = "tool_call"
+					chainStep.Tool = parsed.Tool
+					chainStep.Arguments = parsed.Arguments
+				} else {
+					toolOutput = fmt.Sprintf("Error: Failed to parse ACTION JSON: %v", err)
+				}
+			}
+		}
+
+		if chainStep.Action == "tool_call" && toolName != "" {
+			if !allowedToolSet[toolName] {
+				sanitized := sanitizeToolName(toolName, allowedToolSet)
 				if sanitized != "" {
-					fmt.Fprintf(os.Stderr, "[Probe] Sanitized tool name: '%s' -> '%s'\n",
-						truncate(chainStep.Tool, 50), sanitized)
+					fmt.Fprintf(os.Stderr, "[Probe] Sanitized tool name: '%s' -> '%s'\n", truncate(toolName, 50), sanitized)
+					toolName = sanitized
 					chainStep.Tool = sanitized
 				}
 			}
 
-			// Validate tool is in allowed set
-			if !allowedToolSet[chainStep.Tool] {
-				toolOutput = fmt.Sprintf("Error: tool '%s' is not in the allowed tools set", chainStep.Tool)
+			if !allowedToolSet[toolName] {
+				toolOutput = fmt.Sprintf("Error: tool '%s' is not in the allowed tools set", toolName)
 			} else {
-				// Parse arguments and call
 				args := chainStep.Arguments
 				if args == nil {
 					args = map[string]interface{}{}
 				}
-				// Normalize arguments: remap fallback "query" key to the
-				// tool's actual required parameter (e.g. "path" for filesystem tools)
-				args = normalizeToolArguments(chainStep.Tool, args)
-				// Rescue empty path for filesystem tools by extracting from nextThought
-				args = rescueEmptyPathFromThought(chainStep.Tool, args, chainStep.NextThought)
+				args = normalizeToolArguments(toolName, args)
+				args = rescueEmptyPathFromThought(toolName, args, chainStep.NextThought)
 
-				result, err := tools.Call(ctx, chainStep.Tool, args)
+				result, err := tools.Call(ctx, toolName, args)
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
 				} else {
@@ -233,8 +217,7 @@ func RunProbe(
 				}
 			}
 
-			// Loop detection: check for consecutive identical tool calls
-			currentCall := recentCall{tool: chainStep.Tool, args: toolArgsStr}
+			currentCall := recentCall{tool: toolName, args: toolArgsStr}
 			repeats := 0
 			for i := len(recentCalls) - 1; i >= 0; i-- {
 				if recentCalls[i] == currentCall {
@@ -246,51 +229,81 @@ func RunProbe(
 			recentCalls = append(recentCalls, currentCall)
 
 			if repeats >= maxConsecutiveRepeats {
-				fmt.Fprintf(os.Stderr, "[Probe] Loop detected: %s called %d times with identical args. Injecting hint.\n", chainStep.Tool, repeats+1)
-				lastToolOutput = fmt.Sprintf(
-					"LOOP DETECTED: You have called '%s' with identical arguments %d times in a row and it keeps failing or returning the same result. "+
-						"You MUST try something DIFFERENT: use a different tool, use different arguments (e.g. an absolute path instead of relative, or a different directory), "+
-						"or if you have gathered enough information, set action to 'synthesize' with confidence >= 0.9 to produce your final answer.",
-					chainStep.Tool, repeats+1,
-				)
+				fmt.Fprintf(os.Stderr, "[Probe] Loop detected: %s called %d times. Injecting hint.\n", toolName, repeats+1)
+				lastToolOutput = fmt.Sprintf("LOOP DETECTED: You have called '%s' with identical arguments %d times. You MUST try something DIFFERENT, or output <SYNTHESIZE_READY>.", toolName, repeats+1)
 			} else {
 				lastToolOutput = toolOutput
 			}
+		} else if isSynthesisReady {
+			lastToolOutput = "Synthesis readiness signaled."
+		} else {
+			lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
 		}
 
-		// 5. Persist the thought step
 		thoughtStep := memory.ThoughtStep{
 			ID:         fmt.Sprintf("%s_step_%d", probeID, step),
 			ProbeID:    probeID,
 			TaskID:     taskID,
 			StepIndex:  step,
 			Thought:    chainStep.NextThought,
-			ToolName:   chainStep.Tool,
+			ToolName:   toolName,
 			ToolArgs:   toolArgsStr,
 			ToolOutput: toolOutput,
 			CreatedAt:  time.Now().Unix(),
 		}
-		if err := memory.DB.AddThoughtStep(thoughtStep); err != nil {
-			fmt.Fprintf(os.Stderr, "[Probe] Warning: failed to persist step %d: %v\n", step, err)
+		_ = memory.DB.AddThoughtStep(thoughtStep)
+
+		if isSynthesisReady {
+			break
 		}
 
-		// 6. Check for convergence
-		if chainStep.Action == "synthesize" && chainStep.Confidence >= 0.9 {
-			fmt.Fprintf(os.Stderr, "[Probe] Node %s converged at step %d (confidence: %.2f)\n", probeID, step, chainStep.Confidence)
-			return chainStep.Synthesis, nil
-		}
-
-		// 7. Rolling compaction every N steps
 		if step%compactEvery == 0 {
-			if err := compactThoughtChain(ctx, probeID, taskID, step, compactEvery, engine); err != nil {
-				fmt.Fprintf(os.Stderr, "[Probe] Warning: compaction failed at step %d: %v\n", step, err)
-			}
+			_ = compactThoughtChain(ctx, probeID, taskID, step, compactEvery, engine)
 		}
 	}
 
-	// Budget exhaustion: force synthesis
-	fmt.Fprintf(os.Stderr, "[Probe] Node %s budget exhausted (%d steps). Forcing synthesis.\n", probeID, stepBudget)
-	return forceSynthesis(ctx, probeID, taskID, engine)
+	// Pass 2: Structured Synthesis
+	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, engine)
+}
+
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine) (string, error) {
+	summary, _ := memory.DB.GetLatestSummary(probeID)
+	steps, _ := memory.DB.GetThoughtSteps(probeID)
+
+	var contextStr string
+	if summary.Summary != "" {
+		contextStr += "Summary: " + summary.Summary + "\n"
+	}
+	for _, s := range steps {
+		contextStr += fmt.Sprintf("Step %d: %s\n", s.StepIndex, s.Thought)
+	}
+
+	systemPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Probe Node.
+Your goal was: %s
+
+You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.`, goal)
+
+	synthSchema := `{
+		"type": "object",
+		"properties": {
+			"synthesis": { "type": "string" }
+		},
+		"required": ["synthesis"]
+	}`
+
+	result, err := engine.Infer(ctx, systemPrompt, contextStr, synthSchema)
+	if err != nil {
+		return "Synthesis inference failed: " + err.Error(), nil
+	}
+
+	var parsed struct {
+		Synthesis string `json:"synthesis"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return result, nil // fallback to raw string if parsing fails
+	}
+	return parsed.Synthesis, nil
 }
 
 // buildProbeSystemPrompt constructs the system prompt for the probe's Local Model call.
@@ -305,7 +318,6 @@ func buildProbeSystemPrompt(goal string, allowedTools []string) string {
 		toolList += t
 	}
 
-	// Build per-tool parameter reference by extracting inner schemas
 	toolSchemas := buildToolSchemaReference(allowedTools)
 
 	return fmt.Sprintf(`You are a Probe Node — an autonomous code exploration agent.
@@ -315,17 +327,17 @@ You have access to these tools: [%s]
 
 ## Tool Parameter Reference
 %s
-On each step, produce a JSON object with:
-- "action": either "tool_call" (to use a tool) or "synthesize" (to produce a final answer)
-- "tool": the tool name (when action is "tool_call")
-- "arguments": a JSON object with the tool's required parameters (when action is "tool_call"). ALWAYS include required parameters.
-- "nextThought": your reasoning about what to explore next
-- "confidence": 0.0-1.0 indicating how confident you are that you have enough information to answer
-- "synthesis": your final answer (when action is "synthesize" and confidence >= 0.9)
+On each step, reason about what to explore next. 
+If you need to use a tool, output an XML tag: <ACTION>{"tool": "tool_name", "arguments": {"param": "value"}}</ACTION>.
+If you have gathered enough information and are ready to synthesize a final answer, output <SYNTHESIZE_READY>.
 
-IMPORTANT: When using "tool_call", you MUST include the "arguments" field with all required parameters as a JSON object. For example, list_dir requires: {"path": "/some/path"}
+IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
 
-Be systematic. Build understanding incrementally. Only synthesize when confident.`, goal, toolList, toolSchemas)
+Be systematic. Build understanding incrementally.
+Exploration strategy: list_dir for structure, search_files for patterns (like grep), read_file for content.
+Prefer search_files over browsing directories when looking for types, interfaces, or functions.
+If a path fails with "does not exist", DO NOT call list_dir or read_file on that path again. You MUST use search_files to locate the correct file instead of guessing directory names.
+Do not assume documentation files describe implementation — verify by reading source code.`, goal, toolList, toolSchemas)
 }
 
 // buildToolSchemaReference generates a compact reference block describing each tool's
@@ -422,10 +434,6 @@ func buildProbeUserPrompt(probeID string, stepNum int, lastToolOutput string) (s
 
 	// Include last tool output
 	if lastToolOutput != "" {
-		// Cap tool output to prevent context explosion
-		if len(lastToolOutput) > 4000 {
-			lastToolOutput = lastToolOutput[:4000] + "\n... (truncated)"
-		}
 		prompt += fmt.Sprintf("## Last Tool Output\n```\n%s\n```\n\n", lastToolOutput)
 	}
 

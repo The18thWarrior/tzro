@@ -1,7 +1,7 @@
 {
   "servers": {
     "tzro": {
-      "command": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-install-test-2151126843/bin/tzro-mcp",
+      "command": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-install-test-688372240/bin/tzro-mcp",
       "args": [],
       "env": {
         "TZRO_DIR": "/Users/jp/Desktop/Repos/tzro"

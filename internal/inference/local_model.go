@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -84,12 +85,19 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
+	if flag.Lookup("test.v") != nil {
+		return fmt.Errorf("local server execution disabled in test mode")
+	}
+
 	if m.Status == "Active" || m.Status == "Adopted" {
 		return nil
 	}
 
 	cfg := config.Get()
 	m.GGUFModelPath = cfg.GGUFModelPath
+	if m.GGUFModelPath != "" && !filepath.IsAbs(m.GGUFModelPath) {
+		m.GGUFModelPath = filepath.Join(config.GetModelsDir(), filepath.Base(m.GGUFModelPath))
+	}
 	m.Status = "Starting"
 
 	// Acquire exclusive filesystem lock to prevent concurrent llama-server spawning
@@ -101,49 +109,52 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	}
 	defer releaseFileLock(lockFile)
 
+	portFile := resolveTzroPath(filepath.Join(".tzro", ".llama-server.port"))
+
 	// 1. Attempt Server Process Adoption across reloads.
 	// After acquiring the flock, another process may have started the server
 	// while we waited. The retry loop handles server boot time.
-	portFile := resolveTzroPath(filepath.Join(".tzro", ".llama-server.port"))
-	if data, err := os.ReadFile(portFile); err == nil {
-		fields := strings.Split(strings.TrimSpace(string(data)), ":")
-		if len(fields) == 2 {
-			savedPort, _ := strconv.Atoi(fields[0])
-			savedPID, _ := strconv.Atoi(fields[1])
+	if flag.Lookup("test.v") == nil {
+		if data, err := os.ReadFile(portFile); err == nil {
+			fields := strings.Split(strings.TrimSpace(string(data)), ":")
+			if len(fields) == 2 {
+				savedPort, _ := strconv.Atoi(fields[0])
+				savedPID, _ := strconv.Atoi(fields[1])
 
-			// Verify the process is still alive before retrying health probes
-			processAlive := false
-			if proc, err := os.FindProcess(savedPID); err == nil {
-				if err := proc.Signal(syscall.Signal(0)); err == nil {
-					processAlive = true
-				}
-			}
-
-			if processAlive {
-				// Health probe with retries — server may still be booting
-				for attempt := range 6 {
-					healthURL := fmt.Sprintf("http://localhost:%d/health", savedPort)
-					req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
-					if err != nil {
-						break
-					}
-					resp, err := m.getHealthClient().Do(req)
-					if err == nil && resp.StatusCode == http.StatusOK {
-						resp.Body.Close()
-						m.ActivePort = savedPort
-						m.ActivePID = savedPID
-						m.Status = "Adopted"
-						fmt.Fprintf(os.Stderr, "[Llama Sidecar] Adopted existing running process on Port %d (PID %d)\n", savedPort, savedPID)
-						return nil
-					}
-					if attempt < 5 {
-						fmt.Fprintf(os.Stderr, "[Llama Sidecar] Port file found (port %d) but server not healthy yet, retrying (%d/5)...\n", savedPort, attempt+1)
-						time.Sleep(500 * time.Millisecond)
+				// Verify the process is still alive before retrying health probes
+				processAlive := false
+				if proc, err := os.FindProcess(savedPID); err == nil {
+					if err := proc.Signal(syscall.Signal(0)); err == nil {
+						processAlive = true
 					}
 				}
+
+				if processAlive {
+					// Health probe with retries — server may still be booting
+					for attempt := range 6 {
+						healthURL := fmt.Sprintf("http://localhost:%d/health", savedPort)
+						req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
+						if err != nil {
+							break
+						}
+						resp, err := m.getHealthClient().Do(req)
+						if err == nil && resp.StatusCode == http.StatusOK {
+							resp.Body.Close()
+							m.ActivePort = savedPort
+							m.ActivePID = savedPID
+							m.Status = "Adopted"
+							fmt.Fprintf(os.Stderr, "[Llama Sidecar] Adopted existing running process on Port %d (PID %d)\n", savedPort, savedPID)
+							return nil
+						}
+						if attempt < 5 {
+							fmt.Fprintf(os.Stderr, "[Llama Sidecar] Port file found (port %d) but server not healthy yet, retrying (%d/5)...\n", savedPort, attempt+1)
+							time.Sleep(500 * time.Millisecond)
+						}
+					}
+				}
+				// Process dead or health never passed — stale port file
+				_ = os.Remove(portFile)
 			}
-			// Process dead or health never passed — stale port file
-			_ = os.Remove(portFile)
 		}
 	}
 

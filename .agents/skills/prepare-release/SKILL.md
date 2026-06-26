@@ -40,10 +40,11 @@ Execute these phases **in strict order**. Never skip a phase. Never proceed past
 │  Phase 1: Stage All Files                                          │
 │  Phase 2: Generate Use Case Specs  (write-use-case-spec skill)     │
 │  Phase 3: Run Tests + Fix Failures (pnpm test, loop until green)   │
-│  Phase 4: Proactive QA             (proactive-qa skill, fix loop)  │
+│  Phase 4: Proactive QA             (tzro MCP QA, fix loop)         │
 │  Phase 5: Lint + Format            (pnpm prepare:format, fix)      │
-│  Phase 6: Generate Release Notes   (docs/release-notes/)           │
-│  Phase 7: Stage + Commit           (git add, commit)               │
+│  Phase 6: Update Architecture Docs  (docs/ARCHITECTURE.md)         │
+│  Phase 7: Generate Release Notes   (docs/release-notes/)           │
+│  Phase 8: Stage + Commit           (git add, commit)               │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -116,29 +117,59 @@ git add -A
 
 ---
 
-### Phase 4 — Proactive QA
+### Phase 4 — Proactive QA via MCP
 
-**REQUIRED SUB-SKILL:** Execute `proactive-qa`
-
-Read `.agents/skills/proactive-qa/SKILL.md` and follow its full execution protocol. This uses `browser_subagent` to explore the running app against use case specs and invariants.
-
-**Prerequisite check:** Before starting, verify the app is running:
+**Prerequisite check:** Verify the tzro daemon is reachable:
 
 ```bash
-curl -sf http://localhost:8000 > /dev/null && echo "Frontend: OK" || echo "Frontend: NOT RUNNING"
-curl -sf http://localhost:36888/health > /dev/null 2>&1 && echo "Backend: OK" || echo "Backend: NOT RUNNING"
+curl -sf http://localhost:36888/health > /dev/null 2>&1 && echo "tzro daemon: OK" || echo "tzro daemon: NOT RUNNING"
 ```
 
-If either service is not running, inform the user and ask them to start the dev server (`pnpm dev`). **Do not proceed until both are reachable.**
+If the daemon is not running, start it:
 
-**After QA completes:**
+```bash
+TZRO_DIR=$(pwd) ./bin/tzrod &
+```
+
+Wait a few seconds, then re-check health.
+
+**Step 1 — Gather use case specs:**
+
+List the `uc-*.md` files in `tests/llm/proactive-qa/`. These define the QA scope.
+
+**Step 2 — Delegate QA to tzro:**
+
+Call `tzro_run` with a prompt that instructs the engine to:
+- Read each `uc-*.md` spec in `tests/llm/proactive-qa/`
+- For each spec, verify the success criteria against the current codebase using Probe Nodes
+- Classify findings by severity (P0 critical / P1 major / P2 minor / P3 cosmetic)
+- Produce a structured QA report with file paths and line numbers for each finding
+
+Example prompt:
+```
+Read each use case spec (uc-*.md) in tests/llm/proactive-qa/. For each spec,
+verify the success criteria against the current codebase. Classify findings as
+P0/P1/P2/P3. Produce a structured QA report.
+```
+
+**Step 3 — Wait for completion:**
+
+Follow the Wait Protocol:
+1. Stop calling other tools after `tzro_run` returns
+2. Set a one-shot timer via `schedule` (60–120 seconds)
+3. When notified, check `tzro_status` for the task
+4. Resume only when status is `completed`
+5. Consume **only** `terminal_synthesis` — do not read individual node outputs
+
+**Step 4 — Evaluate findings from `terminal_synthesis`:**
 
 - If **0 findings** at P0 or P1: Proceed to Phase 5.
 - If **any P0 or P1 findings**: Enter the fix loop:
   1. For each P0/P1 finding, investigate the root cause in the codebase
   2. Apply the fix
-  3. Re-run Proactive QA (scoped to the affected use cases only, not the full suite)
-  4. Repeat until no P0/P1 findings remain
+  3. Re-delegate scoped QA via `tzro_run` for affected specs only (not the full suite)
+  4. Wait for completion using the same Wait Protocol
+  5. Repeat until no P0/P1 findings remain
 
 **Cap:** Maximum 3 QA fix iterations. If P0/P1 findings persist after 3 iterations, **stop** and report them to the user.
 
@@ -172,7 +203,27 @@ git add -A
 
 ---
 
-### Phase 6 — Generate Release Notes
+### Phase 6 — Update Architecture Documentation
+
+Inspect the changes in the release (either using `git diff --cached` or `git diff $FROM_COMMIT..HEAD` depending on whether `FROM_COMMIT` is set) to check if any files related to core subsystems have been modified.
+
+**Files of interest:**
+- Go modules/packages: `internal/compiler/`, `internal/executor/`, `internal/memory/`, `internal/agent/`, `internal/sentinel/`, `internal/observer/`, `internal/proactivity/`, `internal/packagemanager/`, `internal/wasm/`, `internal/mcp/`
+- Tool schemas & SDK entrypoints: `cmd/tzro-mcp/`, `cmd/tzro/`
+- Manifests/configurations: `go.mod`
+
+**Execution protocol:**
+1. If any of the files of interest are modified, review [ARCHITECTURE.md](file:///Users/jp/Desktop/Repos/tzro/docs/ARCHITECTURE.md) sections against the modified code.
+2. Update the system description, Go SDK examples, hooks description, or JSON schemas inside `docs/ARCHITECTURE.md` to keep the architecture documentation synchronized with the implementation.
+3. If no architectural changes are present in the diff, proceed silently.
+4. Stage the updated architecture document:
+   ```bash
+   git add docs/ARCHITECTURE.md
+   ```
+
+---
+
+### Phase 7 — Generate Release Notes
 
 **REQUIRED SUB-SKILL:** Execute `writing-release-notes`
 
@@ -186,7 +237,7 @@ The QA Summary section should incorporate findings from Phase 4.
 
 ---
 
-### Phase 7 — Stage + Commit
+### Phase 8 — Stage + Commit
 
 **Step 1 — Final stage:**
 
@@ -299,7 +350,8 @@ git diff --name-only $FROM_COMMIT..HEAD -- '*.tsx' '*.ts' | head -20
 | 1. Stage  | Working directory changes | Staged files         |
 | 2. Specs  | Staged files              | `uc-*.md` specs      |
 | 3. Tests  | Codebase                  | Green test suite     |
-| 4. QA     | Running app + specs       | QA report, bug fixes |
+| 4. QA     | tzro daemon + specs       | QA report, bug fixes |
 | 5. Lint   | Codebase                  | Clean formatting     |
-| 6. Notes  | QA report + diff          | Release notes file   |
-| 7. Commit | All above green           | Git commit           |
+| 6. Arch   | Codebase + diff           | Updated ARCHITECTURE.md|
+| 7. Notes  | QA report + diff          | Release notes file   |
+| 8. Commit | All above green           | Git commit           |

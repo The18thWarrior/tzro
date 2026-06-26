@@ -95,6 +95,7 @@ func init() {
 
 // Execute is the deep Task Engine interface seam.
 // It plans, compiles (topological sort), and runs the execution graph.
+// When Mode == "loop", it bypasses the DAG planner and runs an introspect loop.
 func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.ExecutionGraph, [][]string, error) {
 	if opts.IsForeground {
 		proactivity.RegisterActiveUserTask(opts.TaskID)
@@ -335,6 +336,11 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 		skillsListStr = "No specialized micro-skills available currently."
 	}
 
+	repoMap, _ := compiler.GenerateMap(".")
+	if repoMap == "" {
+		repoMap = "No repository map available."
+	}
+
 	systemPrompt := fmt.Sprintf(`You are the Strategic Planner (The Strategist) for the tzro agentic engine.
 Your task is to compile a user's natural language request into a Directed Acyclic Graph (DAG) representing an automated workflow execution plan.
 
@@ -342,6 +348,9 @@ Your task is to compile a user's natural language request into a Directed Acycli
 %s
 
 ## Available Procedural Micro-Skills SOP Index:
+%s
+
+## Static Repository Map & Core Signatures:
 %s
 
 ## Output Schema Constraints:
@@ -398,7 +407,7 @@ When the request involves open-ended exploration where each step depends on what
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
 5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
 6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that procedural order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
-`, toolsListStr, skillsListStr, taskID)
+`, toolsListStr, skillsListStr, repoMap, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")
 
@@ -518,6 +527,11 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 		skillsListStr = "No specialized micro-skills available currently."
 	}
 
+	repoMap, _ := compiler.GenerateMap(".")
+	if repoMap == "" {
+		repoMap = "No repository map available."
+	}
+
 	systemPrompt := fmt.Sprintf(`You are the Strategic Planner (The Strategist) for the tzro agentic engine.
 Your task is to compile a user's natural language request into a Directed Acyclic Graph (DAG) representing an automated workflow execution plan.
 
@@ -525,6 +539,9 @@ Your task is to compile a user's natural language request into a Directed Acycli
 %s
 
 ## Available Procedural Micro-Skills SOP Index:
+%s
+
+## Static Repository Map & Core Signatures:
 %s
 
 ## Output Schema Constraints:
@@ -581,7 +598,7 @@ When the request involves open-ended exploration where each step depends on what
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
 5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
 6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that procedural order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
-`, toolsListStr, skillsListStr, taskID)
+`, toolsListStr, skillsListStr, repoMap, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")
 

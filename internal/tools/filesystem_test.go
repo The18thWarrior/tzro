@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,7 +138,7 @@ func TestReadFile_WithLineRange(t *testing.T) {
 	}
 }
 
-func TestReadFile_CapsAt200Lines(t *testing.T) {
+func TestReadFile_CapsAt100Lines(t *testing.T) {
 	root, v := setupFilesystemTestFixtures(t)
 	tool := NewReadFileTool(v)
 
@@ -160,8 +161,8 @@ func TestReadFile_CapsAt200Lines(t *testing.T) {
 	lineCount := data["lineCount"].(float64)
 	totalLines := data["totalLines"].(float64)
 
-	if lineCount != 200 {
-		t.Errorf("expected 200 lines returned, got %v", lineCount)
+	if lineCount != 100 {
+		t.Errorf("expected 100 lines returned, got %v", lineCount)
 	}
 	if totalLines != 250 {
 		t.Errorf("expected 250 total lines, got %v", totalLines)
@@ -389,11 +390,295 @@ func TestFilesystemTools_RegisteredInRegistry(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// All three should be registered
-	for _, name := range []string{"read_file", "list_dir", "search_files"} {
+	// All four should be registered
+	for _, name := range []string{"read_file", "list_dir", "search_files", "peek_file"} {
 		tool := GetTool(name)
 		if tool == nil {
 			t.Errorf("expected tool '%s' to be registered", name)
+		}
+	}
+}
+
+// ==========================================
+// Anti-anchoring defense tests (L0-L3)
+// ==========================================
+
+// resolvedTempDir returns a temp directory with symlinks resolved.
+// On macOS, t.TempDir() returns /var/folders/... which is a symlink
+// to /private/var/folders/... — the PathValidator resolves symlinks
+// for security, so the root must match the resolved path.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("failed to resolve temp dir symlinks: %v", err)
+	}
+	return resolved
+}
+
+func TestListDir_FiltersNoisyEntries(t *testing.T) {
+	// Create a temp directory with noisy + real entries
+	root := resolvedTempDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	// Create noisy entries
+	os.Mkdir(filepath.Join(root, "node_modules"), 0755)
+	os.Mkdir(filepath.Join(root, ".git"), 0755)
+	os.Mkdir(filepath.Join(root, "__pycache__"), 0755)
+	os.WriteFile(filepath.Join(root, ".DS_Store"), []byte("x"), 0644)
+	os.WriteFile(filepath.Join(root, "Thumbs.db"), []byte("x"), 0644)
+	os.WriteFile(filepath.Join(root, "~$document.docx"), []byte("x"), 0644)
+
+	// Create real entries
+	os.WriteFile(filepath.Join(root, "main.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test"), 0644)
+	os.Mkdir(filepath.Join(root, "internal"), 0755)
+
+	tool := NewListDirTool(v)
+	result, err := tool.Call(context.Background(), map[string]interface{}{"path": root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	entries := data["entries"].([]interface{})
+
+	// Should only see real entries
+	if len(entries) != 3 {
+		t.Errorf("expected 3 visible entries, got %d", len(entries))
+	}
+
+	// Verify hidden count
+	hiddenCount := int(data["hiddenCount"].(float64))
+	if hiddenCount != 6 {
+		t.Errorf("expected 6 hidden entries, got %d", hiddenCount)
+	}
+
+	// Verify none of the noisy entries are present
+	for _, e := range entries {
+		entry := e.(map[string]interface{})
+		name := entry["name"].(string)
+		if isNoisyEntry(name, name, nil) {
+			t.Errorf("noisy entry '%s' should have been filtered", name)
+		}
+	}
+
+	// Verify hint mentions hidden entries
+	if res.Hint == "" {
+		t.Error("expected hint about hidden entries")
+	}
+}
+
+func TestListDir_IncludesProfile(t *testing.T) {
+	root := resolvedTempDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	// Create files with various extensions
+	for i := 0; i < 5; i++ {
+		os.WriteFile(filepath.Join(root, fmt.Sprintf("file%d.go", i)), []byte("pkg"), 0644)
+	}
+	for i := 0; i < 3; i++ {
+		os.WriteFile(filepath.Join(root, fmt.Sprintf("file%d.rs", i)), []byte("fn"), 0644)
+	}
+	os.WriteFile(filepath.Join(root, "go.mod"), []byte("module test"), 0644)
+	os.Mkdir(filepath.Join(root, "cmd"), 0755)
+
+	tool := NewListDirTool(v)
+	result, err := tool.Call(context.Background(), map[string]interface{}{"path": root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+
+	data := res.Data.(map[string]interface{})
+	profile, ok := data["profile"].(string)
+	if !ok || profile == "" {
+		t.Fatal("expected non-empty profile string")
+	}
+
+	// Profile should mention .go (most common), .rs, and directories
+	if !strings.Contains(profile, ".go") {
+		t.Errorf("profile should mention .go: got %q", profile)
+	}
+	if !strings.Contains(profile, ".rs") {
+		t.Errorf("profile should mention .rs: got %q", profile)
+	}
+	if !strings.Contains(profile, "directories") {
+		t.Errorf("profile should mention directories: got %q", profile)
+	}
+}
+
+func TestListDir_TruncatesLargeDirectories(t *testing.T) {
+	root := resolvedTempDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	// Create 80 files (above the 50 entry limit)
+	for i := 0; i < 80; i++ {
+		os.WriteFile(filepath.Join(root, fmt.Sprintf("file_%03d.txt", i)), []byte("x"), 0644)
+	}
+
+	tool := NewListDirTool(v)
+	result, err := tool.Call(context.Background(), map[string]interface{}{"path": root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+
+	data := res.Data.(map[string]interface{})
+	entryCount := int(data["entryCount"].(float64))
+	totalCount := int(data["totalCount"].(float64))
+
+	if entryCount != 20 {
+		t.Errorf("expected 20 entries after truncation, got %d", entryCount)
+	}
+	if totalCount != 80 {
+		t.Errorf("expected totalCount=80, got %d", totalCount)
+	}
+
+	// Profile should still reflect ALL 80 files
+	profile := data["profile"].(string)
+	if !strings.Contains(profile, "80 .txt") {
+		t.Errorf("profile should show all 80 .txt files even after truncation: got %q", profile)
+	}
+
+	// Hint should mention truncation
+	if !strings.Contains(res.Hint, "Showing first 20") {
+		t.Errorf("expected truncation hint, got %q", res.Hint)
+	}
+}
+
+func TestPeekFile_ReturnsFirst20Lines(t *testing.T) {
+	root := resolvedTempDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	// Create a 50-line file
+	var content strings.Builder
+	for i := 1; i <= 50; i++ {
+		content.WriteString(fmt.Sprintf("line %d\n", i))
+	}
+	filePath := filepath.Join(root, "big.go")
+	os.WriteFile(filePath, []byte(content.String()), 0644)
+
+	tool := NewPeekFileTool(v)
+	result, err := tool.Call(context.Background(), map[string]interface{}{"path": filePath})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	lineCount := int(data["lineCount"].(float64))
+	if lineCount != 20 {
+		t.Errorf("expected 20 lines, got %d", lineCount)
+	}
+
+	// Should have truncation hint
+	if res.Hint == "" {
+		t.Error("expected hint about file continuing")
+	}
+
+	// Content should contain line 1 but not line 21
+	fileContent := data["content"].(string)
+	if !strings.Contains(fileContent, "line 1\n") {
+		t.Error("expected content to contain 'line 1'")
+	}
+	if strings.Contains(fileContent, "line 21") {
+		t.Error("content should NOT contain 'line 21'")
+	}
+}
+
+func TestPeekFile_ShortFile(t *testing.T) {
+	root := resolvedTempDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	// Create a 5-line file
+	filePath := filepath.Join(root, "short.txt")
+	os.WriteFile(filePath, []byte("a\nb\nc\nd\ne\n"), 0644)
+
+	tool := NewPeekFileTool(v)
+	result, err := tool.Call(context.Background(), map[string]interface{}{"path": filePath})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	lineCount := int(data["lineCount"].(float64))
+	if lineCount != 5 {
+		t.Errorf("expected 5 lines, got %d", lineCount)
+	}
+
+	// Should NOT have truncation hint for short files
+	if res.Hint != "" {
+		t.Errorf("expected no hint for short file, got %q", res.Hint)
+	}
+}
+
+func TestSearchFiles_SkipsNoisyDirs(t *testing.T) {
+	root := resolvedTempDir(t)
+	v := NewStaticPathValidator([]string{root})
+
+	// Create a matching file inside node_modules
+	nmDir := filepath.Join(root, "node_modules", "some_pkg")
+	os.MkdirAll(nmDir, 0755)
+	os.WriteFile(filepath.Join(nmDir, "index.js"), []byte("export function UNIQUE_MARKER() {}"), 0644)
+
+	// Create a matching file in a real directory
+	srcDir := filepath.Join(root, "src")
+	os.MkdirAll(srcDir, 0755)
+	os.WriteFile(filepath.Join(srcDir, "main.go"), []byte("func UNIQUE_MARKER() {}"), 0644)
+
+	tool := NewSearchFilesTool(v)
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    root,
+		"pattern": "UNIQUE_MARKER",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	matches := data["matches"].([]interface{})
+
+	// Should find the match in src/ but NOT in node_modules/
+	if len(matches) != 1 {
+		t.Errorf("expected exactly 1 match (from src/), got %d", len(matches))
+	}
+
+	if len(matches) > 0 {
+		match := matches[0].(map[string]interface{})
+		file := match["file"].(string)
+		if strings.Contains(file, "node_modules") {
+			t.Errorf("match should not be from node_modules: %s", file)
 		}
 	}
 }

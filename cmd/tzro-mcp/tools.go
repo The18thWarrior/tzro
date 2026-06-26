@@ -146,11 +146,12 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 			}
 			doneChan <- execResult{nodes: nodes, err: taskErr}
 		} else {
-			_, _, err := task.Execute(context.Background(), args.Prompt, task.ExecuteOptions{
+			execOpts := task.ExecuteOptions{
 				TaskID:       taskID,
 				IntentType:   "workflow",
 				IsForeground: true,
-			})
+			}
+			_, _, err := task.Execute(context.Background(), args.Prompt, execOpts)
 			nodes := memory.DB.GetAllNodeStates(taskID)
 			doneChan <- execResult{nodes: nodes, err: err}
 		}
@@ -2420,6 +2421,115 @@ func registerTools(server *mcp.Server) {
 			"The inference sidecar survives via process adoption. " +
 			"Returns the restart status and previous uptime. Proactivity Level: L3 (Reversible Action).",
 	}, handleTzroRestart)
+
+	// Conversation compaction tool
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_compact",
+		Description: "Compact a conversation history into a focused summary using the local model. " +
+			"Conversation-aware: preserves user corrections, explicit requirements, and final decisions " +
+			"while compressing assistant reasoning and dropping pleasantries. " +
+			"Use for pre-processing context before tzro_run submission (cost arbitrage — local model instead of frontier tokens)." + delegationHint(),
+	}, handleTzroCompact)
+}
+
+// --- Conversation Compaction MCP Tool ---
+
+// TzroCompactArgs defines the inputs for the tzro_compact tool.
+type TzroCompactArgs struct {
+	Messages  []CompactMessage `json:"messages" jsonschema:"required,Conversation messages to compact"`
+	FocusHint string           `json:"focusHint,omitempty" jsonschema:"Optional guidance on what to prioritize preserving during compaction"`
+}
+
+// CompactMessage represents a single message in the conversation to compact.
+type CompactMessage struct {
+	Role    string `json:"role"` // "user" | "assistant" | "system"
+	Content string `json:"content"`
+}
+
+func handleTzroCompact(ctx context.Context, req *mcp.CallToolRequest, args TzroCompactArgs) (*mcp.CallToolResult, any, error) {
+	if len(args.Messages) == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "messages array cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Build the conversation text for compaction
+	var conversationText strings.Builder
+	inputTokens := 0
+	for _, msg := range args.Messages {
+		conversationText.WriteString(fmt.Sprintf("[%s]: %s\n\n", msg.Role, msg.Content))
+		inputTokens += len(msg.Content) / 4 // rough token estimate
+	}
+
+	// Build the compaction system prompt with conversation-aware heuristics
+	systemPrompt := `You are a conversation compactor. Compress the following conversation into a focused summary.
+
+Apply these rules:
+- PRESERVE verbatim: User corrections ("actually, I meant..."), explicit requirements, constraints, final decisions, confirmed choices
+- PRESERVE in compressed form: Technical details referenced in decisions
+- COMPRESS to key conclusions: Assistant reasoning and explanations
+- COMPRESS to outcome only: Exploratory back-and-forth
+- DROP: Pleasantries, acknowledgments, repeated explanations
+- DEDUPLICATE: Repeated explanations to single instance
+
+Output only the compacted summary text, no preamble or labels.`
+
+	if args.FocusHint != "" {
+		systemPrompt += fmt.Sprintf("\n\nFocus hint: Prioritize preserving content related to: %s", args.FocusHint)
+	}
+
+	// Call the local model for compaction
+	backend := inference.ActiveBackend
+	if backend == nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "no active inference backend available for compaction"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	result, err := backend.CallModel(ctx, []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: conversationText.String()},
+	}, "")
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "compaction failed: %s"}`, err.Error())},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	outputTokens := result.CompletionTokens
+	if outputTokens == 0 {
+		outputTokens = len(result.Content) / 4 // fallback estimate
+	}
+
+	compressionRatio := 0.0
+	if outputTokens > 0 {
+		compressionRatio = float64(inputTokens) / float64(outputTokens)
+	}
+
+	response := map[string]interface{}{
+		"summary": strings.TrimSpace(result.Content),
+		"stats": map[string]interface{}{
+			"inputTokens":      inputTokens,
+			"outputTokens":     outputTokens,
+			"compressionRatio": compressionRatio,
+		},
+	}
+
+	respBytes, _ := json.MarshalIndent(response, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
 }
 
 // --- Agent App Package Manager MCP tool handlers ---

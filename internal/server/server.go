@@ -1724,12 +1724,14 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 		req.TaskID = fmt.Sprintf("task_%d", time.Now().Unix())
 	}
 
+	execOpts := task.ExecuteOptions{
+		TaskID:       req.TaskID,
+		IntentType:   "workflow",
+		IsForeground: false,
+	}
+
 	go func() {
-		_, _, _ = task.Execute(context.Background(), req.Prompt, task.ExecuteOptions{
-			TaskID:       req.TaskID,
-			IntentType:   "workflow",
-			IsForeground: true,
-		})
+		_, _, _ = task.Execute(context.Background(), req.Prompt, execOpts)
 	}()
 
 	w.Header().Set("Content-Type", "application/json")

@@ -274,6 +274,7 @@ func Init(configPath string) error {
 	Register(NewReadFileTool(fsValidator))
 	Register(NewListDirTool(fsValidator))
 	Register(NewSearchFilesTool(fsValidator))
+	Register(NewPeekFileTool(fsValidator))
 
 	// 1. Register cache tools statically
 	Register(&FunctionTool{

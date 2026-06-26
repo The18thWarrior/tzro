@@ -31,6 +31,10 @@ When executing any task that does not explicitly require frontier model knowledg
 - **Neural Edge Traversal**: Edge Thoughts and Activation Thresholds enable dynamic graph mutation at runtime — nodes can spawn additional work mid-execution when goal confidence is below threshold.
 - **Micro-Skill Extraction**: Successful trajectories automatically synthesize procedural micro-skills (SOPs) for future runs.
 
+### Execution Modes
+
+tzro executes tasks using **DAG mode** (Directed Acyclic Graph). Workflows are planned upfront, compiled via Kahn sorting, and executed in parallel where possible. For open-ended exploration, it relies on **Probe Nodes** which run bounded reasoning chains dynamically.
+
 ### Execution Model (ADR-0024)
 
 tzro uses an **event-driven ready queue** where nodes fire as soon as their dependencies are satisfied. This replaces the older level-based iteration model.
@@ -70,13 +74,13 @@ When confronted, the agent argued that codebase exploration *"requires frontier 
 
 The cost: ~$2-5 in cloud tokens for work that could have been $0 locally. Multiplied across every "explore this codebase" request, this defeats the entire purpose of tzro.
 
-**Activation Thresholds** solve this: exploration tasks use nodes with high thresholds, and the system dynamically spawns additional tool calls as needed. Each spawned call is a real, checkpointed DAG node — no cloud tokens needed. The agent's only job is to delegate with a goal and consume the compacted synthesis.
+**Probe Nodes** were built specifically to prevent this. They run bounded reasoning chains on the Local Model — zero cloud tokens. The agent's only job is to delegate with a goal and consume the compacted synthesis.
 
 #### Mandatory Delegation
 
 The following task patterns **MUST** be delegated to `tzro_run`. Do not execute these in-context:
-- **Codebase exploration and directory analysis** — delegate with a goal and let the system dynamically spawn exploration nodes via Activation Thresholds (e.g., `"Explore the project at /path and explain its architecture"`).
-- **Web research and multi-source information gathering** — delegate as DAG workflows using `web_search` and `save_memory`.
+- **Codebase exploration and directory analysis** — use a Probe Node by delegating with a goal like: `tzro_run({prompt: "Explore the project at /path and explain its architecture"})`.
+- **Web research and multi-source information gathering** — delegate structured search→save pipelines.
 - **Memory ingestion pipelines** — bulk ingest operations across multiple sources.
 
 #### Trigger
@@ -110,55 +114,61 @@ The Offload Policy applies to **external tool calls** — MCP data-plane tools (
    # If running from local repo:
    TZRO_DIR=$(pwd) ./bin/tzrod
    ```
-2. Submit the task prompt to the planner using the CLI:
-   ```bash
-   # If installed globally:
-   tzro chat "Your detailed research or automation request"
-   # If running from local repo:
-   ./bin/tzro chat "Your detailed research or automation request"
+2. Submit the task prompt using the MCP `tzro_run` tool with the appropriate mode:
+   ```json
+   ```json
+   // Structured workflows or reactive exploration
+   {"prompt": "Explore the codebase at /path and explain its architecture"}
    ```
-   Or call the MCP `tzro_run` tool.
+   Or use the CLI: `tzro chat "Your request"`.
 3. Monitor progress offline:
    ```bash
-   # If installed globally:
    tzro task status <taskId> --offline
-   # If running from local repo:
-   ./bin/tzro task status <taskId> --offline
    ```
-4. Read the final cohesive response from the `terminal_synthesis` node once all levels are completed.
+4. Read the final cohesive response from the `terminal_synthesis` node once completed.
 
 ### Planner Tradeoffs & Design Rules
-When designing prompts for the Strategic Planner, ensure the prompt guides the engine to balance these key design rules:
+When designing prompts for the Strategic Planner (DAG mode), ensure the prompt guides the engine to balance these key design rules:
 - **Strategy vs. Execution**: Let the planner compile the DAG steps logically. Do not attempt to pre-execute steps.
 - **Variable Binding**: Guide the planner to use strict variable binding (`{{nodes.node_id.output.property}}`) to pass data downstream cleanly.
 - **Restricted Tool Spaces**: Explicitly limit node `allowedTools` to the 1-2 tools strictly required for that node's focus area to prevent execution hallucinations.
 - **Conciseness**: Keep the DAG compact (typically 2-4 nodes). Ensure dependencies are cycle-free.
-- **Exploration → Activation Threshold, not rigid DAG**: When a task involves open-ended exploration where the next step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), the prompt should steer the planner toward a node with a **high Activation Threshold** (e.g., 0.8) and allocated **mutation budget**. The system will dynamically spawn additional tool-call nodes as needed, with each spawned step being a real checkpointed node. Rigid multi-node DAGs fail at exploration because the local model cannot extract correct tool parameters without seeing intermediate results.
+- **Exploration → Use Probe Nodes**: When a task involves open-ended exploration where the next step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), prompt the planner to use a **Probe Node**. It handles reactive step-at-a-time reasoning natively.
 
 ### Suggested Prompts to Leverage tzro
-When delegating tasks to `tzro` (using CLI or the `tzro_run` tool), use or adapt the following prompt structures to ensure the Strategic Planner builds optimal, cycle-free DAGs with correct bindings:
+When delegating tasks to `tzro` (using CLI or the `tzro_run` tool), use or adapt the following prompt structures:
 
-#### Template A: Complex Research and Ingestion (e.g., AI Orchestration Space)
-Use this when you need to gather information from the web, synthesize it, and persist it into the relational memory.
-> **Example Prompt:**
-> *"Use web_search to find the latest changes and trends in the AI orchestration space, compile the findings, and save the final structured summary to memory using the save_memory tool."*
-- **Planner Tradeoff Balanced:** Ensures a linear 3-tier sequence: `web_search` -> `save_memory` -> `terminal_synthesis`.
-- **Variable Binding:** The planner binds the search output `{{nodes.node_search_exec.output}}` dynamically to the input of the `save_memory` node.
+#### Template A: Structured Research Pipeline (DAG mode)
+Use when the workflow shape is known: search → process → save.
+> **Example:**
+> ```json
+> {"prompt": "Use web_search to find the latest trends in the AI orchestration space, compile the findings, and save the final structured summary to memory using save_memory.", "mode": "dag"}
+> ```
+- **Why DAG:** The 3-step pipeline (search → save → synthesize) is fully known upfront. Parallelization possible.
 
-#### Template B: Tool-Heavy Multi-System Automation (e.g., Salesforce CRM & Slack Alerting)
-Use this when you need to fetch bulk records from a service, run local deduplication/updates, and notify a target channel.
-> **Example Prompt:**
-> *"Execute a workflow to query recent lead records using salesforce_query, run deduplication check with postgres_insert, and post the execution report to the slack_message tool."*
-- **Planner Tradeoff Balanced:** Limits `allowedTools` at each node to prevent action space hallucinations.
-- **Conciseness:** Restricts the graph to a clean 3-level pipeline (`salesforce_query` -> `postgres_insert` -> `slack_message`).
+#### Template B: Multi-System Automation (DAG mode)
+Use when fetching from multiple services and piping results through a known pipeline.
+> **Example:**
+> ```json
+> {"prompt": "Query recent lead records using salesforce_query, run deduplication check with postgres_insert, and post the execution report to slack_message.", "mode": "dag"}
+> ```
+- **Why DAG:** Fixed tool sequence with no reactive decisions. Each node's `allowedTools` is constrained.
 
-#### Template C: Codebase Exploration and Analysis
-Use this when the task requires navigating an unknown structure where each step depends on what was just discovered.
-> **Example Prompt:**
-> *"Explore the project at /path/to/repo. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary covering purpose, major components, key packages, and design patterns. Use read_file, list_dir, and search_files. Set activationThreshold to 0.8 and mutationBudget to 15."*
-- **Why Activation Threshold over rigid DAG:** Exploration is inherently reactive — you list a directory, see what's there, then decide which file to read. A rigid DAG pre-commits to paths it hasn't seen yet, causing the local model to guess (and guess wrong). With Activation Thresholds, the system dynamically spawns additional exploration nodes as needed, each one observing the previous output before deciding the next step.
-- **Key signals for the planner:** Include `activationThreshold` and `mutationBudget` parameters explicitly. Name the allowed tools (`read_file, list_dir, search_files`) to constrain the spawned nodes' tool space.
-- **Budget constraint:** Set `mutationBudget` to cap total spawned nodes (typically 10–20 for codebase exploration). This prevents runaway expansion while allowing sufficient depth.
+#### Template C: Codebase Exploration (Probe Node) ⭐
+Use when the task requires navigating an unknown structure where each step depends on what was just discovered.
+> **Example:**
+> ```json
+> {"prompt": "Explore the project at /path/to/repo. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary covering purpose, major components, key packages, and design patterns."}
+> ```
+- **Why Probe Nodes:** Exploration is inherently reactive — you list a directory, see what's there, then decide which file to read next. Probe Nodes handle this natively.
+
+#### Template D: Open-Ended Web Research (Probe Node) ⭐
+Use when research is open-ended and the next query depends on what was just discovered.
+> **Example:**
+> ```json
+> {"prompt": "Research the current state of local-first AI orchestration. Find key players, compare approaches, and identify emerging patterns. Save all findings to memory."}
+> ```
+- **Why Probe Nodes:** The model reads search results, identifies gaps, formulates follow-up queries, and decides when enough information has been gathered — all reactively.
 
 ### Activity Reporting (Recommended)
 
@@ -183,6 +193,11 @@ When checking `tzro_hook_list` for pending workflow approvals, also check `tzro_
 - **`ambient`** alerts: Batch and mention only if the user asks for status
 
 Alerts are automatically marked as `read` when retrieved via `tzro_sentinel_alerts`. To prevent repeated alerts for the same context, alerts use fingerprint-based deduplication — they only regenerate after being `dismissed`.
+
+
+
+
+
 
 
 
