@@ -129,19 +129,33 @@ The compiler reads the Strategist's **Abstract Graph** and dynamically builds a 
 The executor processes sorted levels concurrently using Go goroutines:
 - **State Checkpointing:** Node outcomes are persisted to the SQLite database immediately upon completion. If a crash or restart occurs, the task is resumed from the last completed level.
 - **Cycle Budgets:** A counter (`MaxCycles`) decrements on loop executions, terminating the engine if it reaches zero to avoid infinite looping charges.
+- **Weighted Circuit Breaker (v0.7.3):** The executor computes a time budget per task based on the node composition of the DAG. Each node type has a defined budget (probe: 10min, action: 5min, deterministic/synthesis: 90s). A configurable `circuitBreakerMultiplier` (default 1.0) scales the total budget. When the budget expires, remaining pending nodes are marked `timed_out` and the `terminal_synthesis` node is preserved to produce a coherent final output.
+- **Tool Name Classification Fallback (v0.7.3):** At execution time, if a node references a tool that doesn't exist in the registry, the executor uses local inference to classify the hallucinated name to the closest real tool before failing.
 
 ```sql
 CREATE TABLE graph_node_states (
     task_id        TEXT NOT NULL,
     node_id        TEXT NOT NULL,
-    status         TEXT CHECK(status IN ('pending', 'running', 'completed', 'failed', 'skipped')) NOT NULL,
+    status         TEXT CHECK(status IN ('pending', 'running', 'completed', 'failed', 'skipped', 'timed_out')) NOT NULL,
     output_payload TEXT,
     completed_at   INTEGER,
     PRIMARY KEY (task_id, node_id)
 );
 ```
 
-### 3.4. Neural Edge Traversal & Activation Thresholds
+### 3.4. Probe Nodes & Content-Aware Truncation
+
+**Probe Nodes** are autonomous exploration agents that run a bounded Thought Chain loop on the Local Model. They navigate codebases, directories, or data sources using whitelisted filesystem tools (`read_file`, `list_dir`, `search_files`), persisting each step to SQLite.
+
+- **Minimum Step Budget (v0.7.3):** Probes enforce a floor before accepting `<SYNTHESIZE_READY>` signals. Adaptive: `min(8, stepBudget/2)`. Premature synthesis signals are ignored and exploration continues.
+- **Compaction Levels (v0.7.3):** Configurable per-probe via `CompactionLevel`: `"preserve"` (raw passthrough), `"moderate"` (summarize prose, preserve code/tables), `"aggressive"` (heavy summarization). Default is `"preserve"`.
+- **Content-Aware Truncation (v0.7.3):** The synthesis pass applies type-aware truncation to tool outputs before feeding them to the Local Model:
+  - **Code:** Truncated at the lowest bracket nesting level, preserving function signatures and doc comments. 500-char floor per file.
+  - **Tabular data:** Retains 3 sample rows plus summary statistics.
+  - **Text/prose:** Middle-out elision (keep first and last 30 lines).
+  - Truncation budget: 160K characters (~40K tokens). Applied oldest-first, preserving the most recent tool results intact.
+
+### 3.5. Neural Edge Traversal & Activation Thresholds
 
 To handle open-ended exploration dynamically, `tzro` uses **Activation Thresholds** and **Edge Thoughts**:
 - When the execution traverses an edge pointing to a node with a non-zero threshold (0.0 to 1.0), the **Local Model** evaluates the accumulated context.
@@ -154,26 +168,34 @@ To handle open-ended exploration dynamically, `tzro` uses **Activation Threshold
   - `Goal Achieved == true` → Skips the target node and cascades skip statuses downstream.
 - **Safety Dampening:** If 3 consecutive spawned nodes fail, further spawning is suppressed. A **Mutation Budget** restricts total spawns per task.
 
-### 3.5. Pluggable Inference Backend (The Tactician)
+### 3.6. Plan Repair Pipeline (v0.7.3)
+
+When the local planner generates a graph containing nodes that reference non-existent (hallucinated) tools, the **Plan Repair Pipeline** surgically replaces those nodes rather than immediately escalating to cloud planning:
+1. **Detection:** `findInvalidTools()` identifies all nodes referencing unregistered tools.
+2. **Surgical Repair:** Invalid-tool nodes are replaced with a single Probe Node that can explore the problem space using filesystem tools.
+3. **Iteration Cap:** Up to `maxRepairAttempts` (default: 2) repair passes. If invalid tools persist, the pipeline escalates to cloud planning (if allowed by privacy policy).
+4. **Telemetry:** `plan_repair_attempt` and `plan_repair_exhausted` events are published for observability.
+
+### 3.7. Pluggable Inference Backend (The Tactician)
 
 Decouples structured LLM inference from the core execution loop. Pluggable backends are configured in `config.json`:
 - **llama-server sidecar:** Embeds a local llama-server running GGUF weights (e.g. Qwen-3.5 4B).
 - **External Servers:** Integrates OpenAI-compatible local APIs (LMStudio, Ollama, vLLM).
 - **Harness Callback:** Redirects inference programmatically through an external agent framework.
 
-### 3.6. Input-Output Normalization Seams
+### 3.8. Input-Output Normalization Seams
 
 - **Semantic Validator:** Coerces loose XML tags (`<tool>...</tool>`) generated by the model into the strict JSON parameters required by tool schemas, handling types, defaults, and typos.
 - **Response Resolver:** Normalizes raw outputs into flat key-value pairs using a three-tier resolution cascade (recursive search, fuzzy search, semantic fallback), making them queryable by downstream **DynamicBindings** (`{{nodes.node_id.output.key}}`).
 
-### 3.7. Hybrid Memory & Graph-RAG
+### 3.9. Hybrid Memory & Graph-RAG
 
 - **Tabular KV Memory:** Persists facts, preferences, and strategies in SQLite.
 - **Relational Knowledge Graph (KG):** Maps cross-system entities and links (e.g. contact belongs to account).
 - **Hybrid Vector Search:** Runs FTS5 keyword indexing first to generate candidate pools, followed by local ONNX cosine similarity ranking.
 - **Neighborhood Multi-Hop Traversal:** Recursively queries adjacent edges up to $N$ hops to build a context subgraph for Graph-RAG injection.
 
-### 3.8. Background Agents & Attention Loop
+### 3.10. Background Agents & Attention Loop
 
 - **Observer Agent:** A background agent that debounces telemetry events. Performs post-execution reflection, synthesizes memories, and writes **Procedural Micro-Skills** (Markdown SOPs) or **Corrective Micro-Skills** (anti-patterns) to the database.
 - **Sentinel Agent:** A periodic background agent that correlates user activity reports against memory and alerts the user of critical details or suggestions.
@@ -181,7 +203,16 @@ Decouples structured LLM inference from the core execution loop. Pluggable backe
 - **Proactivity Ladder:** Restricts background proposed actions to L0 (Observe) through L4 (External Side Effect) based on active approval gates.
 - **Attention Queue:** A user-visible queue containing pending actions awaiting approval.
 
-### 3.9. Extensibility & Sandboxing
+### 3.11. Comparison & Benchmarking Framework (v0.7.3)
+
+The `internal/comparison/` package provides a structured framework for evaluating execution quality across modes:
+- **Suite Runner:** Executes benchmark task definitions across multiple execution modes (local-only, cloud-only, cooperative).
+- **LLM Judge:** Evaluates output quality using an LLM against defined criteria (completeness, accuracy, depth), producing per-criterion scores and rationale.
+- **ReAct Loop:** Multi-step reasoning for complex judging scenarios.
+- **Structured Reports:** Generates JSON and markdown reports with per-task breakdowns, latencies, token counts, and cost estimates.
+- **CLI Command:** `tzro compare` orchestrates the full comparison pipeline.
+
+### 3.12. Extensibility & Sandboxing
 
 - **Agent Apps:** capability packages (`.tzroapp` archives) containing tool definitions, SQLite migrations, micro-skills, and manifests.
 - **Wazero WASM Sandboxing:** Executed via `wazero` to isolate custom Go or Rust tools with strict memory and filesystem bounds.
@@ -397,13 +428,13 @@ The strategizing agent returns a graph payload conforming to this schema:
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "type": { "type": "string", "enum": ["action", "conditional", "loop"] },
+          "type": { "type": "string", "enum": ["action", "conditional", "loop", "probe", "synthesis", "deterministic", "semantic_validator"] },
           "action": { "type": "string" },
           "instructions": { "type": "string" },
           "allowedTools": { "type": "array", "items": { "type": "string" } },
           "suggestedSkillIds": { "type": "array", "items": { "type": "string" } },
           "activationThreshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.0 },
-          "status": { "type": "string", "enum": ["pending", "running", "completed", "failed", "skipped"] }
+          "status": { "type": "string", "enum": ["pending", "running", "completed", "failed", "skipped", "timed_out"] }
         },
         "required": ["id", "type", "action", "instructions"]
       }

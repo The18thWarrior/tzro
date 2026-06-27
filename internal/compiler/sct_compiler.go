@@ -66,6 +66,13 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			// Keep other structural nodes (branch, merge, probe) as is.
 			// Probe nodes run their own internal Thought Chain loop and
 			// do not need bridge/exec decomposition.
+			//
+			// Default CompactionLevel for probe nodes to "preserve" to prevent
+			// destructive summarization of raw tool output. This is the root cause
+			// fix for the cloud_dag quality regression (4.80 → 3.30 in benchmark-results4).
+			if node.Type == "probe" && node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
+				node.ProbeConfig.CompactionLevel = CompactPreserve
+			}
 			sctNodes = append(sctNodes, node)
 			execNodeMap[node.ID] = node.ID
 		}

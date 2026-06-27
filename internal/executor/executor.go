@@ -111,8 +111,19 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 
 	_, levelDelay := getDelays(ctx)
 
-	fmt.Fprintf(os.Stderr, "[Executor] Starting execution for Task %s with %d topological levels...\n", graph.TaskID, len(levels))
-	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task execution initiated")
+	// P2: Weighted circuit breaker budget
+	// Compute time budget from node composition and apply config multiplier.
+	budget := compiler.ComputeTimeBudget(graph)
+	multiplier := config.Get().CircuitBreakerMultiplier
+	if multiplier <= 0 {
+		multiplier = 1.0 // default
+	}
+	budget = time.Duration(float64(budget) * multiplier)
+	budgetCtx, budgetCancel := context.WithTimeout(ctx, budget)
+	defer budgetCancel()
+
+	fmt.Fprintf(os.Stderr, "[Executor] Starting execution for Task %s with %d topological levels (budget: %s, multiplier: %.1fx)...\n", graph.TaskID, len(levels), budget, multiplier)
+	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", fmt.Sprintf("Task execution initiated (budget: %s)", budget))
 
 	// Resilient task resumption: Cache the execution graph for recovery/resume
 	db := memory.DB.RawDB()
@@ -137,6 +148,28 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	activeHooks := e.getHooksUnlocked()
 
 	for levelIdx, level := range levels {
+		// P2: Circuit breaker timeout check
+		if budgetCtx.Err() == context.DeadlineExceeded {
+			fmt.Fprintf(os.Stderr, "[Executor] Task %s timed out (budget: %s). Marking remaining nodes and forcing terminal synthesis.\n",
+				graph.TaskID, budget)
+			e.getPublisher().PublishEvent("task_circuit_breaker", graph.TaskID, "",
+				fmt.Sprintf("Circuit breaker triggered after %s budget. Remaining levels: %d", budget, len(levels)-levelIdx))
+
+			// Mark all remaining pending nodes as timed_out
+			for _, remainingLevel := range levels[levelIdx:] {
+				for _, nodeID := range remainingLevel {
+					if state, ok := memory.DB.GetNodeState(graph.TaskID, nodeID); ok && state.Status == "pending" {
+						// Don't mark terminal_synthesis as timed_out — let it run
+						if nodeID == "terminal_synthesis" {
+							continue
+						}
+						_ = memory.DB.SetNodeState(graph.TaskID, nodeID, "timed_out", "Circuit breaker triggered")
+					}
+				}
+			}
+			break
+		}
+
 		fmt.Fprintf(os.Stderr, "[Executor] Running topological level %d/%d containing %d parallel actions...\n", levelIdx+1, len(levels), len(level))
 
 		// Resolve level node references for hook arguments
@@ -524,14 +557,13 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			}
 
 			isBenchmark := ctx.Value("is_benchmark") != nil
-			useCloud := IsForceCloud(taskID) && config.Get().PrivacyLevel != "strict-local"
-			if !useCloud && !isBenchmark && attempt == 1 {
+			useCloud := IsForceCloud(taskID) && !isCloudEscalationBlocked()
+			// Skip confidence check when cloud escalation is blocked (local_only mode)
+			// — the check is only meaningful when cloud is available as a fallback.
+			if !useCloud && !isBenchmark && !isCloudEscalationBlocked() && attempt == 1 {
 				sufficient, _ := assessConfidenceTier(ctx, msgs, schemaStr, taskID)
 				checkAndUpdateConfidence(taskID, sufficient)
 				if !sufficient {
-					if config.Get().PrivacyLevel == "strict-local" {
-						return fmt.Errorf("local execution confidence check failed: local model is insufficient for the task under strict-local privacy level")
-					}
 					useCloud = true
 					e.getPublisher().PublishEvent("confidence_insufficient", taskID, node.ID, "Escalating to cloud")
 				}
@@ -773,6 +805,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 		fmt.Fprintf(os.Stderr, "[Executor] Deterministic tool arguments extracted: %v\n", toolArguments)
 
+		// Tool-existence validation with classification fallback.
+		// If the planner hallucinated a tool name, try to classify it to a real tool.
+		if tools.GetTool(node.Action) == nil {
+			resolved := classifyToolName(ctx, node.Action, node.Instructions)
+			if resolved != "" {
+				fmt.Fprintf(os.Stderr, "[Executor] Tool validation: hallucinated '%s' → classified as '%s'\n", node.Action, resolved)
+				node.Action = resolved
+			} else {
+				return fmt.Errorf("tool '%s' is not registered and could not be classified to a known tool", node.Action)
+			}
+		}
+
 		output, err := tools.Call(ctx, node.Action, toolArguments)
 		if err != nil {
 			return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
@@ -799,12 +843,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			return ErrTaskPaused
 		}
 
-		compactedOutput, cacheID, err := cache.Process(ctx, output, interpolatedPrompt)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", err)
-		} else if cacheID != "" {
-			fmt.Fprintf(os.Stderr, "[Executor Compactor] Payload > 12KB. Saved to SQLite and disk cache -> CacheID: %s\n", cacheID)
-			e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
+		var compactedOutput string
+		if isCompactionDisabled(ctx) {
+			compactedOutput = output
+		} else {
+			var cacheID string
+			compactedOutput, cacheID, err = cache.Process(ctx, output, interpolatedPrompt)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", err)
+			} else if cacheID != "" {
+				fmt.Fprintf(os.Stderr, "[Executor Compactor] Payload > 12KB. Saved to SQLite and disk cache -> CacheID: %s\n", cacheID)
+				e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
+			}
 		}
 
 		if nodeDelay > 0 {
@@ -849,7 +899,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		probeConfig := compiler.ProbeConfig{
 			Goal:         node.Instructions,
 			AllowedTools: node.AllowedTools,
-			StepBudget:   10,
+			StepBudget:   20, // Unified default — matches probe.go
 			CompactEvery: 3,
 		}
 		if node.ProbeConfig != nil {
@@ -1108,11 +1158,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
 
-		compactedOutput, cacheID, compactErr := cache.Process(ctx, output, interpolatedPrompt)
-		if compactErr != nil {
-			fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", compactErr)
-		} else if cacheID != "" {
-			e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
+		var compactedOutput string
+		if isCompactionDisabled(ctx) {
+			compactedOutput = output
+		} else {
+			var cacheID string
+			var compactErr error
+			compactedOutput, cacheID, compactErr = cache.Process(ctx, output, interpolatedPrompt)
+			if compactErr != nil {
+				fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", compactErr)
+			} else if cacheID != "" {
+				e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
+			}
 		}
 
 		if nodeDelay > 0 {
@@ -1209,8 +1266,8 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	isBenchmark := ctx.Value("is_benchmark") != nil
 	if !isBenchmark {
 		if validationErr := validateAgainstSchema(node.Action, toolCall.ToolArguments); validationErr != nil {
-			if config.Get().PrivacyLevel == "strict-local" {
-				return fmt.Errorf("schema validation failed for tool '%s': %w (cloud fallback disabled under strict-local privacy level)", node.Action, validationErr)
+			if isCloudEscalationBlocked() {
+				return fmt.Errorf("schema validation failed for tool '%s': %w (cloud escalation blocked)", node.Action, validationErr)
 			}
 			fmt.Fprintf(os.Stderr, "[RetryPolicy] Schema validation failed for %s: %v — retrying with cloud\n", node.Action, validationErr)
 			e.getPublisher().PublishEvent("schema_validation_failed", taskID, node.ID, validationErr.Error())
@@ -1240,8 +1297,8 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		if isBenchmark {
 			return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
 		}
-		if config.Get().PrivacyLevel == "strict-local" {
-			return fmt.Errorf("tool '%s' execution failed: %w (cloud fallback disabled under strict-local privacy level)", node.Action, err)
+		if isCloudEscalationBlocked() {
+			return fmt.Errorf("tool '%s' execution failed: %w (cloud escalation blocked)", node.Action, err)
 		}
 		// Tool execution failure retry (ADR-0020)
 		fmt.Fprintf(os.Stderr, "[RetryPolicy] Tool '%s' execution failed: %v — retrying with cloud\n", node.Action, err)
@@ -1298,12 +1355,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
 
 	// 6. Compact Output & Cache via deep module
-	compactedOutput, cacheID, err := cache.Process(ctx, output, interpolatedPrompt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", err)
-	} else if cacheID != "" {
-		fmt.Fprintf(os.Stderr, "[Executor Compactor] Payload > 12KB. Saved to SQLite and disk cache -> CacheID: %s\n", cacheID)
-		e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
+	var compactedOutput string
+	if isCompactionDisabled(ctx) {
+		compactedOutput = output
+	} else {
+		var cacheID string
+		compactedOutput, cacheID, err = cache.Process(ctx, output, interpolatedPrompt)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", err)
+		} else if cacheID != "" {
+			fmt.Fprintf(os.Stderr, "[Executor Compactor] Payload > 12KB. Saved to SQLite and disk cache -> CacheID: %s\n", cacheID)
+			e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
+		}
 	}
 
 	if nodeDelay > 0 {
@@ -2472,6 +2535,13 @@ func isTestingOrBenchmark(ctx context.Context) bool {
 	return false
 }
 
+// isCompactionDisabled checks whether the 5-Layer Compaction Pipeline is disabled
+// for this execution context. Used by the cloud_dag_raw benchmark condition to
+// bypass cache.Process() and pass raw tool output through unmodified.
+func isCompactionDisabled(ctx context.Context) bool {
+	return ctx.Value("compaction_disabled") != nil
+}
+
 func getDelays(ctx context.Context) (time.Duration, time.Duration) {
 	cfg := config.Get()
 	nodeDelay := time.Duration(cfg.ExecutorNodeDelayMs) * time.Millisecond
@@ -2491,4 +2561,62 @@ func getDelays(ctx context.Context) (time.Duration, time.Duration) {
 	}
 
 	return nodeDelay, levelDelay
+}
+
+// classifyToolName uses GBNF-constrained local inference to map a hallucinated
+// tool name to the closest registered tool. Returns empty string if classification fails.
+func classifyToolName(ctx context.Context, hallucinated string, nodeInstructions string) string {
+	registeredTools := tools.GetList()
+	if len(registeredTools) == 0 {
+		return ""
+	}
+	var toolNames []string
+	for _, t := range registeredTools {
+		toolNames = append(toolNames, t.Name())
+	}
+
+	// Build GBNF-constrained schema with enum of real tool names
+	toolNamesJSON, _ := json.Marshal(toolNames)
+	schema := fmt.Sprintf(`{
+		"type": "object",
+		"properties": {
+			"tool": {
+				"type": "string",
+				"enum": %s
+			}
+		},
+		"required": ["tool"]
+	}`, string(toolNamesJSON))
+
+	systemPrompt := "You are a tool name classifier. Given a hallucinated tool name and the node's instructions, select the most appropriate real tool from the available options."
+	userPrompt := fmt.Sprintf("Hallucinated tool: %s\nNode instructions: %s\nSelect the real tool that best matches the intent.",
+		hallucinated, truncateString(nodeInstructions, 200))
+
+	backend := inference.ActiveBackend
+	if backend == nil {
+		return ""
+	}
+	result, err := backend.CallModel(ctx, []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}, schema)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Executor] Tool classification failed: %v\n", err)
+		return ""
+	}
+
+	var parsed struct {
+		Tool string `json:"tool"`
+	}
+	if json.Unmarshal([]byte(result.Content), &parsed) == nil {
+		return parsed.Tool
+	}
+	return ""
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

@@ -27,6 +27,10 @@ A developer wants the engine to automatically decide whether to plan and execute
 - [ ] When no cloud API key is configured, all tasks route to local with a clear reason in the routing decision.
 - [ ] When the host is under thermal pressure (serious/critical), the routing decision factors in thermal state.
 - [ ] The routing decision reason is visible in the task execution output or observer events.
+- [ ] When a local plan contains nodes referencing hallucinated (non-existent) tools, the plan repair pipeline surgically replaces those nodes with a probe node.
+- [ ] Plan repair runs up to 2 attempts before escalating to cloud planning.
+- [ ] At execution time, if a node references a hallucinated tool, the executor's tool name classifier maps it to the closest real tool using local inference.
+- [ ] When cloud escalation is blocked (local_only privacy mode), confidence checks are skipped since cloud is unavailable as a fallback.
 
 ## Edge Cases to Probe
 
@@ -34,6 +38,9 @@ A developer wants the engine to automatically decide whether to plan and execute
 - Submitting a task when the cloud API key is present but the cloud backend returns an error to verify fallback behavior.
 - Submitting a borderline-complexity task to verify the threshold boundary behavior.
 - Running multiple tasks in rapid succession to verify routing decisions are independent per-task.
+- Local plan hallucinating 3 different invalid tools across 3 nodes, verifying all are repaired in a single repair pass.
+- Repair exhaustion: plan with invalid tools that persist after 2 repair attempts, verifying escalation to cloud.
+- Tool classifier receives a near-miss tool name (e.g., "search_file" instead of "search_files"), verifying it resolves to the correct tool.
 
 ## Anti-Patterns to Watch For
 
@@ -41,4 +48,6 @@ A developer wants the engine to automatically decide whether to plan and execute
 - [ ] Routing decision reason is missing or says "unknown" in the observer events.
 - [ ] Privacy quarantine flag is not set when routing to local for privacy reasons.
 - [ ] System crashes or hangs when both local and cloud backends are unavailable.
+- [ ] Plan repair silently drops nodes, causing broken dependency edges in the DAG.
+- [ ] Tool classifier maps a hallucinated tool to the wrong real tool (e.g., "delete_file" → "read_file").
 - [ ] Model mode override ("local" or "cloud") is silently ignored.

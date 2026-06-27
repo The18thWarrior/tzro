@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"time"
 )
 
 type GraphNode struct {
@@ -27,14 +28,27 @@ type GraphNode struct {
 	ActivationThreshold float64 `json:"activationThreshold,omitempty"` // Sufficiency gate (0.0-1.0). 0.0 = disabled.
 }
 
+// CompactionLevel controls how aggressively a node's output is compacted
+// during the Thought Chain compaction pass. Probe nodes default to "preserve"
+// to prevent destructive summarization of raw tool output (the primary cause
+// of quality loss between cloud_dag_raw and cloud_dag in benchmark-results4).
+type CompactionLevel string
+
+const (
+	CompactAggressive CompactionLevel = "aggressive" // Heavy summarization, 200-char tool output truncation
+	CompactModerate   CompactionLevel = "moderate"   // Summarize prose, preserve code/tables/signatures
+	CompactPreserve   CompactionLevel = "preserve"   // Pass through raw output, no compaction
+)
+
 // ProbeConfig configures a Probe Node's Thought Chain execution loop.
 // The probe autonomously explores a codebase or data source using filesystem tools,
 // persisting each reasoning step to SQLite for durability and compaction.
 type ProbeConfig struct {
-	Goal         string   `json:"goal"`         // The exploration objective
-	AllowedTools []string `json:"allowedTools"` // Tools the probe may use (e.g., ["read_file", "list_dir", "search_files"])
-	StepBudget   int      `json:"stepBudget"`   // Maximum number of Thought Chain steps before forced synthesis
-	CompactEvery int      `json:"compactEvery"` // Rolling compaction frequency (every N steps)
+	Goal            string          `json:"goal"`                      // The exploration objective
+	AllowedTools    []string        `json:"allowedTools"`              // Tools the probe may use (e.g., ["read_file", "list_dir", "search_files"])
+	StepBudget      int             `json:"stepBudget"`                // Maximum number of Thought Chain steps before forced synthesis
+	CompactEvery    int             `json:"compactEvery"`              // Rolling compaction frequency (every N steps)
+	CompactionLevel CompactionLevel `json:"compactionLevel,omitempty"` // Controls tool output truncation during compaction. Default: "preserve"
 }
 
 type GraphEdge struct {
@@ -219,4 +233,32 @@ func IncrementalSort(graph *ExecutionGraph, completedNodes map[string]bool) ([][
 	}
 
 	return executionLevels, nil
+}
+
+// NodeTimeBudgets defines the time budget allocation per node type for the
+// weighted circuit breaker (P2). Values are based on empirical benchmark
+// observations: probe nodes need ~10min for 20-step exploration, action nodes
+// need ~5min for cloud escalation + retries, deterministic/validator nodes
+// are fast local inference.
+var NodeTimeBudgets = map[string]time.Duration{
+	"probe":              10 * time.Minute,
+	"action":             5 * time.Minute,
+	"deterministic":      90 * time.Second,
+	"semantic_validator": 90 * time.Second,
+	"synthesis":          90 * time.Second,
+}
+
+// ComputeTimeBudget calculates the total weighted time budget for a graph
+// based on its node composition. Used by the executor's circuit breaker
+// to prevent runaway task execution.
+func ComputeTimeBudget(graph *ExecutionGraph) time.Duration {
+	var total time.Duration
+	for _, node := range graph.Nodes {
+		if budget, ok := NodeTimeBudgets[node.Type]; ok {
+			total += budget
+		} else {
+			total += 90 * time.Second // default for unknown types
+		}
+	}
+	return total
 }

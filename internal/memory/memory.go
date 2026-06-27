@@ -1284,6 +1284,26 @@ func (sdb *SqliteDatabase) GetLatestSummary(probeID string) (ThoughtSummary, err
 	return s, nil
 }
 
+// CountToolCallsByTaskID counts thought chain steps with a non-empty tool_name
+// for the given task ID. This captures actual tool calls made within probe nodes.
+func (sdb *SqliteDatabase) CountToolCallsByTaskID(taskID string) (int, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return 0, fmt.Errorf("database not initialized")
+	}
+
+	var count int
+	err := sdb.db.QueryRow(
+		`SELECT COUNT(*) FROM thought_chain WHERE task_id = ? AND tool_name != ''`, taskID,
+	).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // --- Edge Thought persistence (ADR-0024) ---
 
 // AddEdgeThought persists an EdgeThought to the edge_thoughts table.

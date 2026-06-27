@@ -4,6 +4,20 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-27T06:59:00-07:00] decision | Three-Bucket Metric Separation (ADR-0034)
+
+- **Activity**: Grill-with-docs session resolved how to separate the conflated "98% token reduction" benchmark claim into three independently measurable savings buckets: (1) DAG structural savings, (2) 5-Layer Pipeline compaction savings, (3) local model offloading savings.
+- **Key Decisions**:
+  - New benchmark condition `cloud_dag_raw` bypasses `cache.Process()` entirely (both 5-layer pipeline and JQ Cache), giving a pure "DAG structure only" signal
+  - Bypass implemented via context flag (`compaction_disabled`), not exposed through MCP — benchmark-only
+  - Probe rolling compaction (`compactThoughtChain`) is NOT disabled — it's intrinsic to probe execution, not a savings mechanism
+  - Bucket attribution computed post-hoc in report generator via cross-condition deltas, not embedded in per-result structs
+- **Files Created/Modified**:
+  - [NEW] [0034-three-bucket-metric-separation.md](../adr/0034-three-bucket-metric-separation.md)
+  - [MODIFY] [log.md](log.md)
+
+---
+
 ## [2026-06-15T20:55:00-07:00] document | PRD: Dual-Audience Hardening
 
 - **Activity**: Published PRD for Dual-Audience Hardening to address four core gaps between framework capabilities and user promises (Fail-Local policy, MCP daemon delegation proxy, editor-native resume/approval tools, and Package Manager CLI/MCP integration).

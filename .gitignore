@@ -78,3 +78,5 @@ mcp.lock
 *.db
 
 models/*
+
+benchmark-results*

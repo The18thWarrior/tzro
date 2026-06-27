@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"testing"
+	"time"
 )
 
 func TestCompileAndSortSuccess(t *testing.T) {
@@ -116,5 +117,59 @@ func TestStrategicGraphToSCTExpansion(t *testing.T) {
 
 	if len(levels) != 5 {
 		t.Errorf("expected 5 topological levels, got: %d (%v)", len(levels), levels)
+	}
+}
+
+func TestComputeTimeBudget_Exploration(t *testing.T) {
+	// Typical exploration: 1 probe + 1 synthesis
+	graph := &ExecutionGraph{
+		Nodes: []GraphNode{
+			{ID: "explore", Type: "probe"},
+			{ID: "synth", Type: "synthesis"},
+		},
+	}
+	budget := ComputeTimeBudget(graph)
+	expected := 10*time.Minute + 90*time.Second // probe + synthesis
+	if budget != expected {
+		t.Errorf("expected %s, got %s", expected, budget)
+	}
+}
+
+func TestComputeTimeBudget_Pipeline(t *testing.T) {
+	// Multi-step pipeline: 2 actions + 2 validators + 1 synthesis
+	graph := &ExecutionGraph{
+		Nodes: []GraphNode{
+			{ID: "a_validator", Type: "semantic_validator"},
+			{ID: "a_exec", Type: "deterministic"},
+			{ID: "b_validator", Type: "semantic_validator"},
+			{ID: "b_exec", Type: "deterministic"},
+			{ID: "synth", Type: "synthesis"},
+		},
+	}
+	budget := ComputeTimeBudget(graph)
+	expected := 4*90*time.Second + 90*time.Second // 4×90s (validators+deterministic) + 90s (synthesis)
+	if budget != expected {
+		t.Errorf("expected %s, got %s", expected, budget)
+	}
+}
+
+func TestComputeTimeBudget_EmptyGraph(t *testing.T) {
+	graph := &ExecutionGraph{Nodes: []GraphNode{}}
+	budget := ComputeTimeBudget(graph)
+	if budget != 0 {
+		t.Errorf("expected 0 budget for empty graph, got %s", budget)
+	}
+}
+
+func TestComputeTimeBudget_UnknownType(t *testing.T) {
+	graph := &ExecutionGraph{
+		Nodes: []GraphNode{
+			{ID: "custom", Type: "custom_unknown"},
+		},
+	}
+	budget := ComputeTimeBudget(graph)
+	expected := 90 * time.Second // default
+	if budget != expected {
+		t.Errorf("expected %s for unknown type, got %s", expected, budget)
 	}
 }

@@ -1,0 +1,77 @@
+[
+  {
+    "id": "cache_function_index",
+    "tier": 1,
+    "prompt": "Generate a function index for internal/cache/ listing every exported function, its signature, and a one-line description.",
+    "targetPaths": ["internal/cache/"],
+    "qualityRubric": {
+      "criteria": [
+        {"name": "Completeness", "description": "Covers all exported functions"},
+        {"name": "Accuracy", "description": "Signatures match source code"},
+        {"name": "Structure", "description": "Well-organized, easy to scan"},
+        {"name": "Usefulness", "description": "Developer would find this helpful"}
+      ],
+      "maxScore": 5.0
+    }
+  },
+  {
+    "id": "inference_module_docs",
+    "tier": 2,
+    "prompt": "Generate module-level documentation for internal/inference/ covering all public types, their relationships, and usage patterns.",
+    "targetPaths": ["internal/inference/"],
+    "qualityRubric": {
+      "criteria": [
+        {"name": "Completeness", "description": "Covers all public types and functions"},
+        {"name": "Accuracy", "description": "Type relationships correctly described"},
+        {"name": "Structure", "description": "Well-organized with clear sections"},
+        {"name": "Usefulness", "description": "Helps a new developer understand the module"}
+      ],
+      "maxScore": 5.0
+    }
+  },
+  {
+    "id": "adr_summary",
+    "tier": 3,
+    "prompt": "Read all ADR files in docs/adr/ and produce a consolidated decision log with status, date, and key implications for each.",
+    "targetPaths": ["docs/adr/"],
+    "qualityRubric": {
+      "criteria": [
+        {"name": "Completeness", "description": "All ADRs included in the log"},
+        {"name": "Accuracy", "description": "Status and implications match source ADRs"},
+        {"name": "Structure", "description": "Consistent format, easy to scan"},
+        {"name": "Usefulness", "description": "Provides quick reference for architectural decisions"}
+      ],
+      "maxScore": 5.0
+    }
+  },
+  {
+    "id": "internal_architecture",
+    "tier": 4,
+    "prompt": "Generate architecture documentation for the full internal/ tree showing package dependencies, data flow, and key abstractions.",
+    "targetPaths": ["internal/"],
+    "qualityRubric": {
+      "criteria": [
+        {"name": "Completeness", "description": "All major packages represented"},
+        {"name": "Accuracy", "description": "Dependencies and data flow correctly mapped"},
+        {"name": "Structure", "description": "Clear visual hierarchy and organization"},
+        {"name": "Usefulness", "description": "Enables understanding of system architecture"}
+      ],
+      "maxScore": 5.0
+    }
+  },
+  {
+    "id": "comprehensive_readme",
+    "tier": 5,
+    "prompt": "Generate a comprehensive README with architecture overview, quickstart guide, package index, and API reference.",
+    "targetPaths": ["."],
+    "qualityRubric": {
+      "criteria": [
+        {"name": "Completeness", "description": "Includes overview, quickstart, package index, and API reference"},
+        {"name": "Accuracy", "description": "Technical details match the actual codebase"},
+        {"name": "Structure", "description": "Professional README layout with clear navigation"},
+        {"name": "Usefulness", "description": "New user can get started and understand the project"}
+      ],
+      "maxScore": 5.0
+    }
+  }
+]

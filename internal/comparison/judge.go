@@ -1,0 +1,209 @@
+package comparison
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"tzro/internal/config"
+	"tzro/internal/inference"
+)
+
+// stripCodeFences removes markdown code fences (```json ... ``` or ``` ... ```)
+// that LLMs sometimes wrap around JSON responses.
+var codeFenceRe = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*\n(.*?)\\s*```\\s*$")
+
+func stripCodeFences(s string) string {
+	s = strings.TrimSpace(s)
+	if m := codeFenceRe.FindStringSubmatch(s); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	return s
+}
+
+// JudgeCriterionScore holds a single criterion evaluation from the LLM judge.
+type JudgeCriterionScore struct {
+	Name      string  `json:"name"`
+	Score     float64 `json:"score"`
+	Reasoning string  `json:"reasoning"`
+}
+
+// JudgeResponse is the structured response from the LLM-as-judge.
+type JudgeResponse struct {
+	Criteria     []JudgeCriterionScore `json:"criteria"`
+	OverallScore float64               `json:"overallScore"`
+	Summary      string                `json:"summary"`
+}
+
+const judgeSystemPrompt = `You are a documentation quality evaluator. You will receive a generated documentation file and a quality rubric. Score each criterion on a 1-5 scale:
+  1 = Missing/wrong
+  2 = Minimal/mostly incorrect
+  3 = Adequate but incomplete
+  4 = Good, covers most requirements
+  5 = Excellent, comprehensive and accurate
+
+Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
+{
+  "criteria": [
+    {"name": "CriterionName", "score": 4, "reasoning": "Brief explanation"}
+  ],
+  "overallScore": 4.0,
+  "summary": "Brief overall assessment"
+}
+
+Do NOT wrap the JSON in code fences. Output raw JSON only.`
+
+// JudgeOutput sends the generated document and rubric to the cloud model for quality scoring.
+// Returns per-criterion scores and an overall composite score.
+// Judge tokens are tracked separately (not part of condition tracking).
+func JudgeOutput(ctx context.Context, outputText string, rubric QualityRubric) (float64, string, error) {
+	return JudgeOutputWithEndpoint(ctx, outputText, rubric, "")
+}
+
+// JudgeOutputWithEndpoint is like JudgeOutput but allows overriding the API endpoint (for testing).
+func JudgeOutputWithEndpoint(ctx context.Context, outputText string, rubric QualityRubric, endpoint string) (float64, string, error) {
+	// Build the rubric description
+	rubricText := "Quality Rubric (score each 1-5):\n"
+	for _, c := range rubric.Criteria {
+		rubricText += fmt.Sprintf("- %s: %s\n", c.Name, c.Description)
+	}
+
+	userMessage := fmt.Sprintf("## Generated Documentation\n\n%s\n\n## Evaluation Rubric\n\n%s", outputText, rubricText)
+
+	var responseText string
+	var err error
+
+	if endpoint != "" {
+		// Testing path: direct HTTP call to the provided endpoint
+		responseText, err = callJudgeEndpoint(ctx, endpoint, userMessage)
+	} else {
+		// Production path: use the standard cloud model
+		messages := []inference.InferenceMessage{
+			{Role: "system", Content: judgeSystemPrompt},
+			{Role: "user", Content: userMessage},
+		}
+		responseText, err = inference.CallCloudModel(ctx, messages, "")
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("judge API call failed: %w", err)
+	}
+
+	responseText = stripCodeFences(responseText)
+
+	// Try structured JudgeResponse first
+	var judgeResp JudgeResponse
+	if err := json.Unmarshal([]byte(responseText), &judgeResp); err == nil && judgeResp.OverallScore > 0 {
+		return judgeResp.OverallScore, judgeResp.Summary, nil
+	}
+
+	// Fallback: handle flat {"criterionName": score, ...} format that models often produce
+	score, summary, fallbackErr := parseFlatJudgeResponse(responseText, rubric)
+	if fallbackErr != nil {
+		return 0, "", fmt.Errorf("failed to parse judge response in any format (raw: %s)", responseText)
+	}
+	return score, summary, nil
+}
+
+// parseFlatJudgeResponse handles responses where the model returns a flat map
+// of criterion names to scores, e.g. {"completeness": 5, "accuracy": 4}.
+// Returns the mean score and an auto-generated summary.
+func parseFlatJudgeResponse(responseText string, rubric QualityRubric) (float64, string, error) {
+	var flat map[string]interface{}
+	if err := json.Unmarshal([]byte(responseText), &flat); err != nil {
+		return 0, "", err
+	}
+
+	var total float64
+	var count int
+	for _, c := range rubric.Criteria {
+		key := strings.ToLower(c.Name)
+		if v, ok := flat[key]; ok {
+			switch n := v.(type) {
+			case float64:
+				total += n
+				count++
+			case json.Number:
+				f, _ := n.Float64()
+				total += f
+				count++
+			}
+		}
+	}
+
+	if count == 0 {
+		return 0, "", fmt.Errorf("no matching criteria scores found in flat response")
+	}
+
+	avg := total / float64(count)
+	summary := fmt.Sprintf("Auto-scored from flat response (%d/%d criteria matched)", count, len(rubric.Criteria))
+	return avg, summary, nil
+}
+
+// callJudgeEndpoint makes a simple chat completion call to a custom endpoint.
+func callJudgeEndpoint(ctx context.Context, endpoint, userMessage string) (string, error) {
+	type Message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type Request struct {
+		Model       string    `json:"model"`
+		Messages    []Message `json:"messages"`
+		Temperature float64   `json:"temperature"`
+	}
+
+	reqBody := Request{
+		Model: config.GetCloudModel(),
+		Messages: []Message{
+			{Role: "system", Content: judgeSystemPrompt},
+			{Role: "user", Content: userMessage},
+		},
+		Temperature: 0.1,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("judge API returned status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode judge response: %w", err)
+	}
+
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("empty choices from judge API")
+	}
+
+	return result.Choices[0].Message.Content, nil
+}

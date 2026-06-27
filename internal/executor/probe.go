@@ -141,6 +141,19 @@ func RunProbe(
 	var recentCalls []recentCall
 	const maxConsecutiveRepeats = 3
 
+	// minStepBudget is the minimum number of steps a probe must take before
+	// synthesis is allowed. Prevents premature termination when the model
+	// signals readiness after too few exploration steps.
+	// Adaptive: uses the lesser of 8 and stepBudget/2, so small test budgets
+	// aren't blocked but production budgets (20-30) get a meaningful floor.
+	minStepBudget := 8
+	if stepBudget/2 < minStepBudget {
+		minStepBudget = stepBudget / 2
+	}
+	if minStepBudget < 1 {
+		minStepBudget = 1
+	}
+
 	// Pass 1: High-Entropy Tool Loop
 	for step := 1; step <= stepBudget; step++ {
 		systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools)
@@ -163,6 +176,25 @@ func RunProbe(
 		chainStep.NextThought = rawResponse
 
 		if strings.Contains(rawResponse, "<SYNTHESIZE_READY>") {
+			if step < minStepBudget {
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but minimum is %d — continuing exploration\n", probeID, step, minStepBudget)
+				// Treat as a no-op thought step; continue the loop
+				chainStep.Action = "tool_call"
+				chainStep.NextThought = rawResponse
+				lastToolOutput = fmt.Sprintf("Synthesis signal ignored: minimum step budget is %d, currently at step %d. Continue exploring.", minStepBudget, step)
+				// Persist the thought step before continuing
+				thoughtStep := memory.ThoughtStep{
+					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
+					ProbeID:    probeID,
+					TaskID:     taskID,
+					StepIndex:  step,
+					Thought:    chainStep.NextThought,
+					ToolOutput: lastToolOutput,
+					CreatedAt:  time.Now().Unix(),
+				}
+				_ = memory.DB.AddThoughtStep(thoughtStep)
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis readiness at step %d\n", probeID, step)
 			isSynthesisReady = true
 			chainStep.Action = "synthesize"
@@ -258,7 +290,7 @@ func RunProbe(
 		}
 
 		if step%compactEvery == 0 {
-			_ = compactThoughtChain(ctx, probeID, taskID, step, compactEvery, engine)
+			_ = compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, engine)
 		}
 	}
 
@@ -275,9 +307,20 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine 
 	if summary.Summary != "" {
 		contextStr += "Summary: " + summary.Summary + "\n"
 	}
+
+	// Build synthesis steps for intelligent truncation.
+	// TruncateSynthesisContext applies content-aware truncation (code bracket-depth
+	// elision, tabular sampling, text middle-out) starting from the oldest tool
+	// results, preserving the most recent results intact.
+	var synthSteps []SynthesisStep
 	for _, s := range steps {
-		contextStr += fmt.Sprintf("Step %d: %s\n", s.StepIndex, s.Thought)
+		synthSteps = append(synthSteps, SynthesisStep{
+			StepIndex:  s.StepIndex,
+			Thought:    s.Thought,
+			ToolOutput: s.ToolOutput,
+		})
 	}
+	contextStr += TruncateSynthesisContext(synthSteps)
 
 	systemPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Probe Node.
 Your goal was: %s
@@ -442,7 +485,11 @@ func buildProbeUserPrompt(probeID string, stepNum int, lastToolOutput string) (s
 }
 
 // compactThoughtChain creates a rolling summary of recent thought chain steps.
-func compactThoughtChain(ctx context.Context, probeID, taskID string, currentStep, window int, engine ProbeInferenceEngine) error {
+// The compactionLevel parameter controls how aggressively tool outputs are
+// truncated in the compaction prompt. With CompactAggressive, outputs are
+// truncated to 200 chars (legacy behavior). With CompactModerate/CompactPreserve,
+// full tool outputs are included.
+func compactThoughtChain(ctx context.Context, probeID, taskID string, currentStep, window int, compactionLevel compiler.CompactionLevel, engine ProbeInferenceEngine) error {
 	startStep := currentStep - window + 1
 	if startStep < 1 {
 		startStep = 1
@@ -470,7 +517,13 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 	for _, s := range windowSteps {
 		stepsText += fmt.Sprintf("Step %d: %s", s.StepIndex, s.Thought)
 		if s.ToolName != "" {
-			stepsText += fmt.Sprintf(" → %s(%s) → %s", s.ToolName, s.ToolArgs, truncate(s.ToolOutput, 200))
+			if compactionLevel == compiler.CompactAggressive {
+				// Legacy behavior: truncate tool output to 200 chars for aggressive compaction
+				stepsText += fmt.Sprintf(" → %s(%s) → %s", s.ToolName, s.ToolArgs, truncate(s.ToolOutput, 200))
+			} else {
+				// Moderate/Preserve: include full tool output so synthesis has actual data
+				stepsText += fmt.Sprintf(" → %s(%s) → %s", s.ToolName, s.ToolArgs, s.ToolOutput)
+			}
 		}
 		stepsText += "\n"
 	}
@@ -505,9 +558,16 @@ func forceSynthesis(ctx context.Context, probeID, taskID string, engine ProbeInf
 	if summary.Summary != "" {
 		context += "Summary: " + summary.Summary + "\n"
 	}
+	// Include tool outputs with intelligent truncation (same as runSynthesisPass)
+	var synthSteps []SynthesisStep
 	for _, s := range steps {
-		context += fmt.Sprintf("Step %d: %s\n", s.StepIndex, s.Thought)
+		synthSteps = append(synthSteps, SynthesisStep{
+			StepIndex:  s.StepIndex,
+			Thought:    s.Thought,
+			ToolOutput: s.ToolOutput,
+		})
 	}
+	context += TruncateSynthesisContext(synthSteps)
 
 	systemPrompt := "You have exhausted your exploration budget. Based on everything discovered so far, produce a comprehensive synthesis of your findings. Be thorough and include all relevant details."
 	result, err := engine.Infer(ctx, systemPrompt, context, "")

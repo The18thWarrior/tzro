@@ -225,7 +225,7 @@ func TestRunProbe_ConvergesOnHighConfidence(t *testing.T) {
 	config := compiler.ProbeConfig{
 		Goal:         "Quick answer",
 		AllowedTools: []string{"read_file"},
-		StepBudget:   10,
+		StepBudget:   2, // Small budget: minStepBudget = 2/2 = 1, allows synthesis at step 1
 		CompactEvery: 3,
 	}
 

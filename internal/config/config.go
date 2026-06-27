@@ -23,6 +23,7 @@ type EngineConfig struct {
 	ThermalCloudCooldownMinutes int     `json:"thermalCloudCooldownMinutes,omitempty"` // default 5
 	GGUFModelPath               string  `json:"ggufModelPath"`                         // path to local gguf model file
 	ModelsDir                   string  `json:"modelsDir"`                             // directory for downloaded models
+	ContextSize                 int     `json:"contextSize,omitempty"`                 // llama-server context window size in tokens (default: 65536)
 	MaxRAGContextChars          int     `json:"maxRagContextChars,omitempty"`          // max chars for Graph-RAG context injection (0 = use default 2000)
 
 	// Inference Backend (ADR-0016)
@@ -58,6 +59,12 @@ type EngineConfig struct {
 	// Visual dashboard pacing delays in milliseconds
 	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
 	ExecutorLevelDelayMs int `json:"executorLevelDelayMs,omitempty"`
+
+	// Circuit Breaker (P2): Multiplier for the weighted time budget.
+	// The budget is computed as sum(nodeCount[type] × weight[type]) where
+	// weights are: probe=10min, action=5min, deterministic/validator=90s.
+	// Default 1.0. Set to 2.0 for lenient mode, 0.5 for aggressive.
+	CircuitBreakerMultiplier float64 `json:"circuitBreakerMultiplier,omitempty"`
 }
 
 type BackendConfig struct {
@@ -136,6 +143,7 @@ var (
 		SidecarEnabled:       true,
 		GGUFModelPath:        "models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
 		ModelsDir:            defaultModelsDir(),
+		ContextSize:          65536,
 		ConfidenceThreshold:  3,
 		ExecutorNodeDelayMs:  800,
 		ExecutorLevelDelayMs: 500,
@@ -199,6 +207,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.PDFOcrBackend = cfg.PDFOcrBackend
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
+	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -232,6 +241,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.PDFOcrBackend = cfg.PDFOcrBackend
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
+	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -308,6 +318,19 @@ func GetModelsDir() string {
 
 	_ = os.MkdirAll(dir, 0755)
 	return dir
+}
+
+// GetContextSize returns the configured llama-server context window size.
+// Falls back to 65536 (64K tokens) if not set or zero.
+func GetContextSize() int {
+	configMutex.RLock()
+	size := GlobalConfig.ContextSize
+	configMutex.RUnlock()
+
+	if size <= 0 {
+		return 65536
+	}
+	return size
 }
 
 // GetCloudAPIKey resolves the CloudAPIKey dynamically from the environment

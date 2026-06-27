@@ -183,12 +183,12 @@ func TestPlanWithEscalation_LocalFailsCloudBlocked(t *testing.T) {
 	}
 }
 
-func TestPlanWithEscalation_ValidationFailsCloudAllowed(t *testing.T) {
-	// Local returns a graph with an unknown tool → validation fails
+func TestPlanWithEscalation_ValidationFailsRepairSucceeds(t *testing.T) {
+	// Local returns a graph with an unknown tool → repair replaces with probe
 	invalidGraph := &compiler.ExecutionGraph{
 		TaskID: "test_invalid",
 		Nodes: []compiler.GraphNode{
-			{ID: "A", Type: "action", Action: "nonexistent_tool"},
+			{ID: "A", Type: "action", Action: "nonexistent_tool", Instructions: "do something"},
 		},
 	}
 	cloudGraph := &compiler.ExecutionGraph{
@@ -209,9 +209,62 @@ func TestPlanWithEscalation_ValidationFailsCloudAllowed(t *testing.T) {
 
 	result, err := PlanWithEscalation(context.Background(), localPlan, cloudPlan, decision, toolExists)
 	if err != nil {
-		t.Fatalf("expected cloud rescue to succeed, got: %v", err)
+		t.Fatalf("expected repair to succeed, got: %v", err)
 	}
-	if result.TaskID != "test_cloud_rescue" {
-		t.Errorf("expected cloud graph returned, got taskID: %s", result.TaskID)
+	// Repair replaces the invalid action node with a probe node,
+	// so the returned graph is the repaired local graph
+	if result.TaskID != "test_invalid" {
+		t.Errorf("expected repaired local graph, got taskID: %s", result.TaskID)
+	}
+	// Verify the invalid action node was replaced with a probe
+	foundProbe := false
+	for _, node := range result.Nodes {
+		if node.Type == "probe" {
+			foundProbe = true
+			break
+		}
+	}
+	if !foundProbe {
+		t.Errorf("expected repair to insert a probe node, but none found")
+	}
+}
+
+func TestPlanWithEscalation_ValidationFailsCloudAllowed(t *testing.T) {
+	// Test that repair produces a valid graph even with cyclic edges
+	// between invalid-tool nodes (the cycle is removed when the nodes are replaced).
+	invalidGraph := &compiler.ExecutionGraph{
+		TaskID: "test_invalid",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "bad_tool_1", Instructions: "step 1"},
+			{ID: "B", Type: "action", Action: "bad_tool_2", Instructions: "step 2"},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "A", TargetID: "B"},
+			{SourceID: "B", TargetID: "A"},
+		},
+	}
+
+	localPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return invalidGraph, nil
+	}
+	cloudPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return nil, fmt.Errorf("cloud should not be called")
+	}
+	decision := RoutingDecision{Backend: "local", AllowCloudFallback: true}
+	toolExists := func(name string) bool { return name == "known_tool" }
+
+	// Repair replaces both invalid nodes with a single probe, removing the cycle
+	result, err := PlanWithEscalation(context.Background(), localPlan, cloudPlan, decision, toolExists)
+	if err != nil {
+		t.Fatalf("expected repair to succeed, got: %v", err)
+	}
+	if result.TaskID != "test_invalid" {
+		t.Errorf("expected repaired local graph, got taskID: %s", result.TaskID)
+	}
+	// Verify the probe node exists and both action nodes are gone
+	for _, node := range result.Nodes {
+		if node.Type == "action" {
+			t.Errorf("expected no action nodes after repair, found: %s", node.ID)
+		}
 	}
 }

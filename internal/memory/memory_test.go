@@ -1257,3 +1257,54 @@ func TestThoughtChain_EmptyProbeReturnsEmpty(t *testing.T) {
 		t.Error("expected error for GetLatestSummary on nonexistent probe, got nil")
 	}
 }
+
+func TestCountToolCallsByTaskID(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_count_tool_calls.db")
+	jsonPath := filepath.Join(tempDir, "test_count_tool_calls_db.json")
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer db.Close()
+
+	taskID := "test_task_123"
+
+	// Add 3 steps with tool calls and 2 without
+	steps := []ThoughtStep{
+		{ID: "s1", ProbeID: "probe_1", TaskID: taskID, StepIndex: 1, Thought: "explore", ToolName: "list_dir", ToolArgs: `{"path":"/"}`, ToolOutput: "dir listing", CreatedAt: 1},
+		{ID: "s2", ProbeID: "probe_1", TaskID: taskID, StepIndex: 2, Thought: "thinking", ToolName: "", ToolArgs: "", ToolOutput: "", CreatedAt: 2},
+		{ID: "s3", ProbeID: "probe_1", TaskID: taskID, StepIndex: 3, Thought: "read file", ToolName: "read_file", ToolArgs: `{"path":"a.go"}`, ToolOutput: "contents", CreatedAt: 3},
+		{ID: "s4", ProbeID: "probe_1", TaskID: taskID, StepIndex: 4, Thought: "search", ToolName: "search_files", ToolArgs: `{"query":"main"}`, ToolOutput: "results", CreatedAt: 4},
+		{ID: "s5", ProbeID: "probe_1", TaskID: taskID, StepIndex: 5, Thought: "synthesize", ToolName: "", ToolArgs: "", ToolOutput: "", CreatedAt: 5},
+	}
+	for _, s := range steps {
+		if err := db.AddThoughtStep(s); err != nil {
+			t.Fatalf("AddThoughtStep failed: %v", err)
+		}
+	}
+
+	// Also add a step for a different task — should not be counted
+	otherStep := ThoughtStep{ID: "s_other", ProbeID: "probe_2", TaskID: "other_task", StepIndex: 1, Thought: "other", ToolName: "list_dir", CreatedAt: 6}
+	if err := db.AddThoughtStep(otherStep); err != nil {
+		t.Fatalf("AddThoughtStep for other task failed: %v", err)
+	}
+
+	count, err := db.CountToolCallsByTaskID(taskID)
+	if err != nil {
+		t.Fatalf("CountToolCallsByTaskID failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("CountToolCallsByTaskID = %d, want 3 (list_dir + read_file + search_files)", count)
+	}
+
+	// Nonexistent task should return 0
+	count, err = db.CountToolCallsByTaskID("nonexistent_task")
+	if err != nil {
+		t.Fatalf("CountToolCallsByTaskID for nonexistent task failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("CountToolCallsByTaskID for nonexistent = %d, want 0", count)
+	}
+}

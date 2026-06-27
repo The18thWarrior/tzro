@@ -241,7 +241,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--parallel", "1",
 		"--jinja",
 		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
-		"--ctx-size", "32768", // Q2: 32K context window
+		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 64K)
 		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)
@@ -718,6 +718,8 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar] HTTP %d response body: %s\n", resp.StatusCode, string(errBody))
 		return nil, fmt.Errorf("local model HTTP server returned status %s", resp.Status)
 	}
 

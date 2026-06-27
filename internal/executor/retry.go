@@ -17,9 +17,18 @@ import (
 	"os"
 	"strings"
 
+	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/tools"
 )
+
+// isCloudEscalationBlocked returns true when cloud retry/escalation must not
+// be attempted. This covers both explicit privacy quarantine (strict-local)
+// and ModelMode=local where no cloud tokens should be consumed at all.
+func isCloudEscalationBlocked() bool {
+	cfg := config.Get()
+	return cfg.PrivacyLevel == "strict-local" || cfg.ModelMode == "local"
+}
 
 // validateAgainstSchema performs basic pre-flight validation of extracted tool arguments
 // against the tool's JSON schema. Returns nil if valid, or a descriptive error.
