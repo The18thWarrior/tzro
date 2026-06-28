@@ -190,3 +190,48 @@ func isInsideRoot(path, root string) bool {
 	prefix := root + string(filepath.Separator)
 	return strings.HasPrefix(path, prefix)
 }
+
+// ValidateWritePath validates a path for write operations. Unlike ValidatePath,
+// it does not require the file to already exist — it checks that the resolved
+// absolute path falls within allowed roots. If the file exists, symlinks are
+// resolved for security. If it doesn't exist, the parent directory is validated.
+func (v *PathValidator) ValidateWritePath(requestedPath string) (string, error) {
+	roots := v.resolveRoots()
+	if len(roots) == 0 {
+		return "", fmt.Errorf("no allowed paths configured")
+	}
+
+	// Resolve to absolute and clean
+	absPath, err := filepath.Abs(requestedPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path: %w", err)
+	}
+	absPath = filepath.Clean(absPath)
+
+	// If the file exists, resolve symlinks for security
+	if _, statErr := os.Lstat(absPath); statErr == nil {
+		realPath, err := filepath.EvalSymlinks(absPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve symlinks: %w", err)
+		}
+		realPath = filepath.Clean(realPath)
+		for _, root := range roots {
+			if isInsideRoot(realPath, root) {
+				return absPath, nil
+			}
+		}
+		return "", fmt.Errorf("path %s is outside all allowed roots", requestedPath)
+	}
+
+	// File doesn't exist — check that the absolute path (without symlink resolution)
+	// falls within at least one allowed root. This is safe because we're creating a
+	// new file, and the parent directory must already exist (or will be created within
+	// the allowed root).
+	for _, root := range roots {
+		if isInsideRoot(absPath, root) {
+			return absPath, nil
+		}
+	}
+
+	return "", fmt.Errorf("path %s is outside all allowed roots", requestedPath)
+}
