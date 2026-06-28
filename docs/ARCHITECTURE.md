@@ -218,6 +218,17 @@ The `internal/comparison/` package provides a structured framework for evaluatin
 - **Wazero WASM Sandboxing:** Executed via `wazero` to isolate custom Go or Rust tools with strict memory and filesystem bounds.
 - **Stdio MCP Host Gateway:** Spawns third-party tool servers (e.g., Slack, Postgres) locally over stdio pipes, injecting environment-delegated secrets.
 
+### 3.13. Code Generation Pipeline (`tzro_code`)
+
+The `internal/codegen/` package provides a static DAG pipeline for single-file code generation, exposed via the `tzro_code` MCP tool:
+
+- **Static 3-Node DAG:** `check_context → reason_code → write_code`. Unlike `tzro_run`, this bypasses the LLM planner entirely — the graph shape is hardcoded at compile time and executed via `task.ExecuteStatic`.
+- **Context Gathering:** `GatherContext` reads the target file (if it exists) and up to 5 sibling files from the same directory, applying content-aware truncation from `internal/executor` for large files.
+- **Prompt Builder:** `BuildCodePrompt` assembles a structured prompt with spec, file path, language, action (create/update), existing content, sibling files, and configurable line cap.
+- **Code Cleaning:** `CleanGeneratedCode` strips markdown fences from LLM output and enforces the `CodeMaxLines` cap (default 500, configurable via `codeMaxLines` in engine config).
+- **`write_file` Tool:** A new filesystem tool with `ValidateWritePath` (allows writing to non-existent paths), automatic parent directory creation, backup-on-overwrite with LRU eviction at 50 files, and binary content rejection.
+- **Design Goal:** Structurally encourages compact, single-responsibility files by capping output and requiring a spec + filepath per invocation.
+
 ---
 
 ## 4. Context & KV Cache Optimization
