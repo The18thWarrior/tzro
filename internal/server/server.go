@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -31,6 +32,22 @@ import (
 	"tzro/internal/tools"
 	"tzro/internal/workflow"
 )
+
+// recoverTaskPanic recovers from panics in background task goroutines.
+// Without this, an unrecovered panic in any ExecuteGraph or task.Execute
+// goroutine crashes the entire daemon process with no stack trace.
+func recoverTaskPanic(taskID string) {
+	if r := recover(); r != nil {
+		stack := debug.Stack()
+		fmt.Fprintf(os.Stderr, "[Server] PANIC in task %s: %v\n%s\n", taskID, r, stack)
+		stream.GlobalBus.Publish(stream.StreamChunk{
+			Source:  "system",
+			TaskID:  taskID,
+			Type:    "task_panic",
+			Content: fmt.Sprintf("Panic recovered: %v", r),
+		})
+	}
+}
 
 type ChatRequest struct {
 	Message string `json:"message"`
@@ -229,6 +246,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 		// Run graph in background asynchronously to prevent HTTP blocking (using Background context)
 		go func() {
+			defer recoverTaskPanic(graph.TaskID)
 			proactivity.RegisterActiveUserTask(graph.TaskID)
 			defer proactivity.DeregisterActiveUserTask(graph.TaskID)
 
@@ -1505,6 +1523,7 @@ func handleTasksResume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer recoverTaskPanic(req.TaskID)
 		db := memory.DB.RawDB()
 		if db == nil {
 			fmt.Fprintf(os.Stderr, "[Server Resume Error] Database not initialized\n")
@@ -1581,6 +1600,7 @@ func handleTasksApprove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer recoverTaskPanic(req.TaskID)
 		db := memory.DB.RawDB()
 		if db == nil {
 			return
@@ -1731,6 +1751,7 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer recoverTaskPanic(req.TaskID)
 		_, _, _ = task.Execute(context.Background(), req.Prompt, execOpts)
 	}()
 
