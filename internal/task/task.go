@@ -119,6 +119,24 @@ func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler
 	return graph, levels, err
 }
 
+// ExecuteStatic takes a pre-built ExecutionGraph (no LLM planning step),
+// compiles it with Kahn sort, and executes it. Used for hardcoded DAGs
+// like the tzro_code pipeline where the graph shape is known at compile time.
+func ExecuteStatic(ctx context.Context, graph *compiler.ExecutionGraph, opts ExecuteOptions) ([][]string, error) {
+	if opts.IsForeground {
+		proactivity.RegisterActiveUserTask(opts.TaskID)
+		defer proactivity.DeregisterActiveUserTask(opts.TaskID)
+	}
+
+	levels, err := compiler.CompileAndSort(graph)
+	if err != nil {
+		return nil, err
+	}
+
+	err = executor.GlobalEngine.ExecuteGraph(ctx, graph, levels)
+	return levels, err
+}
+
 // Plan consolidates LLM DAG planning with dynamic local/cloud routing.
 // Uses the Dynamic Router to evaluate privacy, complexity, and model mode
 // before dispatching to the appropriate planning backend.

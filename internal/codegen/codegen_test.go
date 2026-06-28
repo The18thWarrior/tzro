@@ -211,3 +211,65 @@ func TestBuildCodePrompt_Update(t *testing.T) {
 		t.Error("prompt should contain custom line cap")
 	}
 }
+
+func TestBuildCodeDAG_Structure(t *testing.T) {
+	graph := BuildCodeDAG("task_1", "implement Foo", "/tmp/foo.go", "go", 500)
+
+	if graph.TaskID != "task_1" {
+		t.Errorf("expected taskID 'task_1', got %q", graph.TaskID)
+	}
+	if len(graph.Nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(graph.Nodes))
+	}
+
+	// Verify node IDs and types
+	nodeMap := make(map[string]string)
+	toolMap := make(map[string][]string)
+	for _, n := range graph.Nodes {
+		nodeMap[n.ID] = n.Type
+		toolMap[n.ID] = n.AllowedTools
+	}
+
+	if nodeMap["check_context"] != "deterministic" {
+		t.Errorf("check_context should be deterministic, got %q", nodeMap["check_context"])
+	}
+	if nodeMap["reason_code"] != "action" {
+		t.Errorf("reason_code should be action, got %q", nodeMap["reason_code"])
+	}
+	if nodeMap["write_code"] != "deterministic" {
+		t.Errorf("write_code should be deterministic, got %q", nodeMap["write_code"])
+	}
+
+	// Verify allowed tools
+	if len(toolMap["reason_code"]) != 0 {
+		t.Errorf("reason_code should have no allowed tools, got %v", toolMap["reason_code"])
+	}
+	checkTools := toolMap["check_context"]
+	if len(checkTools) != 2 || checkTools[0] != "read_file" || checkTools[1] != "list_dir" {
+		t.Errorf("check_context tools should be [read_file, list_dir], got %v", checkTools)
+	}
+	writeTools := toolMap["write_code"]
+	if len(writeTools) != 1 || writeTools[0] != "write_file" {
+		t.Errorf("write_code tools should be [write_file], got %v", writeTools)
+	}
+
+	// Verify edges
+	if len(graph.Edges) != 2 {
+		t.Fatalf("expected 2 edges, got %d", len(graph.Edges))
+	}
+	if graph.Edges[0].SourceID != "check_context" || graph.Edges[0].TargetID != "reason_code" {
+		t.Errorf("edge 0 should be check_context -> reason_code, got %s -> %s",
+			graph.Edges[0].SourceID, graph.Edges[0].TargetID)
+	}
+	if graph.Edges[1].SourceID != "reason_code" || graph.Edges[1].TargetID != "write_code" {
+		t.Errorf("edge 1 should be reason_code -> write_code, got %s -> %s",
+			graph.Edges[1].SourceID, graph.Edges[1].TargetID)
+	}
+
+	// Verify instructions contain the spec
+	for _, n := range graph.Nodes {
+		if n.ID == "reason_code" && !strings.Contains(n.Instructions, "implement Foo") {
+			t.Error("reason_code instructions should contain the spec")
+		}
+	}
+}

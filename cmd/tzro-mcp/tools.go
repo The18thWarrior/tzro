@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tzro/internal/channel"
+	"tzro/internal/codegen"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/executor"
@@ -247,6 +248,139 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 		respMap := map[string]interface{}{
 			"taskId": taskID,
 			"status": "running",
+		}
+		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+	}
+}
+
+// tzro_code tool definition
+
+// TzroCodeArgs defines the inputs for the tzro_code code generation tool.
+type TzroCodeArgs struct {
+	Spec     string `json:"spec" jsonschema:"required,The specification or JSDoc describing what to generate"`
+	Filepath string `json:"filepath" jsonschema:"required,Absolute path to the target file to create or update"`
+	Language string `json:"language,omitempty" jsonschema:"Programming language override. Auto-detected from file extension if omitted"`
+	MaxLines int    `json:"maxLines,omitempty" jsonschema:"Maximum lines for generated file. Default: 500 or config codeMaxLines"`
+	Timeout  int    `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 120"`
+}
+
+func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCodeArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Spec) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "spec cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+	if strings.TrimSpace(args.Filepath) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "filepath cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	taskID := uuid.New().String()
+	timeoutSec := args.Timeout
+	if timeoutSec <= 0 {
+		timeoutSec = 120
+	}
+
+	// Resolve maxLines: arg → config → default 500
+	maxLines := args.MaxLines
+	if maxLines <= 0 {
+		cfg := config.Get()
+		if cfg.CodeMaxLines > 0 {
+			maxLines = cfg.CodeMaxLines
+		} else {
+			maxLines = 500
+		}
+	}
+
+	// Detect language from extension if not provided
+	language := args.Language
+	if language == "" {
+		language = codegen.DetectLanguage(args.Filepath)
+	}
+
+	// Build the static 3-node DAG
+	graph := codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines)
+
+	type execResult struct {
+		nodes []memory.NodeState
+		err   error
+	}
+
+	doneChan := make(chan execResult, 1)
+
+	go func() {
+		execOpts := task.ExecuteOptions{
+			TaskID:       taskID,
+			IntentType:   "codegen",
+			IsForeground: true,
+		}
+		_, err := task.ExecuteStatic(context.Background(), graph, execOpts)
+		_ = err
+		nodes := memory.DB.GetAllNodeStates(taskID)
+
+		// Check if any node failed
+		var taskErr error
+		for _, n := range nodes {
+			if n.Status == "failed" {
+				taskErr = fmt.Errorf("node %s failed: %s", n.NodeID, n.Output)
+				break
+			}
+		}
+		doneChan <- execResult{nodes: nodes, err: taskErr}
+	}()
+
+	select {
+	case res := <-doneChan:
+		status := "completed"
+		var errMsg string
+		if res.err != nil {
+			status = "failed"
+			errMsg = res.err.Error()
+		}
+
+		respMap := map[string]interface{}{
+			"taskId":   taskID,
+			"status":   status,
+			"filepath": args.Filepath,
+			"language": language,
+			"maxLines": maxLines,
+		}
+		if errMsg != "" {
+			respMap["error"] = errMsg
+		}
+
+		// Extract write_code node output for action/linesWritten
+		for _, n := range res.nodes {
+			if n.NodeID == "write_code" && n.Status == "completed" {
+				respMap["action"] = "completed"
+			}
+		}
+
+		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		respMap := map[string]interface{}{
+			"taskId":   taskID,
+			"status":   "running",
+			"filepath": args.Filepath,
+			"message":  "Code generation is still in progress. Use tzro_status to check completion.",
 		}
 		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 		return &mcp.CallToolResult{
@@ -2209,6 +2343,11 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_run",
 		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt." + runDelegationHint(),
 	}, handleTzroRun)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_code",
+		Description: "Generate or update a single file using a static 3-node DAG (check_context → reason_code → write_code). Pass a spec/JSDoc and filepath. Encourages compact, single-responsibility files.",
+	}, handleTzroCode)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_status",

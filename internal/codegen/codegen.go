@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"tzro/internal/compiler"
 	"tzro/internal/executor"
 	"tzro/internal/tools"
 )
@@ -236,4 +238,73 @@ func BuildCodePrompt(spec, filePath, language, action, existingContent string, s
 	b.WriteString("- Include appropriate imports/package declarations\n")
 
 	return b.String()
+}
+
+// BuildCodeDAG constructs the static 3-node execution graph for code generation.
+// The graph has the shape:
+//
+//	check_context → reason_code → write_code
+//
+// - check_context (deterministic): reads target file + siblings for context
+// - reason_code (action): generates code using the local model
+// - write_code (deterministic): writes the generated code to disk
+func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int) *compiler.ExecutionGraph {
+	action := "create"
+
+	checkInstructions := fmt.Sprintf(
+		"Read the file at %s if it exists. Also read up to 5 sibling files in the same directory for context. "+
+			"Return the file content and language information. If the file doesn't exist, note that this is a new file creation.",
+		filePath,
+	)
+
+	reasonInstructions := fmt.Sprintf(
+		"Based on the context from check_context, generate code for the following spec.\n\n"+
+			"Spec: %s\n\n"+
+			"Target: %s\nLanguage: %s\nAction: %s\nMax Lines: %d\n\n"+
+			"Output ONLY the raw file content. No markdown fences, no explanation.",
+		spec, filePath, language, action, maxLines,
+	)
+
+	writeInstructions := fmt.Sprintf(
+		"Write the generated code from reason_code to %s. "+
+			"Strip any markdown code fences (```...```) if present in the output. "+
+			"Verify the output does not exceed %d lines. If it does, fail with an error.",
+		filePath, maxLines,
+	)
+
+	return &compiler.ExecutionGraph{
+		TaskID:     taskID,
+		CreatedAt:  time.Now().Unix(),
+		MaxCycles:  1,
+		GoalPrompt: fmt.Sprintf("Generate code for %s: %s", filePath, spec),
+		Nodes: []compiler.GraphNode{
+			{
+				ID:           "check_context",
+				Type:         "deterministic",
+				Action:       "read_file",
+				Instructions: checkInstructions,
+				AllowedTools: []string{"read_file", "list_dir"},
+				Status:       "pending",
+			},
+			{
+				ID:           "reason_code",
+				Type:         "action",
+				Instructions: reasonInstructions,
+				AllowedTools: []string{}, // LLM-only reasoning, no tools
+				Status:       "pending",
+			},
+			{
+				ID:           "write_code",
+				Type:         "deterministic",
+				Action:       "write_file",
+				Instructions: writeInstructions,
+				AllowedTools: []string{"write_file"},
+				Status:       "pending",
+			},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "check_context", TargetID: "reason_code"},
+			{SourceID: "reason_code", TargetID: "write_code"},
+		},
+	}
 }
