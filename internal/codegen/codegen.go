@@ -240,6 +240,59 @@ func BuildCodePrompt(spec, filePath, language, action, existingContent string, s
 	return b.String()
 }
 
+// StripMarkdownFences removes markdown code fences from LLM output.
+// Handles both ```lang and ``` patterns. If the content starts with a fence
+// and ends with a fence, only the inner content is returned.
+func StripMarkdownFences(content string) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) < 2 {
+		return content
+	}
+
+	firstLine := strings.TrimSpace(lines[0])
+	lastLine := strings.TrimSpace(lines[len(lines)-1])
+
+	// Check for opening fence
+	hasOpenFence := strings.HasPrefix(firstLine, "```")
+	hasCloseFence := lastLine == "```"
+
+	if hasOpenFence && hasCloseFence {
+		// Strip first and last lines
+		inner := lines[1 : len(lines)-1]
+		return strings.Join(inner, "\n") + "\n"
+	}
+
+	// If only the opening fence is present (model forgot to close)
+	if hasOpenFence && !hasCloseFence {
+		inner := lines[1:]
+		return strings.Join(inner, "\n") + "\n"
+	}
+
+	return content
+}
+
+// CleanGeneratedCode strips markdown fences and validates line count.
+// Returns the cleaned content and an error if the line count exceeds maxLines.
+func CleanGeneratedCode(rawContent string, maxLines int) (string, error) {
+	content := StripMarkdownFences(rawContent)
+
+	// Count lines
+	lineCount := strings.Count(content, "\n")
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		lineCount++
+	}
+
+	if maxLines > 0 && lineCount > maxLines {
+		return "", fmt.Errorf(
+			"generated code exceeds maximum line count (%d lines > %d max). "+
+				"Consider breaking this file into smaller, single-responsibility files",
+			lineCount, maxLines,
+		)
+	}
+
+	return content, nil
+}
+
 // BuildCodeDAG constructs the static 3-node execution graph for code generation.
 // The graph has the shape:
 //

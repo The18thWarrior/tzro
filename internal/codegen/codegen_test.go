@@ -273,3 +273,66 @@ func TestBuildCodeDAG_Structure(t *testing.T) {
 		}
 	}
 }
+
+func TestStripMarkdownFences_FullFence(t *testing.T) {
+	input := "```go\npackage foo\n\nfunc Bar() {}\n```"
+	result := StripMarkdownFences(input)
+	expected := "package foo\n\nfunc Bar() {}\n"
+	if result != expected {
+		t.Errorf("got %q, want %q", result, expected)
+	}
+}
+
+func TestStripMarkdownFences_OpenOnly(t *testing.T) {
+	input := "```go\npackage foo\n\nfunc Bar() {}\n"
+	result := StripMarkdownFences(input)
+	expected := "package foo\n\nfunc Bar() {}\n\n"
+	if result != expected {
+		t.Errorf("got %q, want %q", result, expected)
+	}
+}
+
+func TestStripMarkdownFences_NoFence(t *testing.T) {
+	input := "package foo\n\nfunc Bar() {}\n"
+	result := StripMarkdownFences(input)
+	if result != input {
+		t.Errorf("should not modify content without fences: got %q", result)
+	}
+}
+
+func TestCleanGeneratedCode_UnderLimit(t *testing.T) {
+	content := "line1\nline2\nline3\n"
+	result, err := CleanGeneratedCode(content, 500)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != content {
+		t.Errorf("content should pass through unchanged: got %q", result)
+	}
+}
+
+func TestCleanGeneratedCode_ExceedsLimit(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 10; i++ {
+		b.WriteString("line\n")
+	}
+	_, err := CleanGeneratedCode(b.String(), 5)
+	if err == nil {
+		t.Fatal("expected error for exceeding line limit")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum line count") {
+		t.Errorf("expected line count error, got: %v", err)
+	}
+}
+
+func TestCleanGeneratedCode_StripsFencesBeforeCounting(t *testing.T) {
+	// 3 content lines wrapped in fences = 3 lines after stripping
+	input := "```go\nline1\nline2\nline3\n```"
+	result, err := CleanGeneratedCode(input, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(result, "```") {
+		t.Error("fences should be stripped")
+	}
+}
