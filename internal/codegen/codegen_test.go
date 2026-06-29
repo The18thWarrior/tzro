@@ -212,8 +212,9 @@ func TestBuildCodePrompt_Update(t *testing.T) {
 	}
 }
 
-func TestBuildCodeDAG_Structure(t *testing.T) {
-	graph := BuildCodeDAG("task_1", "implement Foo", "/tmp/foo.go", "go", 500)
+func TestBuildCodeDAG_Structure_Legacy(t *testing.T) {
+	// nil context triggers the legacy 3-node DAG path
+	graph := BuildCodeDAG("task_1", "implement Foo", "/tmp/foo.go", "go", 500, nil)
 
 	if graph.TaskID != "task_1" {
 		t.Errorf("expected taskID 'task_1', got %q", graph.TaskID)
@@ -271,6 +272,135 @@ func TestBuildCodeDAG_Structure(t *testing.T) {
 		if n.ID == "reason_code" && !strings.Contains(n.Instructions, "implement Foo") {
 			t.Error("reason_code instructions should contain the spec")
 		}
+	}
+}
+
+func TestBuildCodeDAG_WithPrecomputedContext(t *testing.T) {
+	ctx := &CodeContext{
+		Exists:          true,
+		ExistingContent: "package foo\n\nfunc Old() {}\n",
+		Language:        "go",
+		Siblings: map[string]string{
+			"types.go": "package foo\n\ntype Config struct{}\n",
+		},
+	}
+
+	graph := BuildCodeDAG("task_2", "add Bar()", "/tmp/foo.go", "go", 500, ctx)
+
+	if len(graph.Nodes) != 1 {
+		t.Fatalf("expected 1 node (reason_code only), got %d", len(graph.Nodes))
+	}
+
+	node := graph.Nodes[0]
+	if node.ID != "reason_code" {
+		t.Errorf("expected node ID 'reason_code', got %q", node.ID)
+	}
+	if node.Type != "synthesis" {
+		t.Errorf("expected node type 'synthesis', got %q", node.Type)
+	}
+	if len(node.AllowedTools) != 0 {
+		t.Errorf("reason_code should have no allowed tools, got %v", node.AllowedTools)
+	}
+
+	// No edges in single-node graph
+	if len(graph.Edges) != 0 {
+		t.Errorf("expected 0 edges, got %d", len(graph.Edges))
+	}
+
+	// Prompt should contain spec, existing content, and siblings
+	if !strings.Contains(node.Instructions, "add Bar()") {
+		t.Error("prompt should contain the spec")
+	}
+	if !strings.Contains(node.Instructions, "func Old()") {
+		t.Error("prompt should contain existing file content")
+	}
+	if !strings.Contains(node.Instructions, "types.go") {
+		t.Error("prompt should contain sibling file names")
+	}
+	if !strings.Contains(node.Instructions, "update") {
+		t.Error("prompt should say 'update' for existing file")
+	}
+}
+
+func TestWriteCodeFile_CreateAndLineCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "output.go")
+
+	action, lines, err := WriteCodeFile(target, "package foo\n\nfunc Bar() {}\n", 500)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if action != "created" {
+		t.Errorf("expected action 'created', got %q", action)
+	}
+	if lines != 3 {
+		t.Errorf("expected 3 lines, got %d", lines)
+	}
+
+	// Verify file was written
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("file should exist: %v", err)
+	}
+	if !strings.Contains(string(data), "func Bar()") {
+		t.Error("file should contain the generated code")
+	}
+}
+
+func TestWriteCodeFile_UpdateExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "output.go")
+
+	// Create initial file
+	os.WriteFile(target, []byte("package old\n"), 0644)
+
+	action, _, err := WriteCodeFile(target, "package new\n\nfunc Updated() {}\n", 500)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if action != "updated" {
+		t.Errorf("expected action 'updated', got %q", action)
+	}
+}
+
+func TestWriteCodeFile_ExceedsLineLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "output.go")
+
+	var b strings.Builder
+	for i := 0; i < 10; i++ {
+		b.WriteString("line\n")
+	}
+
+	_, _, err := WriteCodeFile(target, b.String(), 5)
+	if err == nil {
+		t.Fatal("expected error for exceeding line limit")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum line count") {
+		t.Errorf("expected line count error, got: %v", err)
+	}
+
+	// File should NOT be written when line limit exceeded
+	if _, statErr := os.Stat(target); statErr == nil {
+		t.Error("file should not be written when line limit is exceeded")
+	}
+}
+
+func TestWriteCodeFile_StripsFences(t *testing.T) {
+	tmpDir := t.TempDir()
+	target := filepath.Join(tmpDir, "output.go")
+
+	action, _, err := WriteCodeFile(target, "```go\npackage foo\n\nfunc Fenced() {}\n```", 500)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if action != "created" {
+		t.Errorf("expected action 'created', got %q", action)
+	}
+
+	data, _ := os.ReadFile(target)
+	if strings.Contains(string(data), "```") {
+		t.Error("fences should be stripped from written file")
 	}
 }
 

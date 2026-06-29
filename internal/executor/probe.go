@@ -109,6 +109,11 @@ const ThoughtChainStepSchema = `{
 //  5. Every N steps: rolling compaction summary
 //  6. At budget exhaustion: forced synthesis
 //
+// downstreamBindingKeys lists property names that downstream nodes need from
+// this Probe's output (e.g., ["handler_file_path", "handler_name"]). When
+// non-empty, the synthesis schema is extended with these keys as required
+// string fields so the Response Resolver can extract them deterministically.
+//
 // All steps are persisted to SQLite for durability.
 func RunProbe(
 	ctx context.Context,
@@ -116,6 +121,7 @@ func RunProbe(
 	probeID string,
 	config compiler.ProbeConfig,
 	engine ProbeInferenceEngine,
+	downstreamBindingKeys []string,
 ) (string, error) {
 	// Defaults
 	stepBudget := config.StepBudget
@@ -167,7 +173,7 @@ func RunProbe(
 
 	// Pass 1: High-Entropy Tool Loop
 	for step := 1; step <= stepBudget; step++ {
-		systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools)
+		systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
 		userPrompt, err := buildProbeUserPrompt(probeID, step, lastToolOutput)
 		if err != nil {
 			return "", fmt.Errorf("failed to build probe prompt at step %d: %w", step, err)
@@ -351,10 +357,10 @@ func RunProbe(
 
 	// Pass 2: Structured Synthesis
 	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, engine)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, engine, downstreamBindingKeys)
 }
 
-func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine) (string, error) {
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string) (string, error) {
 	summary, _ := memory.DB.GetLatestSummary(probeID)
 	steps, _ := memory.DB.GetThoughtSteps(probeID)
 
@@ -377,24 +383,38 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine 
 	}
 	contextStr += TruncateSynthesisContext(synthSteps)
 
+	// Build the synthesis schema dynamically. When downstream nodes declare
+	// dynamic bindings referencing this probe's output (e.g., "probe_id.output.handler_file_path"),
+	// we extend the schema with those keys as required string fields. This ensures
+	// the GBNF grammar forces the local model to produce structured key-value pairs
+	// that the Response Resolver can extract deterministically (Tier 1: recursive_key)
+	// instead of falling through to the lossy semantic fallback.
+	synthSchema, extractionHint := buildSynthesisSchema(bindingKeys)
+
 	systemPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Probe Node.
 Your goal was: %s
 
-You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.`, goal)
-
-	synthSchema := `{
-		"type": "object",
-		"properties": {
-			"synthesis": { "type": "string" }
-		},
-		"required": ["synthesis"]
-	}`
+You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.%s`, goal, extractionHint)
 
 	result, err := engine.Infer(ctx, systemPrompt, contextStr, synthSchema)
 	if err != nil {
 		return "Synthesis inference failed: " + err.Error(), nil
 	}
 
+	// Return the full JSON result so the Response Resolver can parse binding keys
+	// directly from the JSON structure via recursive_key search (Tier 1).
+	// Previously we extracted only the "synthesis" string field, which discarded
+	// all structured binding keys and forced downstream resolution through the
+	// lossy semantic fallback (Tier 3).
+	if len(bindingKeys) > 0 {
+		// Validate the JSON is parseable before returning it raw
+		var check map[string]interface{}
+		if json.Unmarshal([]byte(result), &check) == nil {
+			return result, nil
+		}
+	}
+
+	// No binding keys or JSON parse failed — extract the synthesis field
 	var parsed struct {
 		Synthesis string `json:"synthesis"`
 	}
@@ -404,10 +424,54 @@ You have completed your exploration. Review the findings and produce a comprehen
 	return parsed.Synthesis, nil
 }
 
+// buildSynthesisSchema constructs the GBNF-constrained JSON schema for probe synthesis.
+// When bindingKeys is non-empty, the schema is extended with those keys as required
+// string fields. Returns the schema string and an extraction hint for the system prompt.
+func buildSynthesisSchema(bindingKeys []string) (string, string) {
+	if len(bindingKeys) == 0 {
+		schema := `{
+		"type": "object",
+		"properties": {
+			"synthesis": { "type": "string" }
+		},
+		"required": ["synthesis"]
+	}`
+		return schema, ""
+	}
+
+	// Build dynamic schema with binding keys
+	properties := `"synthesis": { "type": "string" }`
+	required := `"synthesis"`
+	var keyList string
+	for i, key := range bindingKeys {
+		properties += fmt.Sprintf(`, "%s": { "type": "string" }`, key)
+		required += fmt.Sprintf(`, "%s"`, key)
+		if i > 0 {
+			keyList += ", "
+		}
+		keyList += key
+	}
+
+	schema := fmt.Sprintf(`{
+		"type": "object",
+		"properties": { %s },
+		"required": [ %s ]
+	}`, properties, required)
+
+	hint := fmt.Sprintf(`
+
+In addition to the "synthesis" field, you MUST also extract and return these specific values as separate JSON fields: [%s].
+For each field, extract the most relevant value discovered during exploration. If a value was not found, use an empty string.`, keyList)
+
+	return schema, hint
+}
+
 // buildProbeSystemPrompt constructs the system prompt for the probe's Local Model call.
 // Includes per-tool parameter schemas so the local model knows exactly what arguments
 // each tool requires (fixes empty-arguments bug where model omitted required params).
-func buildProbeSystemPrompt(goal string, allowedTools []string) string {
+// taskContext, when non-empty, is pinned above the exploration goal so task requirements
+// (e.g., target language, specific APIs) override workspace conventions.
+func buildProbeSystemPrompt(goal string, allowedTools []string, taskContext string) string {
 	toolList := ""
 	for i, t := range allowedTools {
 		if i > 0 {
@@ -418,8 +482,17 @@ func buildProbeSystemPrompt(goal string, allowedTools []string) string {
 
 	toolSchemas := buildToolSchemaReference(allowedTools)
 
+	var taskContextSection string
+	if taskContext != "" {
+		taskContextSection = fmt.Sprintf(`
+## Task Specification (PRIORITY — follow these requirements over workspace conventions)
+%s
+
+`, taskContext)
+	}
+
 	return fmt.Sprintf(`You are a Probe Node — an autonomous code exploration agent.
-Your goal: %s
+%sYour goal: %s
 
 You have access to these tools: [%s]
 
@@ -435,7 +508,7 @@ Be systematic. Build understanding incrementally.
 Exploration strategy: list_dir for structure, search_files for patterns (like grep), read_file for content.
 Prefer search_files over browsing directories when looking for types, interfaces, or functions.
 If a path fails with "does not exist", DO NOT call list_dir or read_file on that path again. You MUST use search_files to locate the correct file instead of guessing directory names.
-Do not assume documentation files describe implementation — verify by reading source code.`, goal, toolList, toolSchemas)
+Do not assume documentation files describe implementation — verify by reading source code.`, taskContextSection, goal, toolList, toolSchemas)
 }
 
 // buildToolSchemaReference generates a compact reference block describing each tool's

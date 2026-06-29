@@ -1,7 +1,7 @@
-// Package codegen provides the static DAG builder and context gathering
-// for the tzro_code MCP tool. It constructs a hardcoded 3-node DAG
-// (check_context → reason_code → write_code) that reads existing file
-// context, generates code via the local model, and writes the result.
+// Package codegen provides context gathering, prompt construction, and file
+// writing for the tzro_code MCP tool. Context gathering (GatherContext) and
+// file writing (WriteCodeFile) are pure Go logic executed by the caller;
+// only code generation (reason_code) runs through the DAG engine.
 package codegen
 
 import (
@@ -293,15 +293,47 @@ func CleanGeneratedCode(rawContent string, maxLines int) (string, error) {
 	return content, nil
 }
 
-// BuildCodeDAG constructs the static 3-node execution graph for code generation.
-// The graph has the shape:
+// BuildCodeDAG constructs the execution graph for code generation.
 //
-//	check_context → reason_code → write_code
+// When codeCtx is provided (non-nil), the context has been pre-computed by the
+// caller via GatherContext. The DAG is a single reason_code node with the full
+// prompt baked in. The caller handles file writing post-execution via WriteCodeFile.
 //
-// - check_context (deterministic): reads target file + siblings for context
-// - reason_code (action): generates code using the local model
-// - write_code (deterministic): writes the generated code to disk
-func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int) *compiler.ExecutionGraph {
+// When codeCtx is nil, the legacy 3-node DAG is built (check_context → reason_code
+// → write_code) where the executor uses inference to extract tool arguments.
+// This path is deprecated and should not be used for new code.
+func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int, codeCtx *CodeContext) *compiler.ExecutionGraph {
+	// Pre-computed context path: single reason_code node with full prompt
+	if codeCtx != nil {
+		action := "create"
+		if codeCtx.Exists {
+			action = "update"
+		}
+		if codeCtx.Language != "" {
+			language = codeCtx.Language
+		}
+
+		fullPrompt := BuildCodePrompt(spec, filePath, language, action,
+			codeCtx.ExistingContent, codeCtx.Siblings, maxLines)
+
+		return &compiler.ExecutionGraph{
+			TaskID:     taskID,
+			CreatedAt:  time.Now().Unix(),
+			MaxCycles:  1,
+			GoalPrompt: fmt.Sprintf("Generate code for %s: %s", filePath, spec),
+			Nodes: []compiler.GraphNode{
+				{
+					ID:           "reason_code",
+					Type:         "synthesis",
+					Instructions: fullPrompt,
+					AllowedTools: []string{},
+					Status:       "pending",
+				},
+			},
+		}
+	}
+
+	// Legacy 3-node path (deprecated): inference-based argument extraction.
 	action := "create"
 
 	checkInstructions := fmt.Sprintf(
@@ -343,7 +375,7 @@ func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int) *compil
 				ID:           "reason_code",
 				Type:         "action",
 				Instructions: reasonInstructions,
-				AllowedTools: []string{}, // LLM-only reasoning, no tools
+				AllowedTools: []string{},
 				Status:       "pending",
 			},
 			{
@@ -360,4 +392,44 @@ func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int) *compil
 			{SourceID: "reason_code", TargetID: "write_code"},
 		},
 	}
+}
+
+// WriteCodeFile handles post-DAG file writing: strips markdown fences,
+// validates line count, backs up existing files, and writes to disk.
+// Returns the action taken ("created" or "updated") and lines written.
+func WriteCodeFile(filePath, rawContent string, maxLines int) (action string, linesWritten int, err error) {
+	content, err := CleanGeneratedCode(rawContent, maxLines)
+	if err != nil {
+		return "", 0, err
+	}
+
+	if content == "" {
+		return "", 0, fmt.Errorf("model produced no code output")
+	}
+
+	// Determine action and backup if overwriting
+	action = "created"
+	if _, statErr := os.Stat(filePath); statErr == nil {
+		action = "updated"
+		if backupErr := tools.BackupFile(filePath); backupErr != nil {
+			fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
+		}
+	}
+
+	// Create parent directories
+	if mkdirErr := os.MkdirAll(filepath.Dir(filePath), 0755); mkdirErr != nil {
+		return "", 0, fmt.Errorf("failed to create parent directories: %w", mkdirErr)
+	}
+
+	// Write file
+	if writeErr := os.WriteFile(filePath, []byte(content), 0644); writeErr != nil {
+		return "", 0, fmt.Errorf("failed to write file: %w", writeErr)
+	}
+
+	lines := strings.Count(content, "\n")
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		lines++
+	}
+
+	return action, lines, nil
 }

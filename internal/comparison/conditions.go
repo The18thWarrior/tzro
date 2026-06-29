@@ -206,9 +206,10 @@ func countToolCalls(graph *compiler.ExecutionGraph, taskID string) int {
 	return count
 }
 
-// RunCodegenCondition executes a code generation task using the static 3-node DAG
-// from the codegen package (check_context → reason_code → write_code).
-// This benchmarks the tzro_code tool's architecture directly, bypassing the planner.
+// RunCodegenCondition executes a code generation task using the static DAG
+// from the codegen package. Context is pre-computed via GatherContext (pure Go)
+// and file writing is handled post-DAG via WriteCodeFile (pure Go). Only the
+// reason_code node runs through the DAG engine with LLM inference.
 func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
 	// Codegen always runs in cooperative mode (local model generates code)
 	originalModelMode := config.GlobalConfig.ModelMode
@@ -232,7 +233,7 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 		return ComparisonResult{}, fmt.Errorf("failed to init isolated database for tzro_code: %w", err)
 	}
 
-	// Initialize tools (needed for write_file in the static DAG)
+	// Initialize tools (needed for tool schema lookup during DAG execution)
 	_ = tools.Init("")
 
 	// Initialize inference backend
@@ -298,6 +299,20 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 		language = codegen.DetectLanguage(targetPath)
 	}
 
+	// Pre-compute context with a PathValidator that includes tmpDir.
+	// Without this, the PathValidator rejects tmpDir paths (outside TZRO_DIR),
+	// and the local model may extract relative paths that resolve against CWD.
+	extendedPaths := append(tools.GetAllowedPaths(), tmpDir)
+	validator := tools.NewStaticPathValidator(extendedPaths)
+	codeCtx, ctxErr := codegen.GatherContext(targetPath, validator)
+	if ctxErr != nil {
+		fmt.Fprintf(os.Stderr, "[Comparison] GatherContext warning: %v\n", ctxErr)
+		codeCtx = &codegen.CodeContext{
+			Language: language,
+			Siblings: make(map[string]string),
+		}
+	}
+
 	// Fresh token tracker
 	tracker := inference.NewTokenTracker()
 	ctx = inference.WithTokenTracker(ctx, tracker)
@@ -305,8 +320,8 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 	taskID := fmt.Sprintf("comparison_%s_%s", ConditionTzroCode, t.ID)
 	startTime := time.Now()
 
-	// Build the static 3-node DAG
-	graph := codegen.BuildCodeDAG(taskID, spec, targetPath, language, 500)
+	// Build the DAG with pre-computed context (single reason_code node)
+	graph := codegen.BuildCodeDAG(taskID, spec, targetPath, language, 500, codeCtx)
 
 	// Execute the DAG using the global engine
 	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
@@ -327,12 +342,26 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 		}, nil
 	}
 
-	// Read the generated file as the output
+	// Post-process: extract reason_code output and write file (pure Go)
 	var outputText string
+	if state, ok := memory.DB.GetNodeState(taskID, "reason_code"); ok && state.Status == "completed" {
+		rawCode := state.RawOutput
+		if rawCode == "" {
+			rawCode = state.Output
+		}
+		if rawCode != "" {
+			_, _, writeErr := codegen.WriteCodeFile(targetPath, rawCode, 500)
+			if writeErr != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] WriteCodeFile failed: %v\n", writeErr)
+			}
+		}
+	}
+
+	// Read the generated file as the output
 	if data, readErr := os.ReadFile(targetPath); readErr == nil {
 		outputText = string(data)
 	} else {
-		// Try reading from the write_code node state
+		// Fallback to terminal synthesis
 		outputText = extractTerminalSynthesis(graph, taskID)
 	}
 

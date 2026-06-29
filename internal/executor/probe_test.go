@@ -93,7 +93,7 @@ func TestRunProbe_ExecutesToolCallsAndReturns(t *testing.T) {
 		CompactEvery: 3,
 	}
 
-	result, err := RunProbe(context.Background(), "task_test", "probe_test_1", config, mock)
+	result, err := RunProbe(context.Background(), "task_test", "probe_test_1", config, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestRunProbe_PersistsThoughtSteps(t *testing.T) {
 	}
 
 	probeID := "probe_persist_test"
-	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock)
+	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 	}
 
 	probeID := "probe_compact_test"
-	result, err := RunProbe(context.Background(), "task_test", probeID, config, mock)
+	result, err := RunProbe(context.Background(), "task_test", probeID, config, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestRunProbe_ConvergesOnHighConfidence(t *testing.T) {
 		CompactEvery: 3,
 	}
 
-	result, err := RunProbe(context.Background(), "task_test", "probe_converge", config, mock)
+	result, err := RunProbe(context.Background(), "task_test", "probe_converge", config, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestRunProbe_BudgetExhaustionForcesSynthesis(t *testing.T) {
 		CompactEvery: 10, // Don't compact during this test
 	}
 
-	result, err := RunProbe(context.Background(), "task_test", "probe_budget", config, mock)
+	result, err := RunProbe(context.Background(), "task_test", "probe_budget", config, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestRunProbe_RejectsDisallowedTools(t *testing.T) {
 	}
 
 	probeID := "probe_disallowed"
-	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock)
+	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestRunProbe_ConsecutiveErrorsForceSynthesis(t *testing.T) {
 		CompactEvery: 5,
 	}
 
-	result, err := RunProbe(context.Background(), "task_error_test", "probe_error_1", config, mock)
+	result, err := RunProbe(context.Background(), "task_error_test", "probe_error_1", config, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestRunProbe_AdaptiveMinStepAllowsEarlySynthesis(t *testing.T) {
 		CompactEvery: 5,
 	}
 
-	result, err := RunProbe(context.Background(), "task_adaptive_test", "probe_adaptive_1", cfg, mock)
+	result, err := RunProbe(context.Background(), "task_adaptive_test", "probe_adaptive_1", cfg, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}

@@ -703,7 +703,7 @@ func NewWriteFileTool(validator *PathValidator) *BaseAgentTool {
 			if _, err := os.Stat(resolvedPath); err == nil {
 				action = "updated"
 				// Backup existing file before overwriting
-				if err := backupFile(resolvedPath); err != nil {
+				if err := BackupFile(resolvedPath); err != nil {
 					fmt.Fprintf(os.Stderr, "[write_file] Backup failed (non-fatal): %v\n", err)
 				}
 			}
@@ -734,9 +734,9 @@ func NewWriteFileTool(validator *PathValidator) *BaseAgentTool {
 	}
 }
 
-// backupFile copies an existing file to .tzro/backups/{sha256}.bak before overwriting.
+// BackupFile copies an existing file to .tzro/backups/{sha256}.bak before overwriting.
 // Enforces LRU eviction at maxBackups files.
-func backupFile(filePath string) error {
+func BackupFile(filePath string) error {
 	const maxBackups = 50
 
 	// Determine backup directory

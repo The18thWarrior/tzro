@@ -910,8 +910,39 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			probeConfig = *node.ProbeConfig
 		}
 
+		// Inject the original task spec/goal so the Probe knows the actual
+		// requirements (e.g., target language) even when the workspace context
+		// suggests different patterns. Only set if not already provided by planner.
+		if probeConfig.TaskContext == "" && graph.GoalPrompt != "" {
+			probeConfig.TaskContext = graph.GoalPrompt
+		}
+
+		// Collect binding keys that downstream nodes need from this probe's output.
+		// Scan all nodes' DynamicBindings for references to this probe node (format:
+		// "probeNodeId.output.propertyName") and extract the property names. These
+		// keys will be injected into the synthesis schema so the GBNF grammar forces
+		// the local model to produce them as structured JSON fields.
+		var downstreamBindingKeys []string
+		bindingKeySet := make(map[string]bool)
+		for _, otherNode := range graph.Nodes {
+			for _, rawBinding := range otherNode.DynamicBindings {
+				bindingPath := fmt.Sprintf("%v", rawBinding)
+				parts := strings.SplitN(bindingPath, ".", 3) // ["nodeId", "output", "propertyName"]
+				if len(parts) == 3 && parts[0] == node.ID && parts[1] == "output" {
+					key := parts[2]
+					if !bindingKeySet[key] && key != "synthesis" {
+						bindingKeySet[key] = true
+						downstreamBindingKeys = append(downstreamBindingKeys, key)
+					}
+				}
+			}
+		}
+		if len(downstreamBindingKeys) > 0 {
+			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: downstream binding keys: %v\n", node.ID, downstreamBindingKeys)
+		}
+
 		probeEngine := &DefaultProbeInference{}
-		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine)
+		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, downstreamBindingKeys)
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
 			return fmt.Errorf("probe node %s execution failed: %w", node.ID, err)
@@ -1092,6 +1123,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, inferenceResult)
 		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
 
 		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {

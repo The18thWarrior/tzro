@@ -310,8 +310,20 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		language = codegen.DetectLanguage(args.Filepath)
 	}
 
-	// Build the static 3-node DAG
-	graph := codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines)
+	// Pre-compute context: pure Go, no LLM (design spec: "No LLM. Pure Go logic.")
+	validator := tools.NewPathValidator(tools.GetAllowedPaths())
+	codeCtx, ctxErr := codegen.GatherContext(args.Filepath, validator)
+	if ctxErr != nil {
+		// Non-fatal: proceed with nil context (new file creation case)
+		fmt.Fprintf(os.Stderr, "[tzro_code] GatherContext warning: %v\n", ctxErr)
+		codeCtx = &codegen.CodeContext{
+			Language: language,
+			Siblings: make(map[string]string),
+		}
+	}
+
+	// Build DAG with pre-computed context (single reason_code node)
+	graph := codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
 
 	type execResult struct {
 		nodes []memory.NodeState
@@ -361,10 +373,30 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			respMap["error"] = errMsg
 		}
 
-		// Extract write_code node output for action/linesWritten
-		for _, n := range res.nodes {
-			if n.NodeID == "write_code" && n.Status == "completed" {
-				respMap["action"] = "completed"
+		// Post-process: extract reason_code output, write file (pure Go)
+		if status == "completed" {
+			var rawCode string
+			for _, n := range res.nodes {
+				if n.NodeID == "reason_code" && n.Status == "completed" {
+					rawCode = n.RawOutput
+					if rawCode == "" {
+						rawCode = n.Output
+					}
+				}
+			}
+
+			if rawCode != "" {
+				writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
+				if writeErr != nil {
+					respMap["status"] = "failed"
+					respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
+				} else {
+					respMap["action"] = writeAction
+					respMap["linesWritten"] = linesWritten
+				}
+			} else {
+				respMap["status"] = "failed"
+				respMap["error"] = "reason_code produced no output"
 			}
 		}
 
