@@ -41,6 +41,10 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 	proactivity.RegisterActiveUserTask(graph.TaskID)
 	defer proactivity.DeregisterActiveUserTask(graph.TaskID)
 
+	// Pre-task GC: Clear KV cache slots from previous tasks to prevent
+	// memory pressure degradation in sequential runs (e.g., benchmarks).
+	_ = inference.GlobalLocalModel.TriggerGC(ctx)
+
 	fmt.Fprintf(os.Stderr, "[Executor/RQ] Starting reactive execution for Task %s with %d nodes...\n", graph.TaskID, len(graph.Nodes))
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task reactive execution initiated")
 

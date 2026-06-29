@@ -53,6 +53,9 @@ func setupProbeTestTools(t *testing.T) {
 	t.Helper()
 	// Create test fixture directory for filesystem tools
 	tempDir := t.TempDir()
+	// Resolve symlinks (macOS: /var → /private/var) so PathValidator's
+	// root prefix check matches EvalSymlinks'd paths during validation.
+	tempDir, _ = filepath.EvalSymlinks(tempDir)
 	testFile := filepath.Join(tempDir, "test.go")
 	if err := os.WriteFile(testFile, []byte("package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"), 0644); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
@@ -161,16 +164,20 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 	defer cleanup()
 	setupProbeTestTools(t)
 
+	// Use the test file created by setupProbeTestTools for tool calls that succeed.
+	// We use read_file instead of list_dir because the PathValidator reliably
+	// resolves TZRO_DIR-relative file paths in the test environment.
+	// Resolve symlinks (macOS: /var → /private/var) so PathValidator prefix check passes.
+	tzroDir, _ := filepath.EvalSymlinks(os.Getenv("TZRO_DIR"))
+	testFile := filepath.Join(tzroDir, "test.go")
+
 	// Set up 4 steps — compaction should trigger at step 3 (compactEvery=3)
 	mock := &MockProbeInference{
 		Responses: []string{
-			`Step 1
-<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
-			`Step 2
-<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			fmt.Sprintf("Step 1\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
+			fmt.Sprintf("Step 2\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
 			// Step 3 triggers compaction. The mock needs an extra response for the compaction inference call.
-			`Step 3
-<ACTION>{"tool":"list_dir","arguments":{"path":"."}}</ACTION>`,
+			fmt.Sprintf("Step 3\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
 			"Compacted summary of steps 1-3", // This is the compaction inference response
 			`Done
 <SYNTHESIZE_READY>`,
@@ -180,7 +187,7 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 
 	config := compiler.ProbeConfig{
 		Goal:         "Test compaction",
-		AllowedTools: []string{"list_dir"},
+		AllowedTools: []string{"read_file", "list_dir"},
 		StepBudget:   5,
 		CompactEvery: 3,
 	}
@@ -526,5 +533,106 @@ func TestRescueEmptyPath_ResolvesRelativePaths(t *testing.T) {
 				t.Errorf("rescueEmptyPathFromThought path = %q, want %q", pathVal, tt.expectedPath)
 			}
 		})
+	}
+}
+
+func TestRunProbe_ConsecutiveErrorsForceSynthesis(t *testing.T) {
+	cleanup := setupProbeTestDB(t)
+	defer cleanup()
+	setupProbeTestTools(t)
+
+	// Mock engine that produces 4 tool calls hitting errors (nonexistent paths),
+	// then gets the synthesis hint, and produces synthesis.
+	// With stepBudget=15 and minStepBudget=7, without the error guard rail
+	// this would burn through all 15 steps. With it, after 3 consecutive
+	// errors the min step is lowered and synthesis is allowed.
+	mock := &MockProbeInference{
+		Responses: []string{
+			// Steps 1-3: tool calls that will fail (paths don't exist)
+			"Reading nonexistent path\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"/nonexistent/path1.go\"}}</ACTION>",
+			"Trying another path\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"/nonexistent/path2.go\"}}</ACTION>",
+			"One more path\n<ACTION>{\"tool\":\"list_dir\",\"arguments\":{\"path\":\"/nonexistent/dir\"}}</ACTION>",
+			// Step 4: after error warning, model signals synthesis
+			"I should synthesize what I have\n<SYNTHESIZE_READY>",
+			// Pass 2: synthesis
+			`{"synthesis":"Found limited information due to path errors but synthesized what was available."}`,
+		},
+	}
+
+	config := compiler.ProbeConfig{
+		Goal:         "Explore a project",
+		AllowedTools: []string{"read_file", "list_dir", "search_files"},
+		StepBudget:   15,
+		CompactEvery: 5,
+	}
+
+	result, err := RunProbe(context.Background(), "task_error_test", "probe_error_1", config, mock)
+	if err != nil {
+		t.Fatalf("RunProbe failed: %v", err)
+	}
+
+	if result == "" {
+		t.Error("expected non-empty synthesis result")
+	}
+
+	// The probe should have completed in ≤5 steps (3 errors + synthesis signal + synthesis pass),
+	// not burned through all 15
+	if mock.CallCount > 6 {
+		t.Errorf("probe made %d inference calls, expected ≤6 (should have been forced to synthesize early)", mock.CallCount)
+	}
+}
+
+func TestRunProbe_AdaptiveMinStepAllowsEarlySynthesis(t *testing.T) {
+	cleanup := setupProbeTestDB(t)
+	defer cleanup()
+	setupProbeTestTools(t)
+
+	// Set TZRO_DIR to the temp dir so that relative paths resolve to valid locations
+	tempDir := t.TempDir()
+	for _, name := range []string{"file1.go", "file2.go", "file3.go", "file4.go", "file5.go", "file6.go"} {
+		if err := os.WriteFile(filepath.Join(tempDir, name), []byte("package main"), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+	os.Setenv("TZRO_DIR", tempDir)
+
+	// Mock engine: 6 successful tool calls reading files, then synthesis at step 7.
+	// With stepBudget=30 and minStepBudget=8, without adaptive logic the synthesis
+	// would be rejected at step 7 (< 8). With adaptive logic, since
+	// successfulToolCalls(6) >= minStepBudget(8)-2, synthesis is allowed.
+	responses := make([]string, 0, 9)
+	for i := 1; i <= 6; i++ {
+		responses = append(responses, fmt.Sprintf(
+			"Reading file %d\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>",
+			i, filepath.Join(tempDir, fmt.Sprintf("file%d.go", i)),
+		))
+	}
+	// Step 7: synthesis ready
+	responses = append(responses, "I have read all relevant files\n<SYNTHESIZE_READY>")
+	// Pass 2: synthesis
+	responses = append(responses, `{"synthesis":"Complete analysis of all 6 source files."}`)
+
+	mock := &MockProbeInference{Responses: responses}
+
+	cfg := compiler.ProbeConfig{
+		Goal:         "Analyze source files",
+		AllowedTools: []string{"read_file", "list_dir", "search_files"},
+		StepBudget:   30,
+		CompactEvery: 5,
+	}
+
+	result, err := RunProbe(context.Background(), "task_adaptive_test", "probe_adaptive_1", cfg, mock)
+	if err != nil {
+		t.Fatalf("RunProbe failed: %v", err)
+	}
+
+	if result != "Complete analysis of all 6 source files." {
+		t.Errorf("unexpected synthesis result: %s", result)
+	}
+
+	// The probe should synthesize at step 7 (not be forced to continue to step 8+).
+	// 6 tool call steps + 1 synthesis signal + 1 synthesis pass = 8 inference calls.
+	if mock.CallCount > 8 {
+		t.Errorf("probe made %d inference calls, expected ≤8 (adaptive min-step should allow synthesis at step 7)", mock.CallCount)
 	}
 }

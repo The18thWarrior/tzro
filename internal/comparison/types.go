@@ -9,11 +9,27 @@ const (
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"
 	ConditionCooperative = "cooperative"
+	ConditionTzroCode    = "tzro_code" // Static 3-node DAG via codegen package
 )
 
-// AllConditions returns the canonical ordered list of condition IDs.
+// Task category constants.
+const (
+	CategoryAll     = ""        // Run both docgen and codegen
+	CategoryDocgen  = "docgen"
+	CategoryCodegen = "codegen"
+)
+
+// AllConditions returns the canonical ordered list of condition IDs
+// for documentation generation benchmarks.
 func AllConditions() []string {
 	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
+}
+
+// CodegenConditions returns the conditions applicable to code generation benchmarks.
+// Includes tzro_code (static DAG) alongside the standard DAG conditions for comparison.
+// Excludes cloud_react since the ReAct baseline doesn't have tzro_code access.
+func CodegenConditions() []string {
+	return []string{ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative, ConditionTzroCode}
 }
 
 // RubricCriterion defines a single quality evaluation dimension.
@@ -28,12 +44,21 @@ type QualityRubric struct {
 	MaxScore float64           `json:"maxScore"`
 }
 
-// ComparisonTask defines a single documentation generation task.
+// ComparisonTask defines a single benchmark task for comparison evaluation.
+// The Category field determines whether the task is a documentation generation
+// task ("docgen") or a code generation task ("codegen").
 type ComparisonTask struct {
 	ID            string        `json:"id"`
+	Category      string        `json:"category"`                // "docgen" or "codegen"
 	Tier          int           `json:"tier"`
 	Prompt        string        `json:"prompt"`
-	TargetPaths   []string      `json:"targetPaths"`
+	TargetPaths   []string      `json:"targetPaths,omitempty"`
+	// Code-generation specific fields (category=codegen)
+	Spec     string `json:"spec,omitempty"`     // Specification for tzro_code
+	Filepath string `json:"filepath,omitempty"` // Target file path for code generation
+	Language string `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
+	Action   string `json:"action,omitempty"`   // "create" or "update"
+	SeedFile string `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
 	QualityRubric QualityRubric `json:"qualityRubric"`
 }
 

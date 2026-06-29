@@ -59,33 +59,78 @@ Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
 
 Do NOT wrap the JSON in code fences. Output raw JSON only.`
 
-// JudgeOutput sends the generated document and rubric to the cloud model for quality scoring.
+const codeJudgeSystemPrompt = `You are a code quality evaluator. You will receive generated source code and a quality rubric. Score each criterion on a 1-5 scale:
+  1 = Does not compile/parse, or completely wrong
+  2 = Compiles but major logic errors or missing requirements
+  3 = Functional but incomplete or has style issues
+  4 = Good, meets most requirements with minor issues
+  5 = Excellent, correct, complete, idiomatic, and well-structured
+
+For "Preservation" criteria (update tasks): verify that existing code, types, method signatures, and imports that were not part of the spec remain unchanged.
+
+Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
+{
+  "criteria": [
+    {"name": "CriterionName", "score": 4, "reasoning": "Brief explanation"}
+  ],
+  "overallScore": 4.0,
+  "summary": "Brief overall assessment"
+}
+
+Do NOT wrap the JSON in code fences. Output raw JSON only.`
+
+// JudgeSystemPromptForCategory returns the appropriate judge system prompt
+// for the given task category.
+func JudgeSystemPromptForCategory(category string) string {
+	if category == CategoryCodegen {
+		return codeJudgeSystemPrompt
+	}
+	return judgeSystemPrompt
+}
+
+// JudgeOutput sends the generated output and rubric to the cloud model for quality scoring.
 // Returns per-criterion scores and an overall composite score.
 // Judge tokens are tracked separately (not part of condition tracking).
 func JudgeOutput(ctx context.Context, outputText string, rubric QualityRubric) (float64, string, error) {
-	return JudgeOutputWithEndpoint(ctx, outputText, rubric, "")
+	return JudgeOutputWithOptions(ctx, outputText, rubric, "", "")
 }
 
 // JudgeOutputWithEndpoint is like JudgeOutput but allows overriding the API endpoint (for testing).
 func JudgeOutputWithEndpoint(ctx context.Context, outputText string, rubric QualityRubric, endpoint string) (float64, string, error) {
+	return JudgeOutputWithOptions(ctx, outputText, rubric, endpoint, "")
+}
+
+// JudgeOutputWithOptions is the full-featured judge function supporting category-aware prompts
+// and endpoint overrides.
+func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric QualityRubric, endpoint string, category string) (float64, string, error) {
+	// Select the appropriate system prompt
+	sysPrompt := JudgeSystemPromptForCategory(category)
+
 	// Build the rubric description
 	rubricText := "Quality Rubric (score each 1-5):\n"
 	for _, c := range rubric.Criteria {
 		rubricText += fmt.Sprintf("- %s: %s\n", c.Name, c.Description)
 	}
 
-	userMessage := fmt.Sprintf("## Generated Documentation\n\n%s\n\n## Evaluation Rubric\n\n%s", outputText, rubricText)
+	contentLabel := "Generated Output"
+	if category == CategoryCodegen {
+		contentLabel = "Generated Code"
+	} else {
+		contentLabel = "Generated Documentation"
+	}
+
+	userMessage := fmt.Sprintf("## %s\n\n%s\n\n## Evaluation Rubric\n\n%s", contentLabel, outputText, rubricText)
 
 	var responseText string
 	var err error
 
 	if endpoint != "" {
 		// Testing path: direct HTTP call to the provided endpoint
-		responseText, err = callJudgeEndpoint(ctx, endpoint, userMessage)
+		responseText, err = callJudgeEndpoint(ctx, endpoint, userMessage, sysPrompt)
 	} else {
 		// Production path: use the standard cloud model
 		messages := []inference.InferenceMessage{
-			{Role: "system", Content: judgeSystemPrompt},
+			{Role: "system", Content: sysPrompt},
 			{Role: "user", Content: userMessage},
 		}
 		responseText, err = inference.CallCloudModel(ctx, messages, "")
@@ -146,7 +191,7 @@ func parseFlatJudgeResponse(responseText string, rubric QualityRubric) (float64,
 }
 
 // callJudgeEndpoint makes a simple chat completion call to a custom endpoint.
-func callJudgeEndpoint(ctx context.Context, endpoint, userMessage string) (string, error) {
+func callJudgeEndpoint(ctx context.Context, endpoint, userMessage, sysPrompt string) (string, error) {
 	type Message struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -160,7 +205,7 @@ func callJudgeEndpoint(ctx context.Context, endpoint, userMessage string) (strin
 	reqBody := Request{
 		Model: config.GetCloudModel(),
 		Messages: []Message{
-			{Role: "system", Content: judgeSystemPrompt},
+			{Role: "system", Content: sysPrompt},
 			{Role: "user", Content: userMessage},
 		},
 		Temperature: 0.1,

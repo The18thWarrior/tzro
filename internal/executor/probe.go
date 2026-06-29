@@ -141,6 +141,17 @@ func RunProbe(
 	var recentCalls []recentCall
 	const maxConsecutiveRepeats = 3
 
+	// Consecutive error tracking: when 3+ consecutive tool calls return errors
+	// (regardless of which tool/args), lower the minimum step budget to allow
+	// immediate synthesis instead of burning through the budget on failing calls.
+	var consecutiveErrors int
+	const maxConsecutiveErrors = 3
+
+	// Successful tool call counter: tracks unique successful tool invocations
+	// (calls that returned actual content, not errors). Used to adaptively
+	// lower the minimum step budget when the probe has made substantial progress.
+	var successfulToolCalls int
+
 	// minStepBudget is the minimum number of steps a probe must take before
 	// synthesis is allowed. Prevents premature termination when the model
 	// signals readiness after too few exploration steps.
@@ -176,8 +187,14 @@ func RunProbe(
 		chainStep.NextThought = rawResponse
 
 		if strings.Contains(rawResponse, "<SYNTHESIZE_READY>") {
-			if step < minStepBudget {
-				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but minimum is %d — continuing exploration\n", probeID, step, minStepBudget)
+			// Adaptive minimum: allow early synthesis if the probe has made
+			// substantial successful progress (successfulToolCalls >= minStepBudget - 2).
+			// This prevents forcing counter-productive extra exploration when
+			// the model has already gathered enough data.
+			adaptiveMinMet := successfulToolCalls >= minStepBudget-2 && successfulToolCalls > 0
+
+			if step < minStepBudget && !adaptiveMinMet {
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but minimum is %d (successful calls: %d) — continuing exploration\n", probeID, step, minStepBudget, successfulToolCalls)
 				// Treat as a no-op thought step; continue the loop
 				chainStep.Action = "tool_call"
 				chainStep.NextThought = rawResponse
@@ -194,6 +211,9 @@ func RunProbe(
 				}
 				_ = memory.DB.AddThoughtStep(thoughtStep)
 				continue
+			}
+			if adaptiveMinMet && step < minStepBudget {
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d — adaptive minimum met (%d successful calls ≥ %d threshold)\n", probeID, step, successfulToolCalls, minStepBudget-2)
 			}
 			fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis readiness at step %d\n", probeID, step)
 			isSynthesisReady = true
@@ -241,12 +261,47 @@ func RunProbe(
 				result, err := tools.Call(ctx, toolName, args)
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
+					consecutiveErrors++
 				} else {
 					toolOutput = result
+					// Detect tool-level errors: tools return JSON with "success":false
+					// for validation failures, nonexistent paths, etc. (no Go error).
+					if isToolError(result) {
+						consecutiveErrors++
+					} else {
+						consecutiveErrors = 0 // reset on success
+						successfulToolCalls++
+					}
 				}
 				if bytes, err := json.Marshal(args); err == nil {
 					toolArgsStr = string(bytes)
 				}
+			}
+
+			// Consecutive error detection: if 3+ tool calls in a row return errors,
+			// lower the minimum step budget so the probe can synthesize immediately
+			// with whatever it has gathered instead of burning through the budget.
+			if consecutiveErrors >= maxConsecutiveErrors {
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s hit %d consecutive tool errors at step %d. Lowering min step budget to allow synthesis.\n", probeID, consecutiveErrors, step)
+				minStepBudget = step // allow synthesis on the very next step
+				lastToolOutput = fmt.Sprintf(
+					"WARNING: %d consecutive tool calls have failed. You should synthesize your findings using what you have gathered so far. Output <SYNTHESIZE_READY> to produce your final answer.",
+					consecutiveErrors,
+				)
+				// Persist the step with the warning
+				thoughtStep := memory.ThoughtStep{
+					ID:        fmt.Sprintf("%s_step_%d", probeID, step),
+					ProbeID:   probeID,
+					TaskID:    taskID,
+					StepIndex: step,
+					Thought:   chainStep.NextThought,
+					ToolName:  toolName,
+					ToolArgs:  toolArgsStr,
+					ToolOutput: lastToolOutput,
+					CreatedAt: time.Now().Unix(),
+				}
+				_ = memory.DB.AddThoughtStep(thoughtStep)
+				continue
 			}
 
 			currentCall := recentCall{tool: toolName, args: toolArgsStr}
@@ -589,6 +644,21 @@ func sanitizeToolName(garbled string, allowedTools map[string]bool) string {
 		}
 	}
 	return bestMatch
+}
+
+// isToolError checks if a tool result string indicates a tool-level error.
+// Tools return JSON with "success":false for validation failures, nonexistent
+// paths, etc. The Go error return from tools.Call is nil in these cases.
+func isToolError(result string) bool {
+	// Check for the JSON success field pattern
+	if strings.Contains(result, `"success":false`) {
+		return true
+	}
+	// Also catch the "Error: ..." prefix used for disallowed tools and parse failures
+	if strings.HasPrefix(result, "Error:") {
+		return true
+	}
+	return false
 }
 
 // truncate shortens a string to maxLen characters.

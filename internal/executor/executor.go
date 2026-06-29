@@ -125,6 +125,10 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	fmt.Fprintf(os.Stderr, "[Executor] Starting execution for Task %s with %d topological levels (budget: %s, multiplier: %.1fx)...\n", graph.TaskID, len(levels), budget, multiplier)
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", fmt.Sprintf("Task execution initiated (budget: %s)", budget))
 
+	// Pre-task GC: Clear KV cache slots from previous tasks to prevent
+	// memory pressure degradation in sequential runs (e.g., benchmarks).
+	_ = inference.GlobalLocalModel.TriggerGC(budgetCtx)
+
 	// Resilient task resumption: Cache the execution graph for recovery/resume
 	db := memory.DB.RawDB()
 	if db != nil && graph != nil {

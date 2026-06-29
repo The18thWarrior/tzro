@@ -17,6 +17,7 @@ var (
 	compareOutputDir   string
 	compareTier        int
 	compareCondition   string
+	compareCategory    string
 	comparePromptPrice float64
 	compareComplPrice  float64
 )
@@ -24,7 +25,7 @@ var (
 var compareCmd = &cobra.Command{
 	Use:   "compare",
 	Short: "Run comparison benchmark: Cloud ReAct vs tzro hybrid execution",
-	Long:  `Measure cloud token consumption, dollar cost, wall-clock time, and output quality across 4 execution conditions (Cloud ReAct baseline, Cloud DAG, Local-Only, Cooperative) using documentation generation tasks.`,
+	Long:  `Measure cloud token consumption, dollar cost, wall-clock time, and output quality across execution conditions using documentation and code generation tasks. By default runs both docgen and codegen task suites.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 
@@ -41,15 +42,24 @@ var compareCmd = &cobra.Command{
 
 		if compareCondition != "" {
 			valid := false
+			// Check against both docgen and codegen condition sets
+			seen := make(map[string]bool)
 			for _, c := range comparison.AllConditions() {
-				if compareCondition == c {
-					valid = true
-					break
-				}
+				seen[c] = true
+			}
+			for _, c := range comparison.CodegenConditions() {
+				seen[c] = true
+			}
+			if seen[compareCondition] {
+				valid = true
 			}
 			if !valid {
+				var all []string
+				for c := range seen {
+					all = append(all, c)
+				}
 				fmt.Fprintf(os.Stderr, "Error: --condition must be one of: %s\n",
-					strings.Join(comparison.AllConditions(), ", "))
+					strings.Join(all, ", "))
 				os.Exit(1)
 			}
 		}
@@ -66,6 +76,11 @@ var compareCmd = &cobra.Command{
 
 		fmt.Fprintf(out, "=== COMPARISON BENCHMARK ===\n")
 		fmt.Fprintf(out, "Output:     %s\n", compareOutputDir)
+		if compareCategory != "" {
+			fmt.Fprintf(out, "Category:   %s only\n", compareCategory)
+		} else {
+			fmt.Fprintf(out, "Category:   All (docgen + codegen)\n")
+		}
 		if compareTier > 0 {
 			fmt.Fprintf(out, "Tier:       T%d only\n", compareTier)
 		} else {
@@ -74,7 +89,7 @@ var compareCmd = &cobra.Command{
 		if compareCondition != "" {
 			fmt.Fprintf(out, "Condition:  %s only\n", compareCondition)
 		} else {
-			fmt.Fprintf(out, "Condition:  All 4 conditions\n")
+			fmt.Fprintf(out, "Condition:  All conditions\n")
 		}
 		fmt.Fprintf(out, "Pricing:    $%.4f/1K prompt, $%.4f/1K completion\n", pricing.PromptPer1KTokens, pricing.CompletionPer1KTokens)
 		fmt.Fprintf(out, "Time:       %s\n", time.Now().Format("2006-01-02 15:04:05"))
@@ -102,6 +117,7 @@ var compareCmd = &cobra.Command{
 		}
 
 		opts := comparison.SuiteOptions{
+			Category:  compareCategory,
 			Tier:      compareTier,
 			Condition: compareCondition,
 			OutputDir: compareOutputDir,
@@ -152,8 +168,9 @@ func init() {
 	defaultPricing := comparison.DefaultPricing()
 
 	compareCmd.Flags().StringVarP(&compareOutputDir, "output", "o", "", "Output directory for results (required)")
+	compareCmd.Flags().StringVar(&compareCategory, "category", "", "Task category: docgen, codegen, or empty for both (default: both)")
 	compareCmd.Flags().IntVarP(&compareTier, "tier", "t", 0, "Run a specific tier (1-5), or 0 for all")
-	compareCmd.Flags().StringVarP(&compareCondition, "condition", "c", "", "Run a specific condition (cloud_react, cloud_dag, local_only, cooperative)")
+	compareCmd.Flags().StringVarP(&compareCondition, "condition", "c", "", "Run a specific condition (cloud_react, cloud_dag, local_only, cooperative, tzro_code)")
 	compareCmd.Flags().Float64Var(&comparePromptPrice, "prompt-price", defaultPricing.PromptPer1KTokens, "Price per 1K prompt tokens (USD)")
 	compareCmd.Flags().Float64Var(&compareComplPrice, "completion-price", defaultPricing.CompletionPer1KTokens, "Price per 1K completion tokens (USD)")
 

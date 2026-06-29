@@ -1,6 +1,7 @@
 [
   {
     "id": "cache_function_index",
+    "category": "docgen",
     "tier": 1,
     "prompt": "Generate a function index for internal/cache/ listing every exported function, its signature, and a one-line description.",
     "targetPaths": ["internal/cache/"],
@@ -16,6 +17,7 @@
   },
   {
     "id": "inference_module_docs",
+    "category": "docgen",
     "tier": 2,
     "prompt": "Generate module-level documentation for internal/inference/ covering all public types, their relationships, and usage patterns.",
     "targetPaths": ["internal/inference/"],
@@ -31,6 +33,7 @@
   },
   {
     "id": "adr_summary",
+    "category": "docgen",
     "tier": 3,
     "prompt": "Read all ADR files in docs/adr/ and produce a consolidated decision log with status, date, and key implications for each.",
     "targetPaths": ["docs/adr/"],
@@ -46,6 +49,7 @@
   },
   {
     "id": "internal_architecture",
+    "category": "docgen",
     "tier": 4,
     "prompt": "Generate architecture documentation for the full internal/ tree showing package dependencies, data flow, and key abstractions.",
     "targetPaths": ["internal/"],
@@ -61,6 +65,7 @@
   },
   {
     "id": "comprehensive_readme",
+    "category": "docgen",
     "tier": 5,
     "prompt": "Generate a comprehensive README with architecture overview, quickstart guide, package index, and API reference.",
     "targetPaths": ["."],
@@ -75,3 +80,4 @@
     }
   }
 ]
+
