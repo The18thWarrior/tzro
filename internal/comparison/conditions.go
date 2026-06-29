@@ -80,6 +80,44 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	tools.Unregister("gather_config")
 	tools.Unregister("gather_workflows")
 
+	// For codegen tasks, scope file writes to a temporary directory so
+	// benchmark runs never modify the actual source tree. Read tools still
+	// have access to the source directory for Probe exploration.
+	var tmpDir string
+	var codegenTargetPath string
+	if t.Category == CategoryCodegen && t.Filepath != "" {
+		var tmpErr error
+		tmpDir, tmpErr = os.MkdirTemp("", "tzro_benchmark_*")
+		if tmpErr != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to create temp dir for codegen benchmark: %w", tmpErr)
+		}
+		defer os.RemoveAll(tmpDir)
+
+		// Set up target path inside tmpDir
+		codegenTargetPath = filepath.Join(tmpDir, t.Filepath)
+		if mkdirErr := os.MkdirAll(filepath.Dir(codegenTargetPath), 0755); mkdirErr != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to create target parent dir: %w", mkdirErr)
+		}
+
+		// Copy seed file if present
+		if t.SeedFile != "" {
+			seedData, seedErr := ReadSeedFile(t.SeedFile)
+			if seedErr != nil {
+				return ComparisonResult{}, fmt.Errorf("failed to read seed file: %w", seedErr)
+			}
+			if writeErr := os.WriteFile(codegenTargetPath, seedData, 0644); writeErr != nil {
+				return ComparisonResult{}, fmt.Errorf("failed to write seed file: %w", writeErr)
+			}
+		}
+
+		// Re-register write_file with a validator scoped to ONLY the tmpDir.
+		// This ensures any write_file calls from the DAG planner/executor
+		// go to the temp directory, not the actual source tree.
+		writeValidator := tools.NewStaticPathValidator([]string{tmpDir})
+		tools.Register(tools.NewWriteFileTool(writeValidator))
+		fmt.Fprintf(os.Stderr, "[Comparison] Codegen task %s: write_file scoped to %s\n", t.ID, tmpDir)
+	}
+
 	// Initialize inference backend for Probe Node execution.
 	// Without this, probe nodes fail with "no active inference backend".
 	oldBackend := inference.ActiveBackend
@@ -125,9 +163,16 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 
 	taskID := fmt.Sprintf("comparison_%s_%s", conditionID, t.ID)
 
+	// For codegen tasks, augment the prompt with the target path inside tmpDir
+	// so the planner directs write_file to the correct location.
+	taskPrompt := t.Prompt
+	if codegenTargetPath != "" {
+		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, codegenTargetPath)
+	}
+
 	startTime := time.Now()
 
-	graph, _, err := task.Execute(ctx, t.Prompt, task.ExecuteOptions{
+	graph, _, err := task.Execute(ctx, taskPrompt, task.ExecuteOptions{
 		TaskID:     taskID,
 		IntentType: "workflow",
 	})
@@ -145,8 +190,19 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}, nil
 	}
 
-	// Extract terminal synthesis output
-	outputText := extractTerminalSynthesis(graph, taskID)
+	// Extract output: for codegen tasks, prefer reading the written file from tmpDir;
+	// for docgen tasks, use the terminal synthesis node output.
+	var outputText string
+	if codegenTargetPath != "" {
+		if data, readErr := os.ReadFile(codegenTargetPath); readErr == nil && len(data) > 0 {
+			outputText = string(data)
+		} else {
+			// Fallback to terminal synthesis if no file was written
+			outputText = extractTerminalSynthesis(graph, taskID)
+		}
+	} else {
+		outputText = extractTerminalSynthesis(graph, taskID)
+	}
 
 	// Count tool calls from the graph
 	toolCallCount := countToolCalls(graph, taskID)
