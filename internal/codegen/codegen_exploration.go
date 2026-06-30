@@ -83,3 +83,77 @@ func BuildCodeDAGWithExploration(taskID, spec, filePath, language string, maxLin
 		CreatedAt:      time.Now().Unix(),
 	}
 }
+
+// BuildDiffDAGWithExploration constructs an execution graph for diff-mode code
+// generation with codebase exploration. Mirrors BuildCodeDAGWithExploration but
+// uses the diff prompt format and GBNF-constrained DiffOutput schema on the
+// reason_code node.
+//
+// Three nodes:
+//  1. explore_context: action node (ActivationThreshold: 0.8) — explores codebase
+//  2. reason_code: synthesis node with GBNF-constrained DiffOutput schema
+//  3. validate_code: deterministic node (ActivationThreshold: 0.7) — compilation gate
+func BuildDiffDAGWithExploration(taskID, spec, filePath, language string,
+	codeCtx *CodeContext) *compiler.ExecutionGraph {
+
+	action := "update" // diff mode always updates existing files
+	if codeCtx != nil && codeCtx.Language != "" {
+		language = codeCtx.Language
+	}
+
+	existingContent := ""
+	siblings := make(map[string]string)
+	if codeCtx != nil {
+		existingContent = codeCtx.ExistingContent
+		siblings = codeCtx.Siblings
+	}
+
+	nodes := []compiler.GraphNode{
+		{
+			ID:                  "explore_context",
+			Type:                "action",
+			Instructions:        fmt.Sprintf("Explore the codebase to understand context for editing %s code.\nSpec: %s\nTarget: %s\nAction: %s", language, spec, filePath, action),
+			AllowedTools:        []string{"read_file", "list_dir", "search_files"},
+			Status:              "pending",
+			ActivationThreshold: 0.8,
+			OutputFormat:        "source_code",
+			OutputLanguage:      language,
+		},
+		{
+			ID:             "reason_code",
+			Type:           "synthesis",
+			Instructions:   BuildDiffPrompt(spec, filePath, language, existingContent, siblings),
+			AllowedTools:   []string{},
+			Status:         "pending",
+			OutputSchema:   DiffHunkSchema,
+			OutputFormat:   "source_code",
+			OutputLanguage: language,
+		},
+		{
+			ID:                  "validate_code",
+			Type:                "deterministic",
+			Action:              "validate_code",
+			Instructions:        fmt.Sprintf("Validate the patched code by running compilation against %s", filePath),
+			AllowedTools:        []string{"validate_code"},
+			Status:              "pending",
+			ActivationThreshold: 0.7,
+		},
+	}
+
+	edges := []compiler.GraphEdge{
+		{SourceID: "explore_context", TargetID: "reason_code"},
+		{SourceID: "reason_code", TargetID: "validate_code"},
+	}
+
+	budget := &compiler.MutationBudget{MaxSpawns: 10, RemainingSpawns: 10}
+
+	return &compiler.ExecutionGraph{
+		TaskID:         taskID,
+		Nodes:          nodes,
+		Edges:          edges,
+		MutationBudget: budget,
+		GoalPrompt:     fmt.Sprintf("Apply diff edits to %s %s: %s", language, filePath, spec),
+		MaxCycles:      1,
+		CreatedAt:      time.Now().Unix(),
+	}
+}

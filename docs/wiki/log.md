@@ -1340,4 +1340,27 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [MODIFY] [index.md](index.md) (Updated local wiki index links)
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
+---
+
+## [2026-06-30T07:59:00-07:00] tdd | tzro_code Diff/Patch Mode & File Size Guard
+
+- **Activity**: Implemented structured diff mode for `tzro_code` using TDD (12 vertical RED→GREEN slices). Eliminates the 0% file-update success rate for files >300 lines by replacing whole-file rewrite with JSON hunk-based surgical edits.
+- **Spec**: `docs/superpowers/specs/2026-06-30-tzro-code-diff-mode-design.md`
+- **Key Components**:
+  - **Diff engine** (`ApplyDiffHunks`): exact substring match → fuzzy whitespace normalization fallback → error. Handles duplicate detection (ambiguity sentinel), empty file guard, deletion/insertion hunks.
+  - **File size guard**: Hard 500-line limit for full rewrite mode. Auto-mode threshold at 200 lines.
+  - **Routing matrix**: `{simple, moderate/complex} × {full, diff}` → 4 DAG builders.
+  - **GBNF constraint**: `DiffHunkSchema` JSON schema on `reason_code` node's `OutputSchema` forces structured output.
+- **Test Results**: 31 tests pass (19 original + 12 new), 0 regressions, clean build.
+- **Files**:
+  - [NEW] `internal/codegen/diff_types.go` (DiffHunk, DiffOutput, DiffHunkSchema)
+  - [NEW] `internal/codegen/diff_apply.go` (ApplyDiffHunks engine)
+  - [NEW] `internal/codegen/diff_apply_test.go` (8 test cases)
+  - [NEW] `internal/codegen/diff_prompt.go` (BuildDiffPrompt)
+  - [NEW] `internal/codegen/diff_prompt_test.go` (2 test cases)
+  - [NEW] `internal/codegen/codegen_diff.go` (BuildDiffDAG)
+  - [NEW] `internal/codegen/codegen_diff_test.go` (2 test cases for DAG structure)
+  - [MODIFY] `internal/codegen/codegen_exploration.go` (BuildDiffDAGWithExploration)
+  - [MODIFY] `cmd/tzro-mcp/tools.go` (Mode param, auto-mode, size guard, routing, post-DAG diff branch)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
 

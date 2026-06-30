@@ -267,7 +267,16 @@ type TzroCodeArgs struct {
 	Language string `json:"language,omitempty" jsonschema:"Programming language override. Auto-detected from file extension if omitted"`
 	MaxLines int    `json:"maxLines,omitempty" jsonschema:"Maximum lines for generated file. Default: 500 or config codeMaxLines"`
 	Timeout  int    `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 120"`
+	Mode     string `json:"mode,omitempty" jsonschema:"Code generation mode: 'full' (whole file), 'diff' (structured hunks), or '' (auto-select). Auto: new/small files use full, large files use diff"`
 }
+
+// maxFullRewriteLines is the hard limit for whole-file rewrite mode.
+// Files exceeding this must use diff mode to prevent truncation data loss.
+const maxFullRewriteLines = 500
+
+// autoModeDiffThreshold is the line count above which auto-mode selects diff
+// instead of full. Set lower than the hard guard to prefer diff early.
+const autoModeDiffThreshold = 200
 
 func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCodeArgs) (*mcp.CallToolResult, any, error) {
 	if strings.TrimSpace(args.Spec) == "" {
@@ -322,16 +331,93 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		}
 	}
 
+	// --- Mode resolution ---
+	mode := args.Mode
+
+	// Validate mode value
+	if mode != "" && mode != "full" && mode != "diff" {
+		errJSON := fmt.Sprintf(`{"error": "Invalid mode %q. Must be 'full', 'diff', or '' (auto-select)."}`, mode)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: errJSON},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Diff mode requires an existing file
+	if mode == "diff" && !codeCtx.Exists {
+		errJSON := fmt.Sprintf(
+			`{"error": "Cannot use mode \"diff\" for %s: file does not exist. Use mode \"full\" for new file creation."}`,
+			args.Filepath,
+		)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: errJSON},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Auto-mode selection
+	if mode == "" {
+		if !codeCtx.Exists {
+			mode = "full" // New file creation → whole file
+		} else {
+			existingLines := strings.Count(codeCtx.ExistingContent, "\n")
+			if existingLines > autoModeDiffThreshold {
+				mode = "diff" // Large existing file → diff mode
+			} else {
+				mode = "full" // Small existing file → whole file OK
+			}
+		}
+	}
+
+	// File size guard: files > 500 lines MUST use diff mode
+	if codeCtx.Exists && mode != "diff" {
+		existingLines := strings.Count(codeCtx.ExistingContent, "\n")
+		if existingLines > maxFullRewriteLines {
+			respMap := map[string]interface{}{
+				"status": "failed",
+				"taskId": "",
+				"error": fmt.Sprintf(
+					"File %s has %d lines (limit: %d for full rewrite). "+
+						"Use mode: \"diff\" for surgical edits, or decompose the file into "+
+						"smaller single-responsibility files.",
+					args.Filepath, existingLines, maxFullRewriteLines,
+				),
+				"suggestion": "diff",
+			}
+			respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: string(respBytes)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "[tzro_code] Mode=%s for %s\n", mode, args.Filepath)
+
 	// Build DAG with pre-computed context
-	// Route via complexity classification: simple specs use the static single-node
-	// path, moderate/complex specs use the exploration DAG with Edge Thoughts.
+	// Route via complexity × mode matrix:
+	//   simple + full   → BuildCodeDAG
+	//   simple + diff   → BuildDiffDAG
+	//   moderate/complex + full → BuildCodeDAGWithExploration
+	//   moderate/complex + diff → BuildDiffDAGWithExploration
 	tier := classifyCodeComplexity(args.Spec, codeCtx)
 	var graph *compiler.ExecutionGraph
-	switch tier {
-	case "moderate", "complex":
+	switch {
+	case (tier == "moderate" || tier == "complex") && mode == "diff":
+		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, using diff exploration DAG for %s\n", tier, args.Filepath)
+		graph = codegen.BuildDiffDAGWithExploration(taskID, args.Spec, args.Filepath, language, codeCtx)
+	case (tier == "moderate" || tier == "complex") && mode == "full":
 		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, using exploration DAG for %s\n", tier, args.Filepath)
 		graph = codegen.BuildCodeDAGWithExploration(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
-	default: // "simple"
+	case mode == "diff":
+		graph = codegen.BuildDiffDAG(taskID, args.Spec, args.Filepath, language, codeCtx)
+	default: // simple + full
 		graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
 	}
 
@@ -377,7 +463,10 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			"status":   status,
 			"filepath": args.Filepath,
 			"language": language,
-			"maxLines": maxLines,
+			"mode":     mode,
+		}
+		if mode == "full" {
+			respMap["maxLines"] = maxLines
 		}
 		if errMsg != "" {
 			respMap["error"] = errMsg
@@ -395,18 +484,67 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 				}
 			}
 
-			if rawCode != "" {
-				writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
-				if writeErr != nil {
-					respMap["status"] = "failed"
-					respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
-				} else {
-					respMap["action"] = writeAction
-					respMap["linesWritten"] = linesWritten
-				}
-			} else {
+			if rawCode == "" {
 				respMap["status"] = "failed"
 				respMap["error"] = "reason_code produced no output"
+			} else {
+				switch mode {
+				case "diff":
+					// Parse structured diff output
+					var diffOutput codegen.DiffOutput
+					rawJSON := rawCode
+					// Try direct parse; fallback to stripping markdown fences
+					if err := json.Unmarshal([]byte(rawJSON), &diffOutput); err != nil {
+						stripped := codegen.StripMarkdownFences(rawJSON)
+						if err2 := json.Unmarshal([]byte(stripped), &diffOutput); err2 != nil {
+							respMap["status"] = "failed"
+							respMap["error"] = fmt.Sprintf("diff output parse failed: %v", err)
+							break
+						}
+					}
+
+					if len(diffOutput.Hunks) == 0 {
+						respMap["status"] = "failed"
+						respMap["error"] = "diff output contained no hunks"
+						break
+					}
+
+					// Apply hunks to existing content
+					patched, applyErr := codegen.ApplyDiffHunks(codeCtx.ExistingContent, diffOutput.Hunks)
+					if applyErr != nil {
+						respMap["status"] = "failed"
+						respMap["error"] = fmt.Sprintf("diff application failed: %v", applyErr)
+					} else {
+						// Write patched file
+						if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
+							fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
+						}
+						if writeErr := os.WriteFile(args.Filepath, []byte(patched), 0644); writeErr != nil {
+							respMap["status"] = "failed"
+							respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
+						} else {
+							totalLines := strings.Count(patched, "\n")
+							linesChanged := 0
+							for _, h := range diffOutput.Hunks {
+								linesChanged += strings.Count(h.ReplaceContent, "\n") + 1
+							}
+							respMap["action"] = "updated"
+							respMap["hunksApplied"] = len(diffOutput.Hunks)
+							respMap["linesChanged"] = linesChanged
+							respMap["totalLines"] = totalLines
+						}
+					}
+
+				default: // "full"
+					writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
+					if writeErr != nil {
+						respMap["status"] = "failed"
+						respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
+					} else {
+						respMap["action"] = writeAction
+						respMap["linesWritten"] = linesWritten
+					}
+				}
 			}
 		}
 
@@ -2388,7 +2526,7 @@ func registerTools(server *mcp.Server) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_code",
-		Description: "Generate or update a single file using a static 3-node DAG (check_context → reason_code → write_code). Pass a spec/JSDoc and filepath. Encourages compact, single-responsibility files.",
+		Description: "Generate or update a single file via local LLM codegen. Supports two modes: 'full' (whole-file rewrite, default for new/small files) and 'diff' (structured hunk edits, default for files >200 lines). Files >500 lines MUST use diff mode. Pass a spec/JSDoc and filepath.",
 	}, handleTzroCode)
 
 	mcp.AddTool(server, &mcp.Tool{
