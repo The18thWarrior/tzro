@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation — tzro | Local-First Agentic Execution Engine</title>
+  <meta name="description"
+    content="Complete technical documentation for tzro — the production-grade, durable, local-first Agentic Execution Engine. Installation, security model, hardware optimization, and debugging guides." />
+
+  <!-- Fonts (shared with main site) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;1,400&family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet" />
+
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="docs.css" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+</head>
+
+<body class="verdant-synth">
+  <!-- ================================================================== -->
+  <!-- SHARED HEADER                                                       -->
+  <!-- ================================================================== -->
+  <header class="tzro-header">
+    <div class="header-container">
+      <a href="index.html" class="logo-area">
+        <svg class="tzro-logo" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="512" height="512" rx="128" fill="#0A110D" />
+          <g filter="drop-shadow(0px 8px 16px rgba(182, 255, 0, 0.15))">
+            <path d="M 256,160 L 256,360" stroke="#5C6B62" stroke-width="48" stroke-linecap="round"
+              stroke-linejoin="round" />
+            <path d="M 160,160 L 352,160 L 160,352 L 352,352" stroke="#5C6B62" stroke-width="48" stroke-linecap="round"
+              stroke-linejoin="round" fill="none" />
+            <path d="M 256,184 L 256,336" stroke="#B6FF00" stroke-width="8" stroke-linecap="round"
+              stroke-linejoin="round" />
+            <path d="M 184,160 L 328,160 L 184,352 L 328,352" stroke="#B6FF00" stroke-width="8" stroke-linecap="round"
+              stroke-linejoin="round" fill="none" />
+          </g>
+        </svg>
+        <span class="logo-text">tzro</span>
+      </a>
+      <nav class="header-nav">
+        <a href="index.html" class="nav-link">Home</a>
+        <a href="docs.html" class="nav-link active-route">Docs</a>
+      </nav>
+      <button class="hamburger-btn" id="mobile-menu-toggle" aria-label="Toggle Navigation" aria-expanded="false">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round">
+          <line x1="4" y1="6" x2="20" y2="6" class="line-top"></line>
+          <line x1="4" y1="12" x2="20" y2="12" class="line-mid"></line>
+          <line x1="4" y1="18" x2="20" y2="18" class="line-bot"></line>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Mobile nav drawer -->
+  <div class="mobile-nav-drawer" id="mobile-nav-drawer">
+    <nav class="mobile-nav-content">
+      <a href="index.html" class="mobile-nav-link">Home</a>
+      <a href="docs.html" class="mobile-nav-link active-route">Docs</a>
+    </nav>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- DOCS PAGE LAYOUT                                                    -->
+  <!-- ================================================================== -->
+  <div class="docs-page">
+    <!-- Mobile sidebar backdrop -->
+    <div class="docs-sidebar-backdrop"></div>
+
+    <!-- Mobile sidebar FAB -->
+    <button class="docs-mobile-toggle" aria-label="Toggle docs sidebar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="12" x2="15" y2="12"></line>
+        <line x1="3" y1="18" x2="18" y2="18"></line>
+      </svg>
+    </button>
+
+    <!-- ============================================================== -->
+    <!-- LEFT SIDEBAR — Navigation                                       -->
+    <!-- ============================================================== -->
+    <aside class="docs-sidebar">
+      <!-- Section 1 -->
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-group-title">
+          Introduction
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <ul class="docs-sidebar-items">
+          <li><a href="#introduction" class="docs-sidebar-link">Core Paradigm Shift</a></li>
+          <li><a href="#inference-arbitrage" class="docs-sidebar-link">Inference Arbitrage</a></li>
+          <li><a href="#cloud-vs-local" class="docs-sidebar-link">Cloud vs Local Split</a></li>
+        </ul>
+      </div>
+
+      <!-- Section 2 -->
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-group-title">
+          Quickstart
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <ul class="docs-sidebar-items">
+          <li><a href="#quickstart" class="docs-sidebar-link">5-Minute Setup</a></li>
+          <li><a href="#step-bootstrap" class="docs-sidebar-link">Single-Line Bootstrap</a></li>
+          <li><a href="#step-registration" class="docs-sidebar-link">Client Registration</a></li>
+          <li><a href="#step-first-run" class="docs-sidebar-link">First Offline Run</a></li>
+        </ul>
+      </div>
+
+      <!-- Section 3 -->
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-group-title">
+          Security
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <ul class="docs-sidebar-items">
+          <li><a href="#security" class="docs-sidebar-link">Sandbox Transparency</a></li>
+          <li><a href="#data-sovereignty" class="docs-sidebar-link">Data Sovereignty</a></li>
+          <li><a href="#containerized-execution" class="docs-sidebar-link">Containerized Execution</a></li>
+          <li><a href="#grammar-gating" class="docs-sidebar-link">Grammar Gating</a></li>
+          <li><a href="#network-isolation" class="docs-sidebar-link">Network Isolation</a></li>
+        </ul>
+      </div>
+
+      <!-- Section 4 -->
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-group-title">
+          Hardware Optimization
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <ul class="docs-sidebar-items">
+          <li><a href="#hardware" class="docs-sidebar-link">Local Performance</a></li>
+          <li><a href="#speculative-decoding" class="docs-sidebar-link">Speculative Decoding</a></li>
+          <li><a href="#kv-prefix-sharing" class="docs-sidebar-link">KV Prefix Sharing</a></li>
+          <li><a href="#attention-preemption" class="docs-sidebar-link">Attention Preemption</a></li>
+        </ul>
+      </div>
+
+      <!-- Section 5 -->
+      <div class="docs-sidebar-group">
+        <div class="docs-sidebar-group-title">
+          Debugging
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </div>
+        <ul class="docs-sidebar-items">
+          <li><a href="#debugging" class="docs-sidebar-link">Visibility &amp; Debugging</a></li>
+          <li><a href="#tui-dashboard" class="docs-sidebar-link">TUI Dashboard</a></li>
+          <li><a href="#cost-attestation" class="docs-sidebar-link">Cost Attestation</a></li>
+          <li><a href="#log-audit" class="docs-sidebar-link">Logs &amp; Audit</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- ============================================================== -->
+    <!-- MAIN CONTENT                                                    -->
+    <!-- ============================================================== -->
+    <main class="docs-content">
+
+      <!-- ============================================================ -->
+      <!-- 1. INTRODUCTION & CORE PARADIGM SHIFT                        -->
+      <!-- ============================================================ -->
+      <div class="docs-section" id="introduction">
+        <h1>TZRO MCP Sidecar (<code>tzrod</code>)</h1>
+        <p class="docs-subtitle">
+          A production-grade, durable, local-first Agentic Execution Engine built strictly on top of the
+          <strong>Pristal specification</strong>. This is the runtime your AI agent is missing.
+        </p>
+
+        <h2 id="inference-arbitrage">Inference Arbitrage via Cooperative Execution</h2>
+
+        <p>
+          Today's agentic coding workflows are fragile. A cloud-only "generate-and-run" chat loop means
+          every directory listing, every file parse, every grep runs through a frontier API —
+          burning tokens, hitting daily rate limits, and freezing your workflow mid-task. This is
+          <strong>token-maxing</strong>: feeding a $15/MTok model with work a local 3B can handle in milliseconds.
+        </p>
+
+        <p>
+          <code>tzro</code> implements <strong>Inference Arbitrage</strong> — the principle that the right
+          model for the job is rarely the most expensive one. By routing execution-level work to a
+          grammar-locked local engine, you preserve your cloud budget for what actually requires frontier
+          reasoning: code generation, architectural judgment, and interactive user dialogue.
+        </p>
+
+        <div class="docs-callout callout-tip">
+          <div class="docs-callout-icon">💡</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">The Core Insight</div>
+            <p>
+              Directory traversal, file parsing, JSON formatting, and database sync are <strong>routing decisions</strong>,
+              not <strong>frontier reasoning</strong>. A 4-bit quantized 3B model handles them perfectly — at zero API cost.
+            </p>
+          </div>
+        </div>
+
+        <h3 id="cloud-vs-local">The Cloud Plans, Local Executes</h3>
+
+        <p>
+          The division of labor is explicit and non-negotiable:
+        </p>
+
+        <div class="docs-feature-grid">
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">☁️</div>
+            <h4>Cloud — The Planner</h4>
+            <p>
+              Handles non-sensitive abstract graph compilation. Generates DAG workflows, makes architectural
+              decisions, synthesizes final outputs. This is where frontier reasoning lives.
+            </p>
+          </div>
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">⚙️</div>
+            <h4>Local Go Engine — The Executor</h4>
+            <p>
+              Handles the execution grunt work: directory indexing, file parsing, tool dispatch,
+              database sync, and structured output generation. All behind <code>127.0.0.1</code>.
+            </p>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>Cloud-Only Loop</th>
+              <th>tzro Cooperative Model</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Cost per file scan</td>
+              <td class="comparison-old">~$0.02–$0.08</td>
+              <td class="comparison-new">$0.00 (local)</td>
+            </tr>
+            <tr>
+              <td>Rate limit exposure</td>
+              <td class="comparison-old">High — daily freezes</td>
+              <td class="comparison-new">Near-zero for execution tasks</td>
+            </tr>
+            <tr>
+              <td>Data residency</td>
+              <td class="comparison-old">Code leaves premises</td>
+              <td class="comparison-new">100% loopback — code never leaves</td>
+            </tr>
+            <tr>
+              <td>Execution durability</td>
+              <td class="comparison-old">Stateless — lost on disconnect</td>
+              <td class="comparison-new">Checkpointed in SQLite</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 2. THE 5-MINUTE PLUG-AND-PLAY QUICKSTART                     -->
+      <!-- ============================================================ -->
+      <div class="docs-section" id="quickstart">
+        <h2>The 5-Minute Plug-and-Play Quickstart</h2>
+
+        <p>
+          Zero habit change. <code>tzro</code> plugs directly into your existing client tools — Claude Code,
+          Cursor, Zed — as an MCP server. You keep using your tools exactly as before; the sidecar silently
+          intercepts execution-level work and routes it locally.
+        </p>
+
+        <div class="docs-steps">
+          <!-- Step 1 -->
+          <div class="docs-step" id="step-bootstrap">
+            <div class="docs-step-number">1</div>
+            <div class="docs-step-body">
+              <div class="docs-step-title">Single-Line Bootstrap</div>
+              <p>
+                One command provisions everything. No package manager, no dependency tree, no build step.
+              </p>
+
+              <div class="docs-code-block">
+                <div class="docs-code-header">
+                  <span class="docs-code-lang">Shell</span>
+                  <button class="docs-code-copy" aria-label="Copy code">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <span class="copy-label">Copy</span>
+                  </button>
+                </div>
+                <pre><code><span class="tok-function">curl</span> <span class="tok-flag">-fsSL</span> <span class="tok-url">https://get.tzro.ai</span> <span class="tok-operator">|</span> <span class="tok-function">sh</span></code></pre>
+              </div>
+
+              <p>Behind the scenes, the bootstrap script performs:</p>
+              <ul>
+                <li>Provisions the <code>~/.tzro/</code> configuration directory</li>
+                <li>Downloads the <code>tzrod</code> statically-linked Go binary for your platform</li>
+                <li>Fetches the default <strong>4-bit quantized Qwen-3B GGUF</strong> model (~1.8 GB)</li>
+                <li>Initializes the local SQLite state database (<code>~/.tzro/tzro.db</code>)</li>
+                <li>Adds <code>~/.tzro/bin</code> to your <code>$PATH</code> via shell profile detection</li>
+              </ul>
+
+              <div class="docs-callout callout-note">
+                <div class="docs-callout-icon">📦</div>
+                <div class="docs-callout-body">
+                  <div class="docs-callout-title">What Gets Installed</div>
+                  <p>
+                    Total footprint: ~2.1 GB (model + binary + DB). Everything lives in <code>~/.tzro/</code>.
+                    No root access required. Uninstall is <code>rm -rf ~/.tzro</code>.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="docs-step" id="step-registration">
+            <div class="docs-step-number">2</div>
+            <div class="docs-step-body">
+              <div class="docs-step-title">Client Workspace Registration</div>
+              <p>
+                Register <code>tzrod</code> as an MCP server in your AI coding client. Copy-paste the
+                appropriate configuration block:
+              </p>
+
+              <h4>Claude Code — <code>~/.claude.json</code></h4>
+              <div class="docs-code-block">
+                <div class="docs-code-header">
+                  <span class="docs-code-lang">JSON</span>
+                  <button class="docs-code-copy" aria-label="Copy code">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <span class="copy-label">Copy</span>
+                  </button>
+                </div>
+                <pre><code>{
+  <span class="tok-property">"mcpServers"</span><span class="tok-punctuation">:</span> {
+    <span class="tok-property">"tzro"</span><span class="tok-punctuation">:</span> {
+      <span class="tok-property">"command"</span><span class="tok-punctuation">:</span> <span class="tok-string">"tzrod"</span><span class="tok-punctuation">,</span>
+      <span class="tok-property">"args"</span><span class="tok-punctuation">:</span> [<span class="tok-string">"mcp"</span>]<span class="tok-punctuation">,</span>
+      <span class="tok-property">"env"</span><span class="tok-punctuation">:</span> {
+        <span class="tok-property">"TZRO_DIR"</span><span class="tok-punctuation">:</span> <span class="tok-string">"."</span>
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <h4>Cursor IDE — MCP Server Settings</h4>
+              <div class="docs-code-block">
+                <div class="docs-code-header">
+                  <span class="docs-code-lang">JSON</span>
+                  <button class="docs-code-copy" aria-label="Copy code">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <span class="copy-label">Copy</span>
+                  </button>
+                </div>
+                <pre><code>{
+  <span class="tok-property">"mcpServers"</span><span class="tok-punctuation">:</span> {
+    <span class="tok-property">"tzro"</span><span class="tok-punctuation">:</span> {
+      <span class="tok-property">"command"</span><span class="tok-punctuation">:</span> <span class="tok-string">"tzrod"</span><span class="tok-punctuation">,</span>
+      <span class="tok-property">"args"</span><span class="tok-punctuation">:</span> [<span class="tok-string">"mcp"</span>]<span class="tok-punctuation">,</span>
+      <span class="tok-property">"env"</span><span class="tok-punctuation">:</span> {
+        <span class="tok-property">"TZRO_DIR"</span><span class="tok-punctuation">:</span> <span class="tok-string">"."</span>
+      }
+    }
+  }
+}</code></pre>
+              </div>
+
+              <div class="docs-callout callout-tip">
+                <div class="docs-callout-icon">⚡</div>
+                <div class="docs-callout-body">
+                  <div class="docs-callout-title">Automatic Detection</div>
+                  <p>
+                    <code>TZRO_DIR="."</code> tells the sidecar to use the current workspace as its project root.
+                    The daemon auto-discovers project structure, existing <code>.agents/</code> configs, and
+                    any <code>tzro.db</code> state from prior runs.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="docs-step" id="step-first-run">
+            <div class="docs-step-number">3</div>
+            <div class="docs-step-body">
+              <div class="docs-step-title">Trigger an Offline Run</div>
+              <p>
+                With the MCP server registered, your AI client can now delegate execution tasks to the
+                local engine. Try it:
+              </p>
+
+              <div class="docs-code-block">
+                <div class="docs-code-header">
+                  <span class="docs-code-lang">Shell</span>
+                  <button class="docs-code-copy" aria-label="Copy code">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <span class="copy-label">Copy</span>
+                  </button>
+                </div>
+                <pre><code><span class="tok-comment"># From Claude Code, Cursor, or any MCP-compatible client:</span>
+<span class="tok-string">"Use tzro to build markdown documentation for this entire directory."</span>
+
+<span class="tok-comment"># Or directly via CLI:</span>
+<span class="tok-function">tzro</span> chat <span class="tok-string">"Explore this codebase and explain its architecture."</span></code></pre>
+              </div>
+
+              <p>
+                The sidecar compiles a DAG workflow, topologically sorts the nodes via the Kahn Compiler,
+                and executes them in parallel where possible — all locally, all checkpointed.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 3. LOCAL SECURITY & SANDBOX TRANSPARENCY                     -->
+      <!-- ============================================================ -->
+      <div class="docs-section" id="security">
+        <h2>Local Security &amp; Sandbox Transparency</h2>
+
+        <p>
+          We assume you're skeptical of running a local executable that intercepts AI tool calls. Good.
+          Here's the complete security architecture — no hand-waving, no "trust us" appeals.
+          <strong>Least-Privilege Security-by-Design</strong> at every layer.
+        </p>
+
+        <h3 id="data-sovereignty">Data Sovereignty</h3>
+
+        <p>
+          100% of code parsing, file edits, and tool manipulations remain local behind the loopback
+          interface. Sensitive corporate data <strong>never leaves the premises</strong>.
+        </p>
+
+        <div class="docs-feature-grid">
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">🔒</div>
+            <h4>Loopback-Only Binding</h4>
+            <p>
+              The MCP server binds exclusively to <code>127.0.0.1</code>. No external network interfaces
+              are exposed. Zero attack surface from outside the machine.
+            </p>
+          </div>
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">💾</div>
+            <h4>Local SQLite State</h4>
+            <p>
+              All execution state, memory, and knowledge graph data persists in
+              <code>~/.tzro/tzro.db</code> — a single file on your disk. No cloud sync, no telemetry.
+            </p>
+          </div>
+        </div>
+
+        <div class="docs-callout callout-security">
+          <div class="docs-callout-icon">🛡️</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Zero Telemetry Guarantee</div>
+            <p>
+              <code>tzrod</code> makes exactly zero outbound network requests during normal operation.
+              Model weights are fetched once during bootstrap. Everything else is local.
+              Verify this yourself: <code>sudo lsof -i -P | grep tzrod</code>.
+            </p>
+          </div>
+        </div>
+
+        <h3 id="containerized-execution">Containerized Execution</h3>
+
+        <p>
+          When tasks require code execution beyond simple file operations, TZRO dynamically orchestrates
+          short-lived, task-scoped container sandboxes leveraging local <strong>Podman</strong> socket routes.
+        </p>
+
+        <ul>
+          <li><strong>Ephemeral containers</strong> — spun up per-task, destroyed on completion. No persistent state leakage between executions.</li>
+          <li><strong>Rootless Podman</strong> — no Docker daemon, no root access. Runs entirely in userspace via <code>podman --rootless</code>.</li>
+          <li><strong>Resource-capped</strong> — each container is CPU/memory-limited to prevent runaway processes from impacting your development environment.</li>
+        </ul>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Shell</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment"># How tzro spawns a sandboxed execution container:</span>
+<span class="tok-function">podman</span> run <span class="tok-flag">--rm</span> <span class="tok-flag">--read-only</span> \
+  <span class="tok-flag">--network=none</span> \
+  <span class="tok-flag">--memory=512m</span> <span class="tok-flag">--cpus=1.0</span> \
+  <span class="tok-flag">-v</span> <span class="tok-path">/project:/workspace:ro</span> \
+  <span class="tok-string">tzro-sandbox:latest</span> \
+  <span class="tok-function">sh</span> <span class="tok-flag">-c</span> <span class="tok-string">"$TASK_COMMAND"</span></code></pre>
+        </div>
+
+        <h3 id="grammar-gating">Grammar Gating (GBNF)</h3>
+
+        <p>
+          The local LLM doesn't have free-form output. Every generation call is constrained by
+          <strong>logit-level GBNF grammar rules</strong> that mathematically prevent arbitrary command injection.
+        </p>
+
+        <p>
+          The model's output is restricted strictly to predefined JSON schemas. It <em>cannot</em>
+          produce output outside the grammar — this is enforced at the logit sampling level, not by
+          post-hoc filtering. If the grammar says the output must be a JSON object with keys
+          <code>tool</code>, <code>args</code>, and <code>reasoning</code>, then that is the only structure
+          the model can physically produce.
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">GBNF Grammar</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment"># Example: Tool dispatch grammar constraint</span>
+<span class="tok-variable">root</span>   <span class="tok-operator">::=</span> <span class="tok-string">"{"</span> ws <span class="tok-string">"\"tool\":"</span> ws tool-name <span class="tok-string">","</span> ws
+             <span class="tok-string">"\"args\":"</span> ws json-object <span class="tok-string">","</span> ws
+             <span class="tok-string">"\"reasoning\":"</span> ws string ws <span class="tok-string">"}"</span>
+<span class="tok-variable">tool-name</span> <span class="tok-operator">::=</span> <span class="tok-string">"\"read_file\""</span> <span class="tok-operator">|</span> <span class="tok-string">"\"list_dir\""</span> <span class="tok-operator">|</span> <span class="tok-string">"\"search_files\""</span> <span class="tok-operator">|</span> <span class="tok-string">"\"web_search\""</span></code></pre>
+        </div>
+
+        <div class="docs-callout callout-security">
+          <div class="docs-callout-icon">🔐</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Why This Matters</div>
+            <p>
+              Traditional LLM guardrails rely on prompt instructions ("don't run dangerous commands") which
+              can be jailbroken. GBNF constraints are <strong>mathematical</strong> — the model literally
+              cannot emit tokens outside the defined grammar. It's the difference between asking someone
+              nicely not to open a door and welding the door shut.
+            </p>
+          </div>
+        </div>
+
+        <h3 id="network-isolation">Network Isolation</h3>
+
+        <p>
+          Mounted target repositories default to <strong>read-only parameters</strong>, and network
+          interfaces inside execution containers are entirely decoupled (<code>network=none</code>) to
+          block supply-chain leaks.
+        </p>
+
+        <ul>
+          <li><strong>Read-only mounts</strong> — project directories are mounted with <code>:ro</code> flag by default. Write access requires explicit opt-in via task configuration.</li>
+          <li><strong>Network decoupled</strong> — containers run with <code>--network=none</code>. No DNS resolution, no HTTP requests, no exfiltration vector.</li>
+          <li><strong>No package installation</strong> — containers have no access to package registries. No <code>npm install</code>, no <code>pip install</code>, no supply-chain attacks.</li>
+        </ul>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 4. LOCAL HARDWARE OPTIMIZATION                               -->
+      <!-- ============================================================ -->
+      <div class="docs-section" id="hardware">
+        <h2>Local Hardware Optimization</h2>
+
+        <p>
+          Running a local LLM sidecar will <strong>not</strong> freeze your laptop or disrupt your
+          multitasking workflow. Here's exactly how we ensure that.
+        </p>
+
+        <div class="docs-callout callout-note">
+          <div class="docs-callout-icon">💻</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Target Hardware Profile</div>
+            <p>
+              <code>tzrod</code> is optimized for standard developer laptops — 16 GB RAM, 8-core CPU,
+              no dedicated GPU required. The 4-bit quantized Qwen-3B model uses ~1.8 GB RAM at inference time.
+            </p>
+          </div>
+        </div>
+
+        <h3 id="speculative-decoding">Speculative Decoding</h3>
+
+        <p>
+          <code>tzrod</code> uses <strong>n-gram speculative decoding</strong> forward-projections to speed up
+          local 3B–4B generation velocities by <span class="docs-math">1.8×</span> on standard CPUs.
+        </p>
+
+        <p>
+          The technique works by maintaining a rolling n-gram cache of recently generated token sequences.
+          When the model begins generating a new sequence, the speculative decoder proposes multiple
+          candidate continuations in parallel based on n-gram frequency statistics. The main model then
+          verifies these candidates in a single forward pass — accepting correct predictions for free
+          and rejecting mismatches with zero wasted compute.
+        </p>
+
+        <div class="docs-feature-grid">
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">⚡</div>
+            <h4>1.8× Throughput Boost</h4>
+            <p>
+              Measured on Apple M-series and Intel i7/i9 CPUs. JSON-structured output (tool dispatch)
+              benefits most due to predictable token patterns.
+            </p>
+          </div>
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">🧠</div>
+            <h4>Zero Quality Loss</h4>
+            <p>
+              Speculative decoding is mathematically lossless. Accepted predictions produce identical
+              output to standard autoregressive generation.
+            </p>
+          </div>
+        </div>
+
+        <h3 id="kv-prefix-sharing">Warm KV Prefix-Sharing</h3>
+
+        <p>
+          System prompts and tool schemas are <strong>pin-locked into KV Cache slot <code>0</code></strong>,
+          eliminating redundant compilation on every request. The result: compilation times consistently
+          under <span class="docs-math">&lt;100ms</span>.
+        </p>
+
+        <p>
+          When <code>tzrod</code> starts, it pre-compiles the system prompt, all registered tool schemas,
+          and the GBNF grammar into a persistent KV Cache prefix. This prefix is shared across all
+          subsequent inference calls without re-processing. Only the user-specific context (task prompt,
+          file contents, intermediate outputs) needs fresh computation.
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Architecture</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment">┌─────────────────────────────────────────────────────────┐</span>
+<span class="tok-comment">│</span>  <span class="tok-type">KV Cache Slot 0</span> (pin-locked, persistent)               <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  ├── System Prompt          <span class="tok-number">~420 tokens</span>                  <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  ├── Tool Schemas (26 tools) <span class="tok-number">~1,800 tokens</span>               <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  └── GBNF Grammar           <span class="tok-number">~200 tokens</span>                  <span class="tok-comment">│</span>
+<span class="tok-comment">├─────────────────────────────────────────────────────────┤</span>
+<span class="tok-comment">│</span>  <span class="tok-type">KV Cache Slot 1</span> (dynamic, per-request)                 <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  ├── Task Prompt                                        <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  ├── File Contents / Context                            <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  └── Intermediate Outputs                               <span class="tok-comment">│</span>
+<span class="tok-comment">└─────────────────────────────────────────────────────────┘</span></code></pre>
+        </div>
+
+        <h3 id="attention-preemption">Zero-Latency Attention Preemption</h3>
+
+        <p>
+          The <strong><code>AttentionScheduler</code></strong> instantly pauses background processing tasks
+          and dumps their state to disk (<code>$slot_0.bin</code>) the exact millisecond a user triggers a
+          foreground prompt.
+        </p>
+
+        <p>
+          This ensures an interactive foreground Time-to-First-Token (TTFT) of
+          <span class="docs-math">≤ 450ms</span> — regardless of how many background DAG nodes are
+          currently executing. Your interactive coding session is never degraded by background work.
+        </p>
+
+        <div class="docs-callout callout-tip">
+          <div class="docs-callout-icon">🎯</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">How Preemption Works</div>
+            <p>
+              When a foreground prompt arrives, the <code>AttentionScheduler</code>: (1) signals the active
+              background inference to yield, (2) serializes its KV state to <code>$slot_0.bin</code>,
+              (3) loads the foreground context into the attention buffer, and (4) generates the response.
+              Once the foreground response is complete, the background task resumes from its serialized state
+              with zero recomputation.
+            </p>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Without Preemption</th>
+              <th>With AttentionScheduler</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Foreground TTFT</td>
+              <td class="comparison-old">2–8s (waits for background)</td>
+              <td class="comparison-new">≤ 450ms (instant preempt)</td>
+            </tr>
+            <tr>
+              <td>Background state loss</td>
+              <td class="comparison-old">Full recomputation</td>
+              <td class="comparison-new">Zero — state serialized</td>
+            </tr>
+            <tr>
+              <td>Context switch overhead</td>
+              <td class="comparison-old">N/A</td>
+              <td class="comparison-new">~30ms (KV dump + load)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 5. DEBUGGING & VISIBILITY                                    -->
+      <!-- ============================================================ -->
+      <div class="docs-section" id="debugging">
+        <h2>Debugging &amp; Visibility</h2>
+
+        <p>
+          Cooperative execution trades wall-clock latency for extreme cost savings — pennies vs. multi-dollar
+          cloud bills. We don't pretend this is free. What we do provide is <strong>total visibility</strong>
+          into what the background engine is doing, so you always know it isn't hanging.
+        </p>
+
+        <h3 id="tui-dashboard">Fullscreen TUI Dashboard</h3>
+
+        <p>
+          Launch the interactive terminal dashboard to visualize parallel Kahn Topological Sort execution
+          levels, node states, and real-time progress:
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Shell</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-function">tzro</span> tui</code></pre>
+        </div>
+
+        <p>
+          The Bubble Tea TUI shows:
+        </p>
+
+        <ul>
+          <li><strong>DAG visualization</strong> — nodes rendered by topological level with dependency edges</li>
+          <li><strong>Node status</strong> — pending, running, completed, failed, or skipped (with color coding)</li>
+          <li><strong>Live output streaming</strong> — real-time stdout from actively executing nodes</li>
+          <li><strong>Resource metrics</strong> — CPU, memory, and token generation throughput</li>
+        </ul>
+
+        <h3 id="cost-attestation">Real-Time Financial Savings Attestation</h3>
+
+        <p>
+          Every task completion includes a cost attestation block showing exactly how much you saved
+          by running locally vs. cloud:
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Terminal Output</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment">╭───────────────────────────────────────────────────────────╮</span>
+<span class="tok-comment">│</span>  <span class="tok-type">Task Complete</span> · explore-architecture         <span class="tok-number">14.2s</span>      <span class="tok-comment">│</span>
+<span class="tok-comment">├───────────────────────────────────────────────────────────┤</span>
+<span class="tok-comment">│</span>                                                           <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  Nodes executed       <span class="tok-number">7</span>  (4 parallel, 3 sequential)       <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  Local tokens          <span class="tok-number">12,847</span>                              <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  Cloud tokens saved    <span class="tok-number">12,847</span>                              <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>                                                           <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  <span class="tok-keyword">Estimated cloud cost</span>  <span class="tok-property">$0.19</span>                              <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  <span class="tok-keyword">Actual local cost</span>     <span class="tok-string">$0.00</span>                              <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  <span class="tok-keyword">You saved</span>             <span class="tok-function">$0.19</span> <span class="tok-comment">(100%)</span>                       <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>                                                           <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  Session total saved   <span class="tok-function">$4.72</span> across <span class="tok-number">31</span> tasks              <span class="tok-comment">│</span>
+<span class="tok-comment">╰───────────────────────────────────────────────────────────╯</span></code></pre>
+        </div>
+
+        <h3 id="log-audit">Logs &amp; Compliance Audit</h3>
+
+        <p>
+          For debugging execution issues or generating compliance documentation:
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Shell</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment"># Live engine logs — see every tool dispatch, node transition, and error</span>
+<span class="tok-function">tail</span> <span class="tok-flag">-f</span> <span class="tok-path">~/.tzro/logs/engine.log</span>
+
+<span class="tok-comment"># Generate a compliance audit report (HTML) for security review</span>
+<span class="tok-function">tzro</span> audit <span class="tok-flag">--compliance-html</span>
+
+<span class="tok-comment"># Inspect a specific task execution trace</span>
+<span class="tok-function">tzro</span> task status <span class="tok-variable">&lt;taskId&gt;</span> <span class="tok-flag">--offline</span></code></pre>
+        </div>
+
+        <p>
+          The compliance audit generates a standalone HTML document covering:
+        </p>
+
+        <ul>
+          <li><strong>Data flow attestation</strong> — proof that no data left loopback during the session</li>
+          <li><strong>Tool execution log</strong> — every tool invoked, arguments passed, and outputs returned</li>
+          <li><strong>Grammar constraint verification</strong> — confirmation that all LLM outputs matched GBNF schemas</li>
+          <li><strong>Container lifecycle audit</strong> — creation, execution, and teardown timestamps for all sandboxes</li>
+        </ul>
+
+        <div class="docs-callout callout-warning">
+          <div class="docs-callout-icon">⚠️</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Latency Expectations</div>
+            <p>
+              Local execution prioritizes cost savings over wall-clock speed. A task that takes 3 seconds on
+              a frontier API might take 12–18 seconds locally on a 3B model. The tradeoff: that 3-second cloud
+              call costs $0.08–$0.25. The local run costs $0.00 and doesn't count against your rate limit.
+            </p>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ============================================================== -->
+    <!-- RIGHT SIDEBAR — On This Page (TOC)                              -->
+    <!-- ============================================================== -->
+    <aside class="docs-toc">
+      <div class="docs-toc-title">On This Page</div>
+      <ul class="docs-toc-list">
+        <li><a href="#inference-arbitrage" class="docs-toc-link">Inference Arbitrage</a></li>
+        <li><a href="#cloud-vs-local" class="docs-toc-link toc-h3">Cloud Plans, Local Executes</a></li>
+
+        <li><a href="#quickstart" class="docs-toc-link">5-Minute Quickstart</a></li>
+        <li><a href="#step-bootstrap" class="docs-toc-link toc-h3">Single-Line Bootstrap</a></li>
+        <li><a href="#step-registration" class="docs-toc-link toc-h3">Client Registration</a></li>
+        <li><a href="#step-first-run" class="docs-toc-link toc-h3">First Offline Run</a></li>
+
+        <li><a href="#security" class="docs-toc-link">Security &amp; Sandbox</a></li>
+        <li><a href="#data-sovereignty" class="docs-toc-link toc-h3">Data Sovereignty</a></li>
+        <li><a href="#containerized-execution" class="docs-toc-link toc-h3">Containerized Execution</a></li>
+        <li><a href="#grammar-gating" class="docs-toc-link toc-h3">Grammar Gating</a></li>
+        <li><a href="#network-isolation" class="docs-toc-link toc-h3">Network Isolation</a></li>
+
+        <li><a href="#hardware" class="docs-toc-link">Hardware Optimization</a></li>
+        <li><a href="#speculative-decoding" class="docs-toc-link toc-h3">Speculative Decoding</a></li>
+        <li><a href="#kv-prefix-sharing" class="docs-toc-link toc-h3">KV Prefix Sharing</a></li>
+        <li><a href="#attention-preemption" class="docs-toc-link toc-h3">Attention Preemption</a></li>
+
+        <li><a href="#debugging" class="docs-toc-link">Debugging &amp; Visibility</a></li>
+        <li><a href="#tui-dashboard" class="docs-toc-link toc-h3">TUI Dashboard</a></li>
+        <li><a href="#cost-attestation" class="docs-toc-link toc-h3">Cost Attestation</a></li>
+        <li><a href="#log-audit" class="docs-toc-link toc-h3">Logs &amp; Audit</a></li>
+      </ul>
+    </aside>
+  </div>
+
+  <!-- ================================================================== -->
+  <!-- FOOTER                                                              -->
+  <!-- ================================================================== -->
+  <footer class="tzro-footer">
+    <div class="footer-container">
+      <p>&copy; 2026 tzro Project. Released under Apache-2.0 License.</p>
+      <div class="footer-links">
+        <a href="index.html">Home</a>
+        <a href="docs.html">Docs</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="docs.js"></script>
+</body>
+
+</html>
