@@ -25,9 +25,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function initMode() {
+    // GTM 2026: Default to user mode. Developer toggle is hidden.
+    // ?view=developer URL param still works as an internal backdoor.
     const urlMode = new URLSearchParams(location.search).get("view");
-    const storedMode = localStorage.getItem("tzro-site-mode");
-    const mode = urlMode || storedMode || "user";
+    const mode = urlMode === "developer" ? "developer" : "user";
     setMode(mode);
   }
 
