@@ -4,9 +4,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Documentation — tzro | Local-First Agentic Execution Engine</title>
+  <title>Documentation — TZRO | Local-First Agentic Execution Engine</title>
   <meta name="description"
-    content="Complete technical documentation for tzro — the production-grade, durable, local-first Agentic Execution Engine. Installation, security model, hardware optimization, and debugging guides." />
+    content="Complete technical documentation for TZRO — the production-grade, durable, local-first Agentic Execution Engine. Installation, security model, hardware optimization, and debugging guides." />
 
   <!-- Fonts (shared with main site) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -18,7 +18,7 @@
   <!-- Stylesheets -->
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="docs.css" />
-  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/svg+xml" href="logo.png" />
 </head>
 
 <body class="verdant-synth">
@@ -28,20 +28,171 @@
   <header class="tzro-header">
     <div class="header-container">
       <a href="index.html" class="logo-area">
-        <svg class="tzro-logo" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect width="512" height="512" rx="128" fill="#0A110D" />
-          <g filter="drop-shadow(0px 8px 16px rgba(182, 255, 0, 0.15))">
-            <path d="M 256,160 L 256,360" stroke="#5C6B62" stroke-width="48" stroke-linecap="round"
-              stroke-linejoin="round" />
-            <path d="M 160,160 L 352,160 L 160,352 L 352,352" stroke="#5C6B62" stroke-width="48" stroke-linecap="round"
-              stroke-linejoin="round" fill="none" />
-            <path d="M 256,184 L 256,336" stroke="#B6FF00" stroke-width="8" stroke-linecap="round"
-              stroke-linejoin="round" />
-            <path d="M 184,160 L 328,160 L 184,352 L 328,352" stroke="#B6FF00" stroke-width="8" stroke-linecap="round"
-              stroke-linejoin="round" fill="none" />
+        <!-- <svg class="tzro-logo" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path fill="#863bff"
+            d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" />
+          <mask id="a" width="48" height="46" x="0" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha">
+            <path fill="#000"
+              d="M25.842 44.938c-.664.844-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.183c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.498 0-3.579-1.842-3.579H1.133c-.92 0-1.456-1.04-.92-1.787L9.91.473c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.578 1.842 3.578h11.377c.943 0 1.473 1.088.89 1.832L25.843 44.94z"
+              style="fill:#000;fill-opacity:1" />
+          </mask>
+          <g mask="url(#a)">
+            <g filter="url(#b)">
+              <ellipse cx="5.508" cy="14.704" fill="#ede6ff" rx="5.508" ry="14.704"
+                transform="matrix(.00324 1 1 -.00324 -4.47 31.516)" />
+            </g>
+            <g filter="url(#c)">
+              <ellipse cx="10.399" cy="29.851" fill="#ede6ff" rx="10.399" ry="29.851"
+                transform="matrix(.00324 1 1 -.00324 -39.328 7.883)" />
+            </g>
+            <g filter="url(#d)">
+              <ellipse cx="5.508" cy="30.487" fill="#7e14ff" rx="5.508" ry="30.487"
+                transform="rotate(89.814 -25.913 -14.639)scale(1 -1)" />
+            </g>
+            <g filter="url(#e)">
+              <ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599"
+                transform="rotate(89.814 -32.644 -3.334)scale(1 -1)" />
+            </g>
+            <g filter="url(#f)">
+              <ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599"
+                transform="matrix(.00324 1 1 -.00324 -34.34 30.47)" />
+            </g>
+            <g filter="url(#g)">
+              <ellipse cx="14.072" cy="22.078" fill="#ede6ff" rx="14.072" ry="22.078"
+                transform="rotate(93.35 24.506 48.493)scale(-1 1)" />
+            </g>
+            <g filter="url(#h)">
+              <ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501"
+                transform="rotate(89.009 28.708 47.59)scale(-1 1)" />
+            </g>
+            <g filter="url(#i)">
+              <ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501"
+                transform="rotate(89.009 28.708 47.59)scale(-1 1)" />
+            </g>
+            <g filter="url(#j)">
+              <ellipse cx=".387" cy="8.972" fill="#7e14ff" rx="4.407" ry="29.108"
+                transform="rotate(39.51 .387 8.972)" />
+            </g>
+            <g filter="url(#k)">
+              <ellipse cx="47.523" cy="-6.092" fill="#7e14ff" rx="4.407" ry="29.108"
+                transform="rotate(37.892 47.523 -6.092)" />
+            </g>
+            <g filter="url(#l)">
+              <ellipse cx="41.412" cy="6.333" fill="#47bfff" rx="5.971" ry="9.665"
+                transform="rotate(37.892 41.412 6.333)" />
+            </g>
+            <g filter="url(#m)">
+              <ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108"
+                transform="rotate(37.892 -1.88 38.332)" />
+            </g>
+            <g filter="url(#n)">
+              <ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108"
+                transform="rotate(37.892 -1.88 38.332)" />
+            </g>
+            <g filter="url(#o)">
+              <ellipse cx="35.651" cy="29.907" fill="#7e14ff" rx="4.407" ry="29.108"
+                transform="rotate(37.892 35.651 29.907)" />
+            </g>
+            <g filter="url(#p)">
+              <ellipse cx="38.418" cy="32.4" fill="#47bfff" rx="5.971" ry="15.297"
+                transform="rotate(37.892 38.418 32.4)" />
+            </g>
           </g>
-        </svg>
-        <span class="logo-text">tzro</span>
+          <defs>
+            <filter id="b" width="60.045" height="41.654" x="-19.77" y="16.149" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659" />
+            </filter>
+            <filter id="c" width="90.34" height="51.437" x="-54.613" y="-7.533" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659" />
+            </filter>
+            <filter id="d" width="79.355" height="29.4" x="-49.64" y="2.03" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="e" width="79.579" height="29.4" x="-45.045" y="20.029" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="f" width="79.579" height="29.4" x="-43.513" y="21.178" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="g" width="74.749" height="58.852" x="15.756" y="-17.901" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659" />
+            </filter>
+            <filter id="h" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="i" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="j" width="56.045" height="63.649" x="-27.636" y="-22.853" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="k" width="54.814" height="64.646" x="20.116" y="-38.415" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="l" width="33.541" height="35.313" x="24.641" y="-11.323" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="m" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="n" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="o" width="54.814" height="64.646" x="8.244" y="-2.416" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+            <filter id="p" width="39.409" height="43.623" x="18.713" y="10.588" color-interpolation-filters="sRGB"
+              filterUnits="userSpaceOnUse">
+              <feFlood flood-opacity="0" result="BackgroundImageFix" />
+              <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
+              <feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596" />
+            </filter>
+          </defs>
+        </svg> -->
+        <img src="./logo.png" alt="TZRO" class="tzro-logo" />
+        <span class="logo-text">TZRO</span>
       </a>
       <nav class="header-nav">
         <a href="index.html" class="nav-link">Home</a>
@@ -90,11 +241,14 @@
       <div class="docs-sidebar-group">
         <div class="docs-sidebar-group-title">
           Introduction
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </div>
         <ul class="docs-sidebar-items">
-          <li><a href="#introduction" class="docs-sidebar-link">Core Paradigm Shift</a></li>
-          <li><a href="#inference-arbitrage" class="docs-sidebar-link">Inference Arbitrage</a></li>
+          <li><a href="#introduction" class="docs-sidebar-link">What's TZRO</a></li>
+          <li><a href="#inference-arbitrage" class="docs-sidebar-link">Intelligent Task Offloading</a></li>
           <li><a href="#cloud-vs-local" class="docs-sidebar-link">Cloud vs Local Split</a></li>
         </ul>
       </div>
@@ -103,7 +257,10 @@
       <div class="docs-sidebar-group">
         <div class="docs-sidebar-group-title">
           Quickstart
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </div>
         <ul class="docs-sidebar-items">
           <li><a href="#quickstart" class="docs-sidebar-link">5-Minute Setup</a></li>
@@ -117,7 +274,10 @@
       <div class="docs-sidebar-group">
         <div class="docs-sidebar-group-title">
           Security
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </div>
         <ul class="docs-sidebar-items">
           <li><a href="#security" class="docs-sidebar-link">Sandbox Transparency</a></li>
@@ -132,7 +292,10 @@
       <div class="docs-sidebar-group">
         <div class="docs-sidebar-group-title">
           Hardware Optimization
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </div>
         <ul class="docs-sidebar-items">
           <li><a href="#hardware" class="docs-sidebar-link">Local Performance</a></li>
@@ -146,7 +309,10 @@
       <div class="docs-sidebar-group">
         <div class="docs-sidebar-group-title">
           Debugging
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
         </div>
         <ul class="docs-sidebar-items">
           <li><a href="#debugging" class="docs-sidebar-link">Visibility &amp; Debugging</a></li>
@@ -166,13 +332,14 @@
       <!-- 1. INTRODUCTION & CORE PARADIGM SHIFT                        -->
       <!-- ============================================================ -->
       <div class="docs-section" id="introduction">
-        <h1>TZRO MCP Sidecar (<code>tzrod</code>)</h1>
+        <h1>What's TZRO</h1>
         <p class="docs-subtitle">
-          A production-grade, durable, local-first Agentic Execution Engine built strictly on top of the
-          <strong>Pristal specification</strong>. This is the runtime your AI agent is missing.
+          A zero-dependency, local-first agentic execution engine. It compiles natural language prompts into
+          topologically-sorted DAG (Directed Acyclic Graph) workflows, executes them durably with checkpointing,
+          and provides relational memory, knowledge graph, and micro-skill extraction.
         </p>
 
-        <h2 id="inference-arbitrage">Inference Arbitrage via Cooperative Execution</h2>
+        <h2 id="inference-arbitrage">Intelligent Task Offloading</h2>
 
         <p>
           Today's agentic coding workflows are fragile. A cloud-only "generate-and-run" chat loop means
@@ -193,8 +360,10 @@
           <div class="docs-callout-body">
             <div class="docs-callout-title">The Core Insight</div>
             <p>
-              Directory traversal, file parsing, JSON formatting, and database sync are <strong>routing decisions</strong>,
-              not <strong>frontier reasoning</strong>. A 4-bit quantized 3B model handles them perfectly — at zero API cost.
+              Directory traversal, file parsing, JSON formatting, and database sync are <strong>routing
+                decisions</strong>,
+              not <strong>frontier reasoning</strong>. A 4-bit quantized 3B model handles them perfectly — at zero API
+              cost.
             </p>
           </div>
         </div>
@@ -265,7 +434,8 @@
 
         <p>
           Zero habit change. <code>tzro</code> plugs directly into your existing client tools — Claude Code,
-          Cursor, Zed — as an MCP server. You keep using your tools exactly as before; the sidecar silently
+          Cursor, or other MCP hosts — as an MCP server. You keep using your tools exactly as before; the sidecar
+          silently
           intercepts execution-level work and routes it locally.
         </p>
 
@@ -283,7 +453,10 @@
                 <div class="docs-code-header">
                   <span class="docs-code-lang">Shell</span>
                   <button class="docs-code-copy" aria-label="Copy code">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
                     <span class="copy-label">Copy</span>
                   </button>
                 </div>
@@ -327,7 +500,10 @@
                 <div class="docs-code-header">
                   <span class="docs-code-lang">JSON</span>
                   <button class="docs-code-copy" aria-label="Copy code">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
                     <span class="copy-label">Copy</span>
                   </button>
                 </div>
@@ -349,7 +525,10 @@
                 <div class="docs-code-header">
                   <span class="docs-code-lang">JSON</span>
                   <button class="docs-code-copy" aria-label="Copy code">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
                     <span class="copy-label">Copy</span>
                   </button>
                 </div>
@@ -394,7 +573,10 @@
                 <div class="docs-code-header">
                   <span class="docs-code-lang">Shell</span>
                   <button class="docs-code-copy" aria-label="Copy code">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
                     <span class="copy-label">Copy</span>
                   </button>
                 </div>
@@ -472,16 +654,23 @@
         </p>
 
         <ul>
-          <li><strong>Ephemeral containers</strong> — spun up per-task, destroyed on completion. No persistent state leakage between executions.</li>
-          <li><strong>Rootless Podman</strong> — no Docker daemon, no root access. Runs entirely in userspace via <code>podman --rootless</code>.</li>
-          <li><strong>Resource-capped</strong> — each container is CPU/memory-limited to prevent runaway processes from impacting your development environment.</li>
+          <li><strong>Ephemeral containers</strong> — spun up per-task, destroyed on completion. No persistent state
+            leakage between executions.</li>
+          <li><strong>Rootless Podman</strong> — no Docker daemon, no root access. Runs entirely in userspace via
+            <code>podman --rootless</code>.
+          </li>
+          <li><strong>Resource-capped</strong> — each container is CPU/memory-limited to prevent runaway processes from
+            impacting your development environment.</li>
         </ul>
 
         <div class="docs-code-block">
           <div class="docs-code-header">
             <span class="docs-code-lang">Shell</span>
             <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
               <span class="copy-label">Copy</span>
             </button>
           </div>
@@ -513,7 +702,10 @@
           <div class="docs-code-header">
             <span class="docs-code-lang">GBNF Grammar</span>
             <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
               <span class="copy-label">Copy</span>
             </button>
           </div>
@@ -546,9 +738,13 @@
         </p>
 
         <ul>
-          <li><strong>Read-only mounts</strong> — project directories are mounted with <code>:ro</code> flag by default. Write access requires explicit opt-in via task configuration.</li>
-          <li><strong>Network decoupled</strong> — containers run with <code>--network=none</code>. No DNS resolution, no HTTP requests, no exfiltration vector.</li>
-          <li><strong>No package installation</strong> — containers have no access to package registries. No <code>npm install</code>, no <code>pip install</code>, no supply-chain attacks.</li>
+          <li><strong>Read-only mounts</strong> — project directories are mounted with <code>:ro</code> flag by default.
+            Write access requires explicit opt-in via task configuration.</li>
+          <li><strong>Network decoupled</strong> — containers run with <code>--network=none</code>. No DNS resolution,
+            no HTTP requests, no exfiltration vector.</li>
+          <li><strong>No package installation</strong> — containers have no access to package registries. No
+            <code>npm install</code>, no <code>pip install</code>, no supply-chain attacks.
+          </li>
         </ul>
       </div>
 
@@ -627,7 +823,10 @@
           <div class="docs-code-header">
             <span class="docs-code-lang">Architecture</span>
             <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
               <span class="copy-label">Copy</span>
             </button>
           </div>
@@ -723,7 +922,10 @@
           <div class="docs-code-header">
             <span class="docs-code-lang">Shell</span>
             <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
               <span class="copy-label">Copy</span>
             </button>
           </div>
@@ -752,7 +954,10 @@
           <div class="docs-code-header">
             <span class="docs-code-lang">Terminal Output</span>
             <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
               <span class="copy-label">Copy</span>
             </button>
           </div>
@@ -782,7 +987,10 @@
           <div class="docs-code-header">
             <span class="docs-code-lang">Shell</span>
             <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
               <span class="copy-label">Copy</span>
             </button>
           </div>
@@ -803,8 +1011,10 @@
         <ul>
           <li><strong>Data flow attestation</strong> — proof that no data left loopback during the session</li>
           <li><strong>Tool execution log</strong> — every tool invoked, arguments passed, and outputs returned</li>
-          <li><strong>Grammar constraint verification</strong> — confirmation that all LLM outputs matched GBNF schemas</li>
-          <li><strong>Container lifecycle audit</strong> — creation, execution, and teardown timestamps for all sandboxes</li>
+          <li><strong>Grammar constraint verification</strong> — confirmation that all LLM outputs matched GBNF schemas
+          </li>
+          <li><strong>Container lifecycle audit</strong> — creation, execution, and teardown timestamps for all
+            sandboxes</li>
         </ul>
 
         <div class="docs-callout callout-warning">
@@ -828,7 +1038,7 @@
     <aside class="docs-toc">
       <div class="docs-toc-title">On This Page</div>
       <ul class="docs-toc-list">
-        <li><a href="#inference-arbitrage" class="docs-toc-link">Inference Arbitrage</a></li>
+        <li><a href="#inference-arbitrage" class="docs-toc-link">Intelligent Task Offloading</a></li>
         <li><a href="#cloud-vs-local" class="docs-toc-link toc-h3">Cloud Plans, Local Executes</a></li>
 
         <li><a href="#quickstart" class="docs-toc-link">5-Minute Quickstart</a></li>
@@ -860,7 +1070,7 @@
   <!-- ================================================================== -->
   <footer class="tzro-footer">
     <div class="footer-container">
-      <p>&copy; 2026 tzro Project. Released under Apache-2.0 License.</p>
+      <p>&copy; 2026 TZRO Project. Released under Apache-2.0 License.</p>
       <div class="footer-links">
         <a href="index.html">Home</a>
         <a href="docs.html">Docs</a>
