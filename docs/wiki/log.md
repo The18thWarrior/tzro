@@ -4,6 +4,28 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-29T20:43:00-07:00] grill-with-docs | Codegen Quality Pipeline — Edge Thought Migration (ADR-0035)
+
+- **Activity**: Grill-with-docs session resolved 10 design decisions for completing the ADR-0024 Edge Thought migration and building a codegen quality pipeline on top. Discovered that ADR-0024 infrastructure (edge_thought.go, ready_queue.go, mutation.go, 14 tests) was fully implemented on 2026-06-07 but never wired into production — `GlobalEngine` has no `EdgeThoughtInference`, `task.go` still calls `ExecuteGraph` instead of `ExecuteGraphReactive`.
+- **Key Decisions**:
+  - Complete Edge Thought migration in one shot (big-bang, one-line rollback in task.go)
+  - Spawn chains use rolling compaction (lifted from probe's `compactEvery`) for context fidelity
+  - Auto-inject synthesis node when activation gate fires Continue after spawns
+  - `OutputFormat`/`OutputLanguage` on `GraphNode` (not `ProbeConfig` — that's deprecated)
+  - Compilation gate as DAG node with validation command specified by Cloud Planner (not hardcoded)
+  - `tzro_code` T1-T2 stays as single-node `reason_code`; T3+ routes to Edge Thought DAG via Local Model classification
+  - Probe backward compat shim rewrites `type: "probe"` → `type: "action"` + threshold 0.8 + budget 15
+  - Keep `ExecuteGraph` as dead code for rollback; delete after benchmark validation
+- **ADRs Created**:
+  - [ADR-0035: Complete Edge Thought Migration and Codegen Quality Pipeline](../adr/0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md)
+- **Specs Created**:
+  - [2026-06-29 Codegen Quality Pipeline Design](../superpowers/specs/2026-06-29-codegen-quality-pipeline-design.md)
+- **Files Created/Modified**:
+  - [NEW] [0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md](../adr/0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md)
+  - [NEW] [2026-06-29-codegen-quality-pipeline-design.md](../superpowers/specs/2026-06-29-codegen-quality-pipeline-design.md)
+  - [MODIFY] [index.md](index.md) (Added ADR-0032 through ADR-0035)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 ## [2026-06-27T06:59:00-07:00] decision | Three-Bucket Metric Separation (ADR-0034)
 
 - **Activity**: Grill-with-docs session resolved how to separate the conflated "98% token reduction" benchmark claim into three independently measurable savings buckets: (1) DAG structural savings, (2) 5-Layer Pipeline compaction savings, (3) local model offloading savings.
