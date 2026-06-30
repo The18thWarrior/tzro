@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -246,13 +247,17 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 						case ActivationSpawn:
 							// Spawn a new node between source and target
 							spawnedID := fmt.Sprintf("spawned_%s_%d", nID, stepIndex)
+							chainContext := buildSpawnChainContext(graph, nID, targetNode.ID)
 							spawnedNode := compiler.GraphNode{
 								ID:                  spawnedID,
-								Type:                node.Type,
+								Type:                "action",
 								Action:              node.Action,
-								Instructions:        fmt.Sprintf("Continue work toward goal. Previous thought: %s", et.Thought),
+								AllowedTools:        node.AllowedTools,
+								Instructions:        fmt.Sprintf("Goal: %s\n\nAccumulated Context:\n%s\n\nPrevious step result: %s\n\nContinue working toward the goal.", graph.GoalPrompt, chainContext, et.Thought),
 								Status:              "pending",
 								ActivationThreshold: 0.0, // Spawned nodes don't gate further
+								OutputFormat:        targetNode.OutputFormat,
+								OutputLanguage:      targetNode.OutputLanguage,
 							}
 
 							spawnErr := ApplySpawn(graph, nID, spawnedNode)
@@ -290,7 +295,28 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 							}
 
 						case ActivationContinue:
-							// Confidence sufficient — target will execute normally via enqueueReady
+						// Inject synthesis node if spawns occurred between source and target
+						// Only inject when the local model is available (synthesis requires inference)
+						spawnedNodes := findSpawnedNodesInChain(graph, nID, targetNode.ID)
+						sidecarStatus, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
+						sidecarActive := sidecarStatus == "Active" || sidecarStatus == "Adopted"
+						if len(spawnedNodes) > 0 && sidecarActive {
+							synthID := fmt.Sprintf("synth_%s_%s", nID, targetNode.ID)
+							synthNode := compiler.GraphNode{
+								ID:             synthID,
+								Type:           "synthesis",
+								Instructions:   buildSynthesisInstructions(graph, targetNode),
+								Status:         "pending",
+								OutputFormat:   targetNode.OutputFormat,
+								OutputLanguage: targetNode.OutputLanguage,
+							}
+							injectSynthesisNode(graph, nID, targetNode.ID, synthNode)
+							nodeIndex[synthID] = &graph.Nodes[len(graph.Nodes)-1]
+							_ = memory.DB.SetNodeState(graph.TaskID, synthID, "pending", "")
+							fmt.Fprintf(os.Stderr, "[Executor/RQ] Injected synthesis node %s between spawns and %s\n", synthID, targetNode.ID)
+							e.getPublisher().PublishEvent("node_injected", graph.TaskID, synthID,
+								fmt.Sprintf("Synthesis node injected before %s", targetNode.ID))
+						}
 						}
 					}
 				}
@@ -350,4 +376,66 @@ func allNodesResolved(graph *compiler.ExecutionGraph, resolved map[string]bool) 
 		}
 	}
 	return true
+}
+
+// buildSpawnChainContext collects outputs from completed spawned nodes in the chain
+// and applies rolling compaction via TruncateSynthesisContext.
+func buildSpawnChainContext(graph *compiler.ExecutionGraph, sourceID, targetID string) string {
+	var steps []SynthesisStep
+	for _, node := range graph.Nodes {
+		if !strings.HasPrefix(node.ID, "spawned_") {
+			continue
+		}
+		if state, ok := memory.DB.GetNodeState(graph.TaskID, node.ID); ok && state.Status == "completed" {
+			output := state.RawOutput
+			if output == "" {
+				output = state.Output
+			}
+			steps = append(steps, SynthesisStep{Thought: node.Instructions, ToolOutput: output})
+		}
+	}
+	if len(steps) == 0 {
+		return ""
+	}
+	return TruncateSynthesisContext(steps)
+}
+
+// findSpawnedNodesInChain returns IDs of spawned nodes between source and target.
+func findSpawnedNodesInChain(graph *compiler.ExecutionGraph, sourceID, targetID string) []string {
+	var spawned []string
+	for _, node := range graph.Nodes {
+		if strings.HasPrefix(node.ID, "spawned_") && strings.Contains(node.ID, sourceID) {
+			spawned = append(spawned, node.ID)
+		}
+	}
+	return spawned
+}
+
+// buildSynthesisInstructions generates format-constrained synthesis instructions.
+func buildSynthesisInstructions(graph *compiler.ExecutionGraph, targetNode *compiler.GraphNode) string {
+	base := fmt.Sprintf("Synthesize all exploration findings for: %s", graph.GoalPrompt)
+	switch targetNode.OutputFormat {
+	case "source_code":
+		return fmt.Sprintf("%s\n\nCRITICAL: Output ONLY compilable %s source code.\nNo markdown, no explanations, no summaries. Complete file content only.", base, targetNode.OutputLanguage)
+	default:
+		return base + "\nProduce a comprehensive, structured final answer."
+	}
+}
+
+// injectSynthesisNode inserts a synthesis node between spawned nodes and the target,
+// re-wiring edges so spawned nodes feed into synthesis, which feeds target.
+func injectSynthesisNode(graph *compiler.ExecutionGraph, sourceID, targetID string, synthNode compiler.GraphNode) {
+	graph.Nodes = append(graph.Nodes, synthNode)
+	var newEdges []compiler.GraphEdge
+	for _, edge := range graph.Edges {
+		if strings.HasPrefix(edge.SourceID, "spawned_") && edge.TargetID == targetID {
+			// Redirect spawned→target to spawned→synth
+			newEdges = append(newEdges, compiler.GraphEdge{SourceID: edge.SourceID, TargetID: synthNode.ID})
+		} else {
+			newEdges = append(newEdges, edge)
+		}
+	}
+	// Add synth → target edge
+	newEdges = append(newEdges, compiler.GraphEdge{SourceID: synthNode.ID, TargetID: targetID})
+	graph.Edges = newEdges
 }

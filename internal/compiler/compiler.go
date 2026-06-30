@@ -26,6 +26,10 @@ type GraphNode struct {
 
 	// Neural traversal fields (ADR-0024)
 	ActivationThreshold float64 `json:"activationThreshold,omitempty"` // Sufficiency gate (0.0-1.0). 0.0 = disabled.
+
+	// Codegen output constraint fields (ADR-0035)
+	OutputFormat   string `json:"outputFormat,omitempty"`   // "source_code" | "" — constrains synthesis output format
+	OutputLanguage string `json:"outputLanguage,omitempty"` // e.g., "go", "typescript" — target language for source_code format
 }
 
 // CompactionLevel controls how aggressively a node's output is compacted

@@ -85,7 +85,9 @@ func (e *ExecutionEngine) getPublisher() telemetry.EventPublisher {
 	return telemetry.Default
 }
 
-var GlobalEngine = &ExecutionEngine{}
+var GlobalEngine = &ExecutionEngine{
+	EdgeThoughtGen: &DefaultEdgeThoughtInference{},
+}
 
 const CacheExplorationGuide = `
 
@@ -885,7 +887,22 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		return nil
 	}
 
-	// 1.3 Probe node: autonomous Thought Chain exploration (ADR-0019)
+	// 1.3 Probe node backward compatibility shim (ADR-0035)
+	// Rewrites probe nodes as action nodes with activation threshold 0.8
+	// so they execute through the Edge Thought system instead of the legacy Thought Chain.
+	if node.Type == "probe" {
+		fmt.Fprintf(os.Stderr, "[Executor] DEPRECATION: Rewriting probe node %s as action node with ActivationThreshold 0.8\n", node.ID)
+		node.Type = "action"
+		node.ActivationThreshold = 0.8
+		if graph.MutationBudget == nil {
+			graph.MutationBudget = &compiler.MutationBudget{MaxSpawns: 15, RemainingSpawns: 15}
+		}
+		// Fall through to normal action node execution
+	}
+
+	// 1.3-legacy Probe node: autonomous Thought Chain exploration (ADR-0019)
+	// This block is kept for the rollback path — if the shim above rewrites to action,
+	// this block is skipped. If someone disables the shim, probes still work.
 	if node.Type == "probe" {
 		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
 		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Probe: "+node.Instructions)

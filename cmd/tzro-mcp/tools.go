@@ -322,8 +322,18 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		}
 	}
 
-	// Build DAG with pre-computed context (single reason_code node)
-	graph := codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
+	// Build DAG with pre-computed context
+	// Route via complexity classification: simple specs use the static single-node
+	// path, moderate/complex specs use the exploration DAG with Edge Thoughts.
+	tier := classifyCodeComplexity(args.Spec, codeCtx)
+	var graph *compiler.ExecutionGraph
+	switch tier {
+	case "moderate", "complex":
+		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, using exploration DAG for %s\n", tier, args.Filepath)
+		graph = codegen.BuildCodeDAGWithExploration(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
+	default: // "simple"
+		graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
+	}
 
 	type execResult struct {
 		nodes []memory.NodeState
