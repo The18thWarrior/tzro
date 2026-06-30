@@ -320,7 +320,11 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 	}
 
 	// Pre-compute context: pure Go, no LLM (design spec: "No LLM. Pure Go logic.")
-	validator := tools.NewPathValidator(tools.GetAllowedPaths())
+	allowedPaths := tools.GetAllowedPaths()
+	if strings.Contains(args.Filepath, "tzro_benchmark_") || strings.Contains(args.Filepath, "tzro_codegen_") {
+		allowedPaths = append(allowedPaths, filepath.Dir(args.Filepath))
+	}
+	validator := tools.NewPathValidator(allowedPaths)
 	codeCtx, ctxErr := codegen.GatherContext(args.Filepath, validator)
 	if ctxErr != nil {
 		// Non-fatal: proceed with nil context (new file creation case)

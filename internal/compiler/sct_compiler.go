@@ -32,15 +32,16 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 			// 1. Semantic Validator node
 			sctNodes = append(sctNodes, GraphNode{
-				ID:              validatorID,
-				Type:            "semantic_validator",
-				Action:          node.Action,
-				Instructions:    node.Instructions,
-				AllowedTools:    node.AllowedTools,
-				OutputSchema:    schemaStr,
-				SuggestedSkills: node.SuggestedSkills,
-				DynamicBindings: node.DynamicBindings,
-				Status:          "pending",
+				ID:                  validatorID,
+				Type:                "semantic_validator",
+				Action:              node.Action,
+				Instructions:        node.Instructions,
+				AllowedTools:        node.AllowedTools,
+				OutputSchema:        schemaStr,
+				SuggestedSkills:     node.SuggestedSkills,
+				DynamicBindings:     node.DynamicBindings,
+				Status:              "pending",
+				ActivationThreshold: node.ActivationThreshold,
 			})
 
 			// 2. Deterministic Tool execution node

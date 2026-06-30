@@ -387,7 +387,8 @@ Target JSON Structure:
       "dynamicBindings": {"param_from_upstream": "upstream_node_id.output.property_name"},
       "allowedTools": ["target_tool_name_from_inventory"],
       "suggestedSkillIds": ["suggested_skill_id_from_sop_index"],
-      "status": "pending"
+      "status": "pending",
+      "activationThreshold": 0.7
     },
     {
       "id": "probe_unique_id",
@@ -414,6 +415,7 @@ Target JSON Structure:
 2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
 3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
 4. "instructions": Provide natural language goals or variables to read/write.
+5. "activationThreshold": Sufficiency gate threshold (0.0 - 1.0) to enable Edge Thoughts and neural traversal for incoming edges. Defaults to 0.7 for action nodes in codegen tasks, 0.0 (disabled) otherwise.
 
 ### Probe Node Guidance:
 When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
@@ -588,7 +590,8 @@ Target JSON Structure:
       "dynamicBindings": {"param_from_upstream": "upstream_node_id.output.property_name"},
       "allowedTools": ["target_tool_name_from_inventory"],
       "suggestedSkillIds": ["suggested_skill_id_from_sop_index"],
-      "status": "pending"
+      "status": "pending",
+      "activationThreshold": 0.7
     },
     {
       "id": "probe_unique_id",
@@ -615,6 +618,7 @@ Target JSON Structure:
 2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
 3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
 4. "instructions": Provide natural language goals or variables to read/write.
+5. "activationThreshold": Sufficiency gate threshold (0.0 - 1.0) to enable Edge Thoughts and neural traversal for incoming edges. Defaults to 0.7 for action nodes in codegen tasks, 0.0 (disabled) otherwise.
 
 ### Probe Node Guidance:
 When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
