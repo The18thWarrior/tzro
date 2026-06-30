@@ -3284,3 +3284,351 @@ body[data-mode="developer"] [data-audience="user"] {
     padding: 1.25rem;
   }
 }
+
+/* =========================================================================
+   COOPERATIVE CLOUD/LOCAL SPLIT
+   ========================================================================= */
+
+.cooperative-split {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 2.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background-color: var(--bg-card);
+}
+
+.cooperative-col {
+  flex: 1;
+  padding: 2.5rem 2rem;
+  position: relative;
+}
+
+.cooperative-col-icon {
+  font-size: 2.4rem;
+  margin-bottom: 1rem;
+}
+
+.cooperative-col h3 {
+  font-family: var(--font-geom);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-color);
+  margin-bottom: 0.8rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.cooperative-tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.6rem;
+  border-radius: 100px;
+  font-family: var(--font-mono);
+}
+
+.cooperative-cloud .cooperative-tag {
+  background: rgba(99, 179, 237, 0.15);
+  color: #63b3ed;
+  border: 1px solid rgba(99, 179, 237, 0.25);
+}
+
+.cooperative-local .cooperative-tag {
+  background: rgba(182, 255, 0, 0.1);
+  color: var(--accent-color);
+  border: 1px solid rgba(182, 255, 0, 0.2);
+}
+
+.cooperative-col p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.cooperative-cloud {
+  background: linear-gradient(135deg, rgba(99, 179, 237, 0.05) 0%, transparent 60%);
+}
+
+.cooperative-local {
+  background: linear-gradient(135deg, transparent 40%, rgba(182, 255, 0, 0.04) 100%);
+}
+
+.cooperative-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.5rem 0;
+  flex-shrink: 0;
+  width: 1px;
+  position: relative;
+}
+
+.cooperative-divider-line {
+  flex: 1;
+  width: 1px;
+  background: linear-gradient(180deg,
+    transparent 0%,
+    var(--border-color) 20%,
+    var(--accent-color) 50%,
+    var(--border-color) 80%,
+    transparent 100%);
+}
+
+.cooperative-divider-label {
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  padding: 0.4rem 0;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .cooperative-split {
+    flex-direction: column;
+  }
+
+  .cooperative-divider {
+    flex-direction: row;
+    width: 100%;
+    height: 1px;
+    padding: 0 1.5rem;
+  }
+
+  .cooperative-divider-line {
+    flex: 1;
+    height: 1px;
+    width: auto;
+    background: linear-gradient(90deg,
+      transparent 0%,
+      var(--border-color) 20%,
+      var(--accent-color) 50%,
+      var(--border-color) 80%,
+      transparent 100%);
+  }
+
+  .cooperative-divider-label {
+    writing-mode: horizontal-tb;
+    padding: 0 0.6rem;
+  }
+
+  .cooperative-col {
+    padding: 2rem 1.5rem;
+  }
+}
+
+/* =========================================================================
+   COOPERATIVE ROUTER LIFECYCLE (4-step flow)
+   ========================================================================= */
+
+.cooperative-lifecycle {
+  margin-top: 3rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.lifecycle-title {
+  font-family: var(--font-geom);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.lifecycle-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.lifecycle-step {
+  flex: 1;
+  text-align: center;
+  padding: 1.8rem 1.2rem 1.5rem;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-smooth);
+  position: relative;
+}
+
+.lifecycle-step:hover {
+  border-color: rgba(182, 255, 0, 0.3);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.lifecycle-step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-color), #8bcc00);
+  color: #0a110d;
+  font-family: var(--font-geom);
+  font-size: 0.75rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 0.8rem;
+}
+
+.lifecycle-step-label {
+  font-family: var(--font-geom);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent-color);
+  margin-bottom: 0.5rem;
+}
+
+.lifecycle-step-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.lifecycle-step-desc code {
+  background: rgba(182, 255, 0, 0.08);
+  border: 1px solid rgba(182, 255, 0, 0.15);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: var(--accent-color);
+}
+
+.lifecycle-step-desc strong {
+  color: var(--text-color);
+}
+
+.lifecycle-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--border-color);
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .lifecycle-flow {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .lifecycle-arrow {
+    justify-content: center;
+    transform: rotate(90deg);
+    padding: 0.25rem 0;
+  }
+
+  .lifecycle-step {
+    padding: 1.25rem;
+  }
+}
+
+/* =========================================================================
+   TERMINAL EXECUTION DEMO
+   ========================================================================= */
+
+.terminal-demo {
+  margin-top: 3rem;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background-color: #0c1410;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.3),
+    0 0 60px rgba(182, 255, 0, 0.03);
+}
+
+.terminal-demo-header {
+  background-color: rgba(0, 0, 0, 0.4);
+  padding: 0.8rem 1.2rem;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.terminal-demo-header .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.terminal-demo-header .dot.red {
+  background-color: #ef4444;
+}
+
+.terminal-demo-header .dot.yellow {
+  background-color: #f59e0b;
+}
+
+.terminal-demo-header .dot.green {
+  background-color: #10b981;
+}
+
+.terminal-demo-body {
+  padding: 1.8rem 2rem;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: #8b9a8f;
+  margin: 0;
+  overflow-x: auto;
+}
+
+.term-prompt {
+  color: #63b3ed;
+  font-weight: 600;
+}
+
+.term-cmd {
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.term-route {
+  color: #a78bfa;
+}
+
+.term-offload {
+  color: #f59e0b;
+}
+
+.term-constraint {
+  color: #818cf8;
+}
+
+.term-success {
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+.term-metric {
+  color: #22d3ee;
+}
+
+.term-cost {
+  color: #10b981;
+  font-weight: 700;
+}
+
+@media (max-width: 768px) {
+  .terminal-demo-body {
+    padding: 1.2rem 1rem;
+    font-size: 0.72rem;
+  }
+}

@@ -4,9 +4,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>tzro — The Jumpdrive for AI Agents | Agentic Operating System</title>
+  <title>tzro — Local Task Router for AI Agents | Slash API Costs by 90%</title>
   <meta name="description"
-    content="tzro is a portable agentic operating system — a self-contained runtime that gives any AI agent a kernel, scheduler, persistent memory, and self-improving inference. Plug it in via MCP or embed the Go framework." />
+    content="tzro is an intelligent local task router that plugs into Claude Code, Cursor, and Zed. Run heavy file scanning, data formatting, and multi-step tasks locally with a grammar-locked 3B model — slashing API costs and token usage by 90%." />
 
   <!-- Modern Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -39,17 +39,17 @@
         </svg>
         <span class="logo-text">tzro</span>
       </a>
-      <!-- Mode Toggle -->
-      <div class="mode-toggle" id="mode-toggle-desktop">
+      <!-- Mode Toggle (hidden for GTM 2026 — user-only view) -->
+      <div class="mode-toggle" id="mode-toggle-desktop" style="display:none">
         <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
         <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
       </div>
       <nav class="header-nav">
         <!-- User mode nav -->
-        <a href="#use-cases" class="nav-link" data-audience="user">Use Cases</a>
         <a href="#how-it-works" class="nav-link" data-audience="user">How It Works</a>
         <a href="#get-started" class="nav-link" data-audience="user">Install</a>
-        <!-- Developer mode nav -->
+        <a href="docs.html" class="nav-link" data-audience="user">Docs</a>
+        <!-- Developer mode nav (hidden) -->
         <a href="#architecture" class="nav-link" data-audience="developer">Architecture</a>
         <a href="#get-started" class="nav-link" data-audience="developer">Get Started</a>
         <a href="#playgrounds" class="nav-link" data-audience="developer">Playgrounds</a>
@@ -69,7 +69,7 @@
 
   <!-- Mobile Navigation Drawer -->
   <div class="mobile-nav-drawer" id="mobile-nav-drawer">
-    <div class="mobile-mode-toggle">
+    <div class="mobile-mode-toggle" style="display:none">
       <div class="mode-toggle" id="mode-toggle-mobile">
         <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
         <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
@@ -77,10 +77,10 @@
     </div>
     <nav class="mobile-nav-content">
       <!-- User mode nav -->
-      <a href="#use-cases" class="mobile-nav-link" data-audience="user">Use Cases</a>
       <a href="#how-it-works" class="mobile-nav-link" data-audience="user">How It Works</a>
       <a href="#get-started" class="mobile-nav-link" data-audience="user">Install</a>
-      <!-- Developer mode nav -->
+      <a href="docs.html" class="mobile-nav-link" data-audience="user">Docs</a>
+      <!-- Developer mode nav (hidden) -->
       <a href="#architecture" class="mobile-nav-link" data-audience="developer">Architecture</a>
       <a href="#get-started" class="mobile-nav-link" data-audience="developer">Get Started</a>
       <a href="#playgrounds" class="mobile-nav-link" data-audience="developer">Playgrounds</a>
@@ -119,165 +119,29 @@
         </div>
         <!-- User mode hero -->
         <div data-audience="user">
-          <div class="hero-badge">WORKS WITH CLAUDE, CURSOR &amp; ANY MCP AGENT</div>
+          <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR, ZED &amp; ANY MCP HOST</div>
           <h1 class="hero-title text-balance">
-            Stop babysitting <span class="glow-text">your AI agents</span>
+            Get more done without <span class="glow-text">hitting rate limits.</span>
           </h1>
           <p class="hero-desc text-pretty">
-            Your agent loses context mid-task. It can't pick up where it left
-            off. It racks up cloud API costs on every step. tzro fixes all of
-            that — it runs agent tasks locally, saves progress, remembers past
-            work, and only calls the cloud when it actually needs to think.
+            Stop token-maxing. Run heavy repository scanning, data formatting,
+            and multi-step tasks inside your favorite agents (Claude Code,
+            Cursor, Zed, etc.) with a free, grammar-locked local runtime engine
+            that slashes API costs and token usage by 90%.
           </p>
           <div class="hero-ctas">
-            <a href="#use-cases" class="hero-cta-primary">See Use Cases</a>
-            <a href="#get-started" class="hero-cta-secondary">Install in 60 Seconds</a>
+            <a href="#get-started" class="hero-cta-primary">Instant Install</a>
+            <a href="#docs" class="hero-cta-secondary">Docs</a>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ============================================================ -->
-    <!-- USER MODE: WHAT CAN I DO WITH TZRO? (User only) -->
-    <!-- ============================================================ -->
-    <section class="use-cases-section" id="use-cases" data-audience="user">
-      <div class="hero-container">
-        <span class="glass-badge">What Can I Do With tzro?</span>
-        <h2 class="section-title text-balance">
-          Real work, not demos
-        </h2>
-        <p class="section-desc text-pretty">
-          Here's what people actually use tzro for.
-        </p>
-
-        <div class="use-case-grid">
-          <div class="use-case-card">
-            <div class="use-case-card-icon">🔍</div>
-            <h3>Run deep research while you sleep</h3>
-            <p>
-              Ask an agent to research 50 companies overnight. It breaks the
-              work into steps, saves progress, and gives you a structured
-              summary in the morning.
-            </p>
-          </div>
-
-          <div class="use-case-card">
-            <div class="use-case-card-icon">🔒</div>
-            <h3>Process sensitive documents locally</h3>
-            <p>
-              Run document-processing workflows without sending raw contracts,
-              medical records, or financial data to cloud APIs. Everything
-              stays on your machine.
-            </p>
-          </div>
-
-          <div class="use-case-card">
-            <div class="use-case-card-icon">🌙</div>
-            <h3>Queue up work. Come back to results.</h3>
-            <p>
-              Set up a multi-step workflow before you leave. Come back to
-              results — not a "session expired" error. If anything fails,
-              it resumes instead of starting over.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
+    <!-- Use Cases section removed — GTM 2026 rebrand -->
+    <!-- Comparison section removed — GTM 2026 rebrand -->
 
     <!-- ============================================================ -->
-    <!-- WHY NOT JUST CLOUD? COMPARISON -->
-    <!-- ============================================================ -->
-    <section class="comparison-section" id="comparison">
-      <div class="hero-container">
-        <span class="glass-badge">Why Not Just Cloud?</span>
-        <h2 class="section-title text-balance">
-          Your agent deserves an operating system, not another API bill
-        </h2>
-
-        <div class="comparison-grid">
-          <div class="comparison-header">
-            <div class="comparison-label"></div>
-            <div class="comparison-col-header cloud-col">
-              <span class="col-icon">☁️</span>
-              <span>Cloud-Only Agents</span>
-            </div>
-            <div class="comparison-col-header tzro-col">
-              <span class="col-icon">⚡</span>
-              <span>tzro AgenticOS</span>
-            </div>
-          </div>
-
-          <div class="comparison-row">
-            <div class="comparison-dimension">API Cost</div>
-            <div class="comparison-cell cloud-cell">
-              <span data-audience="developer">Linear growth — every tool call is a cloud round-trip</span>
-              <span data-audience="user">Every step costs money — costs grow with every task</span>
-            </div>
-            <div class="comparison-cell tzro-cell">
-              <span data-audience="developer">Cloud called <strong>once</strong> for planning; execution runs locally at
-                zero marginal cost</span>
-              <span data-audience="user">Cloud called <strong>once</strong> for planning; execution runs locally for
-                free</span>
-            </div>
-          </div>
-
-          <div class="comparison-row">
-            <div class="comparison-dimension">Data Privacy</div>
-            <div class="comparison-cell cloud-cell">
-              <span data-audience="developer">All raw data shipped to third-party cloud APIs</span>
-              <span data-audience="user">Your data gets sent to third-party servers</span>
-            </div>
-            <div class="comparison-cell tzro-cell">
-              <span data-audience="developer">Data stays within local POSIX loopback boundary
-                (<code>127.0.0.1</code>)</span>
-              <span data-audience="user">Your data stays on your machine or server</span>
-            </div>
-          </div>
-
-          <div class="comparison-row">
-            <div class="comparison-dimension">Execution Latency</div>
-            <div class="comparison-cell cloud-cell">
-              <span data-audience="developer">200–500ms network round-trip per tool call</span>
-              <span data-audience="user">200–500ms wait for each step (network round-trip)</span>
-            </div>
-            <div class="comparison-cell tzro-cell">
-              <span data-audience="developer">Sub-10ms — hardware-pinned local model generates tool calls
-                natively</span>
-              <span data-audience="user">Near-instant — runs on your hardware, no network needed</span>
-            </div>
-          </div>
-
-          <div class="comparison-row">
-            <div class="comparison-dimension">Self-Improvement</div>
-            <div class="comparison-cell cloud-cell">
-              <span data-audience="developer">None — same behavior every run</span>
-              <span data-audience="user">Same behavior every run — learns nothing</span>
-            </div>
-            <div class="comparison-cell tzro-cell">
-              <span data-audience="developer">Procedural &amp; Corrective Micro-Skills auto-extracted from
-                trajectories</span>
-              <span data-audience="user">Remembers successful procedures and reuses them automatically</span>
-            </div>
-          </div>
-
-          <div class="comparison-row">
-            <div class="comparison-dimension">Crash Recovery</div>
-            <div class="comparison-cell cloud-cell">
-              <span data-audience="developer">Restart from scratch</span>
-              <span data-audience="user">If something fails, start over from scratch</span>
-            </div>
-            <div class="comparison-cell tzro-cell">
-              <span data-audience="developer">Durable checkpointing — resume from exact failing step across
-                crashes</span>
-              <span data-audience="user">If something fails, it resumes from exactly where it stopped</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============================================================ -->
-    <!-- USER MODE: HOW IT WORKS PIPELINE (User only) -->
+    <!-- USER MODE: HOW IT WORKS (User only) -->
     <!-- ============================================================ -->
     <section class="pipeline-section" id="how-it-works" data-audience="user">
       <div class="hero-container">
@@ -286,40 +150,99 @@
           Cloud plans. Your machine executes.
         </h2>
         <p class="section-desc text-pretty">
-          tzro calls the cloud once to break your goal into steps. Everything
-          else runs locally — fast, private, and crash-proof.
+          TZRO acts as an intelligent task gateway for your workspace. It plugs
+          directly into Claude Code, Cursor, or Zed, intercepting heavy,
+          non-cognitive tool executions and processing them locally on your own
+          hardware.
         </p>
 
-        <div class="pipeline-flow">
-          <div class="pipeline-step">
-            <div class="pipeline-step-icon">🎯</div>
-            <div class="pipeline-step-title">1. You give a goal</div>
-            <div class="pipeline-step-desc">"Research these 30 companies"</div>
+        <!-- Core Mechanics: Cloud vs Local Split -->
+        <div class="cooperative-split">
+          <div class="cooperative-col cooperative-cloud">
+            <div class="cooperative-col-icon">☁️</div>
+            <h3>Cloud <span class="cooperative-tag">High-Intelligence / Low-Token</span></h3>
+            <p>
+              We invoke your public frontier models to compile a high-level task
+              plan (compiled as an Abstract Graph JSON). One smart API call —
+              that's it.
+            </p>
           </div>
-          <div class="pipeline-arrow">→</div>
-          <div class="pipeline-step">
-            <div class="pipeline-step-icon">🧠</div>
-            <div class="pipeline-step-title">2. Cloud plans it</div>
-            <div class="pipeline-step-desc">One smart API call breaks the goal into steps</div>
+          <div class="cooperative-divider">
+            <div class="cooperative-divider-line"></div>
+            <div class="cooperative-divider-label">handoff</div>
+            <div class="cooperative-divider-line"></div>
           </div>
-          <div class="pipeline-arrow">→</div>
-          <div class="pipeline-step">
-            <div class="pipeline-step-icon">⚡</div>
-            <div class="pipeline-step-title">3. Local executes</div>
-            <div class="pipeline-step-desc">Steps run on your machine — fast, free, private</div>
+          <div class="cooperative-col cooperative-local">
+            <div class="cooperative-col-icon">⚡</div>
+            <h3>Local <span class="cooperative-tag">Low-Intelligence / Zero-Cost</span></h3>
+            <p>
+              TZRO's Go-native local engine translates that plan into a strict
+              execution graph. It processes the heavy lifting — file traversing,
+              terminal tool calling, and document drafting — 100% locally on your
+              standard laptop using a compact, lightning-fast 3B model.
+            </p>
           </div>
-          <div class="pipeline-arrow">→</div>
-          <div class="pipeline-step">
-            <div class="pipeline-step-icon">💾</div>
-            <div class="pipeline-step-title">4. Progress saves</div>
-            <div class="pipeline-step-desc">Every step checkpointed. Crashes resume, not restart</div>
+        </div>
+
+        <!-- Cooperative Router Lifecycle -->
+        <div class="cooperative-lifecycle">
+          <h3 class="lifecycle-title">Cooperative Router Lifecycle</h3>
+          <div class="lifecycle-flow">
+            <div class="lifecycle-step">
+              <div class="lifecycle-step-num">1</div>
+              <div class="lifecycle-step-label">Intent Check</div>
+              <div class="lifecycle-step-desc">
+                The cloud planner creates the high-level roadmap.
+              </div>
+            </div>
+            <div class="lifecycle-arrow">→</div>
+            <div class="lifecycle-step">
+              <div class="lifecycle-step-num">2</div>
+              <div class="lifecycle-step-label">Local Intercept</div>
+              <div class="lifecycle-step-desc">
+                <code>tzro</code> catches the tool calls over standard loopback.
+              </div>
+            </div>
+            <div class="lifecycle-arrow">→</div>
+            <div class="lifecycle-step">
+              <div class="lifecycle-step-num">3</div>
+              <div class="lifecycle-step-label">Local Execution</div>
+              <div class="lifecycle-step-desc">
+                A local 3B–4B parameter model executes the task via logit-level
+                GBNF constraints, physically guaranteeing a
+                <strong>0% syntax failure rate</strong>.
+              </div>
+            </div>
+            <div class="lifecycle-arrow">→</div>
+            <div class="lifecycle-step">
+              <div class="lifecycle-step-num">4</div>
+              <div class="lifecycle-step-label">Context Compaction</div>
+              <div class="lifecycle-step-desc">
+                Large outputs are compressed into lean TSV formats or cached to a
+                local SQLite disk before returning to the loop, protecting your
+                context window.
+              </div>
+            </div>
           </div>
-          <div class="pipeline-arrow">→</div>
-          <div class="pipeline-step">
-            <div class="pipeline-step-icon">📋</div>
-            <div class="pipeline-step-title">5. Results delivered</div>
-            <div class="pipeline-step-desc">Clean summary. Agent remembers for next time.</div>
+        </div>
+
+        <!-- Terminal Execution Use Case -->
+        <div class="terminal-demo">
+          <div class="terminal-demo-header">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+            <span class="terminal-title">Terminal — Cooperative Execution</span>
           </div>
+          <pre class="terminal-demo-body monospace"><span class="term-prompt">claude &gt;</span> <span class="term-cmd">/goal Document this directory tree</span>
+
+<span class="term-route">Routing "High-Level Planning" to Cloud Strategist...</span>
+<span class="term-offload">Offloading 48 file-reads &amp; AST parses to Local Go Engine...</span>
+<span class="term-constraint">Applying logit-level GBNF constraints on local Qwen-3B model...</span>
+
+<span class="term-success">✓ Generated README.md, API_REFERENCE.md, and CLAUDE.md locally.</span>
+<span class="term-metric">Workload Arbitraged: 148,500 I/O tokens executed on-device.</span>
+<span class="term-cost">Cloud Token Cost: $0.00</span></pre>
         </div>
       </div>
     </section>
@@ -1352,8 +1275,9 @@ fmt.Println(result.Synthesis)</code></pre>
     <div class="footer-container">
       <p>&copy; 2026 tzro Project. Released under Apache-2.0 License.</p>
       <div class="footer-links">
-        <a href="#use-cases" data-audience="user">Use Cases</a>
+        <a href="#how-it-works" data-audience="user">How It Works</a>
         <a href="#get-started" data-audience="user">Install</a>
+        <a href="docs.html" data-audience="user">Docs</a>
         <a href="#architecture" data-audience="developer">Architecture</a>
         <a href="#get-started" data-audience="developer">Get Started</a>
       </div>
