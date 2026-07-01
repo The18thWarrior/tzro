@@ -116,6 +116,14 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		writeValidator := tools.NewStaticPathValidator([]string{tmpDir})
 		tools.Register(tools.NewWriteFileTool(writeValidator))
 		fmt.Fprintf(os.Stderr, "[Comparison] Codegen task %s: write_file scoped to %s\n", t.ID, tmpDir)
+
+		// Re-register read tools with a validator that allows both codebase and tmpDir
+		readPaths := append(tools.GetAllowedPaths(), tmpDir)
+		readValidator := tools.NewStaticPathValidator(readPaths)
+		tools.Register(tools.NewReadFileTool(readValidator))
+		tools.Register(tools.NewListDirTool(readValidator))
+		tools.Register(tools.NewSearchFilesTool(readValidator))
+		tools.Register(tools.NewPeekFileTool(readValidator))
 	}
 
 	// Initialize inference backend for Probe Node execution.
