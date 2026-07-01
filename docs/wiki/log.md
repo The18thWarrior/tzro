@@ -1364,3 +1364,15 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [MODIFY] `cmd/tzro-mcp/tools.go` (Mode param, auto-mode, size guard, routing, post-DAG diff branch)
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
+
+## [2026-07-01T06:13:00-07:00] design | Codegen Benchmark 3 Analysis & Edge Thought Repair Design
+
+- **Activity**: Analyzed codegen benchmark run 3 (10 tasks × 3 conditions). Ran a grill-with-docs session on the P0–P2 improvement recommendations, resolving 11 design decisions and creating ADR-0036.
+- **Benchmark Results**: cloud_code avg 4.78/5.0 quality, tzro_code avg 2.70/5.0, tzro_code_expanded avg 2.88/5.0. Local compilation pass rate 20% vs cloud 70%. Quality cliff at T2→T3 boundary.
+- **Key Decision (ADR-0036)**: Use Edge Thought node spawning for codegen compilation repair instead of a bespoke retry loop. Compilation gate result injected into Edge Thought context as deterministic evidence; Local Model generates reasoning/diagnosis; mutation budget capped at 2. Environmental context (`DiscoverModuleContext`) injected into both initial and repair prompts to address hallucinated imports (#1 failure mode at 4/8).
+- **Scope Reduction**: Original 6 items (P0–P2) reduced to 2 items. P1 import guard collapsed into P0 environmental context. Both P2s cut (type-stub injection redundant, context tuning too vague). Pseudocode fixtures scoped to missing T2+ only (`create_config_parser`).
+- **Roadmap Items**: (1) Re-evaluate Confidence Tier routing for codegen repair cloud escalation. (2) Corrective Micro-Skill extraction from successful repairs — deferred to Confidence Tier re-evaluation.
+- **Files**:
+  - [NEW] `docs/adr/0036-edge-thought-driven-codegen-repair.md`
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+

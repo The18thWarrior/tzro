@@ -26,6 +26,7 @@ func (c *Cache) Get(key K) (V, bool):
 		"", // no existing content
 		nil,
 		500,
+		"",
 	)
 
 	// Must contain the pseudo-code
@@ -79,6 +80,7 @@ func (c *Cache) Len() int: RLock; return len(items)`
 			"types.go": "package cache\n\ntype Entry struct{}\n",
 		},
 		300,
+		"",
 	)
 
 	// Must contain existing content section for update
@@ -116,6 +118,7 @@ func TestBuildPseudocodeExpansionPrompt_NoSpec(t *testing.T) {
 		"",
 		nil,
 		100,
+		"",
 	)
 
 	// Spec section should be omitted entirely
@@ -149,9 +152,9 @@ func TestBuildPseudocodeExpansionDAG_Structure(t *testing.T) {
 		ctx,
 	)
 
-	// Single-node graph
-	if len(graph.Nodes) != 1 {
-		t.Fatalf("expected 1 node, got %d", len(graph.Nodes))
+	// Two-node graph: reason_code → validate_code
+	if len(graph.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(graph.Nodes))
 	}
 
 	node := graph.Nodes[0]
@@ -169,9 +172,20 @@ func TestBuildPseudocodeExpansionDAG_Structure(t *testing.T) {
 		t.Errorf("expected no allowed tools, got %v", node.AllowedTools)
 	}
 
-	// No edges in single-node graph
-	if len(graph.Edges) != 0 {
-		t.Errorf("expected 0 edges, got %d", len(graph.Edges))
+	// Edge: reason_code → validate_code
+	if len(graph.Edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(graph.Edges))
+	}
+	if graph.Edges[0].SourceID != "reason_code" || graph.Edges[0].TargetID != "validate_code" {
+		t.Errorf("expected edge reason_code→validate_code")
+	}
+
+	// MutationBudget
+	if graph.MutationBudget == nil {
+		t.Fatal("expected MutationBudget")
+	}
+	if graph.MutationBudget.MaxSpawns != 2 {
+		t.Errorf("expected MaxSpawns=2, got %d", graph.MutationBudget.MaxSpawns)
 	}
 
 	// Goal prompt should mention expansion

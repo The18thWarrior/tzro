@@ -63,6 +63,19 @@ func (e *ExecutionEngine) RegisterHook(h ExecutionHook) {
 	e.hooks = append(e.hooks, h)
 }
 
+// UnregisterHook removes a specific hook by pointer identity.
+// Used for task-scoped hooks that should be cleaned up after execution.
+func (e *ExecutionEngine) UnregisterHook(h ExecutionHook) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	for i, existing := range e.hooks {
+		if existing == h {
+			e.hooks = append(e.hooks[:i], e.hooks[i+1:]...)
+			return
+		}
+	}
+}
+
 func (e *ExecutionEngine) getHooksUnlocked() []ExecutionHook {
 	if len(e.hooks) == 0 {
 		return nil

@@ -457,6 +457,16 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 	doneChan := make(chan execResult, 1)
 
 	go func() {
+		// Register the compilation gate hook for this task's execution.
+		// It runs the compiler on source_code nodes and enriches their output
+		// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
+		compilationHook := &codegen.CompilationGateHook{
+			FilePath: args.Filepath,
+			Language: language,
+		}
+		executor.GlobalEngine.RegisterHook(compilationHook)
+		defer executor.GlobalEngine.UnregisterHook(compilationHook)
+
 		execOpts := task.ExecuteOptions{
 			TaskID:       taskID,
 			IntentType:   "codegen",
@@ -591,69 +601,62 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 					} else {
 						respMap["action"] = writeAction
 						respMap["linesWritten"] = linesWritten
-
-						// Compilation gate: run language-appropriate compiler after write
-						compResult := codegen.RunCompilationGate(language, args.Filepath)
+						
+						// Compilation gate results are embedded in the node output by the
+						// CompilationGateHook (AfterNode). Edge Thought spawning handles
+						// repair attempts via the MutationBudget (ADR-0036).
+						//
+						// Find the final source_code node's output to extract compilation status.
+						// This may be reason_code or a spawned repair node.
 						compilationInfo := map[string]interface{}{
-							"passed": compResult.Pass,
+							"passed": true, // assume pass; override if we find FAILED
 						}
-						if !compResult.Pass && compResult.Reason != "" {
-							compilationInfo["errors"] = compResult.Reason
 
-							// Always retry: build repair DAG and re-execute
-							fmt.Fprintf(os.Stderr, "[tzro_code] Compilation failed, attempting repair: %s\n", compResult.Reason)
-							repairTaskID := taskID + "_repair"
-							repairGraph := codegen.BuildRepairDAG(
-								repairTaskID,
-								codegen.StripMarkdownFences(rawCode),
-								compResult.Reason,
-								args.Spec,
-								language,
-								maxLines,
-							)
-							repairOpts := task.ExecuteOptions{
-								TaskID:       repairTaskID,
-								IntentType:   "codegen_repair",
-								IsForeground: true,
-							}
-							_, repairErr := task.ExecuteStatic(context.Background(), repairGraph, repairOpts)
-							_ = repairErr
-							repairNodes := memory.DB.GetAllNodeStates(repairTaskID)
-
-							var repairedCode string
-							for _, rn := range repairNodes {
-								if rn.NodeID == "reason_code" && rn.Status == "completed" {
-									repairedCode = rn.RawOutput
-									if repairedCode == "" {
-										repairedCode = rn.Output
+						// Check all completed nodes for the last source_code output
+						for _, n := range res.nodes {
+							if n.Status == "completed" {
+								output := n.RawOutput
+								if output == "" {
+									output = n.Output
+								}
+								if strings.Contains(output, "## Compilation Result") {
+									if strings.Contains(output, "FAILED") {
+										compilationInfo["passed"] = false
+										// Extract error text after "FAILED\n"
+										if idx := strings.Index(output, "FAILED\n"); idx >= 0 {
+											errText := output[idx+len("FAILED\n"):]
+											if endIdx := strings.Index(errText, "\n\n##"); endIdx > 0 {
+												errText = errText[:endIdx]
+											}
+											compilationInfo["errors"] = strings.TrimSpace(errText)
+										}
 									}
 								}
 							}
+						}
 
-							compilationInfo["retried"] = true
-							if repairedCode != "" {
-								// Re-write the repaired code
-								_, _, rewriteErr := codegen.WriteCodeFile(args.Filepath, repairedCode, maxLines)
-								if rewriteErr == nil {
-									// Re-run compilation gate on repaired code
-									retryResult := codegen.RunCompilationGate(language, args.Filepath)
-									compilationInfo["retryPassed"] = retryResult.Pass
-									if !retryResult.Pass {
-										compilationInfo["retryErrors"] = retryResult.Reason
-										fmt.Fprintf(os.Stderr, "[tzro_code] Repair attempt also failed compilation: %s\n", retryResult.Reason)
-									} else {
-										fmt.Fprintf(os.Stderr, "[tzro_code] Repair attempt passed compilation\n")
-										compilationInfo["passed"] = true
-									}
-								} else {
-									compilationInfo["retryPassed"] = false
-									compilationInfo["retryErrors"] = fmt.Sprintf("repair write failed: %v", rewriteErr)
-								}
+						// Check if repair was attempted (spawned nodes exist)
+						for _, n := range res.nodes {
+							if strings.HasPrefix(n.NodeID, "spawned_") {
+								compilationInfo["repairAttempted"] = true
+								break
+							}
+						}
+
+						// Check mutation budget exhaustion for mode-dependent reporting
+						if compilationInfo["passed"] == false && graph.MutationBudget != nil && graph.MutationBudget.RemainingSpawns == 0 {
+							compilationInfo["budgetExhausted"] = true
+							if args.Pseudocode == "" {
+								// Direct mode: signal complexity exceeded
+								respMap["status"] = "complexity_exceeded"
+								respMap["spec_echo"] = args.Spec
+								compilationInfo["exhaustionMode"] = "direct"
 							} else {
-								compilationInfo["retryPassed"] = false
-								compilationInfo["retryErrors"] = "repair produced no output"
+								// Expand mode: structured failure
+								compilationInfo["exhaustionMode"] = "expand"
 							}
 						}
+
 						respMap["compilation"] = compilationInfo
 					}
 				} // end switch mode

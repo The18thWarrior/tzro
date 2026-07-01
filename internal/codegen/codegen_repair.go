@@ -11,7 +11,7 @@ import (
 // BuildRepairPrompt constructs a prompt for the local model to fix compilation
 // errors in generated code. The model receives the original code, the compiler
 // error output, and instructions to fix the errors while preserving intent.
-func BuildRepairPrompt(originalCode, compilerErrors, spec, language string, maxLines int) string {
+func BuildRepairPrompt(originalCode, compilerErrors, spec, language string, maxLines int, moduleContext string) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("You are a %s code repair assistant. Fix the compilation errors in the code below.\n\n", language))
@@ -42,15 +42,24 @@ func BuildRepairPrompt(originalCode, compilerErrors, spec, language string, maxL
 
 	sb.WriteString("## Original Spec\n")
 	sb.WriteString(spec)
-	sb.WriteString("\n")
+	sb.WriteString("\n\n")
+
+	if moduleContext != "" {
+		sb.WriteString("## Available Packages\n")
+		sb.WriteString(moduleContext)
+		if !strings.HasSuffix(moduleContext, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
 
 	return sb.String()
 }
 
 // BuildRepairDAG constructs a single-node synthesis graph that re-generates
 // code using the repair prompt. Used for the compilation gate retry loop.
-func BuildRepairDAG(taskID, originalCode, compilerErrors, spec, language string, maxLines int) *compiler.ExecutionGraph {
-	prompt := BuildRepairPrompt(originalCode, compilerErrors, spec, language, maxLines)
+func BuildRepairDAG(taskID, originalCode, compilerErrors, spec, language string, maxLines int, moduleContext string) *compiler.ExecutionGraph {
+	prompt := BuildRepairPrompt(originalCode, compilerErrors, spec, language, maxLines, moduleContext)
 
 	return &compiler.ExecutionGraph{
 		TaskID: taskID,

@@ -163,6 +163,7 @@ func TestBuildCodePrompt_Create(t *testing.T) {
 		"", // no existing content
 		nil,
 		500,
+		"",
 	)
 
 	if !strings.Contains(prompt, "Implement a Config struct") {
@@ -190,6 +191,7 @@ func TestBuildCodePrompt_Update(t *testing.T) {
 			"types.go": "package config\n\ntype Options struct{}\n",
 		},
 		300,
+		"",
 	)
 
 	if !strings.Contains(prompt, "Action: update") {
@@ -287,8 +289,9 @@ func TestBuildCodeDAG_WithPrecomputedContext(t *testing.T) {
 
 	graph := BuildCodeDAG("task_2", "add Bar()", "/tmp/foo.go", "go", 500, ctx)
 
-	if len(graph.Nodes) != 1 {
-		t.Fatalf("expected 1 node (reason_code only), got %d", len(graph.Nodes))
+	// Two-node DAG: reason_code → validate_code
+	if len(graph.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes (reason_code + validate_code), got %d", len(graph.Nodes))
 	}
 
 	node := graph.Nodes[0]
@@ -301,10 +304,40 @@ func TestBuildCodeDAG_WithPrecomputedContext(t *testing.T) {
 	if len(node.AllowedTools) != 0 {
 		t.Errorf("reason_code should have no allowed tools, got %v", node.AllowedTools)
 	}
+	if node.OutputFormat != "source_code" {
+		t.Errorf("reason_code should have OutputFormat 'source_code', got %q", node.OutputFormat)
+	}
+	if node.OutputLanguage != "go" {
+		t.Errorf("reason_code should have OutputLanguage 'go', got %q", node.OutputLanguage)
+	}
 
-	// No edges in single-node graph
-	if len(graph.Edges) != 0 {
-		t.Errorf("expected 0 edges, got %d", len(graph.Edges))
+	// validate_code node
+	valNode := graph.Nodes[1]
+	if valNode.ID != "validate_code" {
+		t.Errorf("expected second node ID 'validate_code', got %q", valNode.ID)
+	}
+	if valNode.ActivationThreshold <= 0 {
+		t.Errorf("validate_code should have a non-zero ActivationThreshold, got %f", valNode.ActivationThreshold)
+	}
+
+	// Edge: reason_code → validate_code
+	if len(graph.Edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(graph.Edges))
+	}
+	if graph.Edges[0].SourceID != "reason_code" || graph.Edges[0].TargetID != "validate_code" {
+		t.Errorf("expected edge reason_code→validate_code, got %s→%s",
+			graph.Edges[0].SourceID, graph.Edges[0].TargetID)
+	}
+
+	// MutationBudget
+	if graph.MutationBudget == nil {
+		t.Fatal("expected MutationBudget to be set")
+	}
+	if graph.MutationBudget.MaxSpawns != 2 {
+		t.Errorf("expected MaxSpawns=2, got %d", graph.MutationBudget.MaxSpawns)
+	}
+	if graph.MutationBudget.RemainingSpawns != 2 {
+		t.Errorf("expected RemainingSpawns=2, got %d", graph.MutationBudget.RemainingSpawns)
 	}
 
 	// Prompt should contain spec, existing content, and siblings

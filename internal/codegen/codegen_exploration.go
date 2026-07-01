@@ -49,7 +49,7 @@ func BuildCodeDAGWithExploration(taskID, spec, filePath, language string, maxLin
 		{
 			ID:           "reason_code",
 			Type:         "synthesis",
-			Instructions: BuildCodePrompt(spec, filePath, language, action, existingContent, siblings, maxLines),
+			Instructions: BuildCodePrompt(spec, filePath, language, action, existingContent, siblings, maxLines, DiscoverModuleContext(filePath, language)),
 			AllowedTools: []string{},
 			Status:       "pending",
 			OutputFormat:   "source_code",

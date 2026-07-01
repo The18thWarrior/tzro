@@ -261,16 +261,30 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 							// Spawn a new node between source and target
 							spawnedID := fmt.Sprintf("spawned_%s_%d", nID, stepIndex)
 							chainContext := buildSpawnChainContext(graph, nID, targetNode.ID)
+
+							// Determine spawned node properties based on source node's output format.
+							// For source_code nodes (codegen repair), the spawned node is a synthesis
+							// node that re-generates code with compilation error evidence.
+							// For other nodes, the generic action template is used.
+							spawnedType := "action"
+							spawnedOutputFormat := targetNode.OutputFormat
+							spawnedOutputLanguage := targetNode.OutputLanguage
+							if node.OutputFormat == "source_code" {
+								spawnedType = "synthesis"
+								spawnedOutputFormat = node.OutputFormat
+								spawnedOutputLanguage = node.OutputLanguage
+							}
+
 							spawnedNode := compiler.GraphNode{
 								ID:                  spawnedID,
-								Type:                "action",
+								Type:                spawnedType,
 								Action:              node.Action,
 								AllowedTools:        node.AllowedTools,
 								Instructions:        fmt.Sprintf("Goal: %s\n\nAccumulated Context:\n%s\n\nPrevious step result: %s\n\nContinue working toward the goal.", graph.GoalPrompt, chainContext, et.Thought),
 								Status:              "pending",
 								ActivationThreshold: 0.0, // Spawned nodes don't gate further
-								OutputFormat:        targetNode.OutputFormat,
-								OutputLanguage:      targetNode.OutputLanguage,
+								OutputFormat:        spawnedOutputFormat,
+								OutputLanguage:      spawnedOutputLanguage,
 							}
 
 							spawnErr := ApplySpawn(graph, nID, spawnedNode)

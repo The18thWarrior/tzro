@@ -12,6 +12,7 @@ func TestBuildRepairPrompt_IncludesCompilerErrors(t *testing.T) {
 		"Create an Add function",
 		"go",
 		500,
+		"",
 	)
 	if !strings.Contains(prompt, "cannot use a + b") {
 		t.Error("repair prompt should include compiler errors")
@@ -25,6 +26,7 @@ func TestBuildRepairPrompt_IncludesOriginalCode(t *testing.T) {
 		"Create an Add function",
 		"go",
 		500,
+		"",
 	)
 	if !strings.Contains(prompt, "func Add") {
 		t.Error("repair prompt should include the original generated code")
@@ -38,6 +40,7 @@ func TestBuildRepairPrompt_IncludesLanguage(t *testing.T) {
 		"spec here",
 		"typescript",
 		500,
+		"",
 	)
 	if !strings.Contains(prompt, "typescript") && !strings.Contains(prompt, "TypeScript") {
 		t.Error("repair prompt should mention the target language")
@@ -45,14 +48,14 @@ func TestBuildRepairPrompt_IncludesLanguage(t *testing.T) {
 }
 
 func TestBuildRepairPrompt_IncludesLineLimit(t *testing.T) {
-	prompt := BuildRepairPrompt("code", "error", "spec", "go", 300)
+	prompt := BuildRepairPrompt("code", "error", "spec", "go", 300, "")
 	if !strings.Contains(prompt, "300") {
 		t.Error("repair prompt should mention the line limit")
 	}
 }
 
 func TestBuildRepairDAG_SingleNode(t *testing.T) {
-	dag := BuildRepairDAG("repair-test-1", "original code", "type error", "spec", "go", 500)
+	dag := BuildRepairDAG("repair-test-1", "original code", "type error", "spec", "go", 500, "")
 	if len(dag.Nodes) != 1 {
 		t.Fatalf("repair DAG should have 1 node, got %d", len(dag.Nodes))
 	}

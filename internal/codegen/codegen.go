@@ -188,7 +188,7 @@ func GatherContext(targetPath string, validator *tools.PathValidator) (*CodeCont
 }
 
 // BuildCodePrompt assembles the structured prompt for the reason_code node.
-func BuildCodePrompt(spec, filePath, language, action, existingContent string, siblings map[string]string, maxLines int) string {
+func BuildCodePrompt(spec, filePath, language, action, existingContent string, siblings map[string]string, maxLines int, moduleContext string) string {
 	var b strings.Builder
 
 	b.WriteString("You are a code generator. Write code for a single file based on the spec.\n\n")
@@ -227,6 +227,15 @@ func BuildCodePrompt(spec, filePath, language, action, existingContent string, s
 			}
 			b.WriteString("```\n\n")
 		}
+	}
+
+	if moduleContext != "" {
+		b.WriteString("## Available Packages\n")
+		b.WriteString(moduleContext)
+		if !strings.HasSuffix(moduleContext, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
 	}
 
 	b.WriteString("## Rules\n")
@@ -313,22 +322,40 @@ func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int, codeCtx
 			language = codeCtx.Language
 		}
 
+		moduleContext := DiscoverModuleContext(filePath, language)
 		fullPrompt := BuildCodePrompt(spec, filePath, language, action,
-			codeCtx.ExistingContent, codeCtx.Siblings, maxLines)
+			codeCtx.ExistingContent, codeCtx.Siblings, maxLines, moduleContext)
 
 		return &compiler.ExecutionGraph{
 			TaskID:     taskID,
 			CreatedAt:  time.Now().Unix(),
 			MaxCycles:  1,
-			GoalPrompt: fmt.Sprintf("Generate code for %s: %s", filePath, spec),
+			GoalPrompt: fmt.Sprintf("Generate compilable %s code for %s: %s", language, filePath, spec),
+			MutationBudget: &compiler.MutationBudget{
+				MaxSpawns:       2,
+				RemainingSpawns: 2,
+			},
 			Nodes: []compiler.GraphNode{
 				{
-					ID:           "reason_code",
-					Type:         "synthesis",
-					Instructions: fullPrompt,
-					AllowedTools: []string{},
-					Status:       "pending",
+					ID:             "reason_code",
+					Type:           "synthesis",
+					Instructions:   fullPrompt,
+					AllowedTools:   []string{},
+					Status:         "pending",
+					OutputFormat:   "source_code",
+					OutputLanguage: language,
 				},
+				{
+					ID:                  "validate_code",
+					Type:                "synthesis",
+					Instructions:        fmt.Sprintf("Validate that the generated %s code compiles successfully.", language),
+					AllowedTools:        []string{},
+					Status:              "pending",
+					ActivationThreshold: 0.9,
+				},
+			},
+			Edges: []compiler.GraphEdge{
+				{SourceID: "reason_code", TargetID: "validate_code"},
 			},
 		}
 	}

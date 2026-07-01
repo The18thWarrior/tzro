@@ -12,7 +12,7 @@ import (
 // BuildPseudocodeExpansionPrompt assembles the structured prompt for expanding
 // pseudo-code into compilable source code. This is used when the task complexity
 // exceeds T1 and the harness provides pseudo-code for the local model to expand.
-func BuildPseudocodeExpansionPrompt(pseudocode, spec, filePath, language, action, existingContent string, siblings map[string]string, maxLines int) string {
+func BuildPseudocodeExpansionPrompt(pseudocode, spec, filePath, language, action, existingContent string, siblings map[string]string, maxLines int, moduleContext string) string {
 	var b strings.Builder
 
 	b.WriteString("You are a code expander. Convert the following pseudo-code into complete,\n")
@@ -59,6 +59,15 @@ func BuildPseudocodeExpansionPrompt(pseudocode, spec, filePath, language, action
 		}
 	}
 
+	if moduleContext != "" {
+		b.WriteString("## Available Packages\n")
+		b.WriteString(moduleContext)
+		if !strings.HasSuffix(moduleContext, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## Rules\n")
 	b.WriteString("- Output ONLY the complete file content\n")
 	b.WriteString("- No markdown fences, no explanation, no commentary\n")
@@ -88,22 +97,40 @@ func BuildPseudocodeExpansionDAG(taskID, pseudocode, spec, filePath, language st
 		siblings = codeCtx.Siblings
 	}
 
+	moduleContext := DiscoverModuleContext(filePath, language)
 	fullPrompt := BuildPseudocodeExpansionPrompt(pseudocode, spec, filePath, language, action,
-		existingContent, siblings, maxLines)
+		existingContent, siblings, maxLines, moduleContext)
 
 	return &compiler.ExecutionGraph{
 		TaskID:     taskID,
 		CreatedAt:  time.Now().Unix(),
 		MaxCycles:  1,
-		GoalPrompt: fmt.Sprintf("Expand pseudo-code into %s for %s", language, filePath),
+		GoalPrompt: fmt.Sprintf("Expand pseudo-code into compilable %s for %s", language, filePath),
+		MutationBudget: &compiler.MutationBudget{
+			MaxSpawns:       2,
+			RemainingSpawns: 2,
+		},
 		Nodes: []compiler.GraphNode{
 			{
-				ID:           "reason_code",
-				Type:         "synthesis",
-				Instructions: fullPrompt,
-				AllowedTools: []string{},
-				Status:       "pending",
+				ID:             "reason_code",
+				Type:           "synthesis",
+				Instructions:   fullPrompt,
+				AllowedTools:   []string{},
+				Status:         "pending",
+				OutputFormat:   "source_code",
+				OutputLanguage: language,
 			},
+			{
+				ID:                  "validate_code",
+				Type:                "synthesis",
+				Instructions:        fmt.Sprintf("Validate that the expanded %s code compiles successfully.", language),
+				AllowedTools:        []string{},
+				Status:              "pending",
+				ActivationThreshold: 0.9,
+			},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "reason_code", TargetID: "validate_code"},
 		},
 	}
 }
