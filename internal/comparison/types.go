@@ -9,8 +9,9 @@ const (
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"
 	ConditionCooperative = "cooperative"
-	ConditionTzroCode    = "tzro_code" // Static 3-node DAG via codegen package (cooperative mode)
-	ConditionCloudCode   = "cloud_code" // Static 3-node DAG via codegen package (cloud mode)
+	ConditionTzroCode         = "tzro_code"          // Static 3-node DAG via codegen package (cooperative mode)
+	ConditionCloudCode        = "cloud_code"         // Static 3-node DAG via codegen package (cloud mode)
+	ConditionTzroCodeExpanded = "tzro_code_expanded"  // Pseudo-code expansion via codegen package (cooperative mode)
 )
 
 // Task category constants.
@@ -29,7 +30,7 @@ func AllConditions() []string {
 // CodegenConditions returns the conditions applicable to code generation benchmarks.
 // Limits benchmarks to specialized codegen execution conditions for an apples-to-apples comparison.
 func CodegenConditions() []string {
-	return []string{ConditionCloudCode, ConditionTzroCode}
+	return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroCodeExpanded}
 }
 
 // RubricCriterion defines a single quality evaluation dimension.
@@ -59,6 +60,7 @@ type ComparisonTask struct {
 	Language      string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
 	Action        string        `json:"action,omitempty"`   // "create" or "update"
 	SeedFile      string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
+	Pseudocode    string        `json:"pseudocode,omitempty"` // Pseudo-code for expansion mode (used by tzro_code_expanded condition)
 	QualityRubric QualityRubric `json:"qualityRubric"`
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"tzro/internal/codegen"
@@ -441,6 +442,192 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		TaskID:        t.ID,
 		TaskTier:      t.Tier,
 		Condition:     conditionID,
+		CloudTokens:   cloudUsage,
+		LocalTokens:   localUsage,
+		WallClockMs:   wallClock,
+		EstCostUSD:    EstimateCost(cloudUsage, localUsage, pricing),
+		ToolCallCount: toolCallCount,
+		OutputText:    outputText,
+	}, nil
+}
+
+// RunCodegenExpandedCondition executes a codegen task using the pseudo-code
+// expansion path. The task's Pseudocode field is populated from hand-authored
+// fixture files in testdata/codegen_seeds/pseudocode/; the local model expands
+// the pseudo-code into compilable source code.
+func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
+	// Auto-load pseudo-code from fixture file if not populated on the task itself
+	pseudocode := t.Pseudocode
+	if strings.TrimSpace(pseudocode) == "" {
+		pseudocode = ReadPseudocodeFixture(t.ID)
+	}
+	if strings.TrimSpace(pseudocode) == "" {
+		return ComparisonResult{
+			TaskID:    t.ID,
+			TaskTier:  t.Tier,
+			Condition: ConditionTzroCodeExpanded,
+			Error:     "no pseudocode fixture found for task " + t.ID + " — skipping tzro_code_expanded condition",
+		}, nil
+	}
+
+	// Set model mode to cooperative (local sidecar)
+	originalModelMode := config.GlobalConfig.ModelMode
+	config.GlobalConfig.ModelMode = "cooperative"
+	defer func() {
+		config.GlobalConfig.ModelMode = originalModelMode
+	}()
+
+	// Isolated database per condition run
+	dbFile := fmt.Sprintf("tzro_comparison_%s_%s.db", ConditionTzroCodeExpanded, t.ID)
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting(dbFile)
+	defer func() {
+		memory.DB.Close()
+		_ = os.Remove(dbFile)
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+
+	if err := memory.DB.Init(); err != nil {
+		return ComparisonResult{}, fmt.Errorf("failed to init isolated database for %s: %w", ConditionTzroCodeExpanded, err)
+	}
+
+	_ = tools.Init("")
+
+	// Initialize inference backend
+	oldBackend := inference.ActiveBackend
+	inference.ActiveBackend = inference.NewLlamaServerBackend(inference.GlobalLocalModel, telemetry.Default)
+	defer func() {
+		inference.ActiveBackend = oldBackend
+	}()
+
+	// Auto-start sidecar if needed
+	status, activePort, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
+	if status == "Stopped" {
+		if err := inference.GlobalLocalModel.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", ConditionTzroCodeExpanded, err)
+		} else {
+			_, activePort, _, _, _ = inference.GlobalLocalModel.GetStatusInfo()
+			for attempt := range 30 {
+				healthURL := fmt.Sprintf("http://localhost:%d/health", activePort)
+				resp, err := http.Get(healthURL)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					resp.Body.Close()
+					fmt.Fprintf(os.Stderr, "[Comparison] Sidecar healthy after %d attempts\n", attempt+1)
+					break
+				}
+				if resp != nil {
+					resp.Body.Close()
+				}
+				time.Sleep(1 * time.Second)
+			}
+		}
+	}
+
+	// Create a temp directory for the codegen output
+	tmpDir, err := os.MkdirTemp("", "tzro_codegen_expanded_*")
+	if err != nil {
+		return ComparisonResult{}, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	if evalDir, evalErr := filepath.EvalSymlinks(tmpDir); evalErr == nil {
+		tmpDir = evalDir
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// If the task has a seed file, copy it to the temp dir
+	targetPath := filepath.Join(tmpDir, t.Filepath)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return ComparisonResult{}, fmt.Errorf("failed to create target parent dir: %w", err)
+	}
+
+	if t.SeedFile != "" {
+		seedData, err := ReadSeedFile(t.SeedFile)
+		if err != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to read seed file: %w", err)
+		}
+		if err := os.WriteFile(targetPath, seedData, 0644); err != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to write seed file: %w", err)
+		}
+	}
+
+	spec := t.Spec
+	if spec == "" {
+		spec = t.Prompt
+	}
+	language := t.Language
+	if language == "" {
+		language = codegen.DetectLanguage(targetPath)
+	}
+
+	// Pre-compute context
+	extendedPaths := append(tools.GetAllowedPaths(), tmpDir)
+	validator := tools.NewStaticPathValidator(extendedPaths)
+	codeCtx, ctxErr := codegen.GatherContext(targetPath, validator)
+	if ctxErr != nil {
+		fmt.Fprintf(os.Stderr, "[Comparison] GatherContext warning: %v\n", ctxErr)
+		codeCtx = &codegen.CodeContext{
+			Language: language,
+			Siblings: make(map[string]string),
+		}
+	}
+
+	// Fresh token tracker
+	tracker := inference.NewTokenTracker()
+	ctx = inference.WithTokenTracker(ctx, tracker)
+
+	taskID := fmt.Sprintf("comparison_%s_%s", ConditionTzroCodeExpanded, t.ID)
+	startTime := time.Now()
+
+	// Build the expansion DAG with pre-authored pseudo-code
+	graph := codegen.BuildPseudocodeExpansionDAG(taskID, pseudocode, spec, targetPath, language, 500, codeCtx)
+
+	// Execute the DAG
+	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
+
+	wallClock := time.Since(startTime).Milliseconds()
+	localUsage, cloudUsage := tracker.GetUsage()
+
+	if err != nil {
+		return ComparisonResult{
+			TaskID:      t.ID,
+			TaskTier:    t.Tier,
+			Condition:   ConditionTzroCodeExpanded,
+			CloudTokens: cloudUsage,
+			LocalTokens: localUsage,
+			WallClockMs: wallClock,
+			EstCostUSD:  EstimateCost(cloudUsage, localUsage, pricing),
+			Error:       fmt.Sprintf("%s execution failed: %v", ConditionTzroCodeExpanded, err),
+		}, nil
+	}
+
+	// Post-process: extract reason_code output and write file
+	if state, ok := memory.DB.GetNodeState(taskID, "reason_code"); ok && state.Status == "completed" {
+		rawCode := state.RawOutput
+		if rawCode == "" {
+			rawCode = state.Output
+		}
+		if rawCode != "" {
+			_, _, writeErr := codegen.WriteCodeFile(targetPath, rawCode, 500)
+			if writeErr != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] WriteCodeFile failed: %v\n", writeErr)
+			}
+		}
+	}
+
+	// Read the generated file as the output
+	var outputText string
+	if data, readErr := os.ReadFile(targetPath); readErr == nil {
+		outputText = string(data)
+	} else {
+		outputText = extractTerminalSynthesis(graph, taskID)
+	}
+
+	toolCallCount := countToolCalls(graph, taskID)
+
+	return ComparisonResult{
+		TaskID:        t.ID,
+		TaskTier:      t.Tier,
+		Condition:     ConditionTzroCodeExpanded,
 		CloudTokens:   cloudUsage,
 		LocalTokens:   localUsage,
 		WallClockMs:   wallClock,

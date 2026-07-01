@@ -262,12 +262,13 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 
 // TzroCodeArgs defines the inputs for the tzro_code code generation tool.
 type TzroCodeArgs struct {
-	Spec     string `json:"spec" jsonschema:"required,The specification or JSDoc describing what to generate"`
-	Filepath string `json:"filepath" jsonschema:"required,Absolute path to the target file to create or update"`
-	Language string `json:"language,omitempty" jsonschema:"Programming language override. Auto-detected from file extension if omitted"`
-	MaxLines int    `json:"maxLines,omitempty" jsonschema:"Maximum lines for generated file. Default: 500 or config codeMaxLines"`
-	Timeout  int    `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 120"`
-	Mode     string `json:"mode,omitempty" jsonschema:"Code generation mode: 'full' (whole file), 'diff' (structured hunks), or '' (auto-select). Auto: new/small files use full, large files use diff"`
+	Spec       string `json:"spec" jsonschema:"required,The specification or JSDoc describing what to generate"`
+	Filepath   string `json:"filepath" jsonschema:"required,Absolute path to the target file to create or update"`
+	Language   string `json:"language,omitempty" jsonschema:"Programming language override. Auto-detected from file extension if omitted"`
+	MaxLines   int    `json:"maxLines,omitempty" jsonschema:"Maximum lines for generated file. Default: 500 or config codeMaxLines"`
+	Timeout    int    `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 120"`
+	Mode       string `json:"mode,omitempty" jsonschema:"Code generation mode: 'full' (whole file), 'diff' (structured hunks), or '' (auto-select). Auto: new/small files use full, large files use diff"`
+	Pseudocode string `json:"pseudocode,omitempty" jsonschema:"Structured pseudo-code to expand into source code. When provided, the local model expands this into compilable code instead of generating from spec alone. Use when the task exceeds T1 complexity."`
 }
 
 // maxFullRewriteLines is the hard limit for whole-file rewrite mode.
@@ -404,25 +405,48 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 
 	fmt.Fprintf(os.Stderr, "[tzro_code] Mode=%s for %s\n", mode, args.Filepath)
 
-	// Build DAG with pre-computed context
-	// Route via complexity × mode matrix:
-	//   simple + full   → BuildCodeDAG
-	//   simple + diff   → BuildDiffDAG
-	//   moderate/complex + full → BuildCodeDAGWithExploration
-	//   moderate/complex + diff → BuildDiffDAGWithExploration
-	tier := classifyCodeComplexity(args.Spec, codeCtx)
+	// Route via pseudo-code availability and complexity classification:
+	//   pseudocode provided → expansion DAG (any complexity)
+	//   complex + no pseudocode → reject with complexity_exceeded
+	//   simple + no pseudocode → direct generation (existing path)
 	var graph *compiler.ExecutionGraph
-	switch {
-	case (tier == "moderate" || tier == "complex") && mode == "diff":
-		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, using diff exploration DAG for %s\n", tier, args.Filepath)
-		graph = codegen.BuildDiffDAGWithExploration(taskID, args.Spec, args.Filepath, language, codeCtx)
-	case (tier == "moderate" || tier == "complex") && mode == "full":
-		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, using exploration DAG for %s\n", tier, args.Filepath)
-		graph = codegen.BuildCodeDAGWithExploration(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
-	case mode == "diff":
-		graph = codegen.BuildDiffDAG(taskID, args.Spec, args.Filepath, language, codeCtx)
-	default: // simple + full
-		graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
+
+	if strings.TrimSpace(args.Pseudocode) != "" {
+		// Pseudo-code expansion mode: local model expands pseudo-code into source
+		fmt.Fprintf(os.Stderr, "[tzro_code] Pseudo-code expansion mode for %s\n", args.Filepath)
+		graph = codegen.BuildPseudocodeExpansionDAG(taskID, args.Pseudocode, args.Spec, args.Filepath, language, maxLines, codeCtx)
+	} else {
+		// No pseudo-code: classify complexity and route
+		tier := classifyCodeComplexity(args.Spec, codeCtx)
+
+		if tier == "complex" {
+			// Complexity exceeds local model capability — return structured rejection
+			fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=complex, returning complexity_exceeded for %s\n", args.Filepath)
+			respMap := map[string]interface{}{
+				"status":         "complexity_exceeded",
+				"taskId":         "",
+				"tier":           tier,
+				"recommendation": "pseudocode_expansion",
+				"message":        "Task exceeds local model capability for direct generation. Provide structured pseudo-code as the 'pseudocode' parameter and resubmit.",
+				"spec_echo":      args.Spec,
+				"filepath":       args.Filepath,
+				"language":       language,
+			}
+			respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: string(respBytes)},
+				},
+			}, nil, nil
+		}
+
+		// Simple tier: direct generation
+		switch mode {
+		case "diff":
+			graph = codegen.BuildDiffDAG(taskID, args.Spec, args.Filepath, language, codeCtx)
+		default:
+			graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
+		}
 	}
 
 	type execResult struct {
@@ -492,6 +516,26 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 				respMap["status"] = "failed"
 				respMap["error"] = "reason_code produced no output"
 			} else {
+				// Quality gate: structural validation before writing
+				cleanedForGate := codegen.StripMarkdownFences(rawCode)
+				gateResult := codegen.RunStructuralQualityGate(cleanedForGate, language)
+				if !gateResult.Pass {
+					if strings.TrimSpace(args.Pseudocode) == "" {
+						// Direct mode: gate failure means misclassified complexity → escalate
+						fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed in direct mode: %s\n", gateResult.Reason)
+						respMap["status"] = "complexity_exceeded"
+						respMap["tier"] = "complex"
+						respMap["recommendation"] = "pseudocode_expansion"
+						respMap["message"] = fmt.Sprintf("Generated code failed structural validation (%s). Provide structured pseudo-code as the 'pseudocode' parameter and resubmit.", gateResult.Reason)
+						respMap["spec_echo"] = args.Spec
+					} else {
+						// Expand mode: gate failure is a standard failure
+						fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed in expand mode: %s\n", gateResult.Reason)
+						respMap["status"] = "failed"
+						respMap["error"] = fmt.Sprintf("quality gate: %s", gateResult.Reason)
+					}
+				} else {
+					// Quality gate passed — write the file
 				switch mode {
 				case "diff":
 					// Parse structured diff output
@@ -548,6 +592,7 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 						respMap["action"] = writeAction
 						respMap["linesWritten"] = linesWritten
 					}
+				}
 				}
 			}
 		}

@@ -11,8 +11,13 @@ import (
 )
 
 // classifyCodeComplexity analyzes the provided spec against the current code context
-// and returns a complexity tier string ("simple", "moderate", or "complex").
-// It uses the inference.GlobalLocalModel to make the classification decision.
+// and returns a binary complexity tier: "simple" or "complex".
+//
+// "simple" tasks can be generated directly by the local model.
+// "complex" tasks require pseudo-code from the harness for expansion.
+//
+// Uses the inference.GlobalLocalModel to make the classification decision.
+// Falls back to "simple" on any error (conservative: allows direct generation).
 func classifyCodeComplexity(spec string, codeCtx *codegen.CodeContext) string {
 	// Build the user prompt describing the spec and existing context.
 	userPrompt := fmt.Sprintf(`
@@ -23,13 +28,13 @@ Task spec:
 %s
 `, codeCtx, spec)
 
-	// Build the JSON schema constraining the output to a single tier.
+	// Build the JSON schema constraining the output to a binary tier.
 	schemaJSON := `{
 		"type": "object",
 		"properties": {
 			"tier": {
 				"type": "string",
-				"enum": ["simple", "moderate", "complex"]
+				"enum": ["simple", "complex"]
 			}
 		},
 		"required": ["tier"],
@@ -39,7 +44,16 @@ Task spec:
 	// Call the inference engine.
 	req := inference.StructuredInferenceRequest{
 		Messages: []inference.InferenceMessage{
-			{Role: "system", Content: "Classify code generation complexity. Output JSON with tier field."},
+			{Role: "system", Content: `Classify code generation complexity as "simple" or "complex".
+
+"simple": Single-concept tasks that can be directly generated from a spec.
+Examples: add a method, create a handler, add error handling to one function.
+
+"complex": Multi-concept tasks requiring coordinated design decisions.
+Examples: implement a generic data structure with concurrency, refactor across interfaces,
+build a query builder with type-safe chaining, create event systems with wildcard matching.
+
+Output JSON with tier field.`},
 			{Role: "user", Content: userPrompt},
 		},
 		JSONSchema: schemaJSON,
@@ -65,21 +79,10 @@ Task spec:
 		return "simple"
 	}
 
-	// Validate the tier value.
-	allowedTiers := []string{"simple", "moderate", "complex"}
-	if !contains(allowedTiers, result.Tier) {
-		// Unknown tier: fallback to conservative "simple" classification.
-		fmt.Fprintf(os.Stderr, "[tzro_code] classifyCodeComplexity: tier=%s for spec=%.60s...\n", "simple", spec)
+	// Validate the tier value — only "simple" and "complex" are accepted.
+	if result.Tier != "simple" && result.Tier != "complex" {
+		fmt.Fprintf(os.Stderr, "[tzro_code] classifyCodeComplexity: unexpected tier=%q, defaulting to simple for spec=%.60s...\n", result.Tier, spec)
 		return "simple"
-	}
-
-	// Apply bias rule: if siblings > 2 and spec length > 200, bias toward moderate.
-	biasFactor := float64(len(codeCtx.Siblings)) / 3.0
-	if len(spec) > 200 && biasFactor > 0.25 {
-		switch result.Tier {
-		case "simple":
-			result.Tier = "moderate"
-		}
 	}
 
 	fmt.Fprintf(os.Stderr, "[tzro_code] classifyCodeComplexity: tier=%s for spec=%.60s...\n", result.Tier, spec)
