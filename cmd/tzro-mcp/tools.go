@@ -1149,6 +1149,32 @@ func handleTzroSkillsAdd(ctx context.Context, req *mcp.CallToolRequest, args Tzr
 	}, nil, nil
 }
 
+// TzroHookArgs defines the inputs for the merged tzro_hook tool.
+type TzroHookArgs struct {
+	Action string `json:"action" jsonschema:"required,Action to perform: list or approve"`
+	TaskID string `json:"taskId,omitempty" jsonschema:"The task ID to approve (required for approve action)"`
+	NodeID string `json:"nodeId,omitempty" jsonschema:"The node ID to approve (required for approve action)"`
+}
+
+func handleTzroHook(ctx context.Context, req *mcp.CallToolRequest, args TzroHookArgs) (*mcp.CallToolResult, any, error) {
+	switch strings.ToLower(strings.TrimSpace(args.Action)) {
+	case "list":
+		return handleTzroHookList(ctx, req, TzroHookListArgs{})
+	case "approve":
+		return handleTzroHookApprove(ctx, req, TzroHookApproveArgs{
+			TaskID: args.TaskID,
+			NodeID: args.NodeID,
+		})
+	default:
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "unknown action '%s'. Valid actions: list, approve"}`, args.Action)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+}
+
 // TzroHookListArgs defines inputs for tzro_hook_list.
 type TzroHookListArgs struct{}
 
@@ -2523,6 +2549,8 @@ func handleTzroDashboardSpec(ctx context.Context, req *mcp.CallToolRequest, args
 }
 
 func registerTools(server *mcp.Server) {
+	// --- Tier 1: First-class tools (high frequency, core execution) ---
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
 		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt." + runDelegationHint(),
@@ -2544,84 +2572,70 @@ func registerTools(server *mcp.Server) {
 	}, handleTzroListTasks)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_configure_tools",
-		Description: "Configure and provision external MCP server hosts dynamically that tzro can use during DAG planning and execution.",
-	}, handleTzroConfigureTools)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_web_search",
-		Description: "Execute a multi-engine web search using tiered fallback (Startpage, Brave, Bing, DuckDuckGo). Returns ranked results with titles, URLs, and snippets.",
-	}, handleTzroWebSearch)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_memory_query",
-		Description: "Query fact memories and knowledge graph nodes using hybrid semantic/text similarity.",
-	}, handleTzroMemoryQuery)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_memory_ingest",
-		Description: "Ingest a new fact memory into the sqlite database, embedding it if active.",
-	}, handleTzroMemoryIngest)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_kg_neighborhood",
-		Description: "Traverse the connected entities in the knowledge graph starting from a node up to max hops.",
-	}, handleTzroKgNeighborhood)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_kg_add_entity",
-		Description: "Add or update nodes and/or edge relationships in the relational knowledge graph.",
-	}, handleTzroKgAddEntity)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_rag_context",
-		Description: "Get graph-RAG context retrieved semantically for a natural language query.",
-	}, handleTzroRagContext)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_list",
-		Description: "List all micro-skills and SOPs registered in the tzro database.",
-	}, handleTzroSkillsList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_get",
-		Description: "Get full details of a specific SOP skill by its ID.",
-	}, handleTzroSkillsGet)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_relevant",
-		Description: "Find relevant micro-skills and SOPs using dynamic semantic search.",
-	}, handleTzroSkillsRelevant)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_add",
-		Description: "Add a new SOP micro-skill to enable bidirectional execution coordination.",
-	}, handleTzroSkillsAdd)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_hook_list",
-		Description: "List human-in-the-loop workflow approval requests awaiting action.",
-	}, handleTzroHookList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_hook_approve",
-		Description: "Approve a paused human-in-the-loop task execution step and trigger resumption.",
-	}, handleTzroHookApprove)
-
-	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_resume",
 		Description: "Manually resume execution of a paused/interrupted workflow task by its ID.",
 	}, handleTzroResume)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_observer_events",
-		Description: "Retrieve recent observer verification and audit telemetry logs.",
-	}, handleTzroObserverEvents)
+		Name: "tzro_workflow",
+		Description: "Create and execute a tzro DAG workflow by directly specifying nodes, edges, " +
+			"and execution parameters. Bypasses the LLM Strategic Planner — use when you have a " +
+			"pre-defined workflow structure. The graph is SCT-expanded (action nodes decomposed into " +
+			"bridge/exec pairs) and Kahn-sorted before execution. Supports dry-run validation, " +
+			"probe nodes, activation thresholds, mutation budgets, and human-in-the-loop approval gates.",
+	}, handleTzroWorkflow)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_observer_memories",
-		Description: "List memories dynamically synthesized by the background Observer Agent.",
-	}, handleTzroObserverMemories)
+		Name: "tzro_restart",
+		Description: "Restart the tzro daemon (tzrod) in-place using process re-exec. " +
+			"The daemon replaces itself with a fresh copy of the same binary, preserving the PID and pidlock. " +
+			"In-flight tasks are interrupted and recovered automatically on boot. " +
+			"The inference sidecar survives via process adoption. " +
+			"Returns the restart status and previous uptime. Proactivity Level: L3 (Reversible Action).",
+	}, handleTzroRestart)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard",
+		Description: "Check spec status and return the HTTP dashboard URL, age, and status. Triggers initial generation if no spec exists.",
+	}, handleTzroDashboard)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_schedule",
+		Description: "Create, list, toggle, delete, or manually trigger scheduled workflows. " +
+			"Scheduled workflows use standard 5-field cron expressions and run durably inside the tzro daemon — " +
+			"they persist across restarts and do not depend on any conversation or agent session. " +
+			"Actions: create (requires name, cron, tasks), list, toggle (requires workflowId, status), " +
+			"delete (requires workflowId), trigger (requires workflowId for manual immediate execution).",
+	}, handleTzroSchedule)
+
+	// --- Tier 2: Merged action-dispatch tools ---
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_hook",
+		Description: "Manage human-in-the-loop workflow approval hooks. " +
+			"Actions: list (show pending approval requests), approve (approve a paused step by taskId and nodeId).",
+	}, handleTzroHook)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_model",
+		Description: "Manage local LLM models. " +
+			"Actions: list (show available GGUF models with download status and active indicator), " +
+			"set (change active model via modelId, ggufModelPath, or downloadUrl).",
+	}, handleTzroModel)
+
+	// --- Tier 3: Generic API escape hatch ---
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_api",
+		Description: "Generic API tool for less-frequently-used operations. Call named functions directly " +
+			"(completion, classification, compact, web_search, memory_query, memory_ingest, " +
+			"kg_neighborhood, kg_add_entity, rag_context, skills_list, skills_get, skills_relevant, " +
+			"skills_add, observer_events, observer_memories, activity_report, sentinel_alerts, " +
+			"sentinel_wake, configure_tools, schedule, apps_list, apps_install, apps_uninstall, " +
+			"dashboard_regenerate, dashboard_spec) or proxy to daemon HTTP endpoints (paths starting with /).",
+	}, handleTzroApi)
+
+	// --- Infrastructure: Client tool dispatch (MCP protocol-level, not user-facing) ---
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_register_client_tools",
@@ -2637,122 +2651,6 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_client_tool_submit",
 		Description: "Submit execution outcomes for a client-side tool to resume the paused workflow.",
 	}, handleTzroClientToolSubmit)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_model_list",
-		Description: "List available GGUF models from the catalog with download status, active model indicator, and local file paths.",
-	}, handleTzroModelList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_model_set",
-		Description: "Change the active local worker model. Accepts a catalog modelId, a direct ggufModelPath, or a downloadUrl. Stops the current sidecar, cleans up the old managed model file, updates config, and restarts with the new model.",
-	}, handleTzroModelSet)
-
-	// Local model delegation tools — enable cloud-to-local cost arbitrage
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_completion",
-		Description: "Run a prompt through the local on-device LLM for structured text generation. " +
-			"Use this for tasks that don't require frontier-model reasoning: " +
-			"summarization, extraction, reformatting, translation, boilerplate generation, " +
-			"and any task where output structure matters more than world knowledge. " +
-			"Supports optional JSON schema constraint (GBNF grammar) for guaranteed-valid structured output. " +
-			"Zero cost, zero latency to external APIs, fully private." + delegationHint(),
-	}, handleTzroCompletion)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_classification",
-		Description: "Classify arbitrary text into one of a fixed set of categories using the local on-device LLM " +
-			"with grammar-constrained output (GBNF). The model is forced to output exactly one of the provided labels — " +
-			"no hallucination possible. Use for sentiment analysis, intent routing, priority triage, " +
-			"content categorization, or any multi-class classification task. Zero cost, fully private." + delegationHint(),
-	}, handleTzroClassification)
-
-	// Sentinel Agent tools (ADR-0023)
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_activity_report",
-		Description: "Report current agent activity to the Sentinel for proactive context analysis. Called periodically by the cloud agent to enable richer proactive assistance.",
-	}, handleTzroActivityReport)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_sentinel_alerts",
-		Description: "Retrieve proactive insight alerts generated by the Sentinel Agent. Returns alerts filtered by status (default: unread). Marks returned unread alerts as read.",
-	}, handleTzroSentinelAlerts)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_sentinel_wake",
-		Description: "Manually trigger the Sentinel Agent's retrieval-grounded synthesis pipeline outside its normal heartbeat cadence. Use when you want an immediate proactive analysis — e.g., after completing a major code change, before a commit, or when the user explicitly asks for a Sentinel check. Accepts an optional contextHint to bias the analysis toward a specific topic.",
-	}, handleTzroSentinelWake)
-
-	// Direct workflow creation tool
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_workflow",
-		Description: "Create and execute a tzro DAG workflow by directly specifying nodes, edges, " +
-			"and execution parameters. Bypasses the LLM Strategic Planner — use when you have a " +
-			"pre-defined workflow structure. The graph is SCT-expanded (action nodes decomposed into " +
-			"bridge/exec pairs) and Kahn-sorted before execution. Supports dry-run validation, " +
-			"probe nodes, activation thresholds, mutation budgets, and human-in-the-loop approval gates.",
-	}, handleTzroWorkflow)
-
-	// Dashboard tools
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_dashboard",
-		Description: "Check spec status and return the HTTP dashboard URL, age, and status. Triggers initial generation if no spec exists.",
-	}, handleTzroDashboard)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_dashboard_regenerate",
-		Description: "Trigger immediate generation of the system dashboard spec, supporting optional wait blocking parameters.",
-	}, handleTzroDashboardRegenerate)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_dashboard_spec",
-		Description: "Return the current raw system dashboard spec JSON for debugging.",
-	}, handleTzroDashboardSpec)
-
-	// Agent App Package Manager tools (ADR-0031)
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_apps_list",
-		Description: "List all installed Agent Apps (.tzroapp packages) and their current status.",
-	}, handleTzroAppsList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_apps_install",
-		Description: "Install an Agent App from a .tzroapp archive path. Extracts files, runs SQL migrations, registers tools, and indexes micro-skills.",
-	}, handleTzroAppsInstall)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_apps_uninstall",
-		Description: "Uninstall an Agent App by its ID. Soft-disables the app by default (deregisters tools, preserves data). Set purge=true to permanently remove all data and tables.",
-	}, handleTzroAppsUninstall)
-
-	// Scheduled workflow management tool
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_schedule",
-		Description: "Create, list, toggle, delete, or manually trigger scheduled workflows. " +
-			"Scheduled workflows use standard 5-field cron expressions and run durably inside the tzro daemon — " +
-			"they persist across restarts and do not depend on any conversation or agent session. " +
-			"Actions: create (requires name, cron, tasks), list, toggle (requires workflowId, status), " +
-			"delete (requires workflowId), trigger (requires workflowId for manual immediate execution).",
-	}, handleTzroSchedule)
-
-	// Daemon lifecycle management
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_restart",
-		Description: "Restart the tzro daemon (tzrod) in-place using process re-exec. " +
-			"The daemon replaces itself with a fresh copy of the same binary, preserving the PID and pidlock. " +
-			"In-flight tasks are interrupted and recovered automatically on boot. " +
-			"The inference sidecar survives via process adoption. " +
-			"Returns the restart status and previous uptime. Proactivity Level: L3 (Reversible Action).",
-	}, handleTzroRestart)
-
-	// Conversation compaction tool
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_compact",
-		Description: "Compact a conversation history into a focused summary using the local model. " +
-			"Conversation-aware: preserves user corrections, explicit requirements, and final decisions " +
-			"while compressing assistant reasoning and dropping pleasantries. " +
-			"Use for pre-processing context before tzro_run submission (cost arbitrage — local model instead of frontier tokens)." + delegationHint(),
-	}, handleTzroCompact)
 }
 
 // --- Conversation Compaction MCP Tool ---

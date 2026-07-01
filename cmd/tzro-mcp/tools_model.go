@@ -17,6 +17,34 @@ import (
 	"tzro/internal/inference"
 )
 
+// TzroModelArgs defines the inputs for the merged tzro_model tool.
+type TzroModelArgs struct {
+	Action        string `json:"action" jsonschema:"required,Action to perform: list or set"`
+	ModelID       string `json:"modelId,omitempty" jsonschema:"Catalog model ID to activate (used with set action)"`
+	GGUFModelPath string `json:"ggufModelPath,omitempty" jsonschema:"Direct path to a GGUF model file (used with set action)"`
+	DownloadURL   string `json:"downloadUrl,omitempty" jsonschema:"URL to download a GGUF model from (used with set action)"`
+}
+
+func handleTzroModel(ctx context.Context, req *mcp.CallToolRequest, args TzroModelArgs) (*mcp.CallToolResult, any, error) {
+	switch strings.ToLower(strings.TrimSpace(args.Action)) {
+	case "list":
+		return handleTzroModelList(ctx, req, TzroModelListArgs{})
+	case "set":
+		return handleTzroModelSet(ctx, req, TzroModelSetArgs{
+			ModelID:       args.ModelID,
+			GGUFModelPath: args.GGUFModelPath,
+			DownloadURL:   args.DownloadURL,
+		})
+	default:
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "unknown action '%s'. Valid actions: list, set"}`, args.Action)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+}
+
 // ModelSwapResult is the typed return value from activateModel.
 type ModelSwapResult struct {
 	Status       string `json:"status"` // "success" | "error" | "downloading"
