@@ -13,6 +13,25 @@ type User struct {
 	CreatedAt time.Time
 }
 
+// NewUser creates a User with the given fields and sets CreatedAt to now.
+func NewUser(id, email, name string, age int) *User {
+	return &User{
+		ID:        id,
+		Email:     email,
+		Name:      name,
+		Age:       age,
+		CreatedAt: time.Now(),
+	}
+}
+
+// DisplayName returns the user's display name, falling back to email.
+func (u *User) DisplayName() string {
+	if u.Name != "" {
+		return u.Name
+	}
+	return u.Email
+}
+
 func (u *User) Validate() error {
 	if u.ID == "" {
 		return errors.New("ID cannot be empty")

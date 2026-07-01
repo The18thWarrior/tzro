@@ -520,26 +520,26 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 	}, nil
 }
 
-// RunCodegenExpandedCondition executes a codegen task using the pseudo-code
-// expansion path. The task's Pseudocode field is populated from hand-authored
-// fixture files in testdata/codegen_seeds/pseudocode/; the local model expands
-// the pseudo-code into compilable source code.
-func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
-	// Auto-load pseudo-code from fixture file if not populated on the task itself
-	pseudocode := t.Pseudocode
-	if strings.TrimSpace(pseudocode) == "" {
-		pseudocode = ReadPseudocodeFixture(t.ID)
-	}
-	if strings.TrimSpace(pseudocode) == "" {
-		return ComparisonResult{
-			TaskID:    t.ID,
-			TaskTier:  t.Tier,
-			Condition: ConditionTzroCodeExpanded,
-			Error:     "no pseudocode fixture found for task " + t.ID + " — skipping tzro_code_expanded condition",
-		}, nil
-	}
 
-	// Set model mode to cooperative (local sidecar)
+// RunCodegenDraftCondition executes a code generation task in two cooperative
+// phases:
+//
+//  1. Draft phase (local model, zero cloud tokens): Generates a single-pass
+//     draft with NO compilation gate and NO self-repair spawns. The local model
+//     gets one shot — whatever it produces is the "draft."
+//
+//  2. Fix phase (cloud model, cloud tokens): If the draft doesn't compile, a
+//     frontier model receives the draft + compiler errors + original spec and
+//     produces a fixed version. If the draft already compiles, this phase is
+//     skipped entirely.
+//
+// This condition measures the cooperative value of local-first draft generation:
+// "Does the local draft give the frontier model a meaningful head start vs.
+// generating from scratch?"
+func RunCodegenDraftCondition(ctx context.Context, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
+	// ── Phase 1: Draft (local model, cooperative mode) ──────────────────
+
+	// Set model mode to cooperative for the draft phase
 	originalModelMode := config.GlobalConfig.ModelMode
 	config.GlobalConfig.ModelMode = "cooperative"
 	defer func() {
@@ -547,7 +547,7 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 	}()
 
 	// Isolated database per condition run
-	dbFile := fmt.Sprintf("tzro_comparison_%s_%s.db", ConditionTzroCodeExpanded, t.ID)
+	dbFile := fmt.Sprintf("tzro_comparison_%s_%s.db", ConditionTzroDraft, t.ID)
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting(dbFile)
 	defer func() {
@@ -558,9 +558,10 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 	}()
 
 	if err := memory.DB.Init(); err != nil {
-		return ComparisonResult{}, fmt.Errorf("failed to init isolated database for %s: %w", ConditionTzroCodeExpanded, err)
+		return ComparisonResult{}, fmt.Errorf("failed to init isolated database for %s: %w", ConditionTzroDraft, err)
 	}
 
+	// Initialize tools (needed for tool schema lookup during DAG execution)
 	_ = tools.Init("")
 
 	// Initialize inference backend
@@ -574,7 +575,7 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 	status, activePort, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
 	if status == "Stopped" {
 		if err := inference.GlobalLocalModel.Start(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", ConditionTzroCodeExpanded, err)
+			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", ConditionTzroDraft, err)
 		} else {
 			_, activePort, _, _, _ = inference.GlobalLocalModel.GetStatusInfo()
 			for attempt := range 30 {
@@ -594,7 +595,7 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 	}
 
 	// Create a temp directory for the codegen output
-	tmpDir, err := os.MkdirTemp("", "tzro_codegen_expanded_*")
+	tmpDir, err := os.MkdirTemp("", "tzro_codegen_*")
 	if err != nil {
 		return ComparisonResult{}, fmt.Errorf("failed to create temp dir: %w", err)
 	}
@@ -619,6 +620,7 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		}
 	}
 
+	// Determine spec and language
 	spec := t.Spec
 	if spec == "" {
 		spec = t.Prompt
@@ -640,96 +642,140 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		}
 	}
 
-	// For Go tasks, create a go.mod so the compilation gate can run go build
+	// Language scaffolding
 	if language == "go" {
 		goModPath := filepath.Join(tmpDir, "go.mod")
 		if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 			_ = os.WriteFile(goModPath, []byte("module benchmod\n\ngo 1.21\n"), 0644)
 		}
 	}
-
-	// For TypeScript tasks, scaffold tsconfig + ambient type shims
 	if language == "typescript" {
 		scaffoldTypeScriptEnv(tmpDir)
 	}
 
-	// Fresh token tracker
-	tracker := inference.NewTokenTracker()
-	ctx = inference.WithTokenTracker(ctx, tracker)
+	// Fresh token tracker for draft phase
+	draftTracker := inference.NewTokenTracker()
+	draftCtx := inference.WithTokenTracker(ctx, draftTracker)
 
-	taskID := fmt.Sprintf("comparison_%s_%s", ConditionTzroCodeExpanded, t.ID)
+	taskID := fmt.Sprintf("comparison_%s_%s", ConditionTzroDraft, t.ID)
 	startTime := time.Now()
 
-	// Build the expansion DAG with pre-authored pseudo-code
-	graph := codegen.BuildPseudocodeExpansionDAG(taskID, pseudocode, spec, targetPath, language, 500, codeCtx)
+	// Build the DAG — same as tzro_code
+	graph := codegen.BuildCodeDAG(taskID, spec, targetPath, language, 500, codeCtx)
 
-	// Register the compilation gate hook so Edge Thought sees compilation
-	// evidence and can trigger repair spawns (ADR-0036).
-	compilationHook := &codegen.CompilationGateHook{
-		FilePath: targetPath,
-		Language: language,
-		Spec:     spec,
-	}
-	executor.GlobalEngine.RegisterHook(compilationHook)
-	defer executor.GlobalEngine.UnregisterHook(compilationHook)
+	// KEY DIFFERENCE: Do NOT register the CompilationGateHook.
+	// No AfterNode compilation check, no OnEdgeTraversal confidence override,
+	// no repair spawns. The local model gets exactly one shot.
+	fmt.Fprintf(os.Stderr, "[Comparison/Draft] Executing single-pass draft (no compilation gate) for %s/%s\n", ConditionTzroDraft, t.ID)
 
-	// Execute the DAG
-	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
+	err = executor.GlobalEngine.ExecuteGraphReactive(draftCtx, graph)
 
-	wallClock := time.Since(startTime).Milliseconds()
-	localUsage, cloudUsage := tracker.GetUsage()
+	draftLocalUsage, _ := draftTracker.GetUsage()
 
 	if err != nil {
+		wallClock := time.Since(startTime).Milliseconds()
 		return ComparisonResult{
 			TaskID:      t.ID,
 			TaskTier:    t.Tier,
-			Condition:   ConditionTzroCodeExpanded,
-			CloudTokens: cloudUsage,
-			LocalTokens: localUsage,
+			Condition:   ConditionTzroDraft,
+			LocalTokens: draftLocalUsage,
 			WallClockMs: wallClock,
-			EstCostUSD:  EstimateCost(cloudUsage, localUsage, pricing),
-			Error:       fmt.Sprintf("%s execution failed: %v", ConditionTzroCodeExpanded, err),
+			EstCostUSD:  EstimateCost(inference.TokenUsage{}, draftLocalUsage, pricing),
+			Error:       fmt.Sprintf("%s draft phase failed: %v", ConditionTzroDraft, err),
 		}, nil
 	}
 
-	// Post-process: extract the last source_code node's output and write file.
-	// This handles both the original reason_code and any spawned repair nodes.
+	// Extract the draft output
 	rawCode := extractLastSourceCodeOutput(taskID, graph)
 	if rawCode != "" {
 		_, _, writeErr := codegen.WriteCodeFile(targetPath, rawCode, 500)
 		if writeErr != nil {
-			fmt.Fprintf(os.Stderr, "[Comparison] WriteCodeFile failed: %v\n", writeErr)
+			fmt.Fprintf(os.Stderr, "[Comparison/Draft] WriteCodeFile failed: %v\n", writeErr)
 		}
 	}
 
-	// Read the generated file as the output
-	var outputText string
+	var draftText string
 	if data, readErr := os.ReadFile(targetPath); readErr == nil {
-		outputText = string(data)
-	} else {
-		outputText = extractTerminalSynthesis(graph, taskID)
+		draftText = string(data)
 	}
 
-	// Run compilation gate (informational — logged for benchmark reporting)
+	// ── Phase 2: Fix (cloud model, if draft doesn't compile) ────────────
+
 	compResult := codegen.RunCompilationGate(language, targetPath)
-	if !compResult.Pass {
-		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", ConditionTzroCodeExpanded, t.ID, compResult.Reason)
+
+	var outputText string
+	var cloudUsage inference.TokenUsage
+
+	if compResult.Pass {
+		// Draft compiles — no fix needed, zero cloud tokens
+		fmt.Fprintf(os.Stderr, "[Comparison/Draft] Draft COMPILES for %s/%s — skipping fix phase\n", ConditionTzroDraft, t.ID)
+		outputText = draftText
 	} else {
-		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate PASSED for %s/%s\n", ConditionTzroCodeExpanded, t.ID)
+		// Draft doesn't compile — run cloud fix
+		fmt.Fprintf(os.Stderr, "[Comparison/Draft] Draft FAILED compilation for %s/%s — running cloud fix\n  Errors: %s\n",
+			ConditionTzroDraft, t.ID, compResult.Reason)
+
+		// Switch to cloud mode for the fix phase
+		config.GlobalConfig.ModelMode = "cloud"
+
+		// Fresh tracker for the fix phase (cloud tokens only)
+		fixTracker := inference.NewTokenTracker()
+		fixCtx := inference.WithTokenTracker(ctx, fixTracker)
+
+		// Build a repair DAG using the draft + compiler errors
+		moduleCtx := codegen.DiscoverModuleContext(targetPath, language)
+		fixTaskID := fmt.Sprintf("comparison_%s_fix_%s", ConditionTzroDraft, t.ID)
+		fixGraph := codegen.BuildRepairDAG(fixTaskID, draftText, compResult.Reason, spec, language, 500, moduleCtx)
+
+		fixErr := executor.GlobalEngine.ExecuteGraphReactive(fixCtx, fixGraph)
+		_, cloudUsage = fixTracker.GetUsage()
+
+		if fixErr != nil {
+			fmt.Fprintf(os.Stderr, "[Comparison/Draft] Cloud fix FAILED for %s/%s: %v\n", ConditionTzroDraft, t.ID, fixErr)
+			// Use the draft as output (fix failed)
+			outputText = draftText
+		} else {
+			// Extract the fixed code
+			fixedCode := extractLastSourceCodeOutput(fixTaskID, fixGraph)
+			if fixedCode != "" {
+				_, _, writeErr := codegen.WriteCodeFile(targetPath, fixedCode, 500)
+				if writeErr != nil {
+					fmt.Fprintf(os.Stderr, "[Comparison/Draft] Fix WriteCodeFile failed: %v\n", writeErr)
+				}
+			}
+
+			if data, readErr := os.ReadFile(targetPath); readErr == nil {
+				outputText = string(data)
+			} else {
+				outputText = draftText // Fallback to draft
+			}
+
+			// Log whether the fix resolved compilation
+			fixCompResult := codegen.RunCompilationGate(language, targetPath)
+			if fixCompResult.Pass {
+				fmt.Fprintf(os.Stderr, "[Comparison/Draft] Cloud fix RESOLVED compilation for %s/%s\n", ConditionTzroDraft, t.ID)
+			} else {
+				fmt.Fprintf(os.Stderr, "[Comparison/Draft] Cloud fix did NOT resolve compilation for %s/%s: %s\n",
+					ConditionTzroDraft, t.ID, fixCompResult.Reason)
+			}
+		}
+
+		// Restore cooperative mode for cleanup
+		config.GlobalConfig.ModelMode = "cooperative"
 	}
 
-	toolCallCount := countToolCalls(graph, taskID)
+	wallClock := time.Since(startTime).Milliseconds()
 
 	return ComparisonResult{
-		TaskID:        t.ID,
-		TaskTier:      t.Tier,
-		Condition:     ConditionTzroCodeExpanded,
-		CloudTokens:   cloudUsage,
-		LocalTokens:   localUsage,
-		WallClockMs:   wallClock,
-		EstCostUSD:    EstimateCost(cloudUsage, localUsage, pricing),
-		ToolCallCount: toolCallCount,
-		OutputText:    outputText,
+		TaskID:      t.ID,
+		TaskTier:    t.Tier,
+		Condition:   ConditionTzroDraft,
+		CloudTokens: cloudUsage,
+		LocalTokens: draftLocalUsage,
+		WallClockMs: wallClock,
+		EstCostUSD:  EstimateCost(cloudUsage, draftLocalUsage, pricing),
+		OutputText:  outputText,
+		DraftText:   draftText,
 	}, nil
 }
 

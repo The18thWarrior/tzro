@@ -76,27 +76,6 @@ func ReadSeedFile(name string) ([]byte, error) {
 	return data, nil
 }
 
-// pseudocodeFixture is the JSON structure for a pseudo-code fixture file.
-type pseudocodeFixture struct {
-	TaskID     string `json:"taskId"`
-	Pseudocode string `json:"pseudocode"`
-}
-
-// ReadPseudocodeFixture reads a pseudo-code fixture for the given task ID from
-// the embedded testdata/codegen_seeds/pseudocode/ directory. Returns the pseudo-code
-// string, or empty string if no fixture exists for this task.
-func ReadPseudocodeFixture(taskID string) string {
-	path := "testdata/codegen_seeds/pseudocode/" + taskID + ".json"
-	data, err := codegenSeedsFS.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var fixture pseudocodeFixture
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		return ""
-	}
-	return fixture.Pseudocode
-}
 
 
 // SuiteOptions configures a comparison benchmark run.
@@ -180,7 +159,7 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 
 			for _, conditionID := range g.conditions {
 				// For codegen tasks without a condition override, use tier-based
-				// routing: T1-T2 → tzro_code, T3+ → tzro_code_expanded.
+				// routing (all tiers use the same conditions since benchmark #8).
 				if g.category == CategoryCodegen && opts.Condition == "" {
 					tierConditions := CodegenConditionsForTier(task.Tier)
 					found := false
@@ -227,8 +206,8 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 					result, err = RunCodegenCondition(ctx, conditionID, "cooperative", task, opts.Pricing)
 				} else if conditionID == ConditionCloudCode {
 					result, err = RunCodegenCondition(ctx, conditionID, "cloud", task, opts.Pricing)
-				} else if conditionID == ConditionTzroCodeExpanded {
-					result, err = RunCodegenExpandedCondition(ctx, task, opts.Pricing)
+				} else if conditionID == ConditionTzroDraft {
+					result, err = RunCodegenDraftCondition(ctx, task, opts.Pricing)
 				} else {
 					result, err = RunDAGCondition(ctx, conditionID, task, opts.Pricing)
 				}

@@ -115,8 +115,8 @@ func BuildPseudocodeExpansionDAG(taskID, pseudocode, spec, filePath, language st
 		MaxCycles:  1,
 		GoalPrompt: fmt.Sprintf("Expand pseudo-code into compilable %s for %s", language, filePath),
 		MutationBudget: &compiler.MutationBudget{
-			MaxSpawns:       2,
-			RemainingSpawns: 2,
+			MaxSpawns:       1,
+			RemainingSpawns: 1,
 		},
 		Nodes: []compiler.GraphNode{
 			{

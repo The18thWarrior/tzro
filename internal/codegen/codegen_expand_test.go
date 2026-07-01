@@ -184,8 +184,8 @@ func TestBuildPseudocodeExpansionDAG_Structure(t *testing.T) {
 	if graph.MutationBudget == nil {
 		t.Fatal("expected MutationBudget")
 	}
-	if graph.MutationBudget.MaxSpawns != 2 {
-		t.Errorf("expected MaxSpawns=2, got %d", graph.MutationBudget.MaxSpawns)
+	if graph.MutationBudget.MaxSpawns != 1 {
+		t.Errorf("expected MaxSpawns=1, got %d", graph.MutationBudget.MaxSpawns)
 	}
 
 	// Goal prompt should mention expansion

@@ -333,11 +333,11 @@ func TestBuildCodeDAG_WithPrecomputedContext(t *testing.T) {
 	if graph.MutationBudget == nil {
 		t.Fatal("expected MutationBudget to be set")
 	}
-	if graph.MutationBudget.MaxSpawns != 2 {
-		t.Errorf("expected MaxSpawns=2, got %d", graph.MutationBudget.MaxSpawns)
+	if graph.MutationBudget.MaxSpawns != 1 {
+		t.Errorf("expected MaxSpawns=1, got %d", graph.MutationBudget.MaxSpawns)
 	}
-	if graph.MutationBudget.RemainingSpawns != 2 {
-		t.Errorf("expected RemainingSpawns=2, got %d", graph.MutationBudget.RemainingSpawns)
+	if graph.MutationBudget.RemainingSpawns != 1 {
+		t.Errorf("expected RemainingSpawns=1, got %d", graph.MutationBudget.RemainingSpawns)
 	}
 
 	// Prompt should contain spec, existing content, and siblings

@@ -338,8 +338,8 @@ func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int, codeCtx
 			MaxCycles:  1,
 			GoalPrompt: fmt.Sprintf("Generate compilable %s code for %s: %s", language, filePath, spec),
 			MutationBudget: &compiler.MutationBudget{
-				MaxSpawns:       2,
-				RemainingSpawns: 2,
+				MaxSpawns:       1,
+				RemainingSpawns: 1,
 			},
 			Nodes: []compiler.GraphNode{
 				{

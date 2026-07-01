@@ -133,6 +133,16 @@ func (h *CompilationGateHook) OnEdgeTraversal(ctx context.Context, taskID string
 				edgeThought.Thought = BuildRepairPrompt(
 					originalCode, compilerErrors, h.Spec, h.Language, 500, moduleCtx,
 				)
+
+				// Inject error category analysis for targeted repair constraints
+				category, constraint := ClassifyCompilerError(compilerErrors)
+				if category != "" {
+					fmt.Fprintf(os.Stderr, "[CompilationGateHook] Error category: %s for edge %s→%s\n",
+						category, sourceNode.ID, targetNode.ID)
+					// Prepend constraint to thought for maximum visibility to the repair model
+					edgeThought.Thought = fmt.Sprintf("## CRITICAL CONSTRAINT\n%s\n\n%s", constraint, edgeThought.Thought)
+				}
+
 				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Injected structured repair prompt (%d chars) for edge %s→%s\n",
 					len(edgeThought.Thought), sourceNode.ID, targetNode.ID)
 			}

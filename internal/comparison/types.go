@@ -9,9 +9,9 @@ const (
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"
 	ConditionCooperative = "cooperative"
-	ConditionTzroCode         = "tzro_code"          // Static 3-node DAG via codegen package (cooperative mode)
-	ConditionCloudCode        = "cloud_code"         // Static 3-node DAG via codegen package (cloud mode)
-	ConditionTzroCodeExpanded = "tzro_code_expanded"  // Pseudo-code expansion via codegen package (cooperative mode)
+	ConditionTzroCode  = "tzro_code"  // Static 3-node DAG via codegen package (cooperative mode)
+	ConditionCloudCode = "cloud_code" // Static 3-node DAG via codegen package (cloud mode)
+	ConditionTzroDraft = "tzro_draft" // Local draft (no self-repair) + frontier fix (cooperative evaluation)
 )
 
 // Task category constants.
@@ -30,17 +30,15 @@ func AllConditions() []string {
 // CodegenConditions returns all conditions applicable to code generation benchmarks.
 // Use CodegenConditionsForTier for tier-aware routing in production runs.
 func CodegenConditions() []string {
-	return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroCodeExpanded}
+	return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroDraft}
 }
 
 // CodegenConditionsForTier returns the conditions to run for a given task tier.
-//   - T1–T2: cloud_code + tzro_code (local model handles simple tasks)
-//   - T3+:   cloud_code + tzro_code_expanded (complex tasks need pseudocode guidance)
+// All tiers use the same conditions: cloud_code + tzro_code + tzro_draft.
+// Previously T3+ used tzro_code_expanded, but benchmark #8 showed 3.33 avg
+// quality with a 16% compilation gate pass rate, so it was retired.
 func CodegenConditionsForTier(tier int) []string {
-	if tier <= 2 {
-		return []string{ConditionCloudCode, ConditionTzroCode}
-	}
-	return []string{ConditionCloudCode, ConditionTzroCodeExpanded}
+	return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroDraft}
 }
 
 // RubricCriterion defines a single quality evaluation dimension.
@@ -70,7 +68,6 @@ type ComparisonTask struct {
 	Language      string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
 	Action        string        `json:"action,omitempty"`   // "create" or "update"
 	SeedFile      string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
-	Pseudocode    string        `json:"pseudocode,omitempty"` // Pseudo-code for expansion mode (used by tzro_code_expanded condition)
 	QualityRubric QualityRubric `json:"qualityRubric"`
 }
 
@@ -85,6 +82,7 @@ type ComparisonResult struct {
 	EstCostUSD    float64              `json:"estCostUSD"`
 	ToolCallCount int                  `json:"toolCallCount"`
 	OutputText    string               `json:"outputText"`
+	DraftText     string               `json:"draftText,omitempty"`  // Raw local draft before frontier fix (tzro_draft only)
 	QualityScore  float64              `json:"qualityScore"`
 	QualityNotes  string               `json:"qualityNotes"`
 	Error         string               `json:"error,omitempty"`
