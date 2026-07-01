@@ -129,6 +129,7 @@ func TestCompilationGateHook_OnEdgeTraversal_CompilationFailed(t *testing.T) {
 	hook := &CompilationGateHook{
 		FilePath: "/tmp/noop.go",
 		Language: "go",
+		Spec:     "Create a main function that prints hello world",
 	}
 
 	// Store a node state with compilation failure evidence
@@ -167,6 +168,20 @@ func TestCompilationGateHook_OnEdgeTraversal_CompilationFailed(t *testing.T) {
 	}
 	if et.GoalAchieved {
 		t.Error("compilation failure should force GoalAchieved=false")
+	}
+
+	// Thought should contain a structured repair prompt with compiler errors
+	if et.Thought == "" {
+		t.Error("compilation failure should inject a repair prompt into et.Thought")
+	}
+	if !strings.Contains(et.Thought, "Compilation Errors") {
+		t.Error("repair prompt should contain 'Compilation Errors' section")
+	}
+	if !strings.Contains(et.Thought, "main.go:3: syntax error") {
+		t.Error("repair prompt should contain the actual compiler error")
+	}
+	if !strings.Contains(et.Thought, "package main") {
+		t.Error("repair prompt should contain the original code")
 	}
 }
 

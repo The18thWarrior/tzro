@@ -24,6 +24,9 @@ type CompilationGateHook struct {
 	FilePath string
 	// Language is the programming language (e.g. "go", "typescript").
 	Language string
+	// Spec is the original code generation specification, used to build
+	// structured repair prompts when compilation fails.
+	Spec string
 }
 
 // Ensure CompilationGateHook satisfies ExecutionHook at compile time.
@@ -121,8 +124,50 @@ func (h *CompilationGateHook) OnEdgeTraversal(ctx context.Context, taskID string
 			edgeThought.GoalAchieved = false
 			fmt.Fprintf(os.Stderr, "[CompilationGateHook] Compilation failed — overriding confidence to 0.0 for edge %s→%s\n",
 				sourceNode.ID, targetNode.ID)
+
+			// Build a structured repair prompt so spawned nodes get exact
+			// compiler errors instead of a generic "continue working" template.
+			originalCode, compilerErrors := extractCompilationEvidence(output)
+			if compilerErrors != "" && h.Spec != "" {
+				moduleCtx := DiscoverModuleContext(h.FilePath, h.Language)
+				edgeThought.Thought = BuildRepairPrompt(
+					originalCode, compilerErrors, h.Spec, h.Language, 500, moduleCtx,
+				)
+				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Injected structured repair prompt (%d chars) for edge %s→%s\n",
+					len(edgeThought.Thought), sourceNode.ID, targetNode.ID)
+			}
 		}
 	}
 
 	return executor.ActionContinue, nil
+}
+
+// extractCompilationEvidence splits node output into the original code and
+// the compiler error text. The output format from AfterNode is:
+//
+//	<original code>
+//	\n\n## Compilation Result\nFAILED\n<errors>
+//	\n\n## Available Packages\n...
+func extractCompilationEvidence(output string) (originalCode, compilerErrors string) {
+	const marker = "\n\n## Compilation Result\n"
+	idx := strings.Index(output, marker)
+	if idx < 0 {
+		return output, ""
+	}
+
+	originalCode = output[:idx]
+
+	// Everything after "FAILED\n" until the next section or end
+	afterMarker := output[idx+len(marker):]
+	if !strings.HasPrefix(afterMarker, "FAILED\n") {
+		return originalCode, ""
+	}
+	errText := afterMarker[len("FAILED\n"):]
+
+	// Trim at the next "## " section header (e.g. "## Available Packages")
+	if secIdx := strings.Index(errText, "\n\n## "); secIdx >= 0 {
+		errText = errText[:secIdx]
+	}
+
+	return originalCode, strings.TrimSpace(errText)
 }

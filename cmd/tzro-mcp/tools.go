@@ -463,6 +463,7 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		compilationHook := &codegen.CompilationGateHook{
 			FilePath: args.Filepath,
 			Language: language,
+			Spec:     args.Spec,
 		}
 		executor.GlobalEngine.RegisterHook(compilationHook)
 		defer executor.GlobalEngine.UnregisterHook(compilationHook)

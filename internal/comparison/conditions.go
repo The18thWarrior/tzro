@@ -252,6 +252,48 @@ func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) str
 	return ""
 }
 
+// extractLastSourceCodeOutput finds the last completed source_code node's
+// output from the DAG. This handles the case where spawned repair nodes
+// produce updated code — we want the latest version, not just reason_code.
+// The output is stripped of compilation evidence (## Compilation Result ...)
+// that the CompilationGateHook appends during execution.
+func extractLastSourceCodeOutput(taskID string, graph *compiler.ExecutionGraph) string {
+	if graph == nil {
+		return ""
+	}
+
+	// Walk nodes in reverse order — spawned nodes are appended at the end,
+	// so the last completed source_code node has the most recent code.
+	var lastOutput string
+	for i := len(graph.Nodes) - 1; i >= 0; i-- {
+		node := graph.Nodes[i]
+		if node.OutputFormat != "source_code" {
+			continue
+		}
+		state, ok := memory.DB.GetNodeState(taskID, node.ID)
+		if !ok || state.Status != "completed" {
+			continue
+		}
+		raw := state.RawOutput
+		if raw == "" {
+			raw = state.Output
+		}
+		if raw == "" {
+			continue
+		}
+
+		// Strip compilation evidence appended by CompilationGateHook
+		if idx := strings.Index(raw, "\n\n## Compilation Result\n"); idx >= 0 {
+			raw = raw[:idx]
+		}
+
+		lastOutput = raw
+		break
+	}
+
+	return lastOutput
+}
+
 // countToolCalls counts action/deterministic nodes in the execution graph
 // plus actual tool calls made inside probe nodes (stored in the thought_chain table).
 func countToolCalls(graph *compiler.ExecutionGraph, taskID string) int {
@@ -407,6 +449,16 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 	// Build the DAG with pre-computed context (single reason_code node)
 	graph := codegen.BuildCodeDAG(taskID, spec, targetPath, language, 500, codeCtx)
 
+	// Register the compilation gate hook so Edge Thought sees compilation
+	// evidence and can trigger repair spawns (ADR-0036).
+	compilationHook := &codegen.CompilationGateHook{
+		FilePath: targetPath,
+		Language: language,
+		Spec:     spec,
+	}
+	executor.GlobalEngine.RegisterHook(compilationHook)
+	defer executor.GlobalEngine.UnregisterHook(compilationHook)
+
 	// Execute the DAG using the global engine
 	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
 
@@ -426,18 +478,14 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		}, nil
 	}
 
-	// Post-process: extract reason_code output and write file (pure Go)
+	// Post-process: extract the last source_code node's output and write file.
+	// This handles both the original reason_code and any spawned repair nodes.
 	var outputText string
-	if state, ok := memory.DB.GetNodeState(taskID, "reason_code"); ok && state.Status == "completed" {
-		rawCode := state.RawOutput
-		if rawCode == "" {
-			rawCode = state.Output
-		}
-		if rawCode != "" {
-			_, _, writeErr := codegen.WriteCodeFile(targetPath, rawCode, 500)
-			if writeErr != nil {
-				fmt.Fprintf(os.Stderr, "[Comparison] WriteCodeFile failed: %v\n", writeErr)
-			}
+	rawCode := extractLastSourceCodeOutput(taskID, graph)
+	if rawCode != "" {
+		_, _, writeErr := codegen.WriteCodeFile(targetPath, rawCode, 500)
+		if writeErr != nil {
+			fmt.Fprintf(os.Stderr, "[Comparison] WriteCodeFile failed: %v\n", writeErr)
 		}
 	}
 
@@ -449,7 +497,7 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		outputText = extractTerminalSynthesis(graph, taskID)
 	}
 
-	// Run compilation gate (informational — logged but doesn't modify output)
+	// Run compilation gate (informational — logged for benchmark reporting)
 	compResult := codegen.RunCompilationGate(language, targetPath)
 	if !compResult.Pass {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", conditionID, t.ID, compResult.Reason)
@@ -615,6 +663,16 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 	// Build the expansion DAG with pre-authored pseudo-code
 	graph := codegen.BuildPseudocodeExpansionDAG(taskID, pseudocode, spec, targetPath, language, 500, codeCtx)
 
+	// Register the compilation gate hook so Edge Thought sees compilation
+	// evidence and can trigger repair spawns (ADR-0036).
+	compilationHook := &codegen.CompilationGateHook{
+		FilePath: targetPath,
+		Language: language,
+		Spec:     spec,
+	}
+	executor.GlobalEngine.RegisterHook(compilationHook)
+	defer executor.GlobalEngine.UnregisterHook(compilationHook)
+
 	// Execute the DAG
 	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
 
@@ -634,17 +692,13 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		}, nil
 	}
 
-	// Post-process: extract reason_code output and write file
-	if state, ok := memory.DB.GetNodeState(taskID, "reason_code"); ok && state.Status == "completed" {
-		rawCode := state.RawOutput
-		if rawCode == "" {
-			rawCode = state.Output
-		}
-		if rawCode != "" {
-			_, _, writeErr := codegen.WriteCodeFile(targetPath, rawCode, 500)
-			if writeErr != nil {
-				fmt.Fprintf(os.Stderr, "[Comparison] WriteCodeFile failed: %v\n", writeErr)
-			}
+	// Post-process: extract the last source_code node's output and write file.
+	// This handles both the original reason_code and any spawned repair nodes.
+	rawCode := extractLastSourceCodeOutput(taskID, graph)
+	if rawCode != "" {
+		_, _, writeErr := codegen.WriteCodeFile(targetPath, rawCode, 500)
+		if writeErr != nil {
+			fmt.Fprintf(os.Stderr, "[Comparison] WriteCodeFile failed: %v\n", writeErr)
 		}
 	}
 
@@ -656,7 +710,7 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		outputText = extractTerminalSynthesis(graph, taskID)
 	}
 
-	// Run compilation gate (informational — logged but doesn't modify output)
+	// Run compilation gate (informational — logged for benchmark reporting)
 	compResult := codegen.RunCompilationGate(language, targetPath)
 	if !compResult.Pass {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", ConditionTzroCodeExpanded, t.ID, compResult.Reason)
