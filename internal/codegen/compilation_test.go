@@ -114,3 +114,92 @@ func TestRunCompilationGate_NonexistentFile(t *testing.T) {
 		t.Error("nonexistent file should fail compilation gate")
 	}
 }
+
+func TestCompilationCommand_TypeScriptWithTsconfig(t *testing.T) {
+	dir := t.TempDir()
+	tsconfig := filepath.Join(dir, "tsconfig.json")
+	_ = os.WriteFile(tsconfig, []byte(`{"compilerOptions":{"strict":true}}`), 0644)
+
+	// File in a subdirectory should find tsconfig in parent
+	srcDir := filepath.Join(dir, "src")
+	_ = os.MkdirAll(srcDir, 0755)
+	tsFile := filepath.Join(srcDir, "config.ts")
+
+	cmd, available := CompilationCommand("typescript", tsFile)
+	if !available {
+		t.Fatal("TypeScript compilation command should be available")
+	}
+	if !strings.Contains(cmd, "--project") {
+		t.Errorf("should use --project when tsconfig.json exists, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "tsconfig.json") {
+		t.Errorf("should reference tsconfig.json path, got: %s", cmd)
+	}
+}
+
+func TestCompilationCommand_TypeScriptWithoutTsconfig(t *testing.T) {
+	dir := t.TempDir()
+	tsFile := filepath.Join(dir, "config.ts")
+
+	cmd, available := CompilationCommand("typescript", tsFile)
+	if !available {
+		t.Fatal("TypeScript compilation command should be available")
+	}
+	if strings.Contains(cmd, "--project") {
+		t.Errorf("should NOT use --project without tsconfig.json, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--skipLibCheck") {
+		t.Errorf("fallback should include --skipLibCheck, got: %s", cmd)
+	}
+}
+
+func TestRunCompilationGate_ValidTypeScriptWithShim(t *testing.T) {
+	// Skip if npx/tsc is not available
+	if _, err := os.Stat("/usr/local/bin/npx"); os.IsNotExist(err) {
+		if _, err := os.Stat("/opt/homebrew/bin/npx"); os.IsNotExist(err) {
+			t.Skip("npx not found, skipping TypeScript compilation test")
+		}
+	}
+
+	dir := t.TempDir()
+
+	// Create tsconfig.json
+	tsconfig := `{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2020",
+    "lib": ["es2020"],
+    "moduleResolution": "node",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./typings"]
+  },
+  "include": ["**/*.ts"]
+}`
+	_ = os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(tsconfig), 0644)
+
+	// Create ambient type shim
+	typingsDir := filepath.Join(dir, "typings", "node")
+	_ = os.MkdirAll(typingsDir, 0755)
+	nodeShim := `declare var process: {
+  env: Record<string, string | undefined>;
+  exit(code?: number): never;
+  cwd(): string;
+};
+`
+	_ = os.WriteFile(filepath.Join(typingsDir, "index.d.ts"), []byte(nodeShim), 0644)
+
+	// Write a TypeScript file that uses process.env
+	tsFile := filepath.Join(dir, "config.ts")
+	validCode := `export function getPort(): number {
+  const raw = process.env.PORT;
+  return raw ? parseInt(raw, 10) : 3000;
+}
+`
+	_ = os.WriteFile(tsFile, []byte(validCode), 0644)
+
+	result := RunCompilationGate("typescript", tsFile)
+	if !result.Pass {
+		t.Errorf("valid TypeScript with process.env shim should pass, got: %s", result.Reason)
+	}
+}

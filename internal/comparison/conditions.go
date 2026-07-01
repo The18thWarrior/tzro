@@ -392,6 +392,11 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		}
 	}
 
+	// For TypeScript tasks, scaffold tsconfig + ambient type shims
+	if language == "typescript" {
+		scaffoldTypeScriptEnv(tmpDir)
+	}
+
 	// Fresh token tracker
 	tracker := inference.NewTokenTracker()
 	ctx = inference.WithTokenTracker(ctx, tracker)
@@ -595,6 +600,11 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		}
 	}
 
+	// For TypeScript tasks, scaffold tsconfig + ambient type shims
+	if language == "typescript" {
+		scaffoldTypeScriptEnv(tmpDir)
+	}
+
 	// Fresh token tracker
 	tracker := inference.NewTokenTracker()
 	ctx = inference.WithTokenTracker(ctx, tracker)
@@ -667,4 +677,70 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		ToolCallCount: toolCallCount,
 		OutputText:    outputText,
 	}, nil
+}
+
+// scaffoldTypeScriptEnv creates a tsconfig.json and minimal ambient Node.js
+// type declarations in the given directory so that tsc can resolve process.env,
+// Buffer, setTimeout, console, etc. without requiring a full npm install of
+// @types/node. The tsconfig.json uses a local "typings" typeRoot.
+func scaffoldTypeScriptEnv(dir string) {
+	tsconfigPath := filepath.Join(dir, "tsconfig.json")
+	if _, err := os.Stat(tsconfigPath); os.IsNotExist(err) {
+		tsconfig := `{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2020",
+    "lib": ["es2020"],
+    "moduleResolution": "node",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./typings"]
+  },
+  "include": ["**/*.ts"]
+}
+`
+		_ = os.WriteFile(tsconfigPath, []byte(tsconfig), 0644)
+	}
+
+	// Create a minimal ambient type shim for Node.js globals.
+	typingsDir := filepath.Join(dir, "typings", "node")
+	_ = os.MkdirAll(typingsDir, 0755)
+	nodeShim := `// Minimal Node.js ambient type declarations for benchmark compilation.
+// This avoids requiring @types/node via npm install.
+
+declare var process: {
+  env: Record<string, string | undefined>;
+  exit(code?: number): never;
+  cwd(): string;
+  argv: string[];
+  platform: string;
+  version: string;
+};
+
+declare var __dirname: string;
+declare var __filename: string;
+declare function require(id: string): any;
+declare var module: { exports: any };
+declare var exports: any;
+
+declare var console: {
+  log(...args: any[]): void;
+  error(...args: any[]): void;
+  warn(...args: any[]): void;
+  info(...args: any[]): void;
+  debug(...args: any[]): void;
+};
+
+declare var Buffer: {
+  from(data: any, encoding?: string): any;
+  alloc(size: number): any;
+  isBuffer(obj: any): boolean;
+};
+
+declare function setTimeout(callback: (...args: any[]) => void, ms: number, ...args: any[]): any;
+declare function setInterval(callback: (...args: any[]) => void, ms: number, ...args: any[]): any;
+declare function clearTimeout(id: any): void;
+declare function clearInterval(id: any): void;
+`
+	_ = os.WriteFile(filepath.Join(typingsDir, "index.d.ts"), []byte(nodeShim), 0644)
 }

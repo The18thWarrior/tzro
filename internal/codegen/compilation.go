@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"os"
 	"path/filepath"
 )
 
@@ -19,10 +20,22 @@ func CompilationCommand(language, filePath string) (command string, available bo
 		return "go build -o /dev/null " + dir + "/...", true
 
 	case "typescript":
-		// TypeScript type-check only (no emit). Use --noEmit --strict with
-		// --target es2020 so async/await, Map, Set, Promise, WeakMap etc. are
-		// valid (tsc defaults to es5 without a tsconfig, which rejects them).
-		return "npx tsc --noEmit --strict --target es2020 --lib es2020 --moduleResolution node {{targetFile}}", true
+		// TypeScript type-check only (no emit). If a tsconfig.json exists in
+		// the file's directory tree, use --project so all compiler options
+		// (typeRoots, types, lib, etc.) are picked up automatically. This is
+		// critical for benchmark temp directories that scaffold a tsconfig +
+		// ambient type shims for process.env, Buffer, etc.
+		dir := filepath.Dir(filePath)
+		for d := dir; d != "/" && d != "."; d = filepath.Dir(d) {
+			tsconfigPath := filepath.Join(d, "tsconfig.json")
+			if _, statErr := os.Stat(tsconfigPath); statErr == nil {
+				return "npx tsc --project " + tsconfigPath + " --noEmit", true
+			}
+		}
+		// Fallback: inline flags with --skipLibCheck for standalone files
+		// without a tsconfig. Uses --target es2020 so async/await, Map, Set,
+		// Promise, WeakMap etc. are valid.
+		return "npx tsc --noEmit --strict --target es2020 --lib es2020 --moduleResolution node --skipLibCheck {{targetFile}}", true
 
 	case "javascript":
 		// JavaScript has no compiler, but we can syntax-check with Node.

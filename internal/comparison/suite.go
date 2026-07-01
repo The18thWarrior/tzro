@@ -179,6 +179,22 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 			var taskResults []ComparisonResult
 
 			for _, conditionID := range g.conditions {
+				// For codegen tasks without a condition override, use tier-based
+				// routing: T1-T2 → tzro_code, T3+ → tzro_code_expanded.
+				if g.category == CategoryCodegen && opts.Condition == "" {
+					tierConditions := CodegenConditionsForTier(task.Tier)
+					found := false
+					for _, tc := range tierConditions {
+						if tc == conditionID {
+							found = true
+							break
+						}
+					}
+					if !found {
+						continue // skip conditions not applicable to this tier
+					}
+				}
+
 				if callbacks != nil && callbacks.OnTaskStart != nil {
 					callbacks.OnTaskStart(task.ID, conditionID)
 				}

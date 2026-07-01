@@ -27,10 +27,20 @@ func AllConditions() []string {
 	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
 }
 
-// CodegenConditions returns the conditions applicable to code generation benchmarks.
-// Limits benchmarks to specialized codegen execution conditions for an apples-to-apples comparison.
+// CodegenConditions returns all conditions applicable to code generation benchmarks.
+// Use CodegenConditionsForTier for tier-aware routing in production runs.
 func CodegenConditions() []string {
 	return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroCodeExpanded}
+}
+
+// CodegenConditionsForTier returns the conditions to run for a given task tier.
+//   - T1–T2: cloud_code + tzro_code (local model handles simple tasks)
+//   - T3+:   cloud_code + tzro_code_expanded (complex tasks need pseudocode guidance)
+func CodegenConditionsForTier(tier int) []string {
+	if tier <= 2 {
+		return []string{ConditionCloudCode, ConditionTzroCode}
+	}
+	return []string{ConditionCloudCode, ConditionTzroCodeExpanded}
 }
 
 // RubricCriterion defines a single quality evaluation dimension.
