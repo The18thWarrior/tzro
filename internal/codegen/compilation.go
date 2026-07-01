@@ -19,9 +19,10 @@ func CompilationCommand(language, filePath string) (command string, available bo
 		return "go build -o /dev/null " + dir + "/...", true
 
 	case "typescript":
-		// TypeScript type-check only (no emit). Use --noEmit --strict for
-		// maximum error coverage without requiring a full tsconfig.
-		return "npx tsc --noEmit --strict {{targetFile}}", true
+		// TypeScript type-check only (no emit). Use --noEmit --strict with
+		// --target es2020 so async/await, Map, Set, Promise, WeakMap etc. are
+		// valid (tsc defaults to es5 without a tsconfig, which rejects them).
+		return "npx tsc --noEmit --strict --target es2020 --lib es2020 --moduleResolution node {{targetFile}}", true
 
 	case "javascript":
 		// JavaScript has no compiler, but we can syntax-check with Node.

@@ -9,6 +9,7 @@ import (
 
 	"tzro/internal/compiler"
 	"tzro/internal/executor"
+	"tzro/internal/memory"
 )
 
 func TestCompilationGateHook_SourceCodeNode_Pass(t *testing.T) {
@@ -122,4 +123,106 @@ func TestCompilationGateHook_NonSourceCodeNode_Skipped(t *testing.T) {
 	if rawOutput != "some non-code output" {
 		t.Errorf("non-source_code nodes should not be modified, got: %s", rawOutput)
 	}
+}
+
+func TestCompilationGateHook_OnEdgeTraversal_CompilationFailed(t *testing.T) {
+	hook := &CompilationGateHook{
+		FilePath: "/tmp/noop.go",
+		Language: "go",
+	}
+
+	// Store a node state with compilation failure evidence
+	initTestDB(t)
+
+	taskID := "test-edge-fail"
+	failOutput := "package main\n\nfunc main() {}\n\n## Compilation Result\nFAILED\nmain.go:3: syntax error"
+	_ = memory.DB.SetNodeState(taskID, "reason_code", "completed", failOutput)
+	_ = memory.DB.SetNodeRawOutput(taskID, "reason_code", failOutput)
+
+	sourceNode := &compiler.GraphNode{
+		ID:           "reason_code",
+		OutputFormat: "source_code",
+	}
+	targetNode := &compiler.GraphNode{
+		ID:                  "validate_code",
+		ActivationThreshold: 0.9,
+	}
+
+	et := &memory.EdgeThought{
+		GoalConfidence: 0.95, // LM says high confidence
+		GoalAchieved:   true, // LM says goal achieved
+	}
+
+	action, err := hook.OnEdgeTraversal(context.Background(), taskID, sourceNode, targetNode, et)
+	if err != nil {
+		t.Fatalf("OnEdgeTraversal error: %v", err)
+	}
+	if action != executor.ActionContinue {
+		t.Errorf("expected ActionContinue, got %v", action)
+	}
+
+	// Confidence should be overridden to 0.0
+	if et.GoalConfidence != 0.0 {
+		t.Errorf("compilation failure should force GoalConfidence=0.0, got %.2f", et.GoalConfidence)
+	}
+	if et.GoalAchieved {
+		t.Error("compilation failure should force GoalAchieved=false")
+	}
+}
+
+func TestCompilationGateHook_OnEdgeTraversal_CompilationPassed(t *testing.T) {
+	hook := &CompilationGateHook{
+		FilePath: "/tmp/noop.go",
+		Language: "go",
+	}
+
+	initTestDB(t)
+
+	taskID := "test-edge-pass"
+	passOutput := "package main\n\nfunc main() {}\n\n## Compilation Result\nPASSED\n"
+	_ = memory.DB.SetNodeState(taskID, "reason_code", "completed", passOutput)
+	_ = memory.DB.SetNodeRawOutput(taskID, "reason_code", passOutput)
+
+	sourceNode := &compiler.GraphNode{
+		ID:           "reason_code",
+		OutputFormat: "source_code",
+	}
+	targetNode := &compiler.GraphNode{
+		ID:                  "validate_code",
+		ActivationThreshold: 0.9,
+	}
+
+	et := &memory.EdgeThought{
+		GoalConfidence: 0.85,
+		GoalAchieved:   false,
+	}
+
+	action, err := hook.OnEdgeTraversal(context.Background(), taskID, sourceNode, targetNode, et)
+	if err != nil {
+		t.Fatalf("OnEdgeTraversal error: %v", err)
+	}
+	if action != executor.ActionContinue {
+		t.Errorf("expected ActionContinue, got %v", action)
+	}
+
+	// Confidence should NOT be modified
+	if et.GoalConfidence != 0.85 {
+		t.Errorf("compilation pass should not modify GoalConfidence, got %.2f", et.GoalConfidence)
+	}
+}
+
+// initTestDB initializes an isolated test database for hook tests.
+func initTestDB(t *testing.T) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test_hook.db")
+	oldPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting(dbPath)
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test DB: %v", err)
+	}
+	t.Cleanup(func() {
+		memory.DB.Close()
+		memory.DB.SetDBPathForTesting(oldPath)
+		_ = memory.DB.Init()
+	})
 }

@@ -238,6 +238,12 @@ func BuildCodePrompt(spec, filePath, language, action, existingContent string, s
 		b.WriteString("\n")
 	}
 
+	// Inject reference patterns for concurrency/generics when the spec needs them
+	if exemplars := LanguageExemplars(language, spec); exemplars != "" {
+		b.WriteString(exemplars)
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## Rules\n")
 	b.WriteString("- Output ONLY the complete file content\n")
 	b.WriteString("- No markdown fences, no explanation, no commentary\n")

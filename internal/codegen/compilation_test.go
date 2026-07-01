@@ -28,6 +28,9 @@ func TestCompilationCommand_TypeScript(t *testing.T) {
 	if !strings.Contains(cmd, "--noEmit") {
 		t.Errorf("TypeScript command should include --noEmit, got: %s", cmd)
 	}
+	if !strings.Contains(cmd, "--target es2020") {
+		t.Errorf("TypeScript command should include --target es2020 (prevents es5 false-negatives), got: %s", cmd)
+	}
 }
 
 func TestCompilationCommand_Python(t *testing.T) {

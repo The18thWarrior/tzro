@@ -99,6 +99,30 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 	return executor.ActionContinue, nil
 }
 
+// OnEdgeTraversal overrides the Edge Thought confidence when the source node's
+// output contains compilation failure evidence. The LM-generated confidence
+// score is unreliable for code quality (benchmark #4 showed 0.95 confidence
+// on code that scored 2.0/5.0). This deterministic override ensures the
+// activation gate always sees confidence=0.0 for broken code, triggering
+// a repair spawn or budget-exhaustion halt.
 func (h *CompilationGateHook) OnEdgeTraversal(ctx context.Context, taskID string, sourceNode, targetNode *compiler.GraphNode, edgeThought *memory.EdgeThought) (executor.HookAction, error) {
+	if edgeThought == nil || sourceNode.OutputFormat != "source_code" {
+		return executor.ActionContinue, nil
+	}
+
+	// Check if the source node's output contains compilation failure evidence
+	if state, ok := memory.DB.GetNodeState(taskID, sourceNode.ID); ok {
+		output := state.RawOutput
+		if output == "" {
+			output = state.Output
+		}
+		if strings.Contains(output, "## Compilation Result\nFAILED") {
+			edgeThought.GoalConfidence = 0.0
+			edgeThought.GoalAchieved = false
+			fmt.Fprintf(os.Stderr, "[CompilationGateHook] Compilation failed — overriding confidence to 0.0 for edge %s→%s\n",
+				sourceNode.ID, targetNode.ID)
+		}
+	}
+
 	return executor.ActionContinue, nil
 }

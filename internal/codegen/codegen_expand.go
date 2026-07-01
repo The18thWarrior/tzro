@@ -68,10 +68,18 @@ func BuildPseudocodeExpansionPrompt(pseudocode, spec, filePath, language, action
 		b.WriteString("\n")
 	}
 
+	// Inject reference patterns for concurrency/generics when the spec needs them
+	if exemplars := LanguageExemplars(language, spec); exemplars != "" {
+		b.WriteString(exemplars)
+		b.WriteString("\n")
+	}
+
 	b.WriteString("## Rules\n")
 	b.WriteString("- Output ONLY the complete file content\n")
 	b.WriteString("- No markdown fences, no explanation, no commentary\n")
 	b.WriteString(fmt.Sprintf("- Expand ALL pseudo-code constructs into valid %s syntax\n", language))
+	b.WriteString("- Pseudo-code uses shorthand (e.g. `if !x:`, `if a or b`, `= await`, `:` for blocks). You MUST translate these into the target language's actual syntax\n")
+	b.WriteString(fmt.Sprintf("- Do NOT copy pseudo-code syntax verbatim — every line must be valid, compilable %s\n", language))
 	b.WriteString("- Include ALL necessary imports, type declarations, and error handling\n")
 	b.WriteString("- Follow the conventions visible in sibling files (naming, formatting, imports)\n")
 	b.WriteString(fmt.Sprintf("- Maximum %d lines\n", maxLines))
