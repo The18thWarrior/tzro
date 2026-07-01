@@ -384,6 +384,14 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		}
 	}
 
+	// For Go tasks, create a go.mod so the compilation gate can run go build
+	if language == "go" {
+		goModPath := filepath.Join(tmpDir, "go.mod")
+		if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+			_ = os.WriteFile(goModPath, []byte("module benchmod\n\ngo 1.21\n"), 0644)
+		}
+	}
+
 	// Fresh token tracker
 	tracker := inference.NewTokenTracker()
 	ctx = inference.WithTokenTracker(ctx, tracker)
@@ -434,6 +442,14 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 	} else {
 		// Fallback to terminal synthesis
 		outputText = extractTerminalSynthesis(graph, taskID)
+	}
+
+	// Run compilation gate (informational — logged but doesn't modify output)
+	compResult := codegen.RunCompilationGate(language, targetPath)
+	if !compResult.Pass {
+		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", conditionID, t.ID, compResult.Reason)
+	} else {
+		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate PASSED for %s/%s\n", conditionID, t.ID)
 	}
 
 	toolCallCount := countToolCalls(graph, taskID)
@@ -571,6 +587,14 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		}
 	}
 
+	// For Go tasks, create a go.mod so the compilation gate can run go build
+	if language == "go" {
+		goModPath := filepath.Join(tmpDir, "go.mod")
+		if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+			_ = os.WriteFile(goModPath, []byte("module benchmod\n\ngo 1.21\n"), 0644)
+		}
+	}
+
 	// Fresh token tracker
 	tracker := inference.NewTokenTracker()
 	ctx = inference.WithTokenTracker(ctx, tracker)
@@ -620,6 +644,14 @@ func RunCodegenExpandedCondition(ctx context.Context, t ComparisonTask, pricing 
 		outputText = string(data)
 	} else {
 		outputText = extractTerminalSynthesis(graph, taskID)
+	}
+
+	// Run compilation gate (informational — logged but doesn't modify output)
+	compResult := codegen.RunCompilationGate(language, targetPath)
+	if !compResult.Pass {
+		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", ConditionTzroCodeExpanded, t.ID, compResult.Reason)
+	} else {
+		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate PASSED for %s/%s\n", ConditionTzroCodeExpanded, t.ID)
 	}
 
 	toolCallCount := countToolCalls(graph, taskID)

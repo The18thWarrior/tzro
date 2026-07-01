@@ -591,11 +591,75 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 					} else {
 						respMap["action"] = writeAction
 						respMap["linesWritten"] = linesWritten
+
+						// Compilation gate: run language-appropriate compiler after write
+						compResult := codegen.RunCompilationGate(language, args.Filepath)
+						compilationInfo := map[string]interface{}{
+							"passed": compResult.Pass,
+						}
+						if !compResult.Pass && compResult.Reason != "" {
+							compilationInfo["errors"] = compResult.Reason
+
+							// Always retry: build repair DAG and re-execute
+							fmt.Fprintf(os.Stderr, "[tzro_code] Compilation failed, attempting repair: %s\n", compResult.Reason)
+							repairTaskID := taskID + "_repair"
+							repairGraph := codegen.BuildRepairDAG(
+								repairTaskID,
+								codegen.StripMarkdownFences(rawCode),
+								compResult.Reason,
+								args.Spec,
+								language,
+								maxLines,
+							)
+							repairOpts := task.ExecuteOptions{
+								TaskID:       repairTaskID,
+								IntentType:   "codegen_repair",
+								IsForeground: true,
+							}
+							_, repairErr := task.ExecuteStatic(context.Background(), repairGraph, repairOpts)
+							_ = repairErr
+							repairNodes := memory.DB.GetAllNodeStates(repairTaskID)
+
+							var repairedCode string
+							for _, rn := range repairNodes {
+								if rn.NodeID == "reason_code" && rn.Status == "completed" {
+									repairedCode = rn.RawOutput
+									if repairedCode == "" {
+										repairedCode = rn.Output
+									}
+								}
+							}
+
+							compilationInfo["retried"] = true
+							if repairedCode != "" {
+								// Re-write the repaired code
+								_, _, rewriteErr := codegen.WriteCodeFile(args.Filepath, repairedCode, maxLines)
+								if rewriteErr == nil {
+									// Re-run compilation gate on repaired code
+									retryResult := codegen.RunCompilationGate(language, args.Filepath)
+									compilationInfo["retryPassed"] = retryResult.Pass
+									if !retryResult.Pass {
+										compilationInfo["retryErrors"] = retryResult.Reason
+										fmt.Fprintf(os.Stderr, "[tzro_code] Repair attempt also failed compilation: %s\n", retryResult.Reason)
+									} else {
+										fmt.Fprintf(os.Stderr, "[tzro_code] Repair attempt passed compilation\n")
+										compilationInfo["passed"] = true
+									}
+								} else {
+									compilationInfo["retryPassed"] = false
+									compilationInfo["retryErrors"] = fmt.Sprintf("repair write failed: %v", rewriteErr)
+								}
+							} else {
+								compilationInfo["retryPassed"] = false
+								compilationInfo["retryErrors"] = "repair produced no output"
+							}
+						}
+						respMap["compilation"] = compilationInfo
 					}
-				}
-				}
-			}
-		}
+				} // end switch mode
+				} // end quality gate else (passed)
+			} // end rawCode non-empty
+		} // end status == completed
 
 		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 		return &mcp.CallToolResult{

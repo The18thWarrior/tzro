@@ -3,6 +3,8 @@ package codegen
 import (
 	"fmt"
 	"strings"
+
+	"tzro/internal/tools"
 )
 
 // QualityGateResult holds the outcome of a post-generation quality check.
@@ -20,8 +22,8 @@ type QualityGateResult struct {
 //  3. No prose-like content (explanations, commentary mixed in)
 //  4. Contains at least one language-specific keyword
 //
-// This is the first layer of the quality gate. The local-model inference check
-// and WS3 compilation gate compose on top of this when available.
+// This is the first layer of the quality gate. The compilation gate
+// (RunCompilationGate) composes on top of this when a toolchain is available.
 func RunStructuralQualityGate(output, language string) QualityGateResult {
 	trimmed := strings.TrimSpace(output)
 
@@ -72,6 +74,44 @@ func RunStructuralQualityGate(output, language string) QualityGateResult {
 	return QualityGateResult{Pass: true}
 }
 
+// RunCompilationGate runs the language-appropriate compiler/type-checker against
+// the file at filePath and returns a pass/fail result. This is the second layer
+// of the quality gate, composing after RunStructuralQualityGate.
+//
+// If no compilation command is available for the language (e.g., unknown or
+// unsupported), the gate is skipped gracefully (returns Pass: true).
+func RunCompilationGate(language, filePath string) QualityGateResult {
+	command, available := CompilationCommand(language, filePath)
+	if !available {
+		return QualityGateResult{Pass: true, Reason: "no compilation command available — skipped"}
+	}
+
+	// Replace {{targetFile}} placeholder with actual path
+	command = strings.ReplaceAll(command, "{{targetFile}}", filePath)
+
+	result, err := tools.ValidateCode(command, filePath)
+	if err != nil {
+		return QualityGateResult{
+			Pass:   false,
+			Reason: fmt.Sprintf("compilation command failed to execute: %v", err),
+		}
+	}
+
+	if !result.Passed {
+		// Truncate long error output for the Reason field
+		errors := result.Errors
+		if len(errors) > 500 {
+			errors = errors[:500] + "..."
+		}
+		return QualityGateResult{
+			Pass:   false,
+			Reason: fmt.Sprintf("compilation failed (%d errors): %s", result.ErrorCount, errors),
+		}
+	}
+
+	return QualityGateResult{Pass: true}
+}
+
 // languageKeywords returns common keywords expected in valid source code
 // for the given language. Returns nil for unknown languages (skips check).
 func languageKeywords(language string) []string {
@@ -88,3 +128,4 @@ func languageKeywords(language string) []string {
 		return nil
 	}
 }
+
