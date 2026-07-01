@@ -267,15 +267,21 @@ func TestJudgeSystemPromptForCategory_EmptyDefaultsToDocgen(t *testing.T) {
 func TestCodegenConditions_IncludesTzroCode(t *testing.T) {
 	conditions := CodegenConditions()
 
-	// Should include tzro_code
-	found := false
+	// Should include tzro_code and cloud_code
+	var foundTzroCode, foundCloudCode bool
 	for _, c := range conditions {
 		if c == ConditionTzroCode {
-			found = true
+			foundTzroCode = true
+		}
+		if c == ConditionCloudCode {
+			foundCloudCode = true
 		}
 	}
-	if !found {
+	if !foundTzroCode {
 		t.Errorf("CodegenConditions() = %v, want %s included", conditions, ConditionTzroCode)
+	}
+	if !foundCloudCode {
+		t.Errorf("CodegenConditions() = %v, want %s included", conditions, ConditionCloudCode)
 	}
 
 	// Should NOT include cloud_react (not an apples-to-apples comparison)
@@ -290,6 +296,9 @@ func TestAllConditions_DoesNotIncludeTzroCode(t *testing.T) {
 	for _, c := range AllConditions() {
 		if c == ConditionTzroCode {
 			t.Errorf("AllConditions() should not include %s (codegen-only)", ConditionTzroCode)
+		}
+		if c == ConditionCloudCode {
+			t.Errorf("AllConditions() should not include %s (codegen-only)", ConditionCloudCode)
 		}
 	}
 }

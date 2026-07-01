@@ -91,6 +91,9 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		if tmpErr != nil {
 			return ComparisonResult{}, fmt.Errorf("failed to create temp dir for codegen benchmark: %w", tmpErr)
 		}
+		if evalDir, evalErr := filepath.EvalSymlinks(tmpDir); evalErr == nil {
+			tmpDir = evalDir
+		}
 		defer os.RemoveAll(tmpDir)
 
 		// Set up target path inside tmpDir
@@ -271,19 +274,19 @@ func countToolCalls(graph *compiler.ExecutionGraph, taskID string) int {
 }
 
 // RunCodegenCondition executes a code generation task using the static DAG
-// from the codegen package. Context is pre-computed via GatherContext (pure Go)
-// and file writing is handled post-DAG via WriteCodeFile (pure Go). Only the
-// reason_code node runs through the DAG engine with LLM inference.
-func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
-	// Codegen always runs in cooperative mode (local model generates code)
+// from the codegen package under either "cloud" or "cooperative" mode.
+// Context is pre-computed via GatherContext (pure Go) and file writing is
+// handled post-DAG via WriteCodeFile (pure Go).
+func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
+	// Set model mode for the codegen run
 	originalModelMode := config.GlobalConfig.ModelMode
-	config.GlobalConfig.ModelMode = "cooperative"
+	config.GlobalConfig.ModelMode = modelMode
 	defer func() {
 		config.GlobalConfig.ModelMode = originalModelMode
 	}()
 
-	// Isolated database
-	dbFile := fmt.Sprintf("tzro_comparison_%s_%s.db", ConditionTzroCode, t.ID)
+	// Isolated database per condition run
+	dbFile := fmt.Sprintf("tzro_comparison_%s_%s.db", conditionID, t.ID)
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting(dbFile)
 	defer func() {
@@ -294,7 +297,7 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 	}()
 
 	if err := memory.DB.Init(); err != nil {
-		return ComparisonResult{}, fmt.Errorf("failed to init isolated database for tzro_code: %w", err)
+		return ComparisonResult{}, fmt.Errorf("failed to init isolated database for %s: %w", conditionID, err)
 	}
 
 	// Initialize tools (needed for tool schema lookup during DAG execution)
@@ -311,7 +314,7 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 	status, activePort, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
 	if status == "Stopped" {
 		if err := inference.GlobalLocalModel.Start(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for tzro_code: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", conditionID, err)
 		} else {
 			_, activePort, _, _, _ = inference.GlobalLocalModel.GetStatusInfo()
 			for attempt := range 30 {
@@ -334,6 +337,9 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 	tmpDir, err := os.MkdirTemp("", "tzro_codegen_*")
 	if err != nil {
 		return ComparisonResult{}, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	if evalDir, evalErr := filepath.EvalSymlinks(tmpDir); evalErr == nil {
+		tmpDir = evalDir
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -381,7 +387,7 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 	tracker := inference.NewTokenTracker()
 	ctx = inference.WithTokenTracker(ctx, tracker)
 
-	taskID := fmt.Sprintf("comparison_%s_%s", ConditionTzroCode, t.ID)
+	taskID := fmt.Sprintf("comparison_%s_%s", conditionID, t.ID)
 	startTime := time.Now()
 
 	// Build the DAG with pre-computed context (single reason_code node)
@@ -397,12 +403,12 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 		return ComparisonResult{
 			TaskID:      t.ID,
 			TaskTier:    t.Tier,
-			Condition:   ConditionTzroCode,
+			Condition:   conditionID,
 			CloudTokens: cloudUsage,
 			LocalTokens: localUsage,
 			WallClockMs: wallClock,
 			EstCostUSD:  EstimateCost(cloudUsage, localUsage, pricing),
-			Error:       fmt.Sprintf("tzro_code execution failed: %v", err),
+			Error:       fmt.Sprintf("%s execution failed: %v", conditionID, err),
 		}, nil
 	}
 
@@ -434,7 +440,7 @@ func RunCodegenCondition(ctx context.Context, t ComparisonTask, pricing PricingT
 	return ComparisonResult{
 		TaskID:        t.ID,
 		TaskTier:      t.Tier,
-		Condition:     ConditionTzroCode,
+		Condition:     conditionID,
 		CloudTokens:   cloudUsage,
 		LocalTokens:   localUsage,
 		WallClockMs:   wallClock,
