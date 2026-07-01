@@ -543,3 +543,90 @@ func (m *MockInferenceBackend) Start(ctx context.Context) error {
 func (m *MockInferenceBackend) Stop() error {
 	return nil
 }
+
+func TestNeuralTraversalFailureDampening(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_test_neural_dampen.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_test_neural_dampen.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+	_ = memory.DB.Init()
+
+	var executedNodes []string
+	var mu sync.Mutex
+
+	tools.Register(&MockTool{
+		ToolName:   "dampen_tool",
+		ToolSchema: `{"type": "object"}`,
+		ToolCall: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			nodeID := ctx.Value(contextKeyNodeID)
+			mu.Lock()
+			if nodeID != nil {
+				executedNodes = append(executedNodes, nodeID.(string))
+			}
+			mu.Unlock()
+			return `{"status": "ok"}`, nil
+		},
+	})
+	defer tools.Unregister("dampen_tool")
+
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-neural-dampen",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "deterministic", Action: "dampen_tool", Instructions: "Run A"},
+			{ID: "B", Type: "deterministic", Action: "dampen_tool", Instructions: "Run B",
+				ActivationThreshold: 0.7}, // Sufficiency gate
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "A", TargetID: "B"},
+		},
+		MutationBudget: &compiler.MutationBudget{MaxSpawns: 5, RemainingSpawns: 5},
+		CreatedAt:      time.Now().Unix(),
+	}
+
+	// Persistent low confidence (0.0), goalAchieved = false
+	callCount := 0
+	mockInference := &StatefulMockEdgeThoughtInference{
+		generateFn: func(ctx context.Context, taskID string, src, tgt *compiler.GraphNode, output string, step int) (*memory.EdgeThought, error) {
+			callCount++
+			return &memory.EdgeThought{
+				ID:             fmt.Sprintf("et_dampen_%d", callCount),
+				TaskID:         taskID,
+				SourceNode:     src.ID,
+				TargetNode:     tgt.ID,
+				Thought:        fmt.Sprintf("Persistent failure thought %d", callCount),
+				GoalConfidence: 0.0, // Persistently low confidence
+				StepIndex:      step,
+				CreatedAt:      time.Now().Unix(),
+			}, nil
+		},
+	}
+
+	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	err := engine.ExecuteGraphReactive(context.Background(), graph)
+	if err != nil {
+		t.Fatalf("ExecuteGraphReactive failed: %v", err)
+	}
+
+	// Verify that ConsecutiveFailures reached 3 and remained at 3
+	if graph.MutationBudget.ConsecutiveFailures != 3 {
+		t.Errorf("expected ConsecutiveFailures to be 3 (dampened), got %d", graph.MutationBudget.ConsecutiveFailures)
+	}
+
+	// Verify that exactly 3 spawned nodes were successfully created
+	// RemainingSpawns should be 5 - 3 = 2
+	if graph.MutationBudget.RemainingSpawns != 2 {
+		t.Errorf("expected 2 remaining spawns, got %d", graph.MutationBudget.RemainingSpawns)
+	}
+
+	// We expect executedNodes to contain A, 3 spawned nodes, and B.
+	// Executed list: ["A", "spawned_A_1", "spawned_spawned_A_1_2", "spawned_spawned_spawned_A_1_2_3", "B"]
+	mu.Lock()
+	nodesCount := len(executedNodes)
+	mu.Unlock()
+	if nodesCount != 5 {
+		t.Errorf("expected exactly 5 node executions (A, 3 spawns, B), got %d: %v", nodesCount, executedNodes)
+	}
+}

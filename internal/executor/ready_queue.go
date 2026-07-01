@@ -163,6 +163,9 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 					})
 					// Mark as resolved even on failure so we don't loop
 					resolved[nID] = true
+					if strings.HasPrefix(nID, "spawned_") && graph.MutationBudget != nil {
+						graph.MutationBudget.ConsecutiveFailures++
+					}
 					return
 				}
 
@@ -250,6 +253,11 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 
 						switch activationAction {
 						case ActivationSpawn:
+							// Increment consecutive failures if source node is already a spawned node
+							if strings.HasPrefix(nID, "spawned_") && graph.MutationBudget != nil {
+								graph.MutationBudget.ConsecutiveFailures++
+							}
+
 							// Spawn a new node between source and target
 							spawnedID := fmt.Sprintf("spawned_%s_%d", nID, stepIndex)
 							chainContext := buildSpawnChainContext(graph, nID, targetNode.ID)
@@ -287,6 +295,11 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 									nID, targetNode.ID, et.GoalConfidence, targetNode.ActivationThreshold))
 
 						case ActivationHalt:
+							// Reset consecutive failures on success
+							if graph.MutationBudget != nil {
+								graph.MutationBudget.ConsecutiveFailures = 0
+							}
+
 							// Goal achieved — skip the target and propagate downstream
 							fmt.Fprintf(os.Stderr, "[Executor/RQ] HALT: Goal achieved at edge %s→%s. Skipping downstream.\n",
 								nID, targetNode.ID)
@@ -304,28 +317,33 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 							}
 
 						case ActivationContinue:
-						// Inject synthesis node if spawns occurred between source and target
-						// Only inject when the local model is available (synthesis requires inference)
-						spawnedNodes := findSpawnedNodesInChain(graph, nID, targetNode.ID)
-						sidecarStatus, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
-						sidecarActive := sidecarStatus == "Active" || sidecarStatus == "Adopted"
-						if len(spawnedNodes) > 0 && sidecarActive {
-							synthID := fmt.Sprintf("synth_%s_%s", nID, targetNode.ID)
-							synthNode := compiler.GraphNode{
-								ID:             synthID,
-								Type:           "synthesis",
-								Instructions:   buildSynthesisInstructions(graph, targetNode),
-								Status:         "pending",
-								OutputFormat:   targetNode.OutputFormat,
-								OutputLanguage: targetNode.OutputLanguage,
+							// Reset consecutive failures on success
+							if graph.MutationBudget != nil {
+								graph.MutationBudget.ConsecutiveFailures = 0
 							}
-							injectSynthesisNode(graph, nID, targetNode.ID, synthNode)
-							nodeIndex[synthID] = &graph.Nodes[len(graph.Nodes)-1]
-							_ = memory.DB.SetNodeState(graph.TaskID, synthID, "pending", "")
-							fmt.Fprintf(os.Stderr, "[Executor/RQ] Injected synthesis node %s between spawns and %s\n", synthID, targetNode.ID)
-							e.getPublisher().PublishEvent("node_injected", graph.TaskID, synthID,
-								fmt.Sprintf("Synthesis node injected before %s", targetNode.ID))
-						}
+
+							// Inject synthesis node if spawns occurred between source and target
+							// Only inject when the local model is available (synthesis requires inference)
+							spawnedNodes := findSpawnedNodesInChain(graph, nID, targetNode.ID)
+							sidecarStatus, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
+							sidecarActive := sidecarStatus == "Active" || sidecarStatus == "Adopted"
+							if len(spawnedNodes) > 0 && sidecarActive {
+								synthID := fmt.Sprintf("synth_%s_%s", nID, targetNode.ID)
+								synthNode := compiler.GraphNode{
+									ID:             synthID,
+									Type:           "synthesis",
+									Instructions:   buildSynthesisInstructions(graph, targetNode),
+									Status:         "pending",
+									OutputFormat:   targetNode.OutputFormat,
+									OutputLanguage: targetNode.OutputLanguage,
+								}
+								injectSynthesisNode(graph, nID, targetNode.ID, synthNode)
+								nodeIndex[synthID] = &graph.Nodes[len(graph.Nodes)-1]
+								_ = memory.DB.SetNodeState(graph.TaskID, synthID, "pending", "")
+								fmt.Fprintf(os.Stderr, "[Executor/RQ] Injected synthesis node %s between spawns and %s\n", synthID, targetNode.ID)
+								e.getPublisher().PublishEvent("node_injected", graph.TaskID, synthID,
+									fmt.Sprintf("Synthesis node injected before %s", targetNode.ID))
+							}
 						}
 					}
 				}
