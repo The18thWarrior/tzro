@@ -1171,6 +1171,19 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		})
 	}
 
+	// Tool-existence validation with classification fallback.
+	// If the planner hallucinated a tool name (or if this is a rewritten probe node with no action),
+	// try to classify it to a real tool.
+	if tools.GetTool(node.Action) == nil {
+		resolved := classifyToolName(ctx, node.Action, node.Instructions)
+		if resolved != "" {
+			fmt.Fprintf(os.Stderr, "[Executor] Tool validation: hallucinated '%s' → classified as '%s'\n", node.Action, resolved)
+			node.Action = resolved
+		} else {
+			return fmt.Errorf("tool '%s' is not registered and could not be classified to a known tool", node.Action)
+		}
+	}
+
 	// 2. Dynamic GBNF Schema selection
 	schemaStr, schemaErr := tools.GetSchema(node.Action)
 	if schemaErr != nil {

@@ -205,6 +205,7 @@ Alerts are automatically marked as `read` when retrieved via `tzro_sentinel_aler
 
 
 
+
 <!-- BEGIN TZRO INSTRUCTIONS -->
 
 # tzro — Durable Local-First Execution Engine & Delegation Instructions
@@ -269,7 +270,6 @@ The `tzro` MCP server registers **26 tools** split into distinct functional doma
 | Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
 | `tzro_run` | Plan, compile, and execute a durable DAG from a prompt. | `prompt` (string), `timeout` (int) |
-| `tzro_code` | Generate or update a single file via static 3-node DAG. | `spec` (string), `filepath` (string), `language` (string, optional), `maxLines` (int, optional), `timeout` (int, optional) |
 | `tzro_status` | Check execution status, node states, and outcomes of a task. | `taskId` (string) |
 | `tzro_resume` | Manually resume a paused/interrupted task (e.g., after approval). | `taskId` (string) |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status. | `status` (string, optional) |

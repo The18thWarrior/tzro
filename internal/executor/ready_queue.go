@@ -46,6 +46,11 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 	// memory pressure degradation in sequential runs (e.g., benchmarks).
 	_ = inference.GlobalLocalModel.TriggerGC(ctx)
 
+	// Initialize default mutation budget if not set to prevent nil pointer panics on spawn logging/evaluation
+	if graph != nil && graph.MutationBudget == nil {
+		graph.MutationBudget = &compiler.MutationBudget{MaxSpawns: 15, RemainingSpawns: 15}
+	}
+
 	fmt.Fprintf(os.Stderr, "[Executor/RQ] Starting reactive execution for Task %s with %d nodes...\n", graph.TaskID, len(graph.Nodes))
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task reactive execution initiated")
 
@@ -271,8 +276,12 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 							nodeIndex[spawnedID] = &graph.Nodes[len(graph.Nodes)-1]
 							_ = memory.DB.SetNodeState(graph.TaskID, spawnedID, "pending", "")
 
+							remainingSpawns := 0
+							if graph.MutationBudget != nil {
+								remainingSpawns = graph.MutationBudget.RemainingSpawns
+							}
 							fmt.Fprintf(os.Stderr, "[Executor/RQ] Spawned node %s between %s and %s (budget: %d remaining)\n",
-								spawnedID, nID, targetNode.ID, graph.MutationBudget.RemainingSpawns)
+								spawnedID, nID, targetNode.ID, remainingSpawns)
 							e.getPublisher().PublishEvent("node_spawned", graph.TaskID, spawnedID,
 								fmt.Sprintf("Spawned between %s and %s due to low confidence (%.2f < %.2f)",
 									nID, targetNode.ID, et.GoalConfidence, targetNode.ActivationThreshold))

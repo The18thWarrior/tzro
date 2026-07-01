@@ -40,7 +40,7 @@ func TestQuickstartFlow(t *testing.T) {
 		// Determine which tool is being targeted based on prompt
 		isMath := false
 		for _, m := range req.Messages {
-			if strings.Contains(m.Content, "custom_math_tool") {
+			if strings.Contains(m.Content, "parameters for 'custom_math_tool'") {
 				isMath = true
 				break
 			}

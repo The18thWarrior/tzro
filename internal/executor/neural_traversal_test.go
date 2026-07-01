@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tzro/internal/compiler"
+	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/tools"
 )
@@ -357,4 +358,188 @@ func (m *StatefulMockEdgeThoughtInference) GenerateEdgeThought(
 	ctx context.Context, taskID string, src, tgt *compiler.GraphNode, output string, step int,
 ) (*memory.EdgeThought, error) {
 	return m.generateFn(ctx, taskID, src, tgt, output, step)
+}
+
+// TestNeuralTraversalNilBudgetSpawnsSuccessfully verifies that if a graph starts with a nil
+// MutationBudget, the execution engine dynamically sets a default budget and executes without panic.
+func TestNeuralTraversalNilBudgetSpawnsSuccessfully(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_test_neural_traversal_nil_budget.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_test_neural_traversal_nil_budget.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+	_ = memory.DB.Init()
+
+	var executedNodes []string
+	var mu sync.Mutex
+
+	tools.Register(&MockTool{
+		ToolName:   "neural_nil_budget_tool",
+		ToolSchema: `{"type": "object"}`,
+		ToolCall: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			nodeID := ctx.Value(contextKeyNodeID)
+			mu.Lock()
+			if nodeID != nil {
+				executedNodes = append(executedNodes, nodeID.(string))
+			}
+			mu.Unlock()
+			return `{"status": "ok"}`, nil
+		},
+	})
+	defer tools.Unregister("neural_nil_budget_tool")
+
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-neural-nil-budget",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "deterministic", Action: "neural_nil_budget_tool", Instructions: "Run A"},
+			{ID: "B", Type: "deterministic", Action: "neural_nil_budget_tool", Instructions: "Run B",
+				ActivationThreshold: 0.7},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "A", TargetID: "B"},
+		},
+		MutationBudget: nil, // Test nil budget initialization
+		CreatedAt:      time.Now().Unix(),
+	}
+
+	callCount := 0
+	mockInference := &StatefulMockEdgeThoughtInference{
+		generateFn: func(ctx context.Context, taskID string, src, tgt *compiler.GraphNode, output string, step int) (*memory.EdgeThought, error) {
+			callCount++
+			confidence := 0.3 // below threshold, triggers spawn
+			if callCount > 1 {
+				confidence = 0.8 // above threshold, continue
+			}
+			return &memory.EdgeThought{
+				ID:             fmt.Sprintf("et_nil_budget_%d", callCount),
+				TaskID:         taskID,
+				SourceNode:     src.ID,
+				TargetNode:     tgt.ID,
+				Thought:        fmt.Sprintf("Thought %d", callCount),
+				GoalConfidence: confidence,
+				StepIndex:      step,
+				CreatedAt:      time.Now().Unix(),
+			}, nil
+		},
+	}
+
+	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	err := engine.ExecuteGraphReactive(context.Background(), graph)
+	if err != nil {
+		t.Fatalf("ExecuteGraphReactive failed: %v", err)
+	}
+
+	// Verify A executed, then spawned node, then B
+	if len(executedNodes) < 3 {
+		t.Fatalf("expected at least 3 node executions, got %d: %v", len(executedNodes), executedNodes)
+	}
+
+	// Verify budget was initialized to default and decremented
+	if graph.MutationBudget == nil {
+		t.Error("expected MutationBudget to be initialized, but was nil")
+	} else if graph.MutationBudget.RemainingSpawns != 14 {
+		t.Errorf("expected 14 remaining spawns (15 default - 1 used), got %d", graph.MutationBudget.RemainingSpawns)
+	}
+}
+
+// TestActionNodeClassificationFallback verifies that if an action node is executed
+// with an unregistered or empty action name, the execution engine calls classifyToolName
+// and resolves it to a valid registered tool.
+func TestActionNodeClassificationFallback(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_test_action_classification.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_test_action_classification.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+	}()
+	_ = memory.DB.Init()
+
+	var executedNodes []string
+	var mu sync.Mutex
+
+	// Register a mock tool that we want our empty action to be classified as
+	tools.Register(&MockTool{
+		ToolName:   "real_target_tool",
+		ToolSchema: `{"type": "object"}`,
+		ToolCall: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			nodeID := ctx.Value(contextKeyNodeID)
+			mu.Lock()
+			if nodeID != nil {
+				executedNodes = append(executedNodes, nodeID.(string))
+			}
+			mu.Unlock()
+			return `{"status": "ok"}`, nil
+		},
+	})
+	defer tools.Unregister("real_target_tool")
+
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-action-classification",
+		Nodes: []compiler.GraphNode{
+			// Setting Action to empty to simulate a rewritten probe node
+			{ID: "explore", Type: "action", Action: "", Instructions: "Explore the directory using real_target_tool"},
+		},
+		CreatedAt: time.Now().Unix(),
+	}
+
+	// Mock the InferenceBackend to return "real_target_tool" when classifyToolName is called.
+	// classifyToolName expects a JSON response conforming to the GBNF schema:
+	// {"tool": "real_target_tool"}
+	mockBackend := &MockInferenceBackend{
+		CallModelFn: func(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (*inference.InferenceResult, error) {
+			return &inference.InferenceResult{
+				Content: `{"tool": "real_target_tool"}`,
+			}, nil
+		},
+	}
+	oldBackend := inference.ActiveBackend
+	inference.ActiveBackend = mockBackend
+	defer func() {
+		inference.ActiveBackend = oldBackend
+	}()
+
+	engine := &ExecutionEngine{}
+	err := engine.ExecuteGraphReactive(context.Background(), graph)
+	if err != nil {
+		t.Fatalf("ExecuteGraphReactive failed: %v", err)
+	}
+
+	// Verify that the explore node executed using real_target_tool (evidenced by execution record)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(executedNodes) != 1 || executedNodes[0] != "explore" {
+		t.Errorf("expected node 'explore' to be executed, got: %v", executedNodes)
+	}
+
+	// Verify the node action was rewritten to 'real_target_tool' in the graph node
+	if graph.Nodes[0].Action != "real_target_tool" {
+		t.Errorf("expected graph node Action to be updated to 'real_target_tool', got '%s'", graph.Nodes[0].Action)
+	}
+}
+
+type MockInferenceBackend struct {
+	CallModelFn func(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (*inference.InferenceResult, error)
+}
+
+func (m *MockInferenceBackend) CallModel(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (*inference.InferenceResult, error) {
+	return m.CallModelFn(ctx, messages, jsonSchema)
+}
+
+func (m *MockInferenceBackend) CallModelStream(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, meta inference.StreamMeta) (*inference.InferenceResult, error) {
+	return nil, nil
+}
+
+func (m *MockInferenceBackend) Status() string {
+	return "active"
+}
+
+func (m *MockInferenceBackend) Start(ctx context.Context) error {
+	return nil
+}
+
+func (m *MockInferenceBackend) Stop() error {
+	return nil
 }
