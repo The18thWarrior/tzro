@@ -251,6 +251,16 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 						fmt.Fprintf(os.Stderr, "[Executor/RQ] Activation gate %s→%s: confidence=%.2f, threshold=%.2f → %s\n",
 							nID, targetNode.ID, et.GoalConfidence, targetNode.ActivationThreshold, activationAction)
 
+						// 2.3 Verify goal progress via guard heuristics (ADR-0036)
+						if e.ProgressGuard != nil && (activationAction == ActivationHalt || activationAction == ActivationContinue) {
+							if !e.ProgressGuard.VerifySufficientProgress(ctx, graph.GoalPrompt, sourceOutput, et) {
+								fmt.Fprintf(os.Stderr, "[Executor/RQ] Guard OVERRIDE: Hallucinated sufficiency detected for %s→%s. Demoting to SPAWN.\n",
+									nID, targetNode.ID)
+								activationAction = ActivationSpawn
+								et.Thought = "Guard detected insufficient content in output (hallucinated completeness). Continuing exploration."
+							}
+						}
+
 						switch activationAction {
 						case ActivationSpawn:
 							// Increment consecutive failures if source node is already a spawned node

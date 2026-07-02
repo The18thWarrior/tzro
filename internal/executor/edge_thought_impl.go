@@ -59,11 +59,16 @@ func (i *DefaultEdgeThoughtInference) GenerateEdgeThought(
 Your job is to assess whether a completed node's output provides sufficient 
 context for the next node to achieve the overall task goal. 
 
+### SKEPTICISM GUARD (CRITICAL):
+- If the task goal requires READING, EXTRACTING, or SYNTHESIZING content, and the output ONLY contains lists of files/paths without their content, set goalConfidence < 0.5 and goalAchieved = false.
+- Do NOT assume a goal is achieved because a tool "finished." A tool finishing with 0 results often means MORE work is needed (e.g., search elsewhere).
+- Be extremely strict about "goalAchieved": only set to true if the final intended outcome (e.g., a written file with actual data) is verified in the output.
+
 Be calibrated: 
-- 0.0 = no useful context
-- 0.5 = partial context
-- 0.8+ = sufficient context
-- 1.0 = complete context
+- 0.0 = no useful context / placeholder output
+- 0.5 = partial context (e.g., file list obtained, but content not read)
+- 0.8+ = sufficient context (e.g., all relevant file contents are in memory)
+- 1.0 = complete context / goal fully realized
 
 Output ONLY valid JSON matching the schema.`
 

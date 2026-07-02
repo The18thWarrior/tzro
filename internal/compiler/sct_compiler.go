@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -31,6 +32,13 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			}
 
 			// 1. Semantic Validator node
+			threshold := node.ActivationThreshold
+			if node.Type == "synthesis" || isSynthesisGoal(node.Instructions) {
+				if threshold > 0 && threshold < 0.9 {
+					threshold = 0.9 // Boost for high-stakes synthesis
+				}
+			}
+
 			sctNodes = append(sctNodes, GraphNode{
 				ID:                  validatorID,
 				Type:                "semantic_validator",
@@ -41,7 +49,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				SuggestedSkills:     node.SuggestedSkills,
 				DynamicBindings:     node.DynamicBindings,
 				Status:              "pending",
-				ActivationThreshold: node.ActivationThreshold,
+				ActivationThreshold: threshold,
 			})
 
 			// 2. Deterministic Tool execution node
@@ -137,4 +145,15 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		MaxCycles:  graph.MaxCycles,
 		CreatedAt:  time.Now().Unix(),
 	}, nil
+}
+
+func isSynthesisGoal(instructions string) bool {
+	g := strings.ToLower(instructions)
+	keywords := []string{"read", "extract", "synthesize", "compile", "summarize", "index", "docs", "documentation"}
+	for _, k := range keywords {
+		if strings.Contains(g, k) {
+			return true
+		}
+	}
+	return false
 }
