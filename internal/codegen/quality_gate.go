@@ -9,8 +9,8 @@ import (
 
 // QualityGateResult holds the outcome of a post-generation quality check.
 type QualityGateResult struct {
-	Pass    bool   // true if the output passes structural validation
-	Reason  string // explanation if fail
+	Pass   bool   // true if the output passes structural validation
+	Reason string // explanation if fail
 }
 
 // RunStructuralQualityGate performs a lightweight structural validation of
@@ -128,4 +128,3 @@ func languageKeywords(language string) []string {
 		return nil
 	}
 }
-

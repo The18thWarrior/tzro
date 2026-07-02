@@ -76,8 +76,6 @@ func ReadSeedFile(name string) ([]byte, error) {
 	return data, nil
 }
 
-
-
 // SuiteOptions configures a comparison benchmark run.
 type SuiteOptions struct {
 	Category      string       // "" = both docgen and codegen; or "docgen" / "codegen" for single category

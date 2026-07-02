@@ -9,13 +9,13 @@ const (
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"
 	ConditionCooperative = "cooperative"
-	ConditionTzroCode  = "tzro_code"  // Unified codegen: direct (simple) or draft+fix (complex)
-	ConditionCloudCode = "cloud_code" // Static 3-node DAG via codegen package (cloud mode)
+	ConditionTzroCode    = "tzro_code"  // Unified codegen: direct (simple) or draft+fix (complex)
+	ConditionCloudCode   = "cloud_code" // Static 3-node DAG via codegen package (cloud mode)
 )
 
 // Task category constants.
 const (
-	CategoryAll     = ""        // Run both docgen and codegen
+	CategoryAll     = "" // Run both docgen and codegen
 	CategoryDocgen  = "docgen"
 	CategoryCodegen = "codegen"
 )
@@ -80,7 +80,7 @@ type ComparisonResult struct {
 	EstCostUSD    float64              `json:"estCostUSD"`
 	ToolCallCount int                  `json:"toolCallCount"`
 	OutputText    string               `json:"outputText"`
-	DraftText     string               `json:"draftText,omitempty"`  // Raw local draft before cloud fix (populated when draft mode activates)
+	DraftText     string               `json:"draftText,omitempty"` // Raw local draft before cloud fix (populated when draft mode activates)
 	QualityScore  float64              `json:"qualityScore"`
 	QualityNotes  string               `json:"qualityNotes"`
 	Error         string               `json:"error,omitempty"`

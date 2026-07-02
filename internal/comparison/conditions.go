@@ -673,6 +673,7 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 		DraftText:   draftText,
 	}, nil
 }
+
 // scaffoldTypeScriptEnv creates a tsconfig.json and minimal ambient Node.js
 // type declarations in the given directory so that tsc can resolve process.env,
 // Buffer, setTimeout, console, etc. without requiring a full npm install of

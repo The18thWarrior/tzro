@@ -514,110 +514,110 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 					respMap["error"] = fmt.Sprintf("quality gate: %s", gateResult.Reason)
 				} else {
 					// Quality gate passed — write the file
-				switch mode {
-				case "diff":
-					// Parse structured diff output
-					var diffOutput codegen.DiffOutput
-					rawJSON := rawCode
-					// Try direct parse; fallback to stripping markdown fences
-					if err := json.Unmarshal([]byte(rawJSON), &diffOutput); err != nil {
-						stripped := codegen.StripMarkdownFences(rawJSON)
-						if err2 := json.Unmarshal([]byte(stripped), &diffOutput); err2 != nil {
-							respMap["status"] = "failed"
-							respMap["error"] = fmt.Sprintf("diff output parse failed: %v", err)
-							break
-						}
-					}
-
-					if len(diffOutput.Hunks) == 0 {
-						respMap["status"] = "failed"
-						respMap["error"] = "diff output contained no hunks"
-						break
-					}
-
-					// Apply hunks to existing content
-					patched, applyErr := codegen.ApplyDiffHunks(codeCtx.ExistingContent, diffOutput.Hunks)
-					if applyErr != nil {
-						respMap["status"] = "failed"
-						respMap["error"] = fmt.Sprintf("diff application failed: %v", applyErr)
-					} else {
-						// Write patched file
-						if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
-							fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
-						}
-						if writeErr := os.WriteFile(args.Filepath, []byte(patched), 0644); writeErr != nil {
-							respMap["status"] = "failed"
-							respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
-						} else {
-							totalLines := strings.Count(patched, "\n")
-							linesChanged := 0
-							for _, h := range diffOutput.Hunks {
-								linesChanged += strings.Count(h.ReplaceContent, "\n") + 1
-							}
-							respMap["action"] = "updated"
-							respMap["hunksApplied"] = len(diffOutput.Hunks)
-							respMap["linesChanged"] = linesChanged
-							respMap["totalLines"] = totalLines
-						}
-					}
-
-				default: // "full"
-					writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
-					if writeErr != nil {
-						respMap["status"] = "failed"
-						respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
-					} else {
-						respMap["action"] = writeAction
-						respMap["linesWritten"] = linesWritten
-						
-						// Compilation gate results are embedded in the node output by the
-						// CompilationGateHook (AfterNode). Edge Thought spawning handles
-						// repair attempts via the MutationBudget (ADR-0036).
-						//
-						// Find the final source_code node's output to extract compilation status.
-						// This may be reason_code or a spawned repair node.
-						compilationInfo := map[string]interface{}{
-							"passed": true, // assume pass; override if we find FAILED
-						}
-
-						// Check all completed nodes for the last source_code output
-						for _, n := range res.nodes {
-							if n.Status == "completed" {
-								output := n.RawOutput
-								if output == "" {
-									output = n.Output
-								}
-								if strings.Contains(output, "## Compilation Result") {
-									if strings.Contains(output, "FAILED") {
-										compilationInfo["passed"] = false
-										// Extract error text after "FAILED\n"
-										if idx := strings.Index(output, "FAILED\n"); idx >= 0 {
-											errText := output[idx+len("FAILED\n"):]
-											if endIdx := strings.Index(errText, "\n\n##"); endIdx > 0 {
-												errText = errText[:endIdx]
-											}
-											compilationInfo["errors"] = strings.TrimSpace(errText)
-										}
-									}
-								}
-							}
-						}
-
-						// Check if repair was attempted (spawned nodes exist)
-						for _, n := range res.nodes {
-							if strings.HasPrefix(n.NodeID, "spawned_") {
-								compilationInfo["repairAttempted"] = true
-								// Check mutation budget exhaustion
-								if compilationInfo["passed"] == false && graph.MutationBudget != nil && graph.MutationBudget.RemainingSpawns == 0 {
-									compilationInfo["budgetExhausted"] = true
-								}
+					switch mode {
+					case "diff":
+						// Parse structured diff output
+						var diffOutput codegen.DiffOutput
+						rawJSON := rawCode
+						// Try direct parse; fallback to stripping markdown fences
+						if err := json.Unmarshal([]byte(rawJSON), &diffOutput); err != nil {
+							stripped := codegen.StripMarkdownFences(rawJSON)
+							if err2 := json.Unmarshal([]byte(stripped), &diffOutput); err2 != nil {
+								respMap["status"] = "failed"
+								respMap["error"] = fmt.Sprintf("diff output parse failed: %v", err)
 								break
 							}
 						}
 
-						respMap["compilation"] = compilationInfo
-					}
-				} // end switch mode
+						if len(diffOutput.Hunks) == 0 {
+							respMap["status"] = "failed"
+							respMap["error"] = "diff output contained no hunks"
+							break
+						}
+
+						// Apply hunks to existing content
+						patched, applyErr := codegen.ApplyDiffHunks(codeCtx.ExistingContent, diffOutput.Hunks)
+						if applyErr != nil {
+							respMap["status"] = "failed"
+							respMap["error"] = fmt.Sprintf("diff application failed: %v", applyErr)
+						} else {
+							// Write patched file
+							if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
+								fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
+							}
+							if writeErr := os.WriteFile(args.Filepath, []byte(patched), 0644); writeErr != nil {
+								respMap["status"] = "failed"
+								respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
+							} else {
+								totalLines := strings.Count(patched, "\n")
+								linesChanged := 0
+								for _, h := range diffOutput.Hunks {
+									linesChanged += strings.Count(h.ReplaceContent, "\n") + 1
+								}
+								respMap["action"] = "updated"
+								respMap["hunksApplied"] = len(diffOutput.Hunks)
+								respMap["linesChanged"] = linesChanged
+								respMap["totalLines"] = totalLines
+							}
+						}
+
+					default: // "full"
+						writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
+						if writeErr != nil {
+							respMap["status"] = "failed"
+							respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
+						} else {
+							respMap["action"] = writeAction
+							respMap["linesWritten"] = linesWritten
+
+							// Compilation gate results are embedded in the node output by the
+							// CompilationGateHook (AfterNode). Edge Thought spawning handles
+							// repair attempts via the MutationBudget (ADR-0036).
+							//
+							// Find the final source_code node's output to extract compilation status.
+							// This may be reason_code or a spawned repair node.
+							compilationInfo := map[string]interface{}{
+								"passed": true, // assume pass; override if we find FAILED
+							}
+
+							// Check all completed nodes for the last source_code output
+							for _, n := range res.nodes {
+								if n.Status == "completed" {
+									output := n.RawOutput
+									if output == "" {
+										output = n.Output
+									}
+									if strings.Contains(output, "## Compilation Result") {
+										if strings.Contains(output, "FAILED") {
+											compilationInfo["passed"] = false
+											// Extract error text after "FAILED\n"
+											if idx := strings.Index(output, "FAILED\n"); idx >= 0 {
+												errText := output[idx+len("FAILED\n"):]
+												if endIdx := strings.Index(errText, "\n\n##"); endIdx > 0 {
+													errText = errText[:endIdx]
+												}
+												compilationInfo["errors"] = strings.TrimSpace(errText)
+											}
+										}
+									}
+								}
+							}
+
+							// Check if repair was attempted (spawned nodes exist)
+							for _, n := range res.nodes {
+								if strings.HasPrefix(n.NodeID, "spawned_") {
+									compilationInfo["repairAttempted"] = true
+									// Check mutation budget exhaustion
+									if compilationInfo["passed"] == false && graph.MutationBudget != nil && graph.MutationBudget.RemainingSpawns == 0 {
+										compilationInfo["budgetExhausted"] = true
+									}
+									break
+								}
+							}
+
+							respMap["compilation"] = compilationInfo
+						}
+					} // end switch mode
 				} // end quality gate else (passed)
 			} // end rawCode non-empty
 		} // end status == completed

@@ -9,7 +9,7 @@
 
 ## Intent
 
-A local AI coding agent wants to explore an unfamiliar codebase or perform high-latency directory analysis without wasting cloud tokens or hitting context limits. The agent offloads the exploration task to a local Probe Node which runs a step-by-step reasoning thought chain offline, executing local filesystem tools and generating a compacted final report.
+A local AI coding agent wants to explore an unfamiliar codebase or perform high-latency directory analysis without wasting cloud tokens or hitting context limits. The agent offloads the exploration task to a local Probe Node which runs a step-by-step reasoning thought chain offline, executing local filesystem tools and generating a compacted final report. The DAG supports neural edge traversal — dynamically spawning additional nodes mid-execution when accumulated context is insufficient.
 
 ## Preconditions
 
@@ -31,6 +31,18 @@ A local AI coding agent wants to explore an unfamiliar codebase or perform high-
 - [ ] The Probe Node successfully triggers a forced synthesis of all findings if the maximum step budget is exhausted without converging.
 - [ ] The synthesis pass applies content-aware truncation to tool outputs: code is truncated at bracket nesting boundaries preserving signatures, tabular data retains sample rows, and prose uses middle-out elision.
 - [ ] Staging and committing changes handles Probe Node configurations correctly.
+- [ ] When a node has a non-zero activation threshold, the executor generates an Edge Thought on each incoming edge after the source node completes.
+- [ ] Edge Thoughts produce a goal confidence score (0.0–1.0) and a goal-achieved boolean via GBNF-constrained local inference.
+- [ ] When edge thought confidence ≥ activation threshold, the target node executes normally.
+- [ ] When edge thought confidence < activation threshold, a new node is dynamically spawned between source and target to gather additional context.
+- [ ] When edge thought signals goal achieved, the target node and all downstream nodes are skipped.
+- [ ] Failure dampening tracks consecutive spawned-node failures and suppresses further spawning after 3 consecutive failures.
+- [ ] The mutation budget caps total spawned nodes per task, preventing runaway DAG expansion.
+- [ ] Incremental Kahn sorting correctly re-sorts only pending/new nodes after dynamic mutations — completed nodes remain frozen.
+- [ ] Content-aware truncation detects code content and truncates at bracket nesting boundaries, preserving function/method signatures and doc comments.
+- [ ] Content-aware truncation detects tabular data (markdown tables, CSV) and retains header rows plus sample data rows.
+- [ ] Content-aware truncation applies middle-out elision for prose content, preserving beginning and end while summarizing the middle.
+- [ ] Truncation enforces a configurable character budget (default 160K for synthesis context).
 
 ## Edge Cases to Probe
 
@@ -40,6 +52,10 @@ A local AI coding agent wants to explore an unfamiliar codebase or perform high-
 - The local model failing to produce valid JSON or returning a malformed structure, verifying that the parser recovers or reports a clean failure.
 - Halting the executor daemon during a running probe, verifying that the SQLite state remains persisted and can be resumed.
 - Probe reads a 20K-line file — verify content-aware truncation produces a bounded synthesis context without losing function signatures.
+- Edge thought with activation threshold 0.7 and source output at confidence 0.3 — verify a new node is spawned.
+- Three consecutive spawned nodes fail — verify failure dampening suppresses the 4th spawn and the target node runs with available context.
+- Mutation budget exhausted — verify the executor stops spawning and proceeds with existing nodes.
+- Edge thought signals goal achieved on the first edge — verify all downstream nodes are skipped and the task produces a synthesis from completed nodes only.
 
 ## Anti-Patterns to Watch For
 
@@ -50,3 +66,7 @@ A local AI coding agent wants to explore an unfamiliar codebase or perform high-
 - [ ] Code truncation destroys function signatures or doc comments that are needed for understanding.
 - [ ] Raw JSON parse errors or local model stack traces are returned as the final synthesis outcome to the user.
 - [ ] Persisting steps fails due to SQLite database lockouts during concurrent runs.
+- [ ] Edge thought evaluation calls the cloud model instead of the local model, defeating the zero-cost guarantee.
+- [ ] Spawned nodes inherit incorrect dependency edges, creating cycles in the DAG.
+- [ ] Failure dampening counter is not reset after a successful spawn, permanently suppressing future activations.
+- [ ] Mutation budget is not initialized, allowing unbounded node spawning.

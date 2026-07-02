@@ -12,10 +12,10 @@ import (
 
 // ValidationResult represents the structured pass/fail result of a code validation command.
 type ValidationResult struct {
-	Passed   bool   `json:"passed"`
-	Errors   string `json:"errors,omitempty"`
-	ErrorCount int  `json:"errorCount"`
-	Command  string `json:"command"`
+	Passed     bool   `json:"passed"`
+	Errors     string `json:"errors,omitempty"`
+	ErrorCount int    `json:"errorCount"`
+	Command    string `json:"command"`
 	TargetFile string `json:"targetFile"`
 }
 
@@ -41,7 +41,7 @@ const validateCodeSchema = `{
 func executeValidateCode(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
 	var args map[string]interface{}
 	if err := json.Unmarshal(input, &args); err != nil {
-		return ToolError("failed to parse input JSON: "+err.Error()), nil
+		return ToolError("failed to parse input JSON: " + err.Error()), nil
 	}
 
 	cmd, ok := args["command"].(string)
@@ -132,19 +132,19 @@ func ValidateCode(command, targetFile string) (*ValidationResult, error) {
 		}
 
 		return &ValidationResult{
-			Passed:   false,
-			Errors:   errStr,
+			Passed:     false,
+			Errors:     errStr,
 			ErrorCount: errorCount,
-			Command:  processedCommand,
+			Command:    processedCommand,
 			TargetFile: targetFile,
 		}, nil
 	}
 
 	return &ValidationResult{
-		Passed:   true,
-		Errors:   "",
+		Passed:     true,
+		Errors:     "",
 		ErrorCount: 0,
-		Command:  processedCommand,
+		Command:    processedCommand,
 		TargetFile: targetFile,
 	}, nil
 }

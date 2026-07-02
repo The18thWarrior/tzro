@@ -243,8 +243,6 @@ func TestReadSeedFile_MissingFileReturnsError(t *testing.T) {
 	}
 }
 
-
-
 func TestJudgeSystemPromptForCategory_Codegen(t *testing.T) {
 	prompt := JudgeSystemPromptForCategory(CategoryCodegen)
 	if prompt != codeJudgeSystemPrompt {

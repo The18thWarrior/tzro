@@ -296,15 +296,15 @@ func RunProbe(
 				)
 				// Persist the step with the warning
 				thoughtStep := memory.ThoughtStep{
-					ID:        fmt.Sprintf("%s_step_%d", probeID, step),
-					ProbeID:   probeID,
-					TaskID:    taskID,
-					StepIndex: step,
-					Thought:   chainStep.NextThought,
-					ToolName:  toolName,
-					ToolArgs:  toolArgsStr,
+					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
+					ProbeID:    probeID,
+					TaskID:     taskID,
+					StepIndex:  step,
+					Thought:    chainStep.NextThought,
+					ToolName:   toolName,
+					ToolArgs:   toolArgsStr,
 					ToolOutput: lastToolOutput,
-					CreatedAt: time.Now().Unix(),
+					CreatedAt:  time.Now().Unix(),
 				}
 				_ = memory.DB.AddThoughtStep(thoughtStep)
 				continue

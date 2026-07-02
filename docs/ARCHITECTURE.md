@@ -131,6 +131,7 @@ The executor processes sorted levels concurrently using Go goroutines:
 - **Cycle Budgets:** A counter (`MaxCycles`) decrements on loop executions, terminating the engine if it reaches zero to avoid infinite looping charges.
 - **Weighted Circuit Breaker (v0.7.3):** The executor computes a time budget per task based on the node composition of the DAG. Each node type has a defined budget (probe: 10min, action: 5min, deterministic/synthesis: 90s). A configurable `circuitBreakerMultiplier` (default 1.0) scales the total budget. When the budget expires, remaining pending nodes are marked `timed_out` and the `terminal_synthesis` node is preserved to produce a coherent final output.
 - **Tool Name Classification Fallback (v0.7.3):** At execution time, if a node references a tool that doesn't exist in the registry, the executor uses local inference to classify the hallucinated name to the closest real tool before failing.
+- **Failure Dampening Initialization (v0.8.0):** The executor automatically initializes the mutation budget (`maxSpawns` and `remainingSpawns`) if unset by the planner, preventing unbounded node spawning. Consecutive failure counters are tracked per-task and reset on successful activation.
 
 ```sql
 CREATE TABLE graph_node_states (
@@ -211,6 +212,7 @@ The `internal/comparison/` package provides a structured framework for evaluatin
 - **ReAct Loop:** Multi-step reasoning for complex judging scenarios.
 - **Structured Reports:** Generates JSON and markdown reports with per-task breakdowns, latencies, token counts, and cost estimates.
 - **CLI Command:** `tzro compare` orchestrates the full comparison pipeline.
+- **Codegen Benchmark Conditions (v0.8.0):** The comparison framework supports codegen-specific conditions (`ConditionTzroCode`, `ConditionTzroDraft`, `ConditionCloudCode`) with language-specific seed files and pseudocode task definitions for evaluating code generation quality across execution modes.
 
 ### 3.12. Extensibility & Sandboxing
 
@@ -222,11 +224,16 @@ The `internal/comparison/` package provides a structured framework for evaluatin
 
 The `internal/codegen/` package provides a static DAG pipeline for single-file code generation, exposed via the `tzro_code` MCP tool:
 
-- **Static 3-Node DAG:** `check_context → reason_code → write_code`. Unlike `tzro_run`, this bypasses the LLM planner entirely — the graph shape is hardcoded at compile time and executed via `task.ExecuteStatic`.
-- **Context Gathering:** `GatherContext` reads the target file (if it exists) and up to 5 sibling files from the same directory, applying content-aware truncation from `internal/executor` for large files.
-- **Prompt Builder:** `BuildCodePrompt` assembles a structured prompt with spec, file path, language, action (create/update), existing content, sibling files, and configurable line cap.
+- **Complexity-Based Routing (v0.8.0):** `ClassifyComplexity` evaluates spec length, existing file size, and language to route between **direct mode** (single-pass generation for simple tasks) and **draft mode** (two-phase generate → refine for complex tasks). This replaces the prior static 3-node DAG with dynamic graph construction.
+- **Context Gathering:** `GatherContext` reads the target file (if it exists) and up to 5 sibling files from the same directory, prioritizing same-extension files. Content-aware truncation from `internal/executor` is applied to files exceeding 15K characters (target) or 6K characters (siblings).
+- **Module Context Extraction (v0.8.0):** For Go files, `ExtractModuleContext` parses the package directory to extract exported type signatures, function declarations, and interface definitions — injected into the generation prompt to provide package-level awareness.
+- **Exemplar Injection (v0.8.0):** Language-specific code exemplars are injected into the generation prompt to bias the LLM toward idiomatic patterns (e.g., Go error handling, TypeScript type narrowing).
+- **Diff Mode (v0.8.0):** For updates to large existing files, the pipeline generates a structured diff patch instead of a full-file rewrite. `BuildDiffPrompt` produces a targeted prompt, and `ApplyDiff` applies the patch preserving unchanged sections. This prevents catastrophic file rewrites on minor edits.
+- **Compilation Quality Gate (v0.8.0):** After code generation, `RunCompilationGate` executes language-appropriate compilation checks (`go build`, `tsc --noEmit`, `python -m py_compile`, `node --check`). Failures trigger the repair pipeline.
+- **Edge Thought-Driven Repair (v0.8.0):** `CompilationGateHook` implements `ExecutionHook.AfterNode` to intercept compilation failures. It generates a structured repair prompt containing the original code, compilation errors, and language-specific reference patterns, then spawns a repair node via the executor's neural traversal mechanism. Failure dampening (3 consecutive failures) prevents infinite repair loops.
+- **Prompt Builder:** `BuildCodePrompt` assembles a structured prompt with spec, file path, language, action (create/update), existing content, sibling files, module context, and configurable line cap.
 - **Code Cleaning:** `CleanGeneratedCode` strips markdown fences from LLM output and enforces the `CodeMaxLines` cap (default 500, configurable via `codeMaxLines` in engine config).
-- **`write_file` Tool:** A new filesystem tool with `ValidateWritePath` (allows writing to non-existent paths), automatic parent directory creation, backup-on-overwrite with LRU eviction at 50 files, and binary content rejection.
+- **`write_file` Tool:** A filesystem tool with `ValidateWritePath` (allows writing to non-existent paths), automatic parent directory creation, backup-on-overwrite with LRU eviction at 50 files, and binary content rejection.
 - **Design Goal:** Structurally encourages compact, single-responsibility files by capping output and requiring a spec + filepath per invocation.
 
 ---

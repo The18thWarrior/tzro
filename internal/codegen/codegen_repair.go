@@ -160,10 +160,9 @@ func BuildRepairDAG(taskID, originalCode, compilerErrors, spec, language string,
 				OutputLanguage: language,
 			},
 		},
-		Edges:     []compiler.GraphEdge{},
+		Edges:      []compiler.GraphEdge{},
 		GoalPrompt: fmt.Sprintf("Fix compilation errors in %s code", language),
 		MaxCycles:  1,
 		CreatedAt:  time.Now().Unix(),
 	}
 }
-

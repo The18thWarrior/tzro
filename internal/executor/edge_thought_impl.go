@@ -34,9 +34,9 @@ const edgeThoughtSchema = `{
 
 // edgeThoughtResponse is an unexported struct used to parse the inference response.
 type edgeThoughtResponse struct {
-	Thought       string `json:"thought"`
+	Thought        string  `json:"thought"`
 	GoalConfidence float64 `json:"goalConfidence"`
-	GoalAchieved  bool   `json:"goalAchieved"`
+	GoalAchieved   bool    `json:"goalAchieved"`
 }
 
 // GenerateEdgeThought evaluates whether a source node's output provides sufficient
