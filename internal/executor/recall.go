@@ -35,25 +35,38 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 		}
 	}
 
-	systemPrompt := fmt.Sprintf(`You are a Recall Node. Your goal is to align and synthesize discoveries from previous nodes.
+	systemPrompt := fmt.Sprintf(`You are a Recall Node (Map Phase). Your goal is to align and synthesize discoveries from previous nodes.
 Target Goal: %s
 
 ## Discovery Manifest (Tool Outputs from Upstream Nodes)
 %s
 
-You can use these tools to examine specific results in detail:
+You can use these tools to examine specific results in detail or record key facts:
 - <ACTION>{"tool": "fetch_details", "arguments": {"node_id": "id", "step_index": 0}}</ACTION>
+- <ACTION>{"tool": "update_refined_context", "arguments": {"fact": "key fact or signature found"}}</ACTION>
 
-On each step, reason about which discovery you need to examine to fulfill the goal.
-When you have aligned all necessary information, output <SYNTHESIZE_READY>.
+On each step:
+1. Reason about which discovery metadata suggests a high-signal result.
+2. Fetch details for high-signal steps.
+3. Record critical findings using 'update_refined_context'.
+4. When you have aligned all necessary information and your 'Refined Discovery Context' is sufficient, output <SYNTHESIZE_READY>.
+
 You have a maximum of %d steps.`, goal, manifest, maxSteps)
 
 	lastResult := "Manifest loaded."
+	refinedContext := ""
+
 	for step < maxSteps {
 		step++
 		
 		// 1. Infer next action
-		rawResponse, err := engine.Infer(ctx, systemPrompt, lastResult, "")
+		// Include refinedContext in the prompt if not empty
+		currentPrompt := systemPrompt
+		if refinedContext != "" {
+			currentPrompt += fmt.Sprintf("\n\n## Current Refined Discovery Context:\n%s", refinedContext)
+		}
+
+		rawResponse, err := engine.Infer(ctx, currentPrompt, lastResult, "")
 		if err != nil {
 			return "", fmt.Errorf("recall inference failed at step %d: %w", step, err)
 		}
@@ -65,9 +78,10 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 
 		// 2. Extract and execute tool call
 		action, args := extractAction(rawResponse)
-		if action == "fetch_details" {
+		switch action {
+		case "fetch_details":
 			nodeID, _ := args["node_id"].(string)
-			stepIdx, _ := args["step_index"].(float64) // JSON numbers are float64
+			stepIdx, _ := args["step_index"].(float64)
 			
 			stepData, err := memory.DB.GetThoughtStepByProbeAndIndex(nodeID, int(stepIdx))
 			if err != nil {
@@ -75,8 +89,15 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 			} else {
 				lastResult = fmt.Sprintf("### Details for %s Step %d\nTool: %s\nOutput:\n%s", nodeID, int(stepIdx), stepData.ToolName, stepData.ToolOutput)
 			}
-		} else {
-			lastResult = "No valid ACTION found. Use fetch_details or SYNTHESIZE_READY."
+		case "update_refined_context":
+			fact, _ := args["fact"].(string)
+			if refinedContext != "" {
+				refinedContext += "\n"
+			}
+			refinedContext += "- " + fact
+			lastResult = "Refined context updated."
+		default:
+			lastResult = "No valid ACTION found. Use fetch_details, update_refined_context, or SYNTHESIZE_READY."
 		}
 
 		// Publish progress
@@ -85,15 +106,19 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 			TaskID:  taskID,
 			NodeID:  recallNodeID,
 			Type:    "recall_step",
-			Content: fmt.Sprintf("Step %d: %s", step, lastResult),
+			Content: fmt.Sprintf("Step %d: %s (Context Size: %d)", step, lastResult, len(refinedContext)),
 		})
 	}
 
-	// Final Synthesis Pass
-	fmt.Fprintf(os.Stderr, "[Recall] Node %s executing final synthesis.\n", recallNodeID)
-	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Recall Node.
+	// Final Synthesis Pass (Reduce)
+	fmt.Fprintf(os.Stderr, "[Recall] Node %s executing final synthesis (Reduce Phase).\n", recallNodeID)
+	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
-Review all gathered facts and produce a comprehensive, structured final answer.`, goal)
+
+## Refined Discovery Context (Verified Facts):
+%s
+
+Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext)
 	
 	return engine.Infer(ctx, synthPrompt, lastResult, "")
 }

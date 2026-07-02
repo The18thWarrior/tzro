@@ -152,16 +152,6 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		}
 	}
 
-	// 3. Inject terminal synthesis node
-	synthID := "terminal_synthesis"
-	sctNodes = append(sctNodes, GraphNode{
-		ID:                  synthID,
-		Type:                "synthesis",
-		Instructions:        "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details.",
-		Status:              "pending",
-		ActivationThreshold: 0.7, // Default threshold to enable reactive exploration gate (ADR-0024)
-	})
-
 	// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 	// A node is an endpoint if it is an execution node and has no outbound edges to other high-level steps.
 	isSourceMap := make(map[string]bool)
@@ -169,13 +159,38 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		isSourceMap[edge.SourceID] = true
 	}
 
+	// 3. Inject terminal synthesis node
+	// Planning Awareness: Check if the graph already ends in a synthesis-type node.
+	// If the planner manually added a synthesis step at the end, we don't need a double summary.
+	hasSynthesisLeaf := false
 	for _, node := range sctNodes {
-		if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
-			sctEdges = append(sctEdges, GraphEdge{
-				SourceID: node.ID,
-				TargetID: synthID,
-			})
+		if (node.Type == "synthesis" || isSynthesisGoal(node.Instructions)) && !isSourceMap[node.ID] {
+			hasSynthesisLeaf = true
+			break
 		}
+	}
+
+	if !hasSynthesisLeaf {
+		synthID := "terminal_synthesis"
+		sctNodes = append(sctNodes, GraphNode{
+			ID:                  synthID,
+			Type:                "synthesis",
+			Instructions:        "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details.",
+			Status:              "pending",
+			ActivationThreshold: 0.7, // Default threshold to enable reactive exploration gate (ADR-0024)
+		})
+
+		// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
+		for _, node := range sctNodes {
+			if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
+				sctEdges = append(sctEdges, GraphEdge{
+					SourceID: node.ID,
+					TargetID: synthID,
+				})
+			}
+		}
+	} else {
+		fmt.Printf("[Compiler] Graph already has a synthesis leaf. Skipping automatic terminal_synthesis injection.\n")
 	}
 
 	return &ExecutionGraph{

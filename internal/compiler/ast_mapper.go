@@ -89,12 +89,64 @@ func GenerateMap(workspaceRoot string) (string, error) {
 					sb.WriteString(fmt.Sprintf("- %s\n", sig))
 				}
 			}
-
 			return nil
 		})
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[AST Mapper] Walk error in %s: %v\n", dir, err)
+		}
+	}
+
+	return sb.String(), nil
+}
+
+// GenerateShallowMap creates a signature-blind directory tree of the workspace
+// to provide structural scaffolding to the planner without the latency penalty
+// of full AST parsing.
+func GenerateShallowMap(workspaceRoot string, maxDepth int) (string, error) {
+	var sb strings.Builder
+	targetDirs := []string{"cmd", "internal", "pkg", "api", "web", "docs", "scripts"}
+
+	for _, dir := range targetDirs {
+		fullPath := filepath.Join(workspaceRoot, dir)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			continue
+		}
+
+		err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Calculate current depth relative to the targetDir
+			relToTarget, _ := filepath.Rel(fullPath, path)
+			depth := 0
+			if relToTarget != "." {
+				depth = len(strings.Split(relToTarget, string(filepath.Separator)))
+			}
+
+			if depth >= maxDepth {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			if info.IsDir() {
+				// Ignore hidden dirs and noisy dirs
+				if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" || info.Name() == "node_modules" {
+					return filepath.SkipDir
+				}
+				
+				relPath, _ := filepath.Rel(workspaceRoot, path)
+				sb.WriteString(fmt.Sprintf("- %s/\n", relPath))
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[AST Mapper] Shallow Walk error in %s: %v\n", dir, err)
 		}
 	}
 

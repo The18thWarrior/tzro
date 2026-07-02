@@ -354,7 +354,7 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 		skillsListStr = "No specialized micro-skills available currently."
 	}
 
-	repoMap, _ := compiler.GenerateMap(".")
+	repoMap, _ := compiler.GenerateShallowMap(".", 2)
 	if repoMap == "" {
 		repoMap = "No repository map available."
 	}
@@ -368,7 +368,7 @@ Your task is to compile a user's natural language request into a Directed Acycli
 ## Available Procedural Micro-Skills SOP Index:
 %s
 
-## Static Repository Map & Core Signatures:
+## Static Repository Map Scaffolding:
 %s
 
 ## Output Schema Constraints:
@@ -426,9 +426,10 @@ When the request involves open-ended exploration where each step depends on what
 3. allowedTools limit: Restrict the local worker's action space at each node. Only include the 1-2 tools absolutely necessary.
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
 5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
-6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that procedural order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
+6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
 7. EXPLORATION ROUTING RULE (CRITICAL): For tasks involving codebase exploration, directory traversal, file reading, documentation generation, code indexing, architecture analysis, or ANY task where the next step depends on what was just discovered, you MUST emit a SINGLE probe node. Do NOT decompose exploration into a multi-step pipeline of action nodes — the probe node's internal Thought Chain handles reactive step-by-step exploration natively with full tool access. Only use multi-node pipelines when the task has genuinely independent stages requiring DIFFERENT tool sets (e.g., 'search the web AND query the database').
 8. TOOL CONFORMANCE (CRITICAL): You MUST only reference tools from the Available Tool Inventory above. Do NOT invent, hallucinate, or guess tool names that are not listed. If you are unsure whether a tool exists, use a probe node with filesystem tools instead of guessing tool names. Any plan referencing non-existent tools will be rejected.
+9. PROBE-FIRST POLICY (LATENCY OPTIMIZATION): You are provided with only a SHALLOW directory tree. If the user request references specific files, functions, or deep paths not visible in the shallow map, you MUST plan a "probe" node to discover the exact paths rather than guessing them.
 
 ### Code Generation Rules (ADR-0035):
 When the task involves generating or modifying source code files:
@@ -557,7 +558,7 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 		skillsListStr = "No specialized micro-skills available currently."
 	}
 
-	repoMap, _ := compiler.GenerateMap(".")
+	repoMap, _ := compiler.GenerateShallowMap(".", 2)
 	if repoMap == "" {
 		repoMap = "No repository map available."
 	}
