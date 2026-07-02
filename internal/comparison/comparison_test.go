@@ -269,17 +269,14 @@ func TestJudgeSystemPromptForCategory_EmptyDefaultsToDocgen(t *testing.T) {
 func TestCodegenConditions_IncludesTzroCode(t *testing.T) {
 	conditions := CodegenConditions()
 
-	// Should include tzro_code, cloud_code, and tzro_draft
-	var foundTzroCode, foundCloudCode, foundDraft bool
+	// Should include tzro_code and cloud_code only
+	var foundTzroCode, foundCloudCode bool
 	for _, c := range conditions {
 		if c == ConditionTzroCode {
 			foundTzroCode = true
 		}
 		if c == ConditionCloudCode {
 			foundCloudCode = true
-		}
-		if c == ConditionTzroDraft {
-			foundDraft = true
 		}
 	}
 	if !foundTzroCode {
@@ -288,8 +285,8 @@ func TestCodegenConditions_IncludesTzroCode(t *testing.T) {
 	if !foundCloudCode {
 		t.Errorf("CodegenConditions() = %v, want %s included", conditions, ConditionCloudCode)
 	}
-	if !foundDraft {
-		t.Errorf("CodegenConditions() = %v, want %s included", conditions, ConditionTzroDraft)
+	if len(conditions) != 2 {
+		t.Errorf("CodegenConditions() = %v, want exactly 2 conditions", conditions)
 	}
 
 	// Should NOT include cloud_react (not an apples-to-apples comparison)
@@ -308,9 +305,6 @@ func TestAllConditions_DoesNotIncludeTzroCode(t *testing.T) {
 		if c == ConditionCloudCode {
 			t.Errorf("AllConditions() should not include %s (codegen-only)", ConditionCloudCode)
 		}
-		if c == ConditionTzroDraft {
-			t.Errorf("AllConditions() should not include %s (codegen-only)", ConditionTzroDraft)
-		}
 	}
 }
 
@@ -318,35 +312,33 @@ func TestCodegenConditionsForTier_T1(t *testing.T) {
 	conditions := CodegenConditionsForTier(1)
 	assertContains(t, conditions, ConditionCloudCode, "T1")
 	assertContains(t, conditions, ConditionTzroCode, "T1")
-	assertContains(t, conditions, ConditionTzroDraft, "T1")
+	if len(conditions) != 2 {
+		t.Errorf("CodegenConditionsForTier(1) = %v, want exactly 2 conditions", conditions)
+	}
 }
 
 func TestCodegenConditionsForTier_T2(t *testing.T) {
 	conditions := CodegenConditionsForTier(2)
 	assertContains(t, conditions, ConditionCloudCode, "T2")
-	assertNotContains(t, conditions, ConditionTzroCode, "T2")
-	assertContains(t, conditions, ConditionTzroDraft, "T2")
+	assertContains(t, conditions, ConditionTzroCode, "T2")
 }
 
 func TestCodegenConditionsForTier_T3(t *testing.T) {
 	conditions := CodegenConditionsForTier(3)
 	assertContains(t, conditions, ConditionCloudCode, "T3")
-	assertNotContains(t, conditions, ConditionTzroCode, "T3")
-	assertContains(t, conditions, ConditionTzroDraft, "T3")
+	assertContains(t, conditions, ConditionTzroCode, "T3")
 }
 
 func TestCodegenConditionsForTier_T4(t *testing.T) {
 	conditions := CodegenConditionsForTier(4)
 	assertContains(t, conditions, ConditionCloudCode, "T4")
-	assertNotContains(t, conditions, ConditionTzroCode, "T4")
-	assertContains(t, conditions, ConditionTzroDraft, "T4")
+	assertContains(t, conditions, ConditionTzroCode, "T4")
 }
 
 func TestCodegenConditionsForTier_T5(t *testing.T) {
 	conditions := CodegenConditionsForTier(5)
 	assertContains(t, conditions, ConditionCloudCode, "T5")
-	assertNotContains(t, conditions, ConditionTzroCode, "T5")
-	assertContains(t, conditions, ConditionTzroDraft, "T5")
+	assertContains(t, conditions, ConditionTzroCode, "T5")
 }
 
 func assertContains(t *testing.T, conditions []string, target, tier string) {

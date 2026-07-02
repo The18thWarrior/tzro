@@ -407,8 +407,7 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 
 	// Route via pseudo-code availability and complexity classification:
 	//   pseudocode provided → expansion DAG (any complexity)
-	//   complex + no pseudocode → reject with complexity_exceeded
-	//   simple + no pseudocode → direct generation (existing path)
+	//   no pseudocode → direct generation (complexity logged for observability)
 	var graph *compiler.ExecutionGraph
 
 	if strings.TrimSpace(args.Pseudocode) != "" {
@@ -416,31 +415,10 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		fmt.Fprintf(os.Stderr, "[tzro_code] Pseudo-code expansion mode for %s\n", args.Filepath)
 		graph = codegen.BuildPseudocodeExpansionDAG(taskID, args.Pseudocode, args.Spec, args.Filepath, language, maxLines, codeCtx)
 	} else {
-		// No pseudo-code: classify complexity and route
+		// Classify complexity (informational — used for logging and benchmark routing)
 		tier := classifyCodeComplexity(args.Spec, codeCtx)
+		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, proceeding with direct generation for %s\n", tier, args.Filepath)
 
-		if tier == "complex" {
-			// Complexity exceeds local model capability — return structured rejection
-			fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=complex, returning complexity_exceeded for %s\n", args.Filepath)
-			respMap := map[string]interface{}{
-				"status":         "complexity_exceeded",
-				"taskId":         "",
-				"tier":           tier,
-				"recommendation": "pseudocode_expansion",
-				"message":        "Task exceeds local model capability for direct generation. Provide structured pseudo-code as the 'pseudocode' parameter and resubmit.",
-				"spec_echo":      args.Spec,
-				"filepath":       args.Filepath,
-				"language":       language,
-			}
-			respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: string(respBytes)},
-				},
-			}, nil, nil
-		}
-
-		// Simple tier: direct generation
 		switch mode {
 		case "diff":
 			graph = codegen.BuildDiffDAG(taskID, args.Spec, args.Filepath, language, codeCtx)
@@ -531,20 +509,9 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 				cleanedForGate := codegen.StripMarkdownFences(rawCode)
 				gateResult := codegen.RunStructuralQualityGate(cleanedForGate, language)
 				if !gateResult.Pass {
-					if strings.TrimSpace(args.Pseudocode) == "" {
-						// Direct mode: gate failure means misclassified complexity → escalate
-						fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed in direct mode: %s\n", gateResult.Reason)
-						respMap["status"] = "complexity_exceeded"
-						respMap["tier"] = "complex"
-						respMap["recommendation"] = "pseudocode_expansion"
-						respMap["message"] = fmt.Sprintf("Generated code failed structural validation (%s). Provide structured pseudo-code as the 'pseudocode' parameter and resubmit.", gateResult.Reason)
-						respMap["spec_echo"] = args.Spec
-					} else {
-						// Expand mode: gate failure is a standard failure
-						fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed in expand mode: %s\n", gateResult.Reason)
-						respMap["status"] = "failed"
-						respMap["error"] = fmt.Sprintf("quality gate: %s", gateResult.Reason)
-					}
+					fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed: %s\n", gateResult.Reason)
+					respMap["status"] = "failed"
+					respMap["error"] = fmt.Sprintf("quality gate: %s", gateResult.Reason)
 				} else {
 					// Quality gate passed — write the file
 				switch mode {
@@ -640,21 +607,11 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 						for _, n := range res.nodes {
 							if strings.HasPrefix(n.NodeID, "spawned_") {
 								compilationInfo["repairAttempted"] = true
+								// Check mutation budget exhaustion
+								if compilationInfo["passed"] == false && graph.MutationBudget != nil && graph.MutationBudget.RemainingSpawns == 0 {
+									compilationInfo["budgetExhausted"] = true
+								}
 								break
-							}
-						}
-
-						// Check mutation budget exhaustion for mode-dependent reporting
-						if compilationInfo["passed"] == false && graph.MutationBudget != nil && graph.MutationBudget.RemainingSpawns == 0 {
-							compilationInfo["budgetExhausted"] = true
-							if args.Pseudocode == "" {
-								// Direct mode: signal complexity exceeded
-								respMap["status"] = "complexity_exceeded"
-								respMap["spec_echo"] = args.Spec
-								compilationInfo["exhaustionMode"] = "direct"
-							} else {
-								// Expand mode: structured failure
-								compilationInfo["exhaustionMode"] = "expand"
 							}
 						}
 

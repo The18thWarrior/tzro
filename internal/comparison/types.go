@@ -9,9 +9,8 @@ const (
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"
 	ConditionCooperative = "cooperative"
-	ConditionTzroCode  = "tzro_code"  // Static 3-node DAG via codegen package (cooperative mode)
+	ConditionTzroCode  = "tzro_code"  // Unified codegen: direct (simple) or draft+fix (complex)
 	ConditionCloudCode = "cloud_code" // Static 3-node DAG via codegen package (cloud mode)
-	ConditionTzroDraft = "tzro_draft" // Local draft (no self-repair) + frontier fix (cooperative evaluation)
 )
 
 // Task category constants.
@@ -28,21 +27,16 @@ func AllConditions() []string {
 }
 
 // CodegenConditions returns all conditions applicable to code generation benchmarks.
-// Use CodegenConditionsForTier for tier-aware routing in production runs.
 func CodegenConditions() []string {
-	return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroDraft}
+	return []string{ConditionCloudCode, ConditionTzroCode}
 }
 
 // CodegenConditionsForTier returns the conditions to run for a given task tier.
-// T1 (simple) tasks run all three conditions for continued local-only evaluation.
-// T2+ tasks drop tzro_code in favor of tzro_draft: benchmark #9 showed tzro_code
-// compiles only 20% of T2+ tasks (avg Q=2.67) while tzro_draft achieves 90%
-// compilation (avg Q=4.10) at 63% cost savings vs cloud_code.
+// All tiers run the same two conditions. The tzro_code condition internally
+// routes via the complexity gate: simple tasks use direct local codegen,
+// complex tasks use the draft+cloud-fix pipeline (formerly tzro_draft).
 func CodegenConditionsForTier(tier int) []string {
-	if tier <= 1 {
-		return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroDraft}
-	}
-	return []string{ConditionCloudCode, ConditionTzroDraft}
+	return []string{ConditionCloudCode, ConditionTzroCode}
 }
 
 // RubricCriterion defines a single quality evaluation dimension.
@@ -86,7 +80,7 @@ type ComparisonResult struct {
 	EstCostUSD    float64              `json:"estCostUSD"`
 	ToolCallCount int                  `json:"toolCallCount"`
 	OutputText    string               `json:"outputText"`
-	DraftText     string               `json:"draftText,omitempty"`  // Raw local draft before frontier fix (tzro_draft only)
+	DraftText     string               `json:"draftText,omitempty"`  // Raw local draft before cloud fix (populated when draft mode activates)
 	QualityScore  float64              `json:"qualityScore"`
 	QualityNotes  string               `json:"qualityNotes"`
 	Error         string               `json:"error,omitempty"`

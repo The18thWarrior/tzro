@@ -206,8 +206,6 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 					result, err = RunCodegenCondition(ctx, conditionID, "cooperative", task, opts.Pricing)
 				} else if conditionID == ConditionCloudCode {
 					result, err = RunCodegenCondition(ctx, conditionID, "cloud", task, opts.Pricing)
-				} else if conditionID == ConditionTzroDraft {
-					result, err = RunCodegenDraftCondition(ctx, task, opts.Pricing)
 				} else {
 					result, err = RunDAGCondition(ctx, conditionID, task, opts.Pricing)
 				}
