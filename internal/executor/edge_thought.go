@@ -63,6 +63,12 @@ func shouldGenerateEdgeThought(targetNode *compiler.GraphNode) bool {
 //   - Confidence >= Threshold      → ActivationContinue (sufficient, proceed)
 func evaluateActivationThreshold(et *memory.EdgeThought, targetNode *compiler.GraphNode) ActivationAction {
 	if et.GoalAchieved {
+		// Deterministic Shield: Never halt on recall or synthesis nodes.
+		// These nodes are responsible for consolidation/presentation and must execute
+		// to provide a return result to the harness, even if the goal was "achieved" upstream.
+		if targetNode.Type == "recall" || targetNode.Type == "synthesis" {
+			return ActivationContinue
+		}
 		return ActivationHalt
 	}
 

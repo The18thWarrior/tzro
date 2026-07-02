@@ -76,26 +76,50 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				}
 				sctNodes = append(sctNodes, node)
 
-				// Inject Recall Node to align discovery findings (ADR-0038)
-				recallID := node.ID + "_recall"
-				sctNodes = append(sctNodes, GraphNode{
-					ID:                  recallID,
-					Type:                "recall",
-					Action:              "synthesize",
-					Instructions:        fmt.Sprintf("Traverse the execution history of probe node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.ID),
-					Status:              "pending",
-					ActivationThreshold: 0.9, // High skepticism for synthesis
-					DynamicBindings:     node.DynamicBindings,
-				})
+				// Planning Awareness: Check if this probe already has a planned synthesis-type child.
+				// If so, we skip automatic Recall injection to avoid redundant consolidation steps (Discovery -> Aligned Findings -> Terminal).
+				hasPlannedSynthesisChild := false
+				for _, edge := range graph.Edges {
+					if edge.SourceID == node.ID {
+						// Look up the target node in the original high-level graph
+						for _, originalNode := range graph.Nodes {
+							if originalNode.ID == edge.TargetID && (originalNode.Type == "synthesis" || isSynthesisGoal(originalNode.Instructions)) {
+								hasPlannedSynthesisChild = true
+								break
+							}
+						}
+					}
+					if hasPlannedSynthesisChild {
+						break
+					}
+				}
 
-				// Probe -> Recall edge
-				sctEdges = append(sctEdges, GraphEdge{
-					SourceID: node.ID,
-					TargetID: recallID,
-				})
+				if !hasPlannedSynthesisChild {
+					// Inject Recall Node to align discovery findings (ADR-0038)
+					recallID := node.ID + "_recall"
+					sctNodes = append(sctNodes, GraphNode{
+						ID:                  recallID,
+						Type:                "recall",
+						Action:              "synthesize",
+						Instructions:        fmt.Sprintf("Traverse the execution history of probe node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.ID),
+						Status:              "pending",
+						ActivationThreshold: 0.9, // High skepticism for synthesis
+						DynamicBindings:     node.DynamicBindings,
+					})
 
-				execNodeMap[node.ID] = recallID
-				bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe first, then the recall handles synthesis
+					// Probe -> Recall edge
+					sctEdges = append(sctEdges, GraphEdge{
+						SourceID: node.ID,
+						TargetID: recallID,
+					})
+
+					execNodeMap[node.ID] = recallID
+					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe first, then the recall handles synthesis
+				} else {
+					fmt.Printf("[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
+					execNodeMap[node.ID] = node.ID
+					bridgeNodeMap[node.ID] = node.ID
+				}
 			} else {
 				sctNodes = append(sctNodes, node)
 				execNodeMap[node.ID] = node.ID
@@ -146,7 +170,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 
 	for _, node := range sctNodes {
-		if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "sub_dag") && !isSourceMap[node.ID] {
+		if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
 			sctEdges = append(sctEdges, GraphEdge{
 				SourceID: node.ID,
 				TargetID: synthID,
