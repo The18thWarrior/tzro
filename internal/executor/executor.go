@@ -1005,6 +1005,64 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		return nil
 	}
 
+	// 1.4 Recall node: discovery-synthesis alignment (ADR-0038)
+	if node.Type == "recall" {
+		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Recall: "+node.Instructions)
+
+		// Identify upstream probe nodes to recall
+		var upstreamNodeIDs []string
+		for _, edge := range graph.Edges {
+			if edge.TargetID == node.ID {
+				upstreamNodeIDs = append(upstreamNodeIDs, edge.SourceID)
+			}
+		}
+
+		recallEngine := &DefaultProbeInference{}
+		synthesis, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
+		if err != nil {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
+			return fmt.Errorf("recall node %s execution failed: %w", node.ID, err)
+		}
+
+		// Run AfterNode hooks
+		var nodeAfterAction HookAction = ActionContinue
+		for _, h := range activeHooks {
+			action, err := h.AfterNode(ctx, taskID, node, &synthesis)
+			if err != nil {
+				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
+			}
+			if action == ActionAbort {
+				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
+			}
+			if action == ActionPause {
+				nodeAfterAction = ActionPause
+			}
+		}
+
+		if nodeAfterAction == ActionPause {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
+			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
+			return ErrTaskPaused
+		}
+
+		nodeStatus := fmt.Sprintf("[Recall] %s", synthesis)
+		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
+		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+		return nil
+	}
+
 	// 1.5 Sub-DAG node: spawn an isolated child task via SubTaskSpawner
 	if node.Type == "sub_dag" {
 		_ = memory.DB.SetNodeState(taskID, node.ID, "waiting_on_child", "")

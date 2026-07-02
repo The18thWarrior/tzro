@@ -1245,6 +1245,29 @@ func (sdb *SqliteDatabase) GetThoughtSteps(probeID string) ([]ThoughtStep, error
 	return steps, nil
 }
 
+// GetThoughtStepByProbeAndIndex retrieves a single thought step by probe ID and step index.
+func (sdb *SqliteDatabase) GetThoughtStepByProbeAndIndex(probeID string, index int) (ThoughtStep, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return ThoughtStep{}, fmt.Errorf("database not initialized")
+	}
+
+	var s ThoughtStep
+	err := sdb.db.QueryRow(
+		`SELECT id, probe_id, task_id, step_index, thought, COALESCE(tool_name,''), COALESCE(tool_args,''), COALESCE(tool_output,''), embedding, created_at
+		FROM thought_chain WHERE probe_id = ? AND step_index = ?`, probeID, index,
+	).Scan(&s.ID, &s.ProbeID, &s.TaskID, &s.StepIndex, &s.Thought,
+		&s.ToolName, &s.ToolArgs, &s.ToolOutput, &s.Embedding, &s.CreatedAt)
+
+	if err != nil {
+		return ThoughtStep{}, err
+	}
+	return s, nil
+}
+
+
 // AddThoughtSummary persists a rolling compaction summary of a Thought Chain.
 func (sdb *SqliteDatabase) AddThoughtSummary(summary ThoughtSummary) error {
 	sdb.mutex.Lock()

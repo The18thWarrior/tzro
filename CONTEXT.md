@@ -36,6 +36,14 @@ _Avoid_: Graph builder, sort pipeline
 A two-tier conditional execution engine that resolves branch skip decisions first via fast deterministic JSONPath comparisons and falls back to semantic Local Model inference if comparison fails, preventing incorrect path skipping.
 _Avoid_: Simple compiler, condition parser, LLM evaluator
 
+**Probe Node**:
+An autonomous execution node type that runs a bounded, multi-step **Thought Chain** exploration loop (research, directory traversal, file reading) using the **Local Model**. Persists its intermediate reasoning and tool outputs to the `thought_chain` table for durability and later recall.
+_Avoid_: Action Node (single-step), research agent, sub-task
+
+**Recall Node**:
+A specialized execution node injected automatically after a **Probe Node** by the **Kahn Compiler**. Offloads the responsibility of synthesis from the explorer to a synthesizer agent. Traverses the execution history (tool outputs) of upstream nodes to align and synthesize discoveries into a cohesive, structured response, avoiding the "Synthesis Cliff" cognitive overload in local workers.
+_Avoid_: Synthesis Node (one-shot summarizer), summary step, final report
+
 **Local Model**:
 The default-path local LLM workhorse handling all structured work: intent classification, tool call construction, step execution, conversation compaction, and error recovery. Cloud is only invoked when the **Local Model** lacks the knowledge or latency profile required. Backed by a pluggable **Inference Backend**.
 _Avoid_: Local Step Executor (too narrow), system LLM, cloud coder

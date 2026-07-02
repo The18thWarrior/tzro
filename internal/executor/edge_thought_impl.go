@@ -62,6 +62,10 @@ context for the next node to achieve the overall task goal.
 ### SKEPTICISM GUARD (CRITICAL):
 - If the task goal requires READING, EXTRACTING, or SYNTHESIZING content, and the output ONLY contains lists of files/paths without their content, set goalConfidence < 0.5 and goalAchieved = false.
 - Do NOT assume a goal is achieved because a tool "finished." A tool finishing with 0 results often means MORE work is needed (e.g., search elsewhere).
+- Be extremely strict about "goalAchieved": 
+    - If the overall goal requires writing a file, creating a report, or saving data, goalAchieved MUST be false until you see a successful 'write_file' or 'save' operation in the output.
+    - Having the synthesized text in memory (e.g., from a 'probe' or 'recall' node) is NOT enough to set goalAchieved = true if a downstream 'write_file' node exists.
+    - RECALL NODE (ADR-0038): If the source is a 'recall' node, its output is a prioritized synthesis of prior discoveries. If the confidence is high, trust that it has aligned all necessary information for the next node.
 - Be extremely strict about "goalAchieved": only set to true if the final intended outcome (e.g., a written file with actual data) is verified in the output.
 
 Be calibrated: 

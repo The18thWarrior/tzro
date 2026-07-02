@@ -33,10 +33,8 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 			// 1. Semantic Validator node
 			threshold := node.ActivationThreshold
-			if node.Type == "synthesis" || isSynthesisGoal(node.Instructions) {
-				if threshold > 0 && threshold < 0.9 {
-					threshold = 0.9 // Boost for high-stakes synthesis
-				}
+			if (node.Type == "synthesis" || isSynthesisGoal(node.Instructions)) && threshold < 0.9 {
+				threshold = 0.9 // Boost for high-stakes synthesis/documentation
 			}
 
 			sctNodes = append(sctNodes, GraphNode{
@@ -72,18 +70,36 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			execNodeMap[node.ID] = execID
 			bridgeNodeMap[node.ID] = validatorID
 		} else {
-			// Keep other structural nodes (branch, merge, probe) as is.
-			// Probe nodes run their own internal Thought Chain loop and
-			// do not need bridge/exec decomposition.
-			//
-			// Default CompactionLevel for probe nodes to "preserve" to prevent
-			// destructive summarization of raw tool output. This is the root cause
-			// fix for the cloud_dag quality regression (4.80 → 3.30 in benchmark-results4).
-			if node.Type == "probe" && node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
-				node.ProbeConfig.CompactionLevel = CompactPreserve
+			if node.Type == "probe" {
+				if node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
+					node.ProbeConfig.CompactionLevel = CompactPreserve
+				}
+				sctNodes = append(sctNodes, node)
+
+				// Inject Recall Node to align discovery findings (ADR-0038)
+				recallID := node.ID + "_recall"
+				sctNodes = append(sctNodes, GraphNode{
+					ID:                  recallID,
+					Type:                "recall",
+					Action:              "synthesize",
+					Instructions:        fmt.Sprintf("Traverse the execution history of probe node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.ID),
+					Status:              "pending",
+					ActivationThreshold: 0.9, // High skepticism for synthesis
+					DynamicBindings:     node.DynamicBindings,
+				})
+
+				// Probe -> Recall edge
+				sctEdges = append(sctEdges, GraphEdge{
+					SourceID: node.ID,
+					TargetID: recallID,
+				})
+
+				execNodeMap[node.ID] = recallID
+				bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe first, then the recall handles synthesis
+			} else {
+				sctNodes = append(sctNodes, node)
+				execNodeMap[node.ID] = node.ID
 			}
-			sctNodes = append(sctNodes, node)
-			execNodeMap[node.ID] = node.ID
 		}
 	}
 
@@ -115,10 +131,11 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	// 3. Inject terminal synthesis node
 	synthID := "terminal_synthesis"
 	sctNodes = append(sctNodes, GraphNode{
-		ID:           synthID,
-		Type:         "synthesis",
-		Instructions: "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details.",
-		Status:       "pending",
+		ID:                  synthID,
+		Type:                "synthesis",
+		Instructions:        "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details.",
+		Status:              "pending",
+		ActivationThreshold: 0.7, // Default threshold to enable reactive exploration gate (ADR-0024)
 	})
 
 	// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
