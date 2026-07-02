@@ -274,6 +274,7 @@ The `tzro` MCP server registers **26 tools** split into distinct functional doma
 | Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
 | `tzro_run` | Plan, compile, and execute a durable DAG from a prompt. | `prompt` (string), `timeout` (int) |
+| `tzro_code` | Generate or update code for a single file using the local model. | `spec` (string), `filepath` (string), `mode` (string, optional: "full"|"diff") |
 | `tzro_status` | Check execution status, node states, and outcomes of a task. | `taskId` (string) |
 | `tzro_resume` | Manually resume a paused/interrupted task (e.g., after approval). | `taskId` (string) |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status. | `status` (string, optional) |
@@ -326,6 +327,11 @@ Allows the local planner to dispatch tools back to the client or pause for appro
 | `tzro_observer_events` | Retrieve recent observer verification and audit logs. | `limit` (int) |
 | `tzro_observer_memories` | List memories dynamically synthesized by the Observer Agent. | `limit` (int) |
 
+### 8. Code Generation
+| Tool | Purpose | Key Parameters |
+| :--- | :--- | :--- |
+| `tzro_code` | Offload code generation or surgical file updates to the local engine. | `spec` (string), `filepath` (string), `mode` (string, optional) |
+
 ---
 
 ## 📡 MCP Resource Templates & Subscriptions
@@ -366,6 +372,15 @@ When your task requires specific tools or services, name them to constrain the p
 If a task involves navigating an unknown codebase, analyzing a directory, or searching logs where the next step depends on what you discover, **force a Probe Node**. Rigid DAGs fail because the compiler cannot extract paths/parameters without seeing intermediate results.
 *   ✅ **Example**: *"Explore the project at /path/to/repo using a Probe Node. Read the top-level structure, then follow the most important files to understand the architecture. Use read_file, list_dir, and search_files."*
 *   *Key constraint*: Explicitly name `allowedTools` (e.g., `read_file`, `list_dir`, `search_files`) to keep the Thought Chain focused.
+
+### 5. Local Code Generation (`tzro_code`)
+Use `tzro_code` to offload the expensive writing of code to the local engine.
+- **Spec**: Provide a detailed specification (jdoc) including signatures, behavior, and constraints.
+- **Modes**:
+  - `mode: "full"` (default for new files): Rewrites the whole file. Limited to 500 lines.
+  - `mode: "diff"` (default for existing files > 200 lines): Uses structured JSON hunks for surgical edits. Required for files > 500 lines.
+- **Context**: The tool automatically reads the target file and 5 sibling files for context.
+- **Verification**: You (the frontier model) should review the generated code for correctness, as the local model may produce drafts that need minor polish.
 
 ---
 

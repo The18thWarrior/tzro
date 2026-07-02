@@ -27,6 +27,7 @@ The following task patterns benefit from delegation to `tzro_run`:
 *   **Memory ingestion pipelines** — bulk ingest operations across multiple sources.
 *   **Web research and multi-source information gathering** — large-scale research with many queries.
 *   **Codebase exploration** — navigating large unknown codebases with many directories.
+*   **Bulk code generation** — creating multiple boilerplate files or applying surgical edits across many files via `tzro_code`.
 
 #### Do NOT Delegate
 *   **Targeted local file operations** (reading a single known file, viewing a specific function) — these feed frontier reasoning directly.
@@ -62,6 +63,13 @@ When composing prompts for `tzro_run`, describe the *goal*, not the sequence of 
 **Codebase Exploration (Probe Node):**
 ```
 "Explore the codebase at [PATH] using a Probe Node. Walk the directory structure to identify key entrypoints, read main modules, and output a high-level architectural overview. Use read_file, list_dir, and search_files."
+```
+
+**Local Code Generation:**
+```
+Use tzro_code to offload code generation.
+- mode: "full" for new files (limit 500 lines).
+- mode: "diff" for surgical updates to existing files.
 ```
 
 ---
