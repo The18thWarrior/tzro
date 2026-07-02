@@ -34,11 +34,15 @@ func CodegenConditions() []string {
 }
 
 // CodegenConditionsForTier returns the conditions to run for a given task tier.
-// All tiers use the same conditions: cloud_code + tzro_code + tzro_draft.
-// Previously T3+ used tzro_code_expanded, but benchmark #8 showed 3.33 avg
-// quality with a 16% compilation gate pass rate, so it was retired.
+// T1 (simple) tasks run all three conditions for continued local-only evaluation.
+// T2+ tasks drop tzro_code in favor of tzro_draft: benchmark #9 showed tzro_code
+// compiles only 20% of T2+ tasks (avg Q=2.67) while tzro_draft achieves 90%
+// compilation (avg Q=4.10) at 63% cost savings vs cloud_code.
 func CodegenConditionsForTier(tier int) []string {
-	return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroDraft}
+	if tier <= 1 {
+		return []string{ConditionCloudCode, ConditionTzroCode, ConditionTzroDraft}
+	}
+	return []string{ConditionCloudCode, ConditionTzroDraft}
 }
 
 // RubricCriterion defines a single quality evaluation dimension.

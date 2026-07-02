@@ -324,28 +324,28 @@ func TestCodegenConditionsForTier_T1(t *testing.T) {
 func TestCodegenConditionsForTier_T2(t *testing.T) {
 	conditions := CodegenConditionsForTier(2)
 	assertContains(t, conditions, ConditionCloudCode, "T2")
-	assertContains(t, conditions, ConditionTzroCode, "T2")
+	assertNotContains(t, conditions, ConditionTzroCode, "T2")
 	assertContains(t, conditions, ConditionTzroDraft, "T2")
 }
 
 func TestCodegenConditionsForTier_T3(t *testing.T) {
 	conditions := CodegenConditionsForTier(3)
 	assertContains(t, conditions, ConditionCloudCode, "T3")
-	assertContains(t, conditions, ConditionTzroCode, "T3")
+	assertNotContains(t, conditions, ConditionTzroCode, "T3")
 	assertContains(t, conditions, ConditionTzroDraft, "T3")
 }
 
 func TestCodegenConditionsForTier_T4(t *testing.T) {
 	conditions := CodegenConditionsForTier(4)
 	assertContains(t, conditions, ConditionCloudCode, "T4")
-	assertContains(t, conditions, ConditionTzroCode, "T4")
+	assertNotContains(t, conditions, ConditionTzroCode, "T4")
 	assertContains(t, conditions, ConditionTzroDraft, "T4")
 }
 
 func TestCodegenConditionsForTier_T5(t *testing.T) {
 	conditions := CodegenConditionsForTier(5)
 	assertContains(t, conditions, ConditionCloudCode, "T5")
-	assertContains(t, conditions, ConditionTzroCode, "T5")
+	assertNotContains(t, conditions, ConditionTzroCode, "T5")
 	assertContains(t, conditions, ConditionTzroDraft, "T5")
 }
 
