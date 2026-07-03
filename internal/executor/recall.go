@@ -96,6 +96,15 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 			}
 			refinedContext += "- " + fact
 			lastResult = "Refined context updated."
+
+			// ADR-0040: Automatic Recall Compaction
+			if len(refinedContext) > 2000 {
+				compacted, err := e.compactRefinedContext(ctx, refinedContext, goal, engine)
+				if err == nil {
+					refinedContext = compacted
+					lastResult = "Refined context updated and compacted (limit reached)."
+				}
+			}
 		default:
 			lastResult = "No valid ACTION found. Use fetch_details, update_refined_context, or SYNTHESIZE_READY."
 		}
@@ -138,4 +147,17 @@ func extractAction(response string) (string, map[string]interface{}) {
 	return "", nil
 }
 
+func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, context, goal string, engine ProbeInferenceEngine) (string, error) {
+	prompt := fmt.Sprintf(`You are a Recall Compactor. The discovery context for the goal "%s" has exceeded the token budget.
+Compress the following list of facts by:
+1. Merging related facts.
+2. Removing redundant or low-signal information.
+3. Preserving all critical technical details (signatures, file paths, logic branches).
 
+## Current Facts:
+%s
+
+Output ONLY the compressed list of facts starting with '- '.`, goal, context)
+
+	return engine.Infer(ctx, prompt, "System: Context limit reached. Compacting...", "")
+}

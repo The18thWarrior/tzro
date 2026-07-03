@@ -56,6 +56,7 @@ type ExecutionEngine struct {
 	ProgressGuard  *GoalProgressGuard   // optional: prevents sufficiency hallucinations
 	hooks          []ExecutionHook
 	mutex          sync.Mutex
+	Sequential     bool // If true, execute nodes one by one (ADR-0040)
 }
 
 func (e *ExecutionEngine) RegisterHook(h ExecutionHook) {
@@ -571,10 +572,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			msgs := buildSegmentedMessages(staticBase, accumulatedCtx, validatorSchemaStr, instruction, true)
 
 			req := inference.StructuredInferenceRequest{
-				Messages:   msgs,
-				JSONSchema: "", // No GBNF constraint — free-form XML generation
-				StreamMeta: &meta,
-				TaskID:     taskID,
+				Messages:    msgs,
+				JSONSchema:  "", // No GBNF constraint — free-form XML generation
+				StreamMeta:  &meta,
+				TaskID:      taskID,
+				IsLowStakes: true,
 			}
 
 			isBenchmark := ctx.Value("is_benchmark") != nil
@@ -777,10 +779,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			detMsgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, detInstruction, false)
 
 			detReq := inference.StructuredInferenceRequest{
-				Messages:   detMsgs,
-				JSONSchema: schemaStr,
-				StreamMeta: &meta,
-				TaskID:     taskID,
+				Messages:    detMsgs,
+				JSONSchema:  schemaStr,
+				StreamMeta:  &meta,
+				TaskID:      taskID,
+				IsLowStakes: true,
 			}
 
 			detResult, detErr := inference.GlobalLocalModel.ExecuteStructured(ctx, detReq)
@@ -1354,10 +1357,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 		msgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, instruction, false)
 		req = inference.StructuredInferenceRequest{
-			Messages:   msgs,
-			JSONSchema: schemaStr,
-			StreamMeta: &meta,
-			TaskID:     taskID,
+			Messages:    msgs,
+			JSONSchema:  schemaStr,
+			StreamMeta:  &meta,
+			TaskID:      taskID,
+			IsLowStakes: true,
 		}
 	} else {
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, ragCtx, interpolatedPrompt)
