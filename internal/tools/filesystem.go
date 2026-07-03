@@ -466,6 +466,9 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 						}
 					}
 				}
+				if err := scanner.Err(); err != nil {
+					return nil // Skip files that fail to read fully
+				}
 				return nil
 			})
 

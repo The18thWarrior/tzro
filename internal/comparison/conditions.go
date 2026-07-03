@@ -87,6 +87,8 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	var testOutputDir string
 	var cleanup func()
 	if outputDir != "" {
+		absOut, _ := filepath.Abs(outputDir)
+		outputDir = absOut
 		testOutputDir = filepath.Join(outputDir, "test_outputs", conditionID, t.ID)
 		if err := os.MkdirAll(testOutputDir, 0755); err != nil {
 			return ComparisonResult{}, fmt.Errorf("failed to create test output dir: %w", err)
@@ -233,7 +235,11 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, relCodegenPath)
 	} else if t.Category == CategoryDocgen {
 		// For docgen tasks, inform the agent that it should work within the isolated directory
-		relOutputDir, _ := filepath.Rel(projectRoot, testOutputDir)
+		relOutputDir, err := filepath.Rel(projectRoot, testOutputDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[Comparison Warning] failed to get relative path for %s: %v. Using absolute path.\n", testOutputDir, err)
+			relOutputDir = testOutputDir
+		}
 		taskPrompt = fmt.Sprintf("%s\n\nThe target files have been copied to an isolated directory for this task. You should read from and write to this directory: %s", taskPrompt, relOutputDir)
 	}
 
@@ -258,7 +264,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	}
 
 	// Extract output: for codegen tasks, prefer reading the written file from testOutputDir;
-	// for docgen tasks, use the terminal synthesis node output.
+	// for docgen tasks, use the terminal synthesis node output, falling back to the last write_file content.
 	var outputText string
 	if codegenTargetPath != "" {
 		if data, readErr := os.ReadFile(codegenTargetPath); readErr == nil && len(data) > 0 {
@@ -269,6 +275,10 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}
 	} else {
 		outputText = extractTerminalSynthesis(graph, taskID)
+		if outputText == "" && t.Category == CategoryDocgen {
+			// Fallback: if docgen didn't have a synthesis node, it might have written to a file
+			outputText = extractLastWriteContent(taskID, graph, testOutputDir)
+		}
 	}
 
 	// Count tool calls from the graph
@@ -305,6 +315,34 @@ func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) str
 		}
 	}
 	return ""
+}
+
+// extractLastWriteContent attempts to recover the generated documentation from the execution graph
+// or the filesystem if a terminal synthesis node is missing. This is common when the
+// agent's plan ends with a write_file action instead of a synthesis step.
+func extractLastWriteContent(taskID string, graph *compiler.ExecutionGraph, testOutputDir string) string {
+	if graph == nil || testOutputDir == "" {
+		return ""
+	}
+
+	// Scan testOutputDir for any created Markdown files.
+	var content string
+	_ = filepath.Walk(testOutputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		// Prefer .md files for docgen tasks
+		if strings.HasSuffix(strings.ToLower(path), ".md") {
+			data, readErr := os.ReadFile(path)
+			if readErr == nil && len(data) > 0 {
+				content = string(data)
+				return filepath.SkipAll // found it
+			}
+		}
+		return nil
+	})
+
+	return content
 }
 
 // extractLastSourceCodeOutput finds the last completed source_code node's
