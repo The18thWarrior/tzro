@@ -35,7 +35,7 @@
     "id": "adr_summary",
     "category": "docgen",
     "tier": 3,
-    "prompt": "Read all ADR files in docs/adr/ and produce a consolidated decision log with status, date, and key implications for each.",
+    "prompt": "Read all ADR files in the provided docs/adr/ directory. Produce a consolidated decision log with status, date, and key implications for each decision. Focus on technical accuracy and consistent formatting.",
     "targetPaths": ["docs/adr/"],
     "qualityRubric": {
       "criteria": [

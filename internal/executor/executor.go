@@ -1013,13 +1013,29 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
 		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Recall: "+node.Instructions)
 
-		// Identify upstream probe nodes to recall
+		// Identify all upstream probe nodes recursively to ensure full context recall (ADR-0041)
 		var upstreamNodeIDs []string
-		for _, edge := range graph.Edges {
-			if edge.TargetID == node.ID {
-				upstreamNodeIDs = append(upstreamNodeIDs, edge.SourceID)
+		visited := make(map[string]bool)
+		var findProbes func(string)
+		findProbes = func(currentID string) {
+			if visited[currentID] {
+				return
+			}
+			visited[currentID] = true
+			for _, edge := range graph.Edges {
+				if edge.TargetID == currentID {
+					parentID := edge.SourceID
+					// Check if parent is a probe
+					for _, n := range graph.Nodes {
+						if n.ID == parentID && n.Type == "probe" {
+							upstreamNodeIDs = append(upstreamNodeIDs, parentID)
+						}
+					}
+					findProbes(parentID)
+				}
 			}
 		}
+		findProbes(node.ID)
 
 		recallEngine := &DefaultProbeInference{}
 		synthesis, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
@@ -2141,6 +2157,12 @@ func coerceStringArguments(args map[string]interface{}, instruction string, tool
 		isHallucinated := !isEmpty && !strings.Contains(instructionLower, valLower)
 
 		if !isEmpty && !isHallucinated {
+			continue
+		}
+
+		// Protection: If the value looks like a valid path or identifier, don't coerce it
+		// even if it's "hallucinated" (i.e. not in the prose instruction)
+		if !isEmpty && (strings.Contains(strVal, "/") || strings.Contains(strVal, "\\") || strings.HasSuffix(strVal, ".md") || strings.HasSuffix(strVal, ".go")) {
 			continue
 		}
 

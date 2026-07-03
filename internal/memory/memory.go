@@ -116,6 +116,11 @@ func (sdb *SqliteDatabase) Init() error {
 	// Initialize the default Pure Go Embedding Engine for local semantic matching
 	sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
 
+	// Enable WAL mode
+	if _, err := sdb.db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		fmt.Printf("[Memory Warning] Failed to set WAL mode: %v\n", err)
+	}
+
 	// Create tables if they don't exist
 	if err := sdb.createTables(); err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

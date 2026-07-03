@@ -298,23 +298,27 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	}, nil
 }
 
-// extractTerminalSynthesis reads the terminal synthesis node output from the executed graph.
 func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) string {
 	if graph == nil {
 		return ""
 	}
-
-	for _, node := range graph.Nodes {
-		if node.Type == "synthesis" || node.ID == "terminal_synthesis" {
+	var lastOutput string
+	for i := len(graph.Nodes) - 1; i >= 0; i-- {
+		node := graph.Nodes[i]
+		if node.Type == "synthesis" || node.Type == "recall" || node.Type == "probe" || node.ID == "terminal_synthesis" {
 			if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
 				if state.RawOutput != "" {
-					return state.RawOutput
+					lastOutput = state.RawOutput
+					break
 				}
-				return state.Output
+				if state.Output != "" {
+					lastOutput = state.Output
+					break
+				}
 			}
 		}
 	}
-	return ""
+	return lastOutput
 }
 
 // extractLastWriteContent attempts to recover the generated documentation from the execution graph

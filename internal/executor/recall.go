@@ -22,7 +22,7 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 	// 1. Build initial manifest of discoveries (metadata only)
 	manifest := ""
 	for _, nodeID := range upstreamNodeIDs {
-		steps, err := memory.DB.GetThoughtSteps(nodeID)
+		steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID)
 		if err != nil {
 			continue
 		}
@@ -83,7 +83,7 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 			nodeID, _ := args["node_id"].(string)
 			stepIdx, _ := args["step_index"].(float64)
 			
-			stepData, err := memory.DB.GetThoughtStepByProbeAndIndex(nodeID, int(stepIdx))
+			stepData, err := memory.DB.GetThoughtStepByProbeAndIndex(taskID+"_"+nodeID, int(stepIdx))
 			if err != nil {
 				lastResult = fmt.Sprintf("Error fetching details: %v", err)
 			} else {

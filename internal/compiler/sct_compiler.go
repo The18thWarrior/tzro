@@ -209,7 +209,7 @@ func isSynthesisGoal(instructions string) bool {
 	if strings.Contains(g, "write") || strings.Contains(g, "save") {
 		return false
 	}
-	keywords := []string{"read", "extract", "synthesize", "compile", "summarize", "index", "docs", "documentation"}
+	keywords := []string{"synthesize", "compile", "summarize", "index", "docs", "documentation"}
 	for _, k := range keywords {
 		if strings.Contains(g, k) {
 			return true

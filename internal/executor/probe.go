@@ -215,7 +215,9 @@ func RunProbe(
 					ToolOutput: lastToolOutput,
 					CreatedAt:  time.Now().Unix(),
 				}
-				_ = memory.DB.AddThoughtStep(thoughtStep)
+				if err := memory.DB.AddThoughtStep(thoughtStep); err != nil {
+					fmt.Fprintf(os.Stderr, "[Probe Error] Failed to add thought step: %v\n", err)
+				}
 				continue
 			}
 			if adaptiveMinMet && step < minStepBudget {
@@ -306,7 +308,9 @@ func RunProbe(
 					ToolOutput: lastToolOutput,
 					CreatedAt:  time.Now().Unix(),
 				}
-				_ = memory.DB.AddThoughtStep(thoughtStep)
+				if err := memory.DB.AddThoughtStep(thoughtStep); err != nil {
+					fmt.Fprintf(os.Stderr, "[Probe Error] Failed to add thought step: %v\n", err)
+				}
 				continue
 			}
 
@@ -344,7 +348,9 @@ func RunProbe(
 			ToolOutput: toolOutput,
 			CreatedAt:  time.Now().Unix(),
 		}
-		_ = memory.DB.AddThoughtStep(thoughtStep)
+		if err := memory.DB.AddThoughtStep(thoughtStep); err != nil {
+			fmt.Fprintf(os.Stderr, "[Probe Error] Failed to add thought step: %v\n", err)
+		}
 
 		if isSynthesisReady {
 			break
@@ -363,6 +369,7 @@ func RunProbe(
 func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string) (string, error) {
 	summary, _ := memory.DB.GetLatestSummary(probeID)
 	steps, _ := memory.DB.GetThoughtSteps(probeID)
+	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaryLen=%d\n", probeID, len(steps), len(summary.Summary))
 
 	var contextStr string
 	if summary.Summary != "" {

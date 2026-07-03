@@ -155,7 +155,7 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 			selectedLines := allLines[startIdx:endIdx]
 
 			// Cap at 100 lines
-			const maxLines = 100
+			const maxLines = 500
 			truncated := false
 			if len(selectedLines) > maxLines {
 				selectedLines = selectedLines[:maxLines]
@@ -315,7 +315,7 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 			totalVisible := len(items)
 
 			// L1: Pagination — truncate if too many entries
-			const maxDirEntries = 20
+			const maxDirEntries = 100
 			truncated := false
 			if len(items) > maxDirEntries {
 				items = items[:maxDirEntries]
