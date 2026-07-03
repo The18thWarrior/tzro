@@ -1329,7 +1329,8 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	var inferenceResult string
 	var err error
 
-	var isCacheExploration = strings.Contains(strings.ToLower(interpolatedPrompt), "cacheid") || strings.Contains(strings.ToLower(interpolatedPrompt), "cache_")
+	var cacheIdRe = regexp.MustCompile(`(?i)(cacheId|cache_[a-zA-Z0-9]{8,})`)
+	var isCacheExploration = cacheIdRe.MatchString(interpolatedPrompt)
 
 	// P0 Fix (13:00): Use accumulated context architecture instead of flat interpolated prompt.
 	// Upstream node outputs are passed as labeled structured blocks, enabling the bridge

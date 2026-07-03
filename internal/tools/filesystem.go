@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -405,6 +406,11 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 				}
 			}
 
+			re, err := regexp.Compile(in.Pattern)
+			if err != nil {
+				return ToolError(fmt.Sprintf("invalid regex pattern '%s': %v", in.Pattern, err)), nil
+			}
+
 			var matches []interface{}
 			_ = filepath.WalkDir(resolvedPath, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
@@ -442,7 +448,7 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 				for scanner.Scan() {
 					lineNum++
 					line := scanner.Text()
-					if strings.Contains(line, in.Pattern) {
+					if re.MatchString(line) {
 						// Make path relative to search root for readability
 						relPath, _ := filepath.Rel(resolvedPath, path)
 						if relPath == "" {
