@@ -201,11 +201,11 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 						result, err = RunReAct(ctx, task, opts.Pricing)
 					}
 				} else if conditionID == ConditionTzroCode {
-					result, err = RunCodegenCondition(ctx, conditionID, "cooperative", task, opts.Pricing)
+					result, err = RunCodegenCondition(ctx, conditionID, "cooperative", task, opts.Pricing, opts.OutputDir)
 				} else if conditionID == ConditionCloudCode {
-					result, err = RunCodegenCondition(ctx, conditionID, "cloud", task, opts.Pricing)
+					result, err = RunCodegenCondition(ctx, conditionID, "cloud", task, opts.Pricing, opts.OutputDir)
 				} else {
-					result, err = RunDAGCondition(ctx, conditionID, task, opts.Pricing)
+					result, err = RunDAGCondition(ctx, conditionID, task, opts.Pricing, opts.OutputDir)
 				}
 
 				// Restore stderr and collect captured logs

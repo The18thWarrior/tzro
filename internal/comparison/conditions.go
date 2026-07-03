@@ -40,7 +40,7 @@ func modelModeForCondition(conditionID string) (string, error) {
 // (cloud_dag_raw, cloud_dag, local_only, cooperative).
 // It creates an isolated database, sets the appropriate model mode, runs the task through the
 // standard task.Execute pipeline, and extracts the terminal synthesis output.
-func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
+func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, pricing PricingTable, outputDir string) (ComparisonResult, error) {
 	modelMode, err := modelModeForCondition(conditionID)
 	if err != nil {
 		return ComparisonResult{}, err
@@ -81,24 +81,37 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	tools.Unregister("gather_config")
 	tools.Unregister("gather_workflows")
 
-	// For codegen tasks, scope file writes to a temporary directory so
-	// benchmark runs never modify the actual source tree. Read tools still
-	// have access to the source directory for Probe exploration.
-	var tmpDir string
+	// For both codegen and docgen tasks, scope file writes to a temporary directory
+	// (inside OutputDir if provided) so benchmark runs never modify the actual
+	// source tree. Read tools still have access to the source directory for Probe exploration.
+	var testOutputDir string
+	var cleanup func()
+	if outputDir != "" {
+		testOutputDir = filepath.Join(outputDir, "test_outputs", conditionID, t.ID)
+		if err := os.MkdirAll(testOutputDir, 0755); err != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to create test output dir: %w", err)
+		}
+		if evalDir, evalErr := filepath.EvalSymlinks(testOutputDir); evalErr == nil {
+			testOutputDir = evalDir
+		}
+		cleanup = func() {} // Keep for inspection
+	} else {
+		var tmpErr error
+		testOutputDir, tmpErr = os.MkdirTemp("", "tzro_benchmark_*")
+		if tmpErr != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to create temp dir for benchmark: %w", tmpErr)
+		}
+		if evalDir, evalErr := filepath.EvalSymlinks(testOutputDir); evalErr == nil {
+			testOutputDir = evalDir
+		}
+		cleanup = func() { os.RemoveAll(testOutputDir) }
+	}
+	defer cleanup()
+
 	var codegenTargetPath string
 	if t.Category == CategoryCodegen && t.Filepath != "" {
-		var tmpErr error
-		tmpDir, tmpErr = os.MkdirTemp("", "tzro_benchmark_*")
-		if tmpErr != nil {
-			return ComparisonResult{}, fmt.Errorf("failed to create temp dir for codegen benchmark: %w", tmpErr)
-		}
-		if evalDir, evalErr := filepath.EvalSymlinks(tmpDir); evalErr == nil {
-			tmpDir = evalDir
-		}
-		defer os.RemoveAll(tmpDir)
-
-		// Set up target path inside tmpDir
-		codegenTargetPath = filepath.Join(tmpDir, t.Filepath)
+		// Set up target path inside testOutputDir
+		codegenTargetPath = filepath.Join(testOutputDir, t.Filepath)
 		if mkdirErr := os.MkdirAll(filepath.Dir(codegenTargetPath), 0755); mkdirErr != nil {
 			return ComparisonResult{}, fmt.Errorf("failed to create target parent dir: %w", mkdirErr)
 		}
@@ -113,21 +126,26 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 				return ComparisonResult{}, fmt.Errorf("failed to write seed file: %w", writeErr)
 			}
 		}
+	}
 
-		// Re-register write_file with a validator scoped to ONLY the tmpDir.
-		// This ensures any write_file calls from the DAG planner/executor
-		// go to the temp directory, not the actual source tree.
-		writeValidator := tools.NewStaticPathValidator([]string{tmpDir})
-		tools.Register(tools.NewWriteFileTool(writeValidator))
-		fmt.Fprintf(os.Stderr, "[Comparison] Codegen task %s: write_file scoped to %s\n", t.ID, tmpDir)
+	// Re-register write_file with a validator scoped to ONLY the testOutputDir.
+	// This ensures any write_file calls from the DAG planner/executor
+	// go to the test directory, not the actual source tree.
+	writeValidator := tools.NewStaticPathValidator([]string{testOutputDir})
+	tools.Register(tools.NewWriteFileTool(writeValidator))
 
-		// Re-register read tools with a validator that allows both codebase and tmpDir
-		readPaths := append(tools.GetAllowedPaths(), tmpDir)
-		readValidator := tools.NewStaticPathValidator(readPaths)
-		tools.Register(tools.NewReadFileTool(readValidator))
-		tools.Register(tools.NewListDirTool(readValidator))
-		tools.Register(tools.NewSearchFilesTool(readValidator))
-		tools.Register(tools.NewPeekFileTool(readValidator))
+	// Re-register read tools with a validator that allows both codebase and testOutputDir
+	readPaths := append(tools.GetAllowedPaths(), testOutputDir)
+	readValidator := tools.NewStaticPathValidator(readPaths)
+	tools.Register(tools.NewReadFileTool(readValidator))
+	tools.Register(tools.NewListDirTool(readValidator))
+	tools.Register(tools.NewSearchFilesTool(readValidator))
+	tools.Register(tools.NewPeekFileTool(readValidator))
+
+	if t.Category == CategoryCodegen {
+		fmt.Fprintf(os.Stderr, "[Comparison] Codegen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
+	} else if t.Category == CategoryDocgen {
+		fmt.Fprintf(os.Stderr, "[Comparison] Docgen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
 	}
 
 	// Initialize inference backend for Probe Node execution.
@@ -175,11 +193,14 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 
 	taskID := fmt.Sprintf("comparison_%s_%s", conditionID, t.ID)
 
-	// For codegen tasks, augment the prompt with the target path inside tmpDir
+	// For codegen tasks, augment the prompt with the target path inside testOutputDir
 	// so the planner directs write_file to the correct location.
 	taskPrompt := t.Prompt
 	if codegenTargetPath != "" {
 		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, codegenTargetPath)
+	} else if t.Category == CategoryDocgen {
+		// For docgen tasks, provide a directory hint if they want to save output files
+		taskPrompt = fmt.Sprintf("%s\n\nIf you need to write any output documentation files, write them to this directory: %s", taskPrompt, testOutputDir)
 	}
 
 	startTime := time.Now()
@@ -202,7 +223,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}, nil
 	}
 
-	// Extract output: for codegen tasks, prefer reading the written file from tmpDir;
+	// Extract output: for codegen tasks, prefer reading the written file from testOutputDir;
 	// for docgen tasks, use the terminal synthesis node output.
 	var outputText string
 	if codegenTargetPath != "" {
@@ -328,7 +349,7 @@ func countToolCalls(graph *compiler.ExecutionGraph, taskID string) int {
 // generation always runs (the cloud model doesn't need the draft pipeline).
 // Context is pre-computed via GatherContext (pure Go) and file writing is
 // handled post-DAG via WriteCodeFile (pure Go).
-func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
+func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t ComparisonTask, pricing PricingTable, outputDir string) (ComparisonResult, error) {
 	// Set model mode for the codegen run
 	originalModelMode := config.GlobalConfig.ModelMode
 	config.GlobalConfig.ModelMode = modelMode
@@ -384,18 +405,33 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		}
 	}
 
-	// Create a temp directory for the codegen output
-	tmpDir, err := os.MkdirTemp("", "tzro_codegen_*")
-	if err != nil {
-		return ComparisonResult{}, fmt.Errorf("failed to create temp dir: %w", err)
+	// Create a directory for the codegen output (inside OutputDir if provided)
+	var testOutputDir string
+	var cleanup func()
+	if outputDir != "" {
+		testOutputDir = filepath.Join(outputDir, "test_outputs", conditionID, t.ID)
+		if err := os.MkdirAll(testOutputDir, 0755); err != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to create test output dir: %w", err)
+		}
+		if evalDir, evalErr := filepath.EvalSymlinks(testOutputDir); evalErr == nil {
+			testOutputDir = evalDir
+		}
+		cleanup = func() {}
+	} else {
+		var tmpErr error
+		testOutputDir, tmpErr = os.MkdirTemp("", "tzro_codegen_*")
+		if tmpErr != nil {
+			return ComparisonResult{}, fmt.Errorf("failed to create temp dir: %w", tmpErr)
+		}
+		if evalDir, evalErr := filepath.EvalSymlinks(testOutputDir); evalErr == nil {
+			testOutputDir = evalDir
+		}
+		cleanup = func() { os.RemoveAll(testOutputDir) }
 	}
-	if evalDir, evalErr := filepath.EvalSymlinks(tmpDir); evalErr == nil {
-		tmpDir = evalDir
-	}
-	defer os.RemoveAll(tmpDir)
+	defer cleanup()
 
 	// If the task has a seed file, copy it to the temp dir
-	targetPath := filepath.Join(tmpDir, t.Filepath)
+	targetPath := filepath.Join(testOutputDir, t.Filepath)
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 		return ComparisonResult{}, fmt.Errorf("failed to create target parent dir: %w", err)
 	}
@@ -420,8 +456,8 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		language = codegen.DetectLanguage(targetPath)
 	}
 
-	// Pre-compute context with a PathValidator that includes tmpDir.
-	extendedPaths := append(tools.GetAllowedPaths(), tmpDir)
+	// Pre-compute context with a PathValidator that includes testOutputDir.
+	extendedPaths := append(tools.GetAllowedPaths(), testOutputDir)
 	validator := tools.NewStaticPathValidator(extendedPaths)
 	codeCtx, ctxErr := codegen.GatherContext(targetPath, validator)
 	if ctxErr != nil {
@@ -434,7 +470,7 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 
 	// For Go tasks, create a go.mod so the compilation gate can run go build
 	if language == "go" {
-		goModPath := filepath.Join(tmpDir, "go.mod")
+		goModPath := filepath.Join(testOutputDir, "go.mod")
 		if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 			_ = os.WriteFile(goModPath, []byte("module benchmod\n\ngo 1.21\n"), 0644)
 		}
@@ -442,7 +478,7 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 
 	// For TypeScript tasks, scaffold tsconfig + ambient type shims
 	if language == "typescript" {
-		scaffoldTypeScriptEnv(tmpDir)
+		scaffoldTypeScriptEnv(testOutputDir)
 	}
 
 	// Route: cloud mode always uses direct generation.
@@ -456,7 +492,7 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 	}
 
 	if useDraftMode {
-		return runDraftFixMode(ctx, conditionID, spec, language, targetPath, tmpDir, t, codeCtx, pricing)
+		return runDraftFixMode(ctx, conditionID, spec, language, targetPath, testOutputDir, t, codeCtx, pricing)
 	}
 	return runDirectMode(ctx, conditionID, spec, language, targetPath, t, codeCtx, pricing)
 }
