@@ -21,9 +21,27 @@ var codeFenceRe = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*\n(.*?)\\s*```\\s
 
 func stripCodeFences(s string) string {
 	s = strings.TrimSpace(s)
-	if m := codeFenceRe.FindStringSubmatch(s); len(m) == 2 {
+	
+	// 1. Try to find content between triple backticks
+	// This regex finds the first occurrence of ```[lang] ... ``` and captures the content
+	re := regexp.MustCompile("(?s)```(?:[a-zA-Z]+)?\\s*\n?(.*?)\\s*```")
+	if m := re.FindStringSubmatch(s); len(m) > 1 {
 		return strings.TrimSpace(m[1])
 	}
+
+	// 2. Fallback: handle unterminated blocks (common with local models or truncated output)
+	if idx := strings.Index(s, "```"); idx >= 0 {
+		// Find the end of the opening tag (e.g., ```json\n)
+		start := idx + 3
+		// Skip language identifier if present
+		newlineIdx := strings.Index(s[start:], "\n")
+		if newlineIdx >= 0 {
+			start += newlineIdx + 1
+		}
+		content := s[start:]
+		return strings.TrimSpace(content)
+	}
+
 	return s
 }
 

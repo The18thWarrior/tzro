@@ -96,6 +96,9 @@ var chatCmd = &cobra.Command{
 					}
 				}
 			}
+			if err := scanner.Err(); err != nil {
+				fmt.Fprintf(os.Stderr, "Chat stream scanner error: %v\n", err)
+			}
 			fmt.Println("\n-----------------------------------")
 		}
 	},

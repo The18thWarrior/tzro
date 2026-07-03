@@ -227,11 +227,14 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	// For codegen tasks, augment the prompt with the target path inside testOutputDir
 	// so the planner directs write_file to the correct location.
 	taskPrompt := t.Prompt
+	projectRoot := tools.GetAllowedPaths()[0]
 	if codegenTargetPath != "" {
-		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, codegenTargetPath)
+		relCodegenPath, _ := filepath.Rel(projectRoot, codegenTargetPath)
+		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, relCodegenPath)
 	} else if t.Category == CategoryDocgen {
 		// For docgen tasks, inform the agent that it should work within the isolated directory
-		taskPrompt = fmt.Sprintf("%s\n\nThe target files have been copied to an isolated directory for this task. You should read from and write to this directory: %s", taskPrompt, testOutputDir)
+		relOutputDir, _ := filepath.Rel(projectRoot, testOutputDir)
+		taskPrompt = fmt.Sprintf("%s\n\nThe target files have been copied to an isolated directory for this task. You should read from and write to this directory: %s", taskPrompt, relOutputDir)
 	}
 
 	startTime := time.Now()

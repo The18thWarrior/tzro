@@ -18,6 +18,7 @@ var (
 	compareTier        int
 	compareCondition   string
 	compareCategory    string
+	compareTask        string
 	comparePromptPrice float64
 	compareComplPrice  float64
 )
@@ -91,6 +92,9 @@ var compareCmd = &cobra.Command{
 		} else {
 			fmt.Fprintf(out, "Condition:  All conditions\n")
 		}
+		if compareTask != "" {
+			fmt.Fprintf(out, "Task:       %s only\n", compareTask)
+		}
 		fmt.Fprintf(out, "Pricing:    $%.4f/1K prompt, $%.4f/1K completion\n", pricing.PromptPer1KTokens, pricing.CompletionPer1KTokens)
 		fmt.Fprintf(out, "Time:       %s\n", time.Now().Format("2006-01-02 15:04:05"))
 		fmt.Fprintf(out, "============================\n\n")
@@ -120,6 +124,7 @@ var compareCmd = &cobra.Command{
 			Category:  compareCategory,
 			Tier:      compareTier,
 			Condition: compareCondition,
+			TaskID:    compareTask,
 			OutputDir: compareOutputDir,
 			Pricing:   pricing,
 		}
@@ -171,6 +176,7 @@ func init() {
 	compareCmd.Flags().StringVar(&compareCategory, "category", "", "Task category: docgen, codegen, or empty for both (default: both)")
 	compareCmd.Flags().IntVarP(&compareTier, "tier", "t", 0, "Run a specific tier (1-5), or 0 for all")
 	compareCmd.Flags().StringVarP(&compareCondition, "condition", "c", "", "Run a specific condition (cloud_react, cloud_dag, local_only, cooperative, tzro_code)")
+	compareCmd.Flags().StringVar(&compareTask, "task", "", "Run a specific task ID")
 	compareCmd.Flags().Float64Var(&comparePromptPrice, "prompt-price", defaultPricing.PromptPer1KTokens, "Price per 1K prompt tokens (USD)")
 	compareCmd.Flags().Float64Var(&compareComplPrice, "completion-price", defaultPricing.CompletionPer1KTokens, "Price per 1K completion tokens (USD)")
 

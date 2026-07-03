@@ -81,6 +81,7 @@ type SuiteOptions struct {
 	Category      string       // "" = both docgen and codegen; or "docgen" / "codegen" for single category
 	Tier          int          // 0 = all tiers, 1-5 = specific tier
 	Condition     string       // "" = all conditions, or specific condition ID
+	TaskID        string       // "" = all tasks, or specific task ID
 	OutputDir     string       // Directory to write results
 	Pricing       PricingTable // Cloud model pricing
 	JudgeEndpoint string       // Override judge API endpoint (for testing)
@@ -152,6 +153,9 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 
 	for _, g := range groups {
 		for _, task := range g.tasks {
+			if opts.TaskID != "" && task.ID != opts.TaskID {
+				continue
+			}
 			var err error
 			var taskResults []ComparisonResult
 
