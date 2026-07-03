@@ -80,4 +80,5 @@ mcp.lock
 models/*
 
 benchmark-results*
-benchmark-test-run
+benchmark-test-*
+benchmark_results*
