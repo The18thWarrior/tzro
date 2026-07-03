@@ -143,6 +143,11 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 				continue
 			}
 
+			// Skip previous benchmark results to avoid recursive nesting
+			if info.IsDir() && strings.HasPrefix(info.Name(), "benchmark_results_") {
+				continue
+			}
+
 			// Create parent directory in destination
 			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 				return ComparisonResult{}, fmt.Errorf("failed to create docgen target parent: %w", err)
@@ -874,6 +879,22 @@ func copyDir(src, dst string) error {
 	for _, entry := range entries {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() || (entry.Type()&os.ModeSymlink != 0) {
+			// Resolve symlink to check if it's a directory
+			realPath, err := filepath.EvalSymlinks(srcPath)
+			if err == nil {
+				if info, err := os.Stat(realPath); err == nil && info.IsDir() {
+					if strings.HasPrefix(entry.Name(), "benchmark_results_") {
+						continue
+					}
+					if err := copyDir(srcPath, dstPath); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+		}
 
 		if entry.IsDir() {
 			if err := copyDir(srcPath, dstPath); err != nil {
