@@ -126,6 +126,37 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 				return ComparisonResult{}, fmt.Errorf("failed to write seed file: %w", writeErr)
 			}
 		}
+	} else if t.Category == CategoryDocgen {
+		// For docgen tasks, copy the target files to testOutputDir to ensure
+		// a consistent environment where reading and writing happen in the same structure.
+		projectRoot := tools.GetAllowedPaths()[0]
+		for _, p := range t.TargetPaths {
+			src := filepath.Join(projectRoot, p)
+			dst := filepath.Join(testOutputDir, p)
+
+			// Check if source exists
+			info, err := os.Stat(src)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Warning: docgen target path %s does not exist: %v\n", src, err)
+				continue
+			}
+
+			// Create parent directory in destination
+			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+				return ComparisonResult{}, fmt.Errorf("failed to create docgen target parent: %w", err)
+			}
+
+			// Copy file or directory
+			if info.IsDir() {
+				if err := copyDir(src, dst); err != nil {
+					fmt.Fprintf(os.Stderr, "[Comparison] Warning: failed to copy dir %s to %s: %v\n", src, dst, err)
+				}
+			} else {
+				if err := copyFile(src, dst); err != nil {
+					fmt.Fprintf(os.Stderr, "[Comparison] Warning: failed to copy file %s to %s: %v\n", src, dst, err)
+				}
+			}
+		}
 	}
 
 	// Re-register write_file with a validator scoped to ONLY the testOutputDir.
@@ -199,8 +230,8 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	if codegenTargetPath != "" {
 		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, codegenTargetPath)
 	} else if t.Category == CategoryDocgen {
-		// For docgen tasks, provide a directory hint if they want to save output files
-		taskPrompt = fmt.Sprintf("%s\n\nIf you need to write any output documentation files, write them to this directory: %s", taskPrompt, testOutputDir)
+		// For docgen tasks, inform the agent that it should work within the isolated directory
+		taskPrompt = fmt.Sprintf("%s\n\nThe target files have been copied to an isolated directory for this task. You should read from and write to this directory: %s", taskPrompt, testOutputDir)
 	}
 
 	startTime := time.Now()
@@ -774,4 +805,40 @@ declare function clearTimeout(id: any): void;
 declare function clearInterval(id: any): void;
 `
 	_ = os.WriteFile(filepath.Join(typingsDir, "index.d.ts"), []byte(nodeShim), 0644)
+}
+// copyFile copies a single file from src to dst.
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
+}
+
+// copyDir recursively copies a directory from src to dst.
+func copyDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
