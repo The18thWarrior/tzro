@@ -205,6 +205,10 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 func isSynthesisGoal(instructions string) bool {
 	g := strings.ToLower(instructions)
+	// If the node is explicitly writing/saving, it's an action, not a synthesis summary.
+	if strings.Contains(g, "write") || strings.Contains(g, "save") {
+		return false
+	}
 	keywords := []string{"read", "extract", "synthesize", "compile", "summarize", "index", "docs", "documentation"}
 	for _, k := range keywords {
 		if strings.Contains(g, k) {
