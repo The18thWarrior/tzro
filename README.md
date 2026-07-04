@@ -21,7 +21,7 @@ Like a classical operating system, tzro provides:
 | **Daemon Subsystem** | Observer Agent, Sentinel Agent, Attention Scheduler |
 | **Package Manager** | `.tzroapp` archives with manifest, migrations, and tools |
 | **Permission System** | Proactivity Ladder (L0–L4) with Attention Queue approval gates |
-| **Syscall Interface** | 38 MCP tools exposing every OS capability over stdio |
+| **Syscall Interface** | 40 MCP tools exposing every OS capability over stdio |
 
 The "Thumbdrive" metaphor captures three properties simultaneously: **instant activation** (one MCP config block), **completeness** (full OS inside), and **portability** (carry your `tzro.db` between machines).
 
@@ -150,7 +150,7 @@ For more details, refer to the full **[MCP Setup Guide](docs/mcp-setup-guide.md)
 
 ---
 
-## 📡 MCP Syscall Interface — 38 Tools
+## 📡 MCP Syscall Interface — 40 Tools
 
 tzro exposes its full OS capabilities as MCP tools over stdio:
 
@@ -158,6 +158,7 @@ tzro exposes its full OS capabilities as MCP tools over stdio:
 | Tool | Purpose |
 |:---|:---|
 | `tzro_run` | Plan, compile, and execute a durable DAG from a natural language prompt |
+| `tzro_code` | Generate or modify source files using the local model with automatic compilation validation |
 | `tzro_status` | Check execution status, node states, and outcomes of a task |
 | `tzro_resume` | Resume a paused/interrupted task (e.g., after human approval) |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status |
@@ -237,6 +238,18 @@ tzro exposes its full OS capabilities as MCP tools over stdio:
 For real-time observability, the MCP server exposes two URI templates for push notifications:
 - **Task Output:** `tzro://tasks/{taskId}/output{?format}` — Status, metrics, and consolidated output for a task
 - **Node Output:** `tzro://tasks/{taskId}/nodes/{nodeId}/output{?format}` — Status and output of a specific node
+
+---
+
+## 🆕 v0.8.0 Highlights
+
+- **Local Code Generation** — `tzro_code` generates or modifies source files entirely on the local model. Complexity-based routing picks single-pass or two-phase draft generation, module context is extracted from neighboring files, and a compilation quality gate auto-repairs failures via edge thought-driven DAG mutation.
+- **High-Reliability Prompting** — Hardened prompt patterns for 4B local models achieve 4.0+ quality scores on Tier 4–5 codegen tasks using explicit technical anchors, pattern locking, and deterministic exit signals.
+- **Docgen Category Routing** — The planner now mandates single-probe-node plans for documentation, function indexing, and architecture analysis — preventing misrouting through rigid action pipelines.
+- **Regex Pattern Search** — `search_files` upgraded from substring matching to full regex support for more precise codebase exploration.
+- **Expanded Tool Limits** — `read_file` cap raised from 100→500 lines, `list_dir` cap raised from 20→100 entries.
+- **SQLite WAL Mode** — Memory subsystem enables Write-Ahead Logging for concurrent read/write performance.
+- **Automated Benchmark Runner** — Multi-iteration evaluation loop with retry, averaging, and CSV output.
 
 ---
 

@@ -123,6 +123,7 @@ The compiler reads the Strategist's **Abstract Graph** and dynamically builds a 
    - **Deterministic Nodes (`deterministic`):** Execute the actual tool using the coerced parameters without LLM intervention.
    - **Terminal Synthesis Node (`synthesis`):** Injected at the leaf of the graph to summarize the results of all executions into a cohesive natural-language summary.
 4. **Proactive Binding Splice:** Strips deterministically-known parameter variables from the schema before the model plans, then splices them back in after parameter generation to prevent extraction failures.
+5. **Docgen Category Routing (v0.8.0):** The planner system prompt now includes explicit `Documentation & Exploration Rules (CategoryDocgen)` that mandate a single probe node for documentation generation, function indexing, and architecture analysis tasks. This prevents the planner from misrouting docgen tasks through multi-step action node pipelines, which fail because action nodes cannot observe intermediate exploration results.
 
 ### 3.3. Durable Execution Engine & Checkpointing
 
@@ -195,6 +196,7 @@ Decouples structured LLM inference from the core execution loop. Pluggable backe
 - **Relational Knowledge Graph (KG):** Maps cross-system entities and links (e.g. contact belongs to account).
 - **Hybrid Vector Search:** Runs FTS5 keyword indexing first to generate candidate pools, followed by local ONNX cosine similarity ranking.
 - **Neighborhood Multi-Hop Traversal:** Recursively queries adjacent edges up to $N$ hops to build a context subgraph for Graph-RAG injection.
+- **WAL Mode (v0.8.0):** The SQLite database now enables Write-Ahead Logging (`PRAGMA journal_mode=WAL`) on initialization, improving concurrent read/write performance and preventing locking issues during parallel benchmark and probe executions.
 
 ### 3.10. Background Agents & Attention Loop
 
@@ -213,6 +215,8 @@ The `internal/comparison/` package provides a structured framework for evaluatin
 - **Structured Reports:** Generates JSON and markdown reports with per-task breakdowns, latencies, token counts, and cost estimates.
 - **CLI Command:** `tzro compare` orchestrates the full comparison pipeline.
 - **Codegen Benchmark Conditions (v0.8.0):** The comparison framework supports codegen-specific conditions (`ConditionTzroCode`, `ConditionTzroDraft`, `ConditionCloudCode`) with language-specific seed files and pseudocode task definitions for evaluating code generation quality across execution modes.
+- **High-Reliability Prompting (v0.8.0):** Benchmark task prompts now employ hardened patterns for 4B local models: explicit technical anchors (`IMPORTANT:` with mandatory signatures), pattern locking (idiomatic code requirements), mandatory tool usage directives (`You MUST use write_file`), and deterministic exit signals (`Save to [PATH] and EXIT`). These patterns achieve 4.0+ quality scores on Tier 4-5 codegen tasks.
+- **Benchmark Run Loop (v0.8.0):** Shell script (`run_loop.sh`) for automated multi-iteration benchmark evaluation with averaging, retry on failure, and CSV summary output.
 
 ### 3.12. Extensibility & Sandboxing
 
@@ -276,6 +280,8 @@ To optimize context usage and prevent the local model from becoming anchored by 
 - **`peek_file` tool:** A low-cost sampling tool that returns the first 20 lines of a file, encouraging the model to perform quick checks rather than costly `read_file` operations.
 - **Active Noise Filtering (`isNoisyEntry`):** Automatically hides OS clutter (`.DS_Store`), dependency trees (`node_modules`), build artifacts (`dist`, `.next`), and log/database files in both `list_dir` and `search_files` to keep the context clean.
 - **Directory Profiling (`computeDirProfile`):** Summarizes directory contents mathematically by file extensions (e.g., "45 .go, 3 .mod, 2 .sum, 8 directories"), providing context grounding without exposing individual filenames.
+- **Regex Pattern Search (v0.8.0):** `search_files` now uses Go `regexp.Compile` instead of substring matching, supporting full regex patterns for more precise codebase exploration. Invalid patterns return a structured error.
+- **Increased Tool Limits (v0.8.0):** `read_file` cap raised from 100 to 500 lines and `list_dir` cap raised from 20 to 100 entries, giving probe nodes access to larger code contexts in a single call.
 
 ### 4.6. Context Compaction API (`tzro_compact`)
 

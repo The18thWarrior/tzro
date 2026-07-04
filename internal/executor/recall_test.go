@@ -14,7 +14,7 @@ type mockRecallEngine struct {
 
 func (m *mockRecallEngine) Infer(ctx context.Context, systemPrompt, lastResult, userPrompt string) (string, error) {
 	m.Calls = append(m.Calls, systemPrompt+"\nLAST_RESULT: "+lastResult)
-	
+
 	if strings.Contains(systemPrompt, "Synthesis Engine") {
 		if strings.Contains(systemPrompt, "Found API key in config.go") {
 			return "Final synthesis with fact", nil
@@ -29,7 +29,7 @@ func (m *mockRecallEngine) Infer(ctx context.Context, systemPrompt, lastResult, 
 		}
 		return "<SYNTHESIZE_READY>", nil
 	}
-	
+
 	return "Unexpected prompt", nil
 }
 
@@ -48,10 +48,11 @@ func TestRunRecall_RefinedContext(t *testing.T) {
 		t.Fatalf("Failed to init DB: %v", err)
 	}
 
-	// Insert a dummy thought step
+	// Insert a dummy thought step — ProbeID must use the composite
+	// format "taskID_nodeID" matching production probe storage.
 	_ = memory.DB.AddThoughtStep(memory.ThoughtStep{
 		TaskID:     "t1",
-		ProbeID:    "probe_1",
+		ProbeID:    "t1_probe_1",
 		StepIndex:  1,
 		ToolName:   "read_file",
 		ToolArgs:   `{"path": "config.go"}`,

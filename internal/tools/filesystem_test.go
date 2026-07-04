@@ -19,12 +19,12 @@ func setupFilesystemTestFixtures(t *testing.T) (string, *PathValidator) {
 	// Create a file with many lines for line-range and cap tests
 	manyLinesPath := filepath.Join(root, "many_lines.txt")
 	var lines []string
-	for i := 1; i <= 250; i++ {
+	for i := 1; i <= 600; i++ {
 		lines = append(lines, "line "+string(rune('0'+(i/100)%10))+string(rune('0'+(i/10)%10))+string(rune('0'+i%10)))
 	}
 	// Use a simpler approach — write numbered lines
 	var content strings.Builder
-	for i := 1; i <= 250; i++ {
+	for i := 1; i <= 600; i++ {
 		content.WriteString("line " + intToStr(i) + "\n")
 	}
 	if err := os.WriteFile(manyLinesPath, []byte(content.String()), 0644); err != nil {
@@ -138,7 +138,7 @@ func TestReadFile_WithLineRange(t *testing.T) {
 	}
 }
 
-func TestReadFile_CapsAt100Lines(t *testing.T) {
+func TestReadFile_CapsAt500Lines(t *testing.T) {
 	root, v := setupFilesystemTestFixtures(t)
 	tool := NewReadFileTool(v)
 
@@ -161,11 +161,11 @@ func TestReadFile_CapsAt100Lines(t *testing.T) {
 	lineCount := data["lineCount"].(float64)
 	totalLines := data["totalLines"].(float64)
 
-	if lineCount != 100 {
-		t.Errorf("expected 100 lines returned, got %v", lineCount)
+	if lineCount != 500 {
+		t.Errorf("expected 500 lines returned, got %v", lineCount)
 	}
-	if totalLines != 250 {
-		t.Errorf("expected 250 total lines, got %v", totalLines)
+	if totalLines != 600 {
+		t.Errorf("expected 600 total lines, got %v", totalLines)
 	}
 
 	// Should have a hint about truncation
@@ -523,8 +523,8 @@ func TestListDir_TruncatesLargeDirectories(t *testing.T) {
 	root := resolvedTempDir(t)
 	v := NewStaticPathValidator([]string{root})
 
-	// Create 80 files (above the 50 entry limit)
-	for i := 0; i < 80; i++ {
+	// Create 150 files (above the 100 entry limit)
+	for i := 0; i < 150; i++ {
 		os.WriteFile(filepath.Join(root, fmt.Sprintf("file_%03d.txt", i)), []byte("x"), 0644)
 	}
 
@@ -541,21 +541,21 @@ func TestListDir_TruncatesLargeDirectories(t *testing.T) {
 	entryCount := int(data["entryCount"].(float64))
 	totalCount := int(data["totalCount"].(float64))
 
-	if entryCount != 20 {
-		t.Errorf("expected 20 entries after truncation, got %d", entryCount)
+	if entryCount != 100 {
+		t.Errorf("expected 100 entries after truncation, got %d", entryCount)
 	}
-	if totalCount != 80 {
-		t.Errorf("expected totalCount=80, got %d", totalCount)
+	if totalCount != 150 {
+		t.Errorf("expected totalCount=150, got %d", totalCount)
 	}
 
-	// Profile should still reflect ALL 80 files
+	// Profile should still reflect ALL 150 files
 	profile := data["profile"].(string)
-	if !strings.Contains(profile, "80 .txt") {
-		t.Errorf("profile should show all 80 .txt files even after truncation: got %q", profile)
+	if !strings.Contains(profile, "150 .txt") {
+		t.Errorf("profile should show all 150 .txt files even after truncation: got %q", profile)
 	}
 
 	// Hint should mention truncation
-	if !strings.Contains(res.Hint, "Showing first 20") {
+	if !strings.Contains(res.Hint, "Showing first 100") {
 		t.Errorf("expected truncation hint, got %q", res.Hint)
 	}
 }
