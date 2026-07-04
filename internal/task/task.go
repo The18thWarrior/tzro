@@ -62,14 +62,14 @@ func init() {
 			return "", fmt.Errorf("failed to expand child task graph: %w", err)
 		}
 
-		levels, err := compiler.CompileAndSort(expanded)
+		_, err = compiler.CompileAndSort(expanded)
 		if err != nil {
 			return "", fmt.Errorf("failed to compile child task graph: %w", err)
 		}
 
 		fmt.Fprintf(os.Stderr, "[Task] Spawning isolated child task %s (Parent: %s, Node: %s)\n", childTaskID, parentTaskID, parentNodeID)
 
-		err = executor.GlobalEngine.ExecuteGraph(ctx, expanded, levels)
+		err = executor.GlobalEngine.ExecuteGraphReactive(ctx, expanded)
 		if err != nil {
 			return "", fmt.Errorf("child task execution failed: %w", err)
 		}
@@ -115,8 +115,26 @@ func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler
 	}
 
 	// 3. Parallel levels execution, state updates, and micro-skill SOP synthesis
-	err = executor.GlobalEngine.ExecuteGraph(ctx, graph, levels)
+	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
 	return graph, levels, err
+}
+
+// ExecuteStatic takes a pre-built ExecutionGraph (no LLM planning step),
+// compiles it with Kahn sort, and executes it. Used for hardcoded DAGs
+// like the tzro_code pipeline where the graph shape is known at compile time.
+func ExecuteStatic(ctx context.Context, graph *compiler.ExecutionGraph, opts ExecuteOptions) ([][]string, error) {
+	if opts.IsForeground {
+		proactivity.RegisterActiveUserTask(opts.TaskID)
+		defer proactivity.DeregisterActiveUserTask(opts.TaskID)
+	}
+
+	levels, err := compiler.CompileAndSort(graph)
+	if err != nil {
+		return nil, err
+	}
+
+	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
+	return levels, err
 }
 
 // Plan consolidates LLM DAG planning with dynamic local/cloud routing.
@@ -336,7 +354,7 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 		skillsListStr = "No specialized micro-skills available currently."
 	}
 
-	repoMap, _ := compiler.GenerateMap(".")
+	repoMap, _ := compiler.GenerateShallowMap(".", 2)
 	if repoMap == "" {
 		repoMap = "No repository map available."
 	}
@@ -350,7 +368,7 @@ Your task is to compile a user's natural language request into a Directed Acycli
 ## Available Procedural Micro-Skills SOP Index:
 %s
 
-## Static Repository Map & Core Signatures:
+## Static Repository Map Scaffolding:
 %s
 
 ## Output Schema Constraints:
@@ -369,7 +387,8 @@ Target JSON Structure:
       "dynamicBindings": {"param_from_upstream": "upstream_node_id.output.property_name"},
       "allowedTools": ["target_tool_name_from_inventory"],
       "suggestedSkillIds": ["suggested_skill_id_from_sop_index"],
-      "status": "pending"
+      "status": "pending",
+      "activationThreshold": 0.7
     },
     {
       "id": "probe_unique_id",
@@ -396,6 +415,7 @@ Target JSON Structure:
 2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
 3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
 4. "instructions": Provide natural language goals or variables to read/write.
+5. "activationThreshold": Sufficiency gate threshold (0.0 - 1.0) to enable Edge Thoughts and neural traversal for incoming edges. Defaults to 0.7 for action nodes in codegen tasks, 0.0 (disabled) otherwise.
 
 ### Probe Node Guidance:
 When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
@@ -406,9 +426,26 @@ When the request involves open-ended exploration where each step depends on what
 3. allowedTools limit: Restrict the local worker's action space at each node. Only include the 1-2 tools absolutely necessary.
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
 5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
-6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that procedural order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
-7. EXPLORATION ROUTING RULE (CRITICAL): For tasks involving codebase exploration, directory traversal, file reading, documentation generation, code indexing, architecture analysis, or ANY task where the next step depends on what was just discovered, you MUST emit a SINGLE probe node. Do NOT decompose exploration into a multi-step pipeline of action nodes — the probe node's internal Thought Chain handles reactive step-by-step exploration natively with full tool access. Only use multi-node pipelines when the task has genuinely independent stages requiring DIFFERENT tool sets (e.g., 'search the web AND query the database').
+6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
+7. EXPLORATION ROUTING RULE (CRITICAL): For tasks involving codebase exploration, directory traversal, file reading, documentation generation, code indexing, architecture analysis, or ANY task where the next step depends on what was just discovered, you MUST emit a SINGLE probe node. Action nodes are too rigid for exploration and will fail. Any plan that decomposes documentation or indexing into multiple action nodes is WRONG.
 8. TOOL CONFORMANCE (CRITICAL): You MUST only reference tools from the Available Tool Inventory above. Do NOT invent, hallucinate, or guess tool names that are not listed. If you are unsure whether a tool exists, use a probe node with filesystem tools instead of guessing tool names. Any plan referencing non-existent tools will be rejected.
+9. PROBE-FIRST POLICY (LATENCY OPTIMIZATION): You are provided with only a SHALLOW directory tree. If the user request references specific files, functions, or deep paths not visible in the shallow map, you MUST plan a "probe" node to discover the exact paths rather than guessing them.
+
+### Code Generation Rules (ADR-0035):
+When the task involves generating or modifying ACTUAL SOURCE CODE files (.go, .ts, .py, etc.):
+1. Set "outputFormat": "source_code" on ALL nodes that produce code output (synthesis, action, or probe nodes in the code generation path).
+2. Set "outputLanguage" to the target programming language (e.g., "go", "typescript", "python") on those same nodes.
+3. For complex code generation requiring codebase exploration, use an action node with activationThreshold 0.7-0.8 and allowedTools ["read_file", "list_dir", "search_files"] instead of a probe node. The Edge Thought system will automatically spawn additional exploration if the initial context is insufficient.
+4. When a validate_code tool is available, add a downstream deterministic validation node with activationThreshold 0.7 to enable retry via Edge Thought if compilation fails.
+5. Do NOT emit type "probe" for code generation tasks (writing .go/.ts/.py files). Use action nodes with activationThreshold for exploration.
+
+### Documentation & Exploration Rules (CategoryDocgen):
+When the task involves generating documentation, function indexes, architecture summaries, or analyzing the codebase without writing implementation code:
+1. You MUST use a SINGLE node of type "probe".
+2. Documentation tasks are NOT code generation tasks. Do NOT apply the Code Generation Rules (ADR-0035) to documentation tasks.
+3. A probe node's internal Thought Chain is the most efficient way to index a codebase for documentation.
+4. Do NOT set "outputFormat": "source_code" for documentation output.
+5. If you decompose a docgen/exploration task into multiple action nodes, the plan will be REJECTED because action nodes cannot see intermediate exploration results and will guess file paths incorrectly.
 `, toolsListStr, skillsListStr, repoMap, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")
@@ -529,7 +566,7 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 		skillsListStr = "No specialized micro-skills available currently."
 	}
 
-	repoMap, _ := compiler.GenerateMap(".")
+	repoMap, _ := compiler.GenerateShallowMap(".", 2)
 	if repoMap == "" {
 		repoMap = "No repository map available."
 	}
@@ -562,7 +599,8 @@ Target JSON Structure:
       "dynamicBindings": {"param_from_upstream": "upstream_node_id.output.property_name"},
       "allowedTools": ["target_tool_name_from_inventory"],
       "suggestedSkillIds": ["suggested_skill_id_from_sop_index"],
-      "status": "pending"
+      "status": "pending",
+      "activationThreshold": 0.7
     },
     {
       "id": "probe_unique_id",
@@ -589,6 +627,7 @@ Target JSON Structure:
 2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
 3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
 4. "instructions": Provide natural language goals or variables to read/write.
+5. "activationThreshold": Sufficiency gate threshold (0.0 - 1.0) to enable Edge Thoughts and neural traversal for incoming edges. Defaults to 0.7 for action nodes in codegen tasks, 0.0 (disabled) otherwise.
 
 ### Probe Node Guidance:
 When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
@@ -600,6 +639,14 @@ When the request involves open-ended exploration where each step depends on what
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
 5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
 6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that procedural order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
+
+### Code Generation Rules (ADR-0035):
+When the task involves generating or modifying source code files:
+1. Set "outputFormat": "source_code" on ALL nodes that produce code output (synthesis, action, or probe nodes in the code generation path).
+2. Set "outputLanguage" to the target programming language (e.g., "go", "typescript", "python") on those same nodes.
+3. For complex code generation requiring codebase exploration, use an action node with activationThreshold 0.7-0.8 and allowedTools ["read_file", "list_dir", "search_files"] instead of a probe node. The Edge Thought system will automatically spawn additional exploration if the initial context is insufficient.
+4. When a validate_code tool is available, add a downstream deterministic validation node with activationThreshold 0.7 to enable retry via Edge Thought if compilation fails.
+5. Do NOT emit type "probe" for code generation tasks. Use action nodes with activationThreshold for exploration.
 `, toolsListStr, skillsListStr, repoMap, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")

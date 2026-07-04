@@ -127,13 +127,15 @@ The Offload Policy applies to **external tool calls** — MCP data-plane tools (
    ```
 4. Read the final cohesive response from the `terminal_synthesis` node once completed.
 
-### Planner Tradeoffs & Design Rules
-When designing prompts for the Strategic Planner (DAG mode), ensure the prompt guides the engine to balance these key design rules:
-- **Strategy vs. Execution**: Let the planner compile the DAG steps logically. Do not attempt to pre-execute steps.
-- **Variable Binding**: Guide the planner to use strict variable binding (`{{nodes.node_id.output.property}}`) to pass data downstream cleanly.
-- **Restricted Tool Spaces**: Explicitly limit node `allowedTools` to the 1-2 tools strictly required for that node's focus area to prevent execution hallucinations.
-- **Conciseness**: Keep the DAG compact (typically 2-4 nodes). Ensure dependencies are cycle-free.
 - **Exploration → Use Probe Nodes**: When a task involves open-ended exploration where the next step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), prompt the planner to use a **Probe Node**. It handles reactive step-at-a-time reasoning natively.
+
+### High-Reliability Prompting (Tier 4+ Optimization)
+When delegating complex architectural tasks to `tzro` (especially using local 4B models), apply these "Hardening" patterns to ensure a 4.0+ quality score:
+
+1. **Explicit Technical Anchors**: Do not just ask for a feature. Use `IMPORTANT:` with a numbered list of mandatory signatures, return types, and error codes.
+2. **Pattern Locking**: Mandate specific idiomatic patterns (e.g., "Use Go closures", "Implement exhaustive type switches"). Local models follow explicit patterns better than abstract goals.
+3. **Threshold Management**: For deterministic codegen where you already know the target files, set `ActivationThreshold: 0.0` in the prompt to prevent redundant "Skepticism Loops."
+4. **Deterministic Exit**: Always end complex prompts with a clear "Save to [PATH] and EXIT" signal to prevent infinite exploration/synthesis.
 
 ### Suggested Prompts to Leverage tzro
 When delegating tasks to `tzro` (using CLI or the `tzro_run` tool), use or adapt the following prompt structures:
@@ -193,6 +195,11 @@ When checking `tzro_hook_list` for pending workflow approvals, also check `tzro_
 - **`ambient`** alerts: Batch and mention only if the user asks for status
 
 Alerts are automatically marked as `read` when retrieved via `tzro_sentinel_alerts`. To prevent repeated alerts for the same context, alerts use fingerprint-based deduplication — they only regenerate after being `dismissed`.
+
+
+
+
+
 
 
 
@@ -269,6 +276,7 @@ The `tzro` MCP server registers **26 tools** split into distinct functional doma
 | Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
 | `tzro_run` | Plan, compile, and execute a durable DAG from a prompt. | `prompt` (string), `timeout` (int) |
+| `tzro_code` | Generate or update code for a single file using the local model. | `spec` (string), `filepath` (string), `mode` (string, optional: "full"|"diff") |
 | `tzro_status` | Check execution status, node states, and outcomes of a task. | `taskId` (string) |
 | `tzro_resume` | Manually resume a paused/interrupted task (e.g., after approval). | `taskId` (string) |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status. | `status` (string, optional) |
@@ -321,6 +329,11 @@ Allows the local planner to dispatch tools back to the client or pause for appro
 | `tzro_observer_events` | Retrieve recent observer verification and audit logs. | `limit` (int) |
 | `tzro_observer_memories` | List memories dynamically synthesized by the Observer Agent. | `limit` (int) |
 
+### 8. Code Generation
+| Tool | Purpose | Key Parameters |
+| :--- | :--- | :--- |
+| `tzro_code` | Offload code generation or surgical file updates to the local engine. | `spec` (string), `filepath` (string), `mode` (string, optional) |
+
 ---
 
 ## 📡 MCP Resource Templates & Subscriptions
@@ -361,6 +374,15 @@ When your task requires specific tools or services, name them to constrain the p
 If a task involves navigating an unknown codebase, analyzing a directory, or searching logs where the next step depends on what you discover, **force a Probe Node**. Rigid DAGs fail because the compiler cannot extract paths/parameters without seeing intermediate results.
 *   ✅ **Example**: *"Explore the project at /path/to/repo using a Probe Node. Read the top-level structure, then follow the most important files to understand the architecture. Use read_file, list_dir, and search_files."*
 *   *Key constraint*: Explicitly name `allowedTools` (e.g., `read_file`, `list_dir`, `search_files`) to keep the Thought Chain focused.
+
+### 5. Local Code Generation (`tzro_code`)
+Use `tzro_code` to offload the expensive writing of code to the local engine.
+- **Spec**: Provide a detailed specification (jdoc) including signatures, behavior, and constraints.
+- **Modes**:
+  - `mode: "full"` (default for new files): Rewrites the whole file. Limited to 500 lines.
+  - `mode: "diff"` (default for existing files > 200 lines): Uses structured JSON hunks for surgical edits. Required for files > 500 lines.
+- **Context**: The tool automatically reads the target file and 5 sibling files for context.
+- **Verification**: You (the frontier model) should review the generated code for correctness, as the local model may produce drafts that need minor polish.
 
 ---
 

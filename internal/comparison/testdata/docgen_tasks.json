@@ -1,8 +1,9 @@
 [
   {
     "id": "cache_function_index",
+    "category": "docgen",
     "tier": 1,
-    "prompt": "Generate a function index for internal/cache/ listing every exported function, its signature, and a one-line description.",
+    "prompt": "Generate a function index for internal/cache/ listing every exported function, its signature, and a one-line description. You MUST use the write_file tool to save the content to the path 'function_index.md' inside the target directory.",
     "targetPaths": ["internal/cache/"],
     "qualityRubric": {
       "criteria": [
@@ -16,8 +17,9 @@
   },
   {
     "id": "inference_module_docs",
+    "category": "docgen",
     "tier": 2,
-    "prompt": "Generate module-level documentation for internal/inference/ covering all public types, their relationships, and usage patterns.",
+    "prompt": "Generate module-level documentation for internal/inference/ covering all public types, their relationships, and usage patterns. You MUST use the write_file tool to save the content to the path 'module_docs.md' (relative to your current working directory).",
     "targetPaths": ["internal/inference/"],
     "qualityRubric": {
       "criteria": [
@@ -31,8 +33,9 @@
   },
   {
     "id": "adr_summary",
+    "category": "docgen",
     "tier": 3,
-    "prompt": "Read all ADR files in docs/adr/ and produce a consolidated decision log with status, date, and key implications for each.",
+    "prompt": "Read all ADR files in the provided docs/adr/ directory. Produce a consolidated decision log with status, date, and key implications for each decision. Focus on technical accuracy and consistent formatting.",
     "targetPaths": ["docs/adr/"],
     "qualityRubric": {
       "criteria": [
@@ -46,6 +49,7 @@
   },
   {
     "id": "internal_architecture",
+    "category": "docgen",
     "tier": 4,
     "prompt": "Generate architecture documentation for the full internal/ tree showing package dependencies, data flow, and key abstractions.",
     "targetPaths": ["internal/"],
@@ -61,8 +65,9 @@
   },
   {
     "id": "comprehensive_readme",
+    "category": "docgen",
     "tier": 5,
-    "prompt": "Generate a comprehensive README with architecture overview, quickstart guide, package index, and API reference.",
+    "prompt": "Generate a comprehensive README.md with architecture overview, quickstart guide, package index, and API reference. You MUST use the write_file tool to save the content to the path 'README.md' inside the target directory.",
     "targetPaths": ["."],
     "qualityRubric": {
       "criteria": [
@@ -75,3 +80,4 @@
     }
   }
 ]
+

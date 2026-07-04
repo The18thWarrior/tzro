@@ -4,6 +4,28 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-06-29T20:43:00-07:00] grill-with-docs | Codegen Quality Pipeline — Edge Thought Migration (ADR-0035)
+
+- **Activity**: Grill-with-docs session resolved 10 design decisions for completing the ADR-0024 Edge Thought migration and building a codegen quality pipeline on top. Discovered that ADR-0024 infrastructure (edge_thought.go, ready_queue.go, mutation.go, 14 tests) was fully implemented on 2026-06-07 but never wired into production — `GlobalEngine` has no `EdgeThoughtInference`, `task.go` still calls `ExecuteGraph` instead of `ExecuteGraphReactive`.
+- **Key Decisions**:
+  - Complete Edge Thought migration in one shot (big-bang, one-line rollback in task.go)
+  - Spawn chains use rolling compaction (lifted from probe's `compactEvery`) for context fidelity
+  - Auto-inject synthesis node when activation gate fires Continue after spawns
+  - `OutputFormat`/`OutputLanguage` on `GraphNode` (not `ProbeConfig` — that's deprecated)
+  - Compilation gate as DAG node with validation command specified by Cloud Planner (not hardcoded)
+  - `tzro_code` T1-T2 stays as single-node `reason_code`; T3+ routes to Edge Thought DAG via Local Model classification
+  - Probe backward compat shim rewrites `type: "probe"` → `type: "action"` + threshold 0.8 + budget 15
+  - Keep `ExecuteGraph` as dead code for rollback; delete after benchmark validation
+- **ADRs Created**:
+  - [ADR-0035: Complete Edge Thought Migration and Codegen Quality Pipeline](../adr/0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md)
+- **Specs Created**:
+  - [2026-06-29 Codegen Quality Pipeline Design](../superpowers/specs/2026-06-29-codegen-quality-pipeline-design.md)
+- **Files Created/Modified**:
+  - [NEW] [0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md](../adr/0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md)
+  - [NEW] [2026-06-29-codegen-quality-pipeline-design.md](../superpowers/specs/2026-06-29-codegen-quality-pipeline-design.md)
+  - [MODIFY] [index.md](index.md) (Added ADR-0032 through ADR-0035)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
 ## [2026-06-27T06:59:00-07:00] decision | Three-Bucket Metric Separation (ADR-0034)
 
 - **Activity**: Grill-with-docs session resolved how to separate the conflated "98% token reduction" benchmark claim into three independently measurable savings buckets: (1) DAG structural savings, (2) 5-Layer Pipeline compaction savings, (3) local model offloading savings.
@@ -1318,4 +1340,39 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [MODIFY] [index.md](index.md) (Updated local wiki index links)
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
+---
+
+## [2026-06-30T07:59:00-07:00] tdd | tzro_code Diff/Patch Mode & File Size Guard
+
+- **Activity**: Implemented structured diff mode for `tzro_code` using TDD (12 vertical RED→GREEN slices). Eliminates the 0% file-update success rate for files >300 lines by replacing whole-file rewrite with JSON hunk-based surgical edits.
+- **Spec**: `docs/superpowers/specs/2026-06-30-tzro-code-diff-mode-design.md`
+- **Key Components**:
+  - **Diff engine** (`ApplyDiffHunks`): exact substring match → fuzzy whitespace normalization fallback → error. Handles duplicate detection (ambiguity sentinel), empty file guard, deletion/insertion hunks.
+  - **File size guard**: Hard 500-line limit for full rewrite mode. Auto-mode threshold at 200 lines.
+  - **Routing matrix**: `{simple, moderate/complex} × {full, diff}` → 4 DAG builders.
+  - **GBNF constraint**: `DiffHunkSchema` JSON schema on `reason_code` node's `OutputSchema` forces structured output.
+- **Test Results**: 31 tests pass (19 original + 12 new), 0 regressions, clean build.
+- **Files**:
+  - [NEW] `internal/codegen/diff_types.go` (DiffHunk, DiffOutput, DiffHunkSchema)
+  - [NEW] `internal/codegen/diff_apply.go` (ApplyDiffHunks engine)
+  - [NEW] `internal/codegen/diff_apply_test.go` (8 test cases)
+  - [NEW] `internal/codegen/diff_prompt.go` (BuildDiffPrompt)
+  - [NEW] `internal/codegen/diff_prompt_test.go` (2 test cases)
+  - [NEW] `internal/codegen/codegen_diff.go` (BuildDiffDAG)
+  - [NEW] `internal/codegen/codegen_diff_test.go` (2 test cases for DAG structure)
+  - [MODIFY] `internal/codegen/codegen_exploration.go` (BuildDiffDAGWithExploration)
+  - [MODIFY] `cmd/tzro-mcp/tools.go` (Mode param, auto-mode, size guard, routing, post-DAG diff branch)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+
+## [2026-07-01T06:13:00-07:00] design | Codegen Benchmark 3 Analysis & Edge Thought Repair Design
+
+- **Activity**: Analyzed codegen benchmark run 3 (10 tasks × 3 conditions). Ran a grill-with-docs session on the P0–P2 improvement recommendations, resolving 11 design decisions and creating ADR-0036.
+- **Benchmark Results**: cloud_code avg 4.78/5.0 quality, tzro_code avg 2.70/5.0, tzro_code_expanded avg 2.88/5.0. Local compilation pass rate 20% vs cloud 70%. Quality cliff at T2→T3 boundary.
+- **Key Decision (ADR-0036)**: Use Edge Thought node spawning for codegen compilation repair instead of a bespoke retry loop. Compilation gate result injected into Edge Thought context as deterministic evidence; Local Model generates reasoning/diagnosis; mutation budget capped at 2. Environmental context (`DiscoverModuleContext`) injected into both initial and repair prompts to address hallucinated imports (#1 failure mode at 4/8).
+- **Scope Reduction**: Original 6 items (P0–P2) reduced to 2 items. P1 import guard collapsed into P0 environmental context. Both P2s cut (type-stub injection redundant, context tuning too vague). Pseudocode fixtures scoped to missing T2+ only (`create_config_parser`).
+- **Roadmap Items**: (1) Re-evaluate Confidence Tier routing for codegen repair cloud escalation. (2) Corrective Micro-Skill extraction from successful repairs — deferred to Confidence Tier re-evaluation.
+- **Files**:
+  - [NEW] `docs/adr/0036-edge-thought-driven-codegen-repair.md`
+  - [MODIFY] [log.md](log.md) (Appended this entry)
 

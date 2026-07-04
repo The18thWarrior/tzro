@@ -49,11 +49,33 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph) stri
 		return ""
 	}
 
-	// Build a map of nodeID → tool name from the graph
+	// Build maps from the graph to identify node types and relationships
 	nodeToolMap := make(map[string]string)
+	nodeTypeMap := make(map[string]string)
 	if graph != nil {
 		for _, n := range graph.Nodes {
 			nodeToolMap[n.ID] = n.Action
+			nodeTypeMap[n.ID] = n.Type
+		}
+	}
+
+	// Identify nodes superseded by a completed 'recall' node.
+	// We check the graph edges to find which probe nodes feed into which recall nodes.
+	// If a recall node is completed, its probe's raw output is 'sludge' and should be excluded.
+	supersededProbes := make(map[string]bool)
+	if graph != nil {
+		// First, find all completed recall nodes in the current state
+		completedRecalls := make(map[string]bool)
+		for _, state := range states {
+			if state.Status == "completed" && nodeTypeMap[state.NodeID] == "recall" {
+				completedRecalls[state.NodeID] = true
+			}
+		}
+		// Then, find their upstream sources
+		for _, edge := range graph.Edges {
+			if completedRecalls[edge.TargetID] {
+				supersededProbes[edge.SourceID] = true
+			}
 		}
 	}
 
@@ -65,6 +87,13 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph) stri
 	var completed []completedNode
 	for _, state := range states {
 		if state.Status != "completed" {
+			continue
+		}
+
+		// Skip nodes that have been superseded by a completed Recall node.
+		// This keeps the context 'clean' by replacing discovery sludge with aligned findings.
+		if supersededProbes[state.NodeID] {
+			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Skipping node %s as it has been superseded by a completed Recall node\n", state.NodeID)
 			continue
 		}
 

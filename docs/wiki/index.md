@@ -96,7 +96,10 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0029: Response Resolver and Semantic Binding Fallback](../adr/0029-response-resolver-and-semantic-binding-fallback.md) - Two-tier output resolution (recursive key search + Local Model semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator.
 - [ADR-0030: Proactive Binding Splice for Deterministic Resolutions](../adr/0030-proactive-binding-splice-for-deterministic-resolutions.md) - Pre-inference optimization stripping high-confidence resolved bindings from schema before Semantic Validator inference.
 - [ADR-0031: Agent App Packaging and Package Manager](../adr/0031-agent-app-packaging-and-package-manager.md) - Composable `.tzroapp` packaging format with app-scoped namespacing, incremental MCP registration, developer-trusted capability declarations, and soft-disable uninstall lifecycle.
-
+- [ADR-0032: AgenticOS JumpDrive Website Positioning](../adr/0032-agenticos-jumpdrive-website-positioning.md) - Website positioning and messaging strategy.
+- [ADR-0033: Daemon Re-exec Restart via MCP](../adr/0033-daemon-re-exec-restart-via-mcp.md) - Graceful daemon restart via MCP tool with re-exec pattern.
+- [ADR-0034: Three-Bucket Metric Separation](../adr/0034-three-bucket-metric-separation.md) - Separates DAG structural, pipeline compaction, and local offloading savings into independently measurable benchmark buckets.
+- [ADR-0035: Complete Edge Thought Migration and Codegen Quality Pipeline](../adr/0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md) - Completes ADR-0024 production wiring and builds codegen validation, output constraints, and complexity routing on top.
 
 ## Ingested Sources
 

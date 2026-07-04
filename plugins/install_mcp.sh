@@ -238,7 +238,7 @@ else
     echo ""
     echo -e "    2) ${BOLD}Balanced${NC} ${GREEN}(recommended)${NC}"
     echo -e "       ${DIM}Delegate when task doesn't require frontier model reasoning.${NC}"
-    echo -e "       ${DIM}Triggers at 3+ sequential tool calls. 'Must delegate' for known patterns.${NC}"
+    echo -e "       ${DIM}Includes ${BOLD}Hardened Prompt Patterns${NC} ${DIM}for high-reliability local execution.${NC}"
     echo ""
     echo -e "    3) ${BOLD}Aggressive${NC}"
     echo -e "       ${DIM}Route everything possible through tzro for maximum local execution.${NC}"

@@ -19,12 +19,12 @@ func setupFilesystemTestFixtures(t *testing.T) (string, *PathValidator) {
 	// Create a file with many lines for line-range and cap tests
 	manyLinesPath := filepath.Join(root, "many_lines.txt")
 	var lines []string
-	for i := 1; i <= 250; i++ {
+	for i := 1; i <= 600; i++ {
 		lines = append(lines, "line "+string(rune('0'+(i/100)%10))+string(rune('0'+(i/10)%10))+string(rune('0'+i%10)))
 	}
 	// Use a simpler approach — write numbered lines
 	var content strings.Builder
-	for i := 1; i <= 250; i++ {
+	for i := 1; i <= 600; i++ {
 		content.WriteString("line " + intToStr(i) + "\n")
 	}
 	if err := os.WriteFile(manyLinesPath, []byte(content.String()), 0644); err != nil {
@@ -138,7 +138,7 @@ func TestReadFile_WithLineRange(t *testing.T) {
 	}
 }
 
-func TestReadFile_CapsAt100Lines(t *testing.T) {
+func TestReadFile_CapsAt500Lines(t *testing.T) {
 	root, v := setupFilesystemTestFixtures(t)
 	tool := NewReadFileTool(v)
 
@@ -161,11 +161,11 @@ func TestReadFile_CapsAt100Lines(t *testing.T) {
 	lineCount := data["lineCount"].(float64)
 	totalLines := data["totalLines"].(float64)
 
-	if lineCount != 100 {
-		t.Errorf("expected 100 lines returned, got %v", lineCount)
+	if lineCount != 500 {
+		t.Errorf("expected 500 lines returned, got %v", lineCount)
 	}
-	if totalLines != 250 {
-		t.Errorf("expected 250 total lines, got %v", totalLines)
+	if totalLines != 600 {
+		t.Errorf("expected 600 total lines, got %v", totalLines)
 	}
 
 	// Should have a hint about truncation
@@ -523,8 +523,8 @@ func TestListDir_TruncatesLargeDirectories(t *testing.T) {
 	root := resolvedTempDir(t)
 	v := NewStaticPathValidator([]string{root})
 
-	// Create 80 files (above the 50 entry limit)
-	for i := 0; i < 80; i++ {
+	// Create 150 files (above the 100 entry limit)
+	for i := 0; i < 150; i++ {
 		os.WriteFile(filepath.Join(root, fmt.Sprintf("file_%03d.txt", i)), []byte("x"), 0644)
 	}
 
@@ -541,21 +541,21 @@ func TestListDir_TruncatesLargeDirectories(t *testing.T) {
 	entryCount := int(data["entryCount"].(float64))
 	totalCount := int(data["totalCount"].(float64))
 
-	if entryCount != 20 {
-		t.Errorf("expected 20 entries after truncation, got %d", entryCount)
+	if entryCount != 100 {
+		t.Errorf("expected 100 entries after truncation, got %d", entryCount)
 	}
-	if totalCount != 80 {
-		t.Errorf("expected totalCount=80, got %d", totalCount)
+	if totalCount != 150 {
+		t.Errorf("expected totalCount=150, got %d", totalCount)
 	}
 
-	// Profile should still reflect ALL 80 files
+	// Profile should still reflect ALL 150 files
 	profile := data["profile"].(string)
-	if !strings.Contains(profile, "80 .txt") {
-		t.Errorf("profile should show all 80 .txt files even after truncation: got %q", profile)
+	if !strings.Contains(profile, "150 .txt") {
+		t.Errorf("profile should show all 150 .txt files even after truncation: got %q", profile)
 	}
 
 	// Hint should mention truncation
-	if !strings.Contains(res.Hint, "Showing first 20") {
+	if !strings.Contains(res.Hint, "Showing first 100") {
 		t.Errorf("expected truncation hint, got %q", res.Hint)
 	}
 }
@@ -680,5 +680,249 @@ func TestSearchFiles_SkipsNoisyDirs(t *testing.T) {
 		if strings.Contains(file, "node_modules") {
 			t.Errorf("match should not be from node_modules: %s", file)
 		}
+	}
+}
+
+// ==========================================
+// write_file tests
+// ==========================================
+
+func TestWriteFile_CreatesNewFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	targetPath := filepath.Join(tmpDir, "hello.go")
+	content := "package hello\n\nfunc Hello() string {\n\treturn \"hello\"\n}\n"
+
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    targetPath,
+		"content": content,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	if data["action"] != "created" {
+		t.Errorf("expected action 'created', got %v", data["action"])
+	}
+
+	// Verify file on disk
+	diskContent, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+	if string(diskContent) != content {
+		t.Errorf("content mismatch: got %q, want %q", string(diskContent), content)
+	}
+}
+
+func TestWriteFile_CreatesParentDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	targetPath := filepath.Join(tmpDir, "deep", "nested", "dir", "file.txt")
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    targetPath,
+		"content": "hello\n",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	if data["action"] != "created" {
+		t.Errorf("expected action 'created', got %v", data["action"])
+	}
+
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		t.Fatalf("file not created with nested directories")
+	}
+}
+
+func TestWriteFile_OverwriteReportsUpdated(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpDir, _ = filepath.EvalSymlinks(tmpDir) // macOS: /var -> /private/var
+	os.Setenv("TZRO_DIR", tmpDir)
+	defer os.Unsetenv("TZRO_DIR")
+
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	targetPath := filepath.Join(tmpDir, "existing.go")
+	originalContent := "package original\n"
+	os.WriteFile(targetPath, []byte(originalContent), 0644)
+
+	newContent := "package updated\n"
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    targetPath,
+		"content": newContent,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	if data["action"] != "updated" {
+		t.Errorf("expected action 'updated', got %v", data["action"])
+	}
+
+	// Verify backup was created
+	backupDir := filepath.Join(tmpDir, ".tzro", "backups")
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatalf("backup directory not created: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("no backup files created")
+	}
+
+	// Verify backup contains original content
+	backupContent, err := os.ReadFile(filepath.Join(backupDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("failed to read backup: %v", err)
+	}
+	if string(backupContent) != originalContent {
+		t.Errorf("backup content mismatch: got %q, want %q", string(backupContent), originalContent)
+	}
+}
+
+func TestWriteFile_RejectsPathOutsideWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    "/etc/passwd",
+		"content": "hacked\n",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if res.Success {
+		t.Errorf("expected success=false for path outside workspace")
+	}
+	if !strings.Contains(res.Error, "path validation failed") {
+		t.Errorf("expected path validation error, got: %s", res.Error)
+	}
+}
+
+func TestWriteFile_RejectsBinaryContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    filepath.Join(tmpDir, "binary.bin"),
+		"content": "hello\x00world",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if res.Success {
+		t.Errorf("expected success=false for binary content")
+	}
+	if !strings.Contains(res.Error, "binary content not allowed") {
+		t.Errorf("expected binary content error, got: %s", res.Error)
+	}
+}
+
+func TestWriteFile_BackupLRUEviction(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.Setenv("TZRO_DIR", tmpDir)
+	defer os.Unsetenv("TZRO_DIR")
+
+	// Pre-create 50 backup files
+	backupDir := filepath.Join(tmpDir, ".tzro", "backups")
+	os.MkdirAll(backupDir, 0755)
+	for i := 0; i < 50; i++ {
+		name := fmt.Sprintf("backup_%02d.bak", i)
+		os.WriteFile(filepath.Join(backupDir, name), []byte("old"), 0644)
+	}
+
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	// Create and overwrite a file to trigger backup + eviction
+	targetPath := filepath.Join(tmpDir, "eviction_test.go")
+	os.WriteFile(targetPath, []byte("original\n"), 0644)
+
+	_, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    targetPath,
+		"content": "updated\n",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Count backups — should be <= 50 after eviction
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatalf("failed to read backup dir: %v", err)
+	}
+	bakCount := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".bak") {
+			bakCount++
+		}
+	}
+	if bakCount > 50 {
+		t.Errorf("expected <= 50 backups after LRU eviction, got %d", bakCount)
+	}
+}
+
+func TestWriteFile_CountsLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	// 5 lines with trailing newline
+	content := "line1\nline2\nline3\nline4\nline5\n"
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    filepath.Join(tmpDir, "counted.txt"),
+		"content": content,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	linesWritten := data["linesWritten"].(float64)
+	if linesWritten != 5 {
+		t.Errorf("expected 5 lines, got %v", linesWritten)
 	}
 }

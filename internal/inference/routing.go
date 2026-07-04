@@ -47,11 +47,12 @@ func (m InferenceMessage) HasMultimodalContent() bool {
 }
 
 type StructuredInferenceRequest struct {
-	Messages   []InferenceMessage
-	JSONSchema string
-	StreamMeta *StreamMeta
-	ToolNames  []string
-	TaskID     string
+	Messages    []InferenceMessage
+	JSONSchema  string
+	StreamMeta  *StreamMeta
+	ToolNames   []string
+	TaskID      string
+	IsLowStakes bool // If true, disable thermal escalation and sticky cloud fallback (ADR-0040)
 }
 
 // NewSimpleRequest creates a 2-message request for classification, chat, and other
@@ -264,17 +265,22 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			if req.StreamMeta != nil {
 				nodeID = req.StreamMeta.NodeID
 			}
-			proceed, escalateToCloud := CheckThermalPressure(req.TaskID, nodeID, m)
-			if !proceed {
-				if escalateToCloud && cfg.ModelMode == "cooperative" {
-					// Thermal cloud escalation — route to cloud for this call
-					if req.StreamMeta != nil {
-						return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
+			
+			// ADR-0040: Low-stakes requests (like validators) bypass thermal escalation
+			// to avoid burning cloud tokens on simple structured extraction.
+			if !req.IsLowStakes {
+				proceed, escalateToCloud := CheckThermalPressure(req.TaskID, nodeID, m)
+				if !proceed {
+					if escalateToCloud && cfg.ModelMode == "cooperative" {
+						// Thermal cloud escalation — route to cloud for this call
+						if req.StreamMeta != nil {
+							return CallCloudModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta, m.getPublisher())
+						}
+						return CallCloudModel(ctx, req.Messages, req.JSONSchema)
 					}
-					return CallCloudModel(ctx, req.Messages, req.JSONSchema)
+					// In local-only mode with thermal pressure, we have no alternative.
+					// Fall through to attempt local inference anyway (speed floor is the backup).
 				}
-				// In local-only mode with thermal pressure, we have no alternative.
-				// Fall through to attempt local inference anyway (speed floor is the backup).
 			}
 
 			var localRes *InferenceResult
@@ -322,7 +328,7 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			}
 
 			// Escalation to cloud in cooperative mode
-			if cfg.ModelMode == "cooperative" {
+			if cfg.ModelMode == "cooperative" && !req.IsLowStakes {
 				if cfg.PrivacyLevel == "strict-local" {
 					return "", fmt.Errorf("local execution failed: %w (cloud fallback disabled under strict-local privacy level)", err)
 				}

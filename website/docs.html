@@ -352,9 +352,9 @@
 
         <p>
           <code>tzro</code> implements <strong>Inference Arbitrage</strong> — the principle that the right
-          model for the job is rarely the most expensive one. By routing execution-level work to a
-          grammar-locked local engine, you preserve your cloud budget for what actually requires frontier
-          reasoning: code generation, architectural judgment, and interactive user dialogue.
+          model for the job is rarely the most expensive one. By routing execution-level work and even
+          code generation to a grammar-locked local engine (via <code>tzro_code</code>), you preserve your cloud budget
+          for what actually requires frontier reasoning: architectural planning, complex judgment, and interactive user dialogue.
         </p>
 
         <div class="docs-callout callout-tip">
@@ -389,8 +389,8 @@
             <div class="docs-feature-card-icon">⚙️</div>
             <h4>Local Go Engine — The Executor</h4>
             <p>
-              Handles the execution grunt work: directory indexing, file parsing, tool dispatch,
-              database sync, and structured output generation. All behind <code>127.0.0.1</code>.
+              Handles execution and code generation: directory indexing, file parsing, tool dispatch,
+              database sync, source file generation with compilation validation, and structured output generation. All behind <code>127.0.0.1</code>.
             </p>
           </div>
         </div>

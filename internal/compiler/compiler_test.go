@@ -120,6 +120,54 @@ func TestStrategicGraphToSCTExpansion(t *testing.T) {
 	}
 }
 
+func TestExpandToSCTGraph_PlanningAware(t *testing.T) {
+	// Test 1: Skip Recall if Synthesis child exists
+	graphRecallSkip := &ExecutionGraph{
+		TaskID: "recall_skip",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore codebase"},
+			{ID: "s1", Type: "synthesis", Instructions: "Summarize findings"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "p1", TargetID: "s1"},
+		},
+	}
+
+	expanded1, _ := ExpandToSCTGraph(graphRecallSkip, nil)
+	hasRecall := false
+	for _, n := range expanded1.Nodes {
+		if n.ID == "p1_recall" {
+			hasRecall = true
+		}
+	}
+	if hasRecall {
+		t.Errorf("expected p1_recall to be skipped when synthesis child exists")
+	}
+
+	// Test 2: Skip Terminal Synthesis if a synthesis node is already the final leaf
+	graphTerminalSkip := &ExecutionGraph{
+		TaskID: "terminal_skip",
+		Nodes: []GraphNode{
+			{ID: "action1", Type: "action", Action: "web_search"},
+			{ID: "final_synth", Type: "synthesis", Instructions: "Final report"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "action1", TargetID: "final_synth"},
+		},
+	}
+
+	expanded2, _ := ExpandToSCTGraph(graphTerminalSkip, nil)
+	hasTerminalSynth := false
+	for _, n := range expanded2.Nodes {
+		if n.ID == "terminal_synthesis" {
+			hasTerminalSynth = true
+		}
+	}
+	if hasTerminalSynth {
+		t.Errorf("expected terminal_synthesis to be skipped when a synthesis leaf already exists")
+	}
+}
+
 func TestComputeTimeBudget_Exploration(t *testing.T) {
 	// Typical exploration: 1 probe + 1 synthesis
 	graph := &ExecutionGraph{

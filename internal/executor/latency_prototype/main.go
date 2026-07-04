@@ -77,8 +77,8 @@ type runStepMsg struct {
 	nodeStates map[string]string
 }
 
-func initialModel() Model {
-	m := Model{
+func initialModel() *Model {
+	m := &Model{
 		NodeSleep:     800 * time.Millisecond,
 		LevelSleep:    500 * time.Millisecond,
 		ToolWork:      200 * time.Millisecond,
@@ -139,7 +139,7 @@ func (m *Model) computeInstantReport() {
 	}
 }
 
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	return nil
 }
 
@@ -151,7 +151,7 @@ func tickCmd() tea.Cmd {
 }
 
 // Live simulation runner
-func (m Model) runSimulation() tea.Cmd {
+func (m *Model) runSimulation() tea.Cmd {
 	return func() tea.Msg {
 		topo := Topologies[m.TopologyIndex]
 		startTime := time.Now()
@@ -232,7 +232,7 @@ func (m Model) runSimulation() tea.Cmd {
 	}
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.Running {
@@ -354,7 +354,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m *Model) View() string {
 	// Styles
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -377,15 +377,20 @@ func (m Model) View() string {
 	var sb strings.Builder
 
 	// Header
-	sb.WriteString(titleStyle.Render("tzro Execution Latency Logic Prototype") + "\n\n")
+	sb.WriteString(titleStyle.Render("tzro Execution Latency Logic Prototype"))
+	sb.WriteString("\n\n")
 
 	// State of Question
-	sb.WriteString(boldStyle.Render("THE QUESTION BEING PROTOTYPED:") + "\n")
-	sb.WriteString(dimStyle.Render("How do hardcoded sleeps in executor.go impact overall DAG execution latency across different") + "\n")
-	sb.WriteString(dimStyle.Render("topologies, and can we safely configure or optimize them away without losing GUI updates?") + "\n\n")
+	sb.WriteString(boldStyle.Render("THE QUESTION BEING PROTOTYPED:"))
+	sb.WriteString("\n")
+	sb.WriteString(dimStyle.Render("How do hardcoded sleeps in executor.go impact overall DAG execution latency across different"))
+	sb.WriteString("\n")
+	sb.WriteString(dimStyle.Render("topologies, and can we safely configure or optimize them away without losing GUI updates?"))
+	sb.WriteString("\n\n")
 
 	// Configuration Settings Table
-	sb.WriteString(sectionStyle.Render("1. CURRENT RUNTIME CONFIGURATION") + "\n")
+	sb.WriteString(sectionStyle.Render("1. CURRENT RUNTIME CONFIGURATION"))
+	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf("%s %v (Hardcoded in node execution steps)\n", boldStyle.Render("- Node Sleep:"), m.NodeSleep))
 	sb.WriteString(fmt.Sprintf("%s %v (Hardcoded delay between Kahn sorted levels)\n", boldStyle.Render("- Level Sleep:"), m.LevelSleep))
 	sb.WriteString(fmt.Sprintf("%s %v (Simulated actual tool completion latency)\n", boldStyle.Render("- Node Work:"), m.ToolWork))
@@ -398,7 +403,8 @@ func (m Model) View() string {
 	sb.WriteString(fmt.Sprintf("%s %s\n\n", boldStyle.Render("- Topology:"), Topologies[m.TopologyIndex].Name))
 
 	// Graph Topology Visualization
-	sb.WriteString(sectionStyle.Render("2. GRAPH VISUALIZATION & RUNTIME STATES") + "\n")
+	sb.WriteString(sectionStyle.Render("2. GRAPH VISUALIZATION & RUNTIME STATES"))
+	sb.WriteString("\n")
 	topo := Topologies[m.TopologyIndex]
 	for lvlIdx, lvl := range topo.Levels {
 		var nodes []string
@@ -426,14 +432,17 @@ func (m Model) View() string {
 
 	// Live runner status
 	if m.Running {
-		sb.WriteString(warningStyle.Render(fmt.Sprintf(">>> LIVE SIMULATION RUNNING (Scaled 0.5x for demo): %.1fs elapsed...", m.ElapsedTime.Seconds())) + "\n\n")
+		sb.WriteString(warningStyle.Render(fmt.Sprintf(">>> LIVE SIMULATION RUNNING (Scaled 0.5x for demo): %.1fs elapsed...", m.ElapsedTime.Seconds())))
+		sb.WriteString("\n\n")
 	} else {
-		sb.WriteString(dimStyle.Render("Status: Idle. Press [r] to run live scaled simulation.") + "\n\n")
+		sb.WriteString(dimStyle.Render("Status: Idle. Press [r] to run live scaled simulation."))
+		sb.WriteString("\n\n")
 	}
 
 	// Simulation Results
 	if m.SimResults != nil {
-		sb.WriteString(sectionStyle.Render("3. SIMULATED PROFILE RESULTS (THEORETICAL OUTCOME)") + "\n")
+		sb.WriteString(sectionStyle.Render("3. SIMULATED PROFILE RESULTS (THEORETICAL OUTCOME)"))
+		sb.WriteString("\n")
 		sb.WriteString(fmt.Sprintf("%s %v\n", boldStyle.Render("Total Sleeptime Overhead:"), m.SimResults.TotalSleepDuration))
 		sb.WriteString(fmt.Sprintf("%s %v\n", boldStyle.Render("Total Actual Tool Work:  "), m.SimResults.TotalWorkDuration))
 
@@ -453,7 +462,8 @@ func (m Model) View() string {
 	}
 
 	// Shortcuts list
-	sb.WriteString(dimStyle.Render("==================================================================================") + "\n")
+	sb.WriteString(dimStyle.Render("=================================================================================="))
+	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf("%s adjust Node Sleep    %s adjust Level Sleep    %s toggle Concurrency\n", boldStyle.Render("[n]"), boldStyle.Render("[l]"), boldStyle.Render("[c]")))
 	sb.WriteString(fmt.Sprintf("%s adjust Node Work     %s change Topology      %s run Live Simulation    %s quit\n", boldStyle.Render("[w]"), boldStyle.Render("[t]"), boldStyle.Render("[r]"), boldStyle.Render("[q]")))
 

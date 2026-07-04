@@ -138,38 +138,25 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 	}
 
 	expectedTools := map[string]bool{
-		"tzro_run":                   false,
-		"tzro_status":                false,
-		"tzro_list_tasks":            false,
-		"tzro_configure_tools":       false,
-		"tzro_web_search":            false,
-		"tzro_memory_query":          false,
-		"tzro_memory_ingest":         false,
-		"tzro_kg_neighborhood":       false,
-		"tzro_kg_add_entity":         false,
-		"tzro_rag_context":           false,
-		"tzro_skills_list":           false,
-		"tzro_skills_get":            false,
-		"tzro_skills_relevant":       false,
-		"tzro_skills_add":            false,
-		"tzro_hook_list":             false,
-		"tzro_hook_approve":          false,
-		"tzro_resume":                false,
-		"tzro_observer_events":       false,
-		"tzro_observer_memories":     false,
+		// Tier 1: First-class tools
+		"tzro_run":        false,
+		"tzro_code":       false,
+		"tzro_status":     false,
+		"tzro_list_tasks": false,
+		"tzro_resume":     false,
+		"tzro_workflow":   false,
+		"tzro_restart":    false,
+		"tzro_dashboard":  false,
+		"tzro_schedule":   false,
+		// Tier 2: Merged action-dispatch tools
+		"tzro_hook":  false,
+		"tzro_model": false,
+		// Tier 3: Generic API escape hatch
+		"tzro_api": false,
+		// Infrastructure: Client tool dispatch
 		"tzro_register_client_tools": false,
 		"tzro_client_tool_list":      false,
 		"tzro_client_tool_submit":    false,
-		"tzro_model_list":            false,
-		"tzro_model_set":             false,
-		"tzro_completion":            false,
-		"tzro_classification":        false,
-		"tzro_activity_report":       false,
-		"tzro_sentinel_alerts":       false,
-		"tzro_sentinel_wake":         false,
-		"tzro_workflow":              false,
-		"tzro_schedule":              false,
-		"tzro_restart":               false,
 	}
 
 	for _, toolItem := range tools {
@@ -218,46 +205,46 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 		t.Errorf("Expected empty JSON array '[]' in tasks list, got: %s", text)
 	}
 
-	// 7. Test tzro_memory_ingest
-	ingestReq := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tzro_memory_ingest","arguments":{"type":"preference","content":"User prefers dark mode preference","confidence":0.9}}}`
+	// 7. Test tzro_api: memory_ingest
+	ingestReq := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"memory_ingest","params":{"type":"preference","content":"User prefers dark mode preference","confidence":0.9}}}}`
 	ingestRespStr := sendAndReceive(ingestReq)
 	if !strings.Contains(ingestRespStr, "success") {
-		t.Errorf("Expected successful memory ingest, got: %s", ingestRespStr)
+		t.Errorf("Expected successful memory ingest via tzro_api, got: %s", ingestRespStr)
 	}
 
-	// 8. Test tzro_memory_query
-	queryReq := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tzro_memory_query","arguments":{"query":"dark mode preference","limit":5}}}`
+	// 8. Test tzro_api: memory_query
+	queryReq := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"memory_query","params":{"query":"dark mode preference","limit":5}}}}`
 	queryRespStr := sendAndReceive(queryReq)
 	if !strings.Contains(queryRespStr, "prefers dark mode") {
 		t.Errorf("Expected queried memory to contain 'prefers dark mode', got: %s", queryRespStr)
 	}
 
-	// 9. Test tzro_kg_add_entity
-	addReq := `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tzro_kg_add_entity","arguments":{"node":{"id":"node_test_1","nodeType":"account","name":"Test Acme Corp","weight":1.0}}}}`
+	// 9. Test tzro_api: kg_add_entity
+	addReq := `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"kg_add_entity","params":{"node":{"id":"node_test_1","nodeType":"account","name":"Test Acme Corp","weight":1.0}}}}}`
 	addRespStr := sendAndReceive(addReq)
 	if !strings.Contains(addRespStr, "success") {
-		t.Errorf("Expected successful node addition, got: %s", addRespStr)
+		t.Errorf("Expected successful node addition via tzro_api, got: %s", addRespStr)
 	}
 
-	// 10. Test tzro_kg_neighborhood
-	nbReq := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"tzro_kg_neighborhood","arguments":{"entityId":"node_test_1","maxHops":1}}}`
+	// 10. Test tzro_api: kg_neighborhood
+	nbReq := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"kg_neighborhood","params":{"entityId":"node_test_1","maxHops":1}}}}`
 	nbRespStr := sendAndReceive(nbReq)
 	if !strings.Contains(nbRespStr, "node_test_1") || !strings.Contains(nbRespStr, "Test Acme Corp") {
 		t.Errorf("Expected neighborhood traversal to contain node_test_1 details, got: %s", nbRespStr)
 	}
 
-	// 11. Test tzro_rag_context
-	ragReq := `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tzro_rag_context","arguments":{"query":"Test Acme Corp","maxChars":2000}}}`
+	// 11. Test tzro_api: rag_context
+	ragReq := `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"rag_context","params":{"query":"Test Acme Corp","maxChars":2000}}}}`
 	ragRespStr := sendAndReceive(ragReq)
 	if !strings.Contains(ragRespStr, "Test Acme Corp") {
 		t.Errorf("Expected RAG context to include node Name 'Test Acme Corp', got: %s", ragRespStr)
 	}
 
-	// 12. Test tzro_skills_add
-	addSkillReq := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tzro_skills_add","arguments":{"name":"Acme Deployment SOP","triggerDescription":"trigger docker container sync on aws","sopContent":"# SOP Acme\nStep 1: Deploy"}}}`
+	// 12. Test tzro_api: skills_add
+	addSkillReq := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"skills_add","params":{"name":"Acme Deployment SOP","triggerDescription":"trigger docker container sync on aws","sopContent":"# SOP Acme\nStep 1: Deploy"}}}}`
 	addSkillRespStr := sendAndReceive(addSkillReq)
 	if !strings.Contains(addSkillRespStr, "success") {
-		t.Errorf("Expected successful skill addition, got: %s", addSkillRespStr)
+		t.Errorf("Expected successful skill addition via tzro_api, got: %s", addSkillRespStr)
 	}
 
 	// Parse generated skill ID
@@ -293,22 +280,22 @@ func TestMCPServer_HandshakeAndTools(t *testing.T) {
 		t.Fatalf("failed to extract skill ID from text: %s", addText)
 	}
 
-	// 13. Test tzro_skills_get
-	getReq := `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"tzro_skills_get","arguments":{"id":"` + skillID + `"}}}`
+	// 13. Test tzro_api: skills_get
+	getReq := `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"skills_get","params":{"id":"` + skillID + `"}}}}`
 	getRespStr := sendAndReceive(getReq)
 	if !strings.Contains(getRespStr, "Acme Deployment SOP") {
 		t.Errorf("Expected skill details in get response, got: %s", getRespStr)
 	}
 
-	// 14. Test tzro_skills_list
-	listSkillsReq := `{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"tzro_skills_list","arguments":{"limit":5}}}`
+	// 14. Test tzro_api: skills_list
+	listSkillsReq := `{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"skills_list","params":{"limit":5}}}}`
 	listSkillsRespStr := sendAndReceive(listSkillsReq)
 	if !strings.Contains(listSkillsRespStr, "Acme Deployment SOP") {
 		t.Errorf("Expected skill to be in list, got: %s", listSkillsRespStr)
 	}
 
-	// 15. Test tzro_skills_relevant
-	relReq := `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"tzro_skills_relevant","arguments":{"prompt":"docker container on aws","limit":5}}}`
+	// 15. Test tzro_api: skills_relevant
+	relReq := `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"tzro_api","arguments":{"endpoint":"skills_relevant","params":{"prompt":"docker container on aws","limit":5}}}}`
 	relRespStr := sendAndReceive(relReq)
 	if !strings.Contains(relRespStr, "Acme Deployment SOP") {
 		t.Errorf("Expected relevant skill 'Acme Deployment SOP' to match prompt, got: %s", relRespStr)
@@ -468,22 +455,22 @@ func TestMCPServer_ApprovalHookAndResume(t *testing.T) {
 		t.Fatalf("expected tzro_resume to succeed, got: %s", resumeRespStr)
 	}
 
-	// 8. Give it a moment to run and pause, then call tzro_hook_list
+	// 8. Give it a moment to run and pause, then call tzro_hook {action: "list"}
 	time.Sleep(500 * time.Millisecond)
-	listReq := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tzro_hook_list","arguments":{}}}`
+	listReq := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tzro_hook","arguments":{"action":"list"}}}`
 	listRespStr := sendAndReceive(listReq)
 	t.Logf("listRespStr: %s", listRespStr)
 
 	if !strings.Contains(listRespStr, "task-test-approval") || !strings.Contains(listRespStr, "node1") {
-		t.Fatalf("expected approval request to be listed in tzro_hook_list, got: %s", listRespStr)
+		t.Fatalf("expected approval request to be listed in tzro_hook {action: list}, got: %s", listRespStr)
 	}
 
-	// 9. Approve the node using tzro_hook_approve
-	approveReq := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tzro_hook_approve","arguments":{"taskId":"task-test-approval","nodeId":"node1"}}}`
+	// 9. Approve the node using tzro_hook {action: "approve"}
+	approveReq := `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tzro_hook","arguments":{"action":"approve","taskId":"task-test-approval","nodeId":"node1"}}}`
 	approveRespStr := sendAndReceive(approveReq)
 	t.Logf("approveRespStr: %s", approveRespStr)
 	if !strings.Contains(approveRespStr, "success") {
-		t.Fatalf("expected tzro_hook_approve to succeed, got: %s", approveRespStr)
+		t.Fatalf("expected tzro_hook approve to succeed, got: %s", approveRespStr)
 	}
 
 	// 10. Poll tzro_status until task transitions to completed
@@ -1408,25 +1395,29 @@ func TestMCPServer_EdgeCases(t *testing.T) {
 		}
 	}
 
-	// 5. Test validation cases
+	// 5. Test validation cases — first-class tools
 	assertValidationFail(2, "tzro_run", `{"prompt": ""}`, "prompt cannot be empty")
 	assertValidationFail(3, "tzro_run", `{"prompt": "   "}`, "prompt cannot be empty")
 	assertValidationFail(4, "tzro_status", `{"taskId": ""}`, "taskId cannot be empty")
-	assertValidationFail(5, "tzro_memory_query", `{"query": ""}`, "query cannot be empty")
-	assertValidationFail(6, "tzro_memory_ingest", `{"type": "fact", "content": ""}`, "content cannot be empty")
-	assertValidationFail(7, "tzro_memory_ingest", `{"type": "invalid_type", "content": "hello"}`, "invalid memory type")
-	assertValidationFail(8, "tzro_kg_add_entity", `{"node": {"id": "", "nodeType": "account", "name": "Acme"}}`, "node requires non-empty id, nodeType, and name")
-	assertValidationFail(9, "tzro_kg_add_entity", `{"edge": {"id": "edge1", "edgeType": "", "sourceId": "n1", "targetId": "n2"}}`, "edge requires non-empty id, edgeType, sourceId, and targetId")
-	assertValidationFail(10, "tzro_skills_add", `{"name": "", "triggerDescription": "desc", "sopContent": "sop"}`, "name, triggerDescription, and sopContent are required")
-	assertValidationFail(11, "tzro_skills_get", `{"id": ""}`, "id cannot be empty")
-	assertValidationFail(12, "tzro_skills_relevant", `{"prompt": ""}`, "prompt cannot be empty")
-	assertValidationFail(13, "tzro_hook_approve", `{"taskId": "", "nodeId": "node1"}`, "taskId and nodeId are required")
 	assertValidationFail(14, "tzro_resume", `{"taskId": ""}`, "taskId cannot be empty")
-	assertValidationFail(15, "tzro_completion", `{"systemPrompt": "sys", "userPrompt": ""}`, "userPrompt cannot be empty")
-	assertValidationFail(16, "tzro_classification", `{"input": "", "categories": ["A", "B"]}`, "input cannot be empty")
-	assertValidationFail(17, "tzro_classification", `{"input": "text", "categories": ["A"]}`, "at least 2 categories are required")
 	assertValidationFail(18, "tzro_client_tool_submit", `{"taskId": "", "nodeId": ""}`, "must provide either requestId or both taskId and nodeId")
-	assertValidationFail(19, "tzro_web_search", `{"query": ""}`, "query cannot be empty")
+
+	// Merged tool: tzro_hook
+	assertValidationFail(13, "tzro_hook", `{"action": "approve", "taskId": "", "nodeId": "node1"}`, "taskId and nodeId are required")
+
+	// Validation via tzro_api named functions
+	assertValidationFail(5, "tzro_api", `{"endpoint": "memory_query", "params": {"query": ""}}`, "query cannot be empty")
+	assertValidationFail(6, "tzro_api", `{"endpoint": "memory_ingest", "params": {"type": "fact", "content": ""}}`, "content cannot be empty")
+	assertValidationFail(7, "tzro_api", `{"endpoint": "memory_ingest", "params": {"type": "invalid_type", "content": "hello"}}`, "invalid memory type")
+	assertValidationFail(8, "tzro_api", `{"endpoint": "kg_add_entity", "params": {"node": {"id": "", "nodeType": "account", "name": "Acme"}}}`, "node requires non-empty id, nodeType, and name")
+	assertValidationFail(9, "tzro_api", `{"endpoint": "kg_add_entity", "params": {"edge": {"id": "edge1", "edgeType": "", "sourceId": "n1", "targetId": "n2"}}}`, "edge requires non-empty id, edgeType, sourceId, and targetId")
+	assertValidationFail(10, "tzro_api", `{"endpoint": "skills_add", "params": {"name": "", "triggerDescription": "desc", "sopContent": "sop"}}`, "name, triggerDescription, and sopContent are required")
+	assertValidationFail(11, "tzro_api", `{"endpoint": "skills_get", "params": {"id": ""}}`, "id is required")
+	assertValidationFail(12, "tzro_api", `{"endpoint": "skills_relevant", "params": {"prompt": ""}}`, "prompt is required")
+	assertValidationFail(15, "tzro_api", `{"endpoint": "completion", "params": {"systemPrompt": "sys", "userPrompt": ""}}`, "userPrompt cannot be empty")
+	assertValidationFail(16, "tzro_api", `{"endpoint": "classification", "params": {"input": "", "categories": ["A", "B"]}}`, "input cannot be empty")
+	assertValidationFail(17, "tzro_api", `{"endpoint": "classification", "params": {"input": "text", "categories": ["A"]}}`, "at least 2 categories are required")
+	assertValidationFail(19, "tzro_api", `{"endpoint": "web_search", "params": {"query": ""}}`, "query cannot be empty")
 }
 
 // --- tzro_workflow unit tests ---

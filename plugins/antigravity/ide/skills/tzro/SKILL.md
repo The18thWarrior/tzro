@@ -78,6 +78,7 @@ The 26 tzro MCP tools are organized into functional groups. Read `references/mcp
 | Tool | Purpose |
 |------|---------|
 | `tzro_run` | Plan, compile, and execute a durable DAG from a natural language prompt |
+| `tzro_code` | Generate or update code for a single file using the local model |
 | `tzro_status` | Check execution status, node states, and outcomes of a task |
 | `tzro_resume` | Resume a paused/interrupted task |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status |
@@ -127,6 +128,11 @@ The 26 tzro MCP tools are organized into functional groups. Read `references/mcp
 | `tzro_model_set` | Change the active local LLM model (downloads and swaps sidecars) |
 | `tzro_observer_events` | Retrieve observer verification/audit telemetry |
 | `tzro_observer_memories` | List memories synthesized by the background Observer Agent |
+
+### Code Generation
+| Tool | Purpose |
+|------|---------|
+| `tzro_code` | Offload code generation or surgical file updates to the local engine |
 
 ## DAG Prompt Design Rules
 
@@ -186,6 +192,20 @@ Use tzro_rag_context to retrieve semantically relevant context for augmented res
 
 # Traverse knowledge graph
 Use tzro_kg_neighborhood to explore entity relationships starting from a known node.
+
+# Local Code Generation
+Use tzro_code to offload code writing.
+- Use mode: "full" for new files (limit 500 lines).
+- Use mode: "diff" for surgical updates to existing files.
+
+## 🚀 High-Reliability Prompting (Tier 4+ Hardening)
+When delegating complex architectural tasks (especially to local 4B models):
+
+1. **Explicit Technical Anchors**: Always use `IMPORTANT:` with a numbered list of mandatory signatures, return types, and error codes.
+2. **Pattern Locking**: Mandate specific idiomatic patterns (e.g., "Use Go closures", "Implement exhaustive type switches").
+3. **Threshold Management**: Set `ActivationThreshold: 0.0` for tasks with known targets to bypass redundant exploration loops.
+4. **Validation Gates**: Follow every `write_file` with a `read_file` or a compile/test check within the same task.
+5. **Deterministic Exit**: Always end complex prompts with a clear "Save to [PATH] and EXIT" signal.
 ```
 
 ## CLI Fallback

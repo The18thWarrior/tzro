@@ -139,6 +139,7 @@ func TestRunComparisonSuite_RunsSingleConditionForFilteredTier(t *testing.T) {
 	}
 
 	opts := SuiteOptions{
+		Category:      CategoryDocgen,      // Pin to docgen (default is now both categories)
 		Tier:          1,                   // Only T1
 		Condition:     ConditionCloudReAct, // Only the ReAct condition (no daemon needed)
 		OutputDir:     outputDir,

@@ -53,14 +53,29 @@ var ErrTaskPaused = fmt.Errorf("task execution paused by hook")
 type ExecutionEngine struct {
 	Publisher      telemetry.EventPublisher
 	EdgeThoughtGen EdgeThoughtInference // optional: enables neural edge traversal (ADR-0024)
+	ProgressGuard  *GoalProgressGuard   // optional: prevents sufficiency hallucinations
 	hooks          []ExecutionHook
 	mutex          sync.Mutex
+	Sequential     bool // If true, execute nodes one by one (ADR-0040)
 }
 
 func (e *ExecutionEngine) RegisterHook(h ExecutionHook) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	e.hooks = append(e.hooks, h)
+}
+
+// UnregisterHook removes a specific hook by pointer identity.
+// Used for task-scoped hooks that should be cleaned up after execution.
+func (e *ExecutionEngine) UnregisterHook(h ExecutionHook) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	for i, existing := range e.hooks {
+		if existing == h {
+			e.hooks = append(e.hooks[:i], e.hooks[i+1:]...)
+			return
+		}
+	}
 }
 
 func (e *ExecutionEngine) getHooksUnlocked() []ExecutionHook {
@@ -85,7 +100,10 @@ func (e *ExecutionEngine) getPublisher() telemetry.EventPublisher {
 	return telemetry.Default
 }
 
-var GlobalEngine = &ExecutionEngine{}
+var GlobalEngine = &ExecutionEngine{
+	EdgeThoughtGen: &DefaultEdgeThoughtInference{},
+	ProgressGuard:  &GoalProgressGuard{},
+}
 
 const CacheExplorationGuide = `
 
@@ -124,6 +142,10 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 
 	fmt.Fprintf(os.Stderr, "[Executor] Starting execution for Task %s with %d topological levels (budget: %s, multiplier: %.1fx)...\n", graph.TaskID, len(levels), budget, multiplier)
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", fmt.Sprintf("Task execution initiated (budget: %s)", budget))
+
+	// Pre-task GC: Clear KV cache slots from previous tasks to prevent
+	// memory pressure degradation in sequential runs (e.g., benchmarks).
+	_ = inference.GlobalLocalModel.TriggerGC(budgetCtx)
 
 	// Resilient task resumption: Cache the execution graph for recovery/resume
 	db := memory.DB.RawDB()
@@ -550,10 +572,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			msgs := buildSegmentedMessages(staticBase, accumulatedCtx, validatorSchemaStr, instruction, true)
 
 			req := inference.StructuredInferenceRequest{
-				Messages:   msgs,
-				JSONSchema: "", // No GBNF constraint — free-form XML generation
-				StreamMeta: &meta,
-				TaskID:     taskID,
+				Messages:    msgs,
+				JSONSchema:  "", // No GBNF constraint — free-form XML generation
+				StreamMeta:  &meta,
+				TaskID:      taskID,
+				IsLowStakes: true,
 			}
 
 			isBenchmark := ctx.Value("is_benchmark") != nil
@@ -756,10 +779,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			detMsgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, detInstruction, false)
 
 			detReq := inference.StructuredInferenceRequest{
-				Messages:   detMsgs,
-				JSONSchema: schemaStr,
-				StreamMeta: &meta,
-				TaskID:     taskID,
+				Messages:    detMsgs,
+				JSONSchema:  schemaStr,
+				StreamMeta:  &meta,
+				TaskID:      taskID,
+				IsLowStakes: true,
 			}
 
 			detResult, detErr := inference.GlobalLocalModel.ExecuteStructured(ctx, detReq)
@@ -882,6 +906,8 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	}
 
 	// 1.3 Probe node: autonomous Thought Chain exploration (ADR-0019)
+	// We have restored the native probe execution path to prevent the quality loss
+	// associated with flattening exploration into single action nodes (ADR-0035 rollback).
 	if node.Type == "probe" {
 		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
 		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Probe: "+node.Instructions)
@@ -906,8 +932,39 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			probeConfig = *node.ProbeConfig
 		}
 
+		// Inject the original task spec/goal so the Probe knows the actual
+		// requirements (e.g., target language) even when the workspace context
+		// suggests different patterns. Only set if not already provided by planner.
+		if probeConfig.TaskContext == "" && graph.GoalPrompt != "" {
+			probeConfig.TaskContext = graph.GoalPrompt
+		}
+
+		// Collect binding keys that downstream nodes need from this probe's output.
+		// Scan all nodes' DynamicBindings for references to this probe node (format:
+		// "probeNodeId.output.propertyName") and extract the property names. These
+		// keys will be injected into the synthesis schema so the GBNF grammar forces
+		// the local model to produce them as structured JSON fields.
+		var downstreamBindingKeys []string
+		bindingKeySet := make(map[string]bool)
+		for _, otherNode := range graph.Nodes {
+			for _, rawBinding := range otherNode.DynamicBindings {
+				bindingPath := fmt.Sprintf("%v", rawBinding)
+				parts := strings.SplitN(bindingPath, ".", 3) // ["nodeId", "output", "propertyName"]
+				if len(parts) == 3 && parts[0] == node.ID && parts[1] == "output" {
+					key := parts[2]
+					if !bindingKeySet[key] && key != "synthesis" {
+						bindingKeySet[key] = true
+						downstreamBindingKeys = append(downstreamBindingKeys, key)
+					}
+				}
+			}
+		}
+		if len(downstreamBindingKeys) > 0 {
+			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: downstream binding keys: %v\n", node.ID, downstreamBindingKeys)
+		}
+
 		probeEngine := &DefaultProbeInference{}
-		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine)
+		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, downstreamBindingKeys)
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
 			return fmt.Errorf("probe node %s execution failed: %w", node.ID, err)
@@ -935,6 +992,80 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 
 		nodeStatus := fmt.Sprintf("[Probe] %s", synthesis)
+		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
+		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+		return nil
+	}
+
+	// 1.4 Recall node: discovery-synthesis alignment (ADR-0038)
+	if node.Type == "recall" {
+		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Recall: "+node.Instructions)
+
+		// Identify all upstream probe nodes recursively to ensure full context recall (ADR-0041)
+		var upstreamNodeIDs []string
+		visited := make(map[string]bool)
+		var findProbes func(string)
+		findProbes = func(currentID string) {
+			if visited[currentID] {
+				return
+			}
+			visited[currentID] = true
+			for _, edge := range graph.Edges {
+				if edge.TargetID == currentID {
+					parentID := edge.SourceID
+					// Check if parent is a probe
+					for _, n := range graph.Nodes {
+						if n.ID == parentID && n.Type == "probe" {
+							upstreamNodeIDs = append(upstreamNodeIDs, parentID)
+						}
+					}
+					findProbes(parentID)
+				}
+			}
+		}
+		findProbes(node.ID)
+
+		recallEngine := &DefaultProbeInference{}
+		synthesis, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
+		if err != nil {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
+			return fmt.Errorf("recall node %s execution failed: %w", node.ID, err)
+		}
+
+		// Run AfterNode hooks
+		var nodeAfterAction HookAction = ActionContinue
+		for _, h := range activeHooks {
+			action, err := h.AfterNode(ctx, taskID, node, &synthesis)
+			if err != nil {
+				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
+			}
+			if action == ActionAbort {
+				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
+			}
+			if action == ActionPause {
+				nodeAfterAction = ActionPause
+			}
+		}
+
+		if nodeAfterAction == ActionPause {
+			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
+			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
+			return ErrTaskPaused
+		}
+
+		nodeStatus := fmt.Sprintf("[Recall] %s", synthesis)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
 		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
 		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
@@ -1088,6 +1219,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, inferenceResult)
 		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
 
 		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
@@ -1116,6 +1248,19 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			Type:    "node_state",
 			Content: string(statePayload),
 		})
+	}
+
+	// Tool-existence validation with classification fallback.
+	// If the planner hallucinated a tool name (or if this is a rewritten probe node with no action),
+	// try to classify it to a real tool.
+	if tools.GetTool(node.Action) == nil {
+		resolved := classifyToolName(ctx, node.Action, node.Instructions)
+		if resolved != "" {
+			fmt.Fprintf(os.Stderr, "[Executor] Tool validation: hallucinated '%s' → classified as '%s'\n", node.Action, resolved)
+			node.Action = resolved
+		} else {
+			return fmt.Errorf("tool '%s' is not registered and could not be classified to a known tool", node.Action)
+		}
 	}
 
 	// 2. Dynamic GBNF Schema selection
@@ -1200,7 +1345,8 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	var inferenceResult string
 	var err error
 
-	var isCacheExploration = strings.Contains(strings.ToLower(interpolatedPrompt), "cacheid") || strings.Contains(strings.ToLower(interpolatedPrompt), "cache_")
+	var cacheIdRe = regexp.MustCompile(`(?i)(cacheId|cache_[a-zA-Z0-9]{8,})`)
+	var isCacheExploration = cacheIdRe.MatchString(interpolatedPrompt)
 
 	// P0 Fix (13:00): Use accumulated context architecture instead of flat interpolated prompt.
 	// Upstream node outputs are passed as labeled structured blocks, enabling the bridge
@@ -1228,10 +1374,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 		msgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, instruction, false)
 		req = inference.StructuredInferenceRequest{
-			Messages:   msgs,
-			JSONSchema: schemaStr,
-			StreamMeta: &meta,
-			TaskID:     taskID,
+			Messages:    msgs,
+			JSONSchema:  schemaStr,
+			StreamMeta:  &meta,
+			TaskID:      taskID,
+			IsLowStakes: true,
 		}
 	} else {
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, ragCtx, interpolatedPrompt)
@@ -2010,6 +2157,12 @@ func coerceStringArguments(args map[string]interface{}, instruction string, tool
 		isHallucinated := !isEmpty && !strings.Contains(instructionLower, valLower)
 
 		if !isEmpty && !isHallucinated {
+			continue
+		}
+
+		// Protection: If the value looks like a valid path or identifier, don't coerce it
+		// even if it's "hallucinated" (i.e. not in the prose instruction)
+		if !isEmpty && (strings.Contains(strVal, "/") || strings.Contains(strVal, "\\") || strings.HasSuffix(strVal, ".md") || strings.HasSuffix(strVal, ".go")) {
 			continue
 		}
 

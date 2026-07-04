@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tzro/internal/channel"
+	"tzro/internal/codegen"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/executor"
@@ -247,6 +248,393 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 		respMap := map[string]interface{}{
 			"taskId": taskID,
 			"status": "running",
+		}
+		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+	}
+}
+
+// tzro_code tool definition
+
+// TzroCodeArgs defines the inputs for the tzro_code code generation tool.
+type TzroCodeArgs struct {
+	Spec       string `json:"spec" jsonschema:"required,The specification or JSDoc describing what to generate"`
+	Filepath   string `json:"filepath" jsonschema:"required,Absolute path to the target file to create or update"`
+	Language   string `json:"language,omitempty" jsonschema:"Programming language override. Auto-detected from file extension if omitted"`
+	MaxLines   int    `json:"maxLines,omitempty" jsonschema:"Maximum lines for generated file. Default: 500 or config codeMaxLines"`
+	Timeout    int    `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 120"`
+	Mode       string `json:"mode,omitempty" jsonschema:"Code generation mode: 'full' (whole file), 'diff' (structured hunks), or '' (auto-select). Auto: new/small files use full, large files use diff"`
+	Pseudocode string `json:"pseudocode,omitempty" jsonschema:"Structured pseudo-code to expand into source code. When provided, the local model expands this into compilable code instead of generating from spec alone. Use when the task exceeds T1 complexity."`
+}
+
+// maxFullRewriteLines is the hard limit for whole-file rewrite mode.
+// Files exceeding this must use diff mode to prevent truncation data loss.
+const maxFullRewriteLines = 500
+
+// autoModeDiffThreshold is the line count above which auto-mode selects diff
+// instead of full. Set lower than the hard guard to prefer diff early.
+const autoModeDiffThreshold = 200
+
+func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCodeArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.Spec) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "spec cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+	if strings.TrimSpace(args.Filepath) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "filepath cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	taskID := uuid.New().String()
+	timeoutSec := args.Timeout
+	if timeoutSec <= 0 {
+		timeoutSec = 120
+	}
+
+	// Resolve maxLines: arg → config → default 500
+	maxLines := args.MaxLines
+	if maxLines <= 0 {
+		cfg := config.Get()
+		if cfg.CodeMaxLines > 0 {
+			maxLines = cfg.CodeMaxLines
+		} else {
+			maxLines = 500
+		}
+	}
+
+	// Detect language from extension if not provided
+	language := args.Language
+	if language == "" {
+		language = codegen.DetectLanguage(args.Filepath)
+	}
+
+	// Pre-compute context: pure Go, no LLM (design spec: "No LLM. Pure Go logic.")
+	allowedPaths := tools.GetAllowedPaths()
+	if strings.Contains(args.Filepath, "tzro_benchmark_") || strings.Contains(args.Filepath, "tzro_codegen_") {
+		allowedPaths = append(allowedPaths, filepath.Dir(args.Filepath))
+	}
+	validator := tools.NewPathValidator(allowedPaths)
+	codeCtx, ctxErr := codegen.GatherContext(args.Filepath, validator)
+	if ctxErr != nil {
+		// Non-fatal: proceed with nil context (new file creation case)
+		fmt.Fprintf(os.Stderr, "[tzro_code] GatherContext warning: %v\n", ctxErr)
+		codeCtx = &codegen.CodeContext{
+			Language: language,
+			Siblings: make(map[string]string),
+		}
+	}
+
+	// --- Mode resolution ---
+	mode := args.Mode
+
+	// Validate mode value
+	if mode != "" && mode != "full" && mode != "diff" {
+		errJSON := fmt.Sprintf(`{"error": "Invalid mode %q. Must be 'full', 'diff', or '' (auto-select)."}`, mode)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: errJSON},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Diff mode requires an existing file
+	if mode == "diff" && !codeCtx.Exists {
+		errJSON := fmt.Sprintf(
+			`{"error": "Cannot use mode \"diff\" for %s: file does not exist. Use mode \"full\" for new file creation."}`,
+			args.Filepath,
+		)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: errJSON},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// Auto-mode selection
+	if mode == "" {
+		if !codeCtx.Exists {
+			mode = "full" // New file creation → whole file
+		} else {
+			existingLines := strings.Count(codeCtx.ExistingContent, "\n")
+			if existingLines > autoModeDiffThreshold {
+				mode = "diff" // Large existing file → diff mode
+			} else {
+				mode = "full" // Small existing file → whole file OK
+			}
+		}
+	}
+
+	// File size guard: files > 500 lines MUST use diff mode
+	if codeCtx.Exists && mode != "diff" {
+		existingLines := strings.Count(codeCtx.ExistingContent, "\n")
+		if existingLines > maxFullRewriteLines {
+			respMap := map[string]interface{}{
+				"status": "failed",
+				"taskId": "",
+				"error": fmt.Sprintf(
+					"File %s has %d lines (limit: %d for full rewrite). "+
+						"Use mode: \"diff\" for surgical edits, or decompose the file into "+
+						"smaller single-responsibility files.",
+					args.Filepath, existingLines, maxFullRewriteLines,
+				),
+				"suggestion": "diff",
+			}
+			respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: string(respBytes)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "[tzro_code] Mode=%s for %s\n", mode, args.Filepath)
+
+	// Route via pseudo-code availability and complexity classification:
+	//   pseudocode provided → expansion DAG (any complexity)
+	//   no pseudocode → direct generation (complexity logged for observability)
+	var graph *compiler.ExecutionGraph
+
+	if strings.TrimSpace(args.Pseudocode) != "" {
+		// Pseudo-code expansion mode: local model expands pseudo-code into source
+		fmt.Fprintf(os.Stderr, "[tzro_code] Pseudo-code expansion mode for %s\n", args.Filepath)
+		graph = codegen.BuildPseudocodeExpansionDAG(taskID, args.Pseudocode, args.Spec, args.Filepath, language, maxLines, codeCtx)
+	} else {
+		// Classify complexity (informational — used for logging and benchmark routing)
+		tier := classifyCodeComplexity(args.Spec, codeCtx)
+		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, proceeding with direct generation for %s\n", tier, args.Filepath)
+
+		switch mode {
+		case "diff":
+			graph = codegen.BuildDiffDAG(taskID, args.Spec, args.Filepath, language, codeCtx)
+		default:
+			graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
+		}
+	}
+
+	type execResult struct {
+		nodes []memory.NodeState
+		err   error
+	}
+
+	doneChan := make(chan execResult, 1)
+
+	go func() {
+		// Register the compilation gate hook for this task's execution.
+		// It runs the compiler on source_code nodes and enriches their output
+		// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
+		compilationHook := &codegen.CompilationGateHook{
+			FilePath: args.Filepath,
+			Language: language,
+			Spec:     args.Spec,
+		}
+		executor.GlobalEngine.RegisterHook(compilationHook)
+		defer executor.GlobalEngine.UnregisterHook(compilationHook)
+
+		execOpts := task.ExecuteOptions{
+			TaskID:       taskID,
+			IntentType:   "codegen",
+			IsForeground: true,
+		}
+		_, err := task.ExecuteStatic(context.Background(), graph, execOpts)
+		_ = err
+		nodes := memory.DB.GetAllNodeStates(taskID)
+
+		// Check if any node failed
+		var taskErr error
+		for _, n := range nodes {
+			if n.Status == "failed" {
+				taskErr = fmt.Errorf("node %s failed: %s", n.NodeID, n.Output)
+				break
+			}
+		}
+		doneChan <- execResult{nodes: nodes, err: taskErr}
+	}()
+
+	select {
+	case res := <-doneChan:
+		status := "completed"
+		var errMsg string
+		if res.err != nil {
+			status = "failed"
+			errMsg = res.err.Error()
+		}
+
+		respMap := map[string]interface{}{
+			"taskId":   taskID,
+			"status":   status,
+			"filepath": args.Filepath,
+			"language": language,
+			"mode":     mode,
+		}
+		if mode == "full" {
+			respMap["maxLines"] = maxLines
+		}
+		if errMsg != "" {
+			respMap["error"] = errMsg
+		}
+
+		// Post-process: extract reason_code output, write file (pure Go)
+		if status == "completed" {
+			var rawCode string
+			for _, n := range res.nodes {
+				if n.NodeID == "reason_code" && n.Status == "completed" {
+					rawCode = n.RawOutput
+					if rawCode == "" {
+						rawCode = n.Output
+					}
+				}
+			}
+
+			if rawCode == "" {
+				respMap["status"] = "failed"
+				respMap["error"] = "reason_code produced no output"
+			} else {
+				// Quality gate: structural validation before writing
+				cleanedForGate := codegen.StripMarkdownFences(rawCode)
+				gateResult := codegen.RunStructuralQualityGate(cleanedForGate, language)
+				if !gateResult.Pass {
+					fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed: %s\n", gateResult.Reason)
+					respMap["status"] = "failed"
+					respMap["error"] = fmt.Sprintf("quality gate: %s", gateResult.Reason)
+				} else {
+					// Quality gate passed — write the file
+					switch mode {
+					case "diff":
+						// Parse structured diff output
+						var diffOutput codegen.DiffOutput
+						rawJSON := rawCode
+						// Try direct parse; fallback to stripping markdown fences
+						if err := json.Unmarshal([]byte(rawJSON), &diffOutput); err != nil {
+							stripped := codegen.StripMarkdownFences(rawJSON)
+							if err2 := json.Unmarshal([]byte(stripped), &diffOutput); err2 != nil {
+								respMap["status"] = "failed"
+								respMap["error"] = fmt.Sprintf("diff output parse failed: %v", err)
+								break
+							}
+						}
+
+						if len(diffOutput.Hunks) == 0 {
+							respMap["status"] = "failed"
+							respMap["error"] = "diff output contained no hunks"
+							break
+						}
+
+						// Apply hunks to existing content
+						patched, applyErr := codegen.ApplyDiffHunks(codeCtx.ExistingContent, diffOutput.Hunks)
+						if applyErr != nil {
+							respMap["status"] = "failed"
+							respMap["error"] = fmt.Sprintf("diff application failed: %v", applyErr)
+						} else {
+							// Write patched file
+							if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
+								fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
+							}
+							if writeErr := os.WriteFile(args.Filepath, []byte(patched), 0644); writeErr != nil {
+								respMap["status"] = "failed"
+								respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
+							} else {
+								totalLines := strings.Count(patched, "\n")
+								linesChanged := 0
+								for _, h := range diffOutput.Hunks {
+									linesChanged += strings.Count(h.ReplaceContent, "\n") + 1
+								}
+								respMap["action"] = "updated"
+								respMap["hunksApplied"] = len(diffOutput.Hunks)
+								respMap["linesChanged"] = linesChanged
+								respMap["totalLines"] = totalLines
+							}
+						}
+
+					default: // "full"
+						writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
+						if writeErr != nil {
+							respMap["status"] = "failed"
+							respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
+						} else {
+							respMap["action"] = writeAction
+							respMap["linesWritten"] = linesWritten
+
+							// Compilation gate results are embedded in the node output by the
+							// CompilationGateHook (AfterNode). Edge Thought spawning handles
+							// repair attempts via the MutationBudget (ADR-0036).
+							//
+							// Find the final source_code node's output to extract compilation status.
+							// This may be reason_code or a spawned repair node.
+							compilationInfo := map[string]interface{}{
+								"passed": true, // assume pass; override if we find FAILED
+							}
+
+							// Check all completed nodes for the last source_code output
+							for _, n := range res.nodes {
+								if n.Status == "completed" {
+									output := n.RawOutput
+									if output == "" {
+										output = n.Output
+									}
+									if strings.Contains(output, "## Compilation Result") {
+										if strings.Contains(output, "FAILED") {
+											compilationInfo["passed"] = false
+											// Extract error text after "FAILED\n"
+											if idx := strings.Index(output, "FAILED\n"); idx >= 0 {
+												errText := output[idx+len("FAILED\n"):]
+												if endIdx := strings.Index(errText, "\n\n##"); endIdx > 0 {
+													errText = errText[:endIdx]
+												}
+												compilationInfo["errors"] = strings.TrimSpace(errText)
+											}
+										}
+									}
+								}
+							}
+
+							// Check if repair was attempted (spawned nodes exist)
+							for _, n := range res.nodes {
+								if strings.HasPrefix(n.NodeID, "spawned_") {
+									compilationInfo["repairAttempted"] = true
+									// Check mutation budget exhaustion
+									if compilationInfo["passed"] == false && graph.MutationBudget != nil && graph.MutationBudget.RemainingSpawns == 0 {
+										compilationInfo["budgetExhausted"] = true
+									}
+									break
+								}
+							}
+
+							respMap["compilation"] = compilationInfo
+						}
+					} // end switch mode
+				} // end quality gate else (passed)
+			} // end rawCode non-empty
+		} // end status == completed
+
+		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: string(respBytes)},
+			},
+		}, nil, nil
+
+	case <-time.After(time.Duration(timeoutSec) * time.Second):
+		respMap := map[string]interface{}{
+			"taskId":   taskID,
+			"status":   "running",
+			"filepath": args.Filepath,
+			"message":  "Code generation is still in progress. Use tzro_status to check completion.",
 		}
 		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 		return &mcp.CallToolResult{
@@ -829,6 +1217,32 @@ func handleTzroSkillsAdd(ctx context.Context, req *mcp.CallToolRequest, args Tzr
 			&mcp.TextContent{Text: string(respBytes)},
 		},
 	}, nil, nil
+}
+
+// TzroHookArgs defines the inputs for the merged tzro_hook tool.
+type TzroHookArgs struct {
+	Action string `json:"action" jsonschema:"required,Action to perform: list or approve"`
+	TaskID string `json:"taskId,omitempty" jsonschema:"The task ID to approve (required for approve action)"`
+	NodeID string `json:"nodeId,omitempty" jsonschema:"The node ID to approve (required for approve action)"`
+}
+
+func handleTzroHook(ctx context.Context, req *mcp.CallToolRequest, args TzroHookArgs) (*mcp.CallToolResult, any, error) {
+	switch strings.ToLower(strings.TrimSpace(args.Action)) {
+	case "list":
+		return handleTzroHookList(ctx, req, TzroHookListArgs{})
+	case "approve":
+		return handleTzroHookApprove(ctx, req, TzroHookApproveArgs{
+			TaskID: args.TaskID,
+			NodeID: args.NodeID,
+		})
+	default:
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "unknown action '%s'. Valid actions: list, approve"}`, args.Action)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
 }
 
 // TzroHookListArgs defines inputs for tzro_hook_list.
@@ -2205,10 +2619,17 @@ func handleTzroDashboardSpec(ctx context.Context, req *mcp.CallToolRequest, args
 }
 
 func registerTools(server *mcp.Server) {
+	// --- Tier 1: First-class tools (high frequency, core execution) ---
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
 		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt." + runDelegationHint(),
 	}, handleTzroRun)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_code",
+		Description: "Generate or update a single file via local LLM codegen. Supports two modes: 'full' (whole-file rewrite, default for new/small files) and 'diff' (structured hunk edits, default for files >200 lines). Files >500 lines MUST use diff mode. Pass a spec/JSDoc and filepath.",
+	}, handleTzroCode)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_status",
@@ -2221,84 +2642,70 @@ func registerTools(server *mcp.Server) {
 	}, handleTzroListTasks)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_configure_tools",
-		Description: "Configure and provision external MCP server hosts dynamically that tzro can use during DAG planning and execution.",
-	}, handleTzroConfigureTools)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_web_search",
-		Description: "Execute a multi-engine web search using tiered fallback (Startpage, Brave, Bing, DuckDuckGo). Returns ranked results with titles, URLs, and snippets.",
-	}, handleTzroWebSearch)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_memory_query",
-		Description: "Query fact memories and knowledge graph nodes using hybrid semantic/text similarity.",
-	}, handleTzroMemoryQuery)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_memory_ingest",
-		Description: "Ingest a new fact memory into the sqlite database, embedding it if active.",
-	}, handleTzroMemoryIngest)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_kg_neighborhood",
-		Description: "Traverse the connected entities in the knowledge graph starting from a node up to max hops.",
-	}, handleTzroKgNeighborhood)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_kg_add_entity",
-		Description: "Add or update nodes and/or edge relationships in the relational knowledge graph.",
-	}, handleTzroKgAddEntity)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_rag_context",
-		Description: "Get graph-RAG context retrieved semantically for a natural language query.",
-	}, handleTzroRagContext)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_list",
-		Description: "List all micro-skills and SOPs registered in the tzro database.",
-	}, handleTzroSkillsList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_get",
-		Description: "Get full details of a specific SOP skill by its ID.",
-	}, handleTzroSkillsGet)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_relevant",
-		Description: "Find relevant micro-skills and SOPs using dynamic semantic search.",
-	}, handleTzroSkillsRelevant)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_skills_add",
-		Description: "Add a new SOP micro-skill to enable bidirectional execution coordination.",
-	}, handleTzroSkillsAdd)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_hook_list",
-		Description: "List human-in-the-loop workflow approval requests awaiting action.",
-	}, handleTzroHookList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_hook_approve",
-		Description: "Approve a paused human-in-the-loop task execution step and trigger resumption.",
-	}, handleTzroHookApprove)
-
-	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_resume",
 		Description: "Manually resume execution of a paused/interrupted workflow task by its ID.",
 	}, handleTzroResume)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_observer_events",
-		Description: "Retrieve recent observer verification and audit telemetry logs.",
-	}, handleTzroObserverEvents)
+		Name: "tzro_workflow",
+		Description: "Create and execute a tzro DAG workflow by directly specifying nodes, edges, " +
+			"and execution parameters. Bypasses the LLM Strategic Planner — use when you have a " +
+			"pre-defined workflow structure. The graph is SCT-expanded (action nodes decomposed into " +
+			"bridge/exec pairs) and Kahn-sorted before execution. Supports dry-run validation, " +
+			"probe nodes, activation thresholds, mutation budgets, and human-in-the-loop approval gates.",
+	}, handleTzroWorkflow)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_observer_memories",
-		Description: "List memories dynamically synthesized by the background Observer Agent.",
-	}, handleTzroObserverMemories)
+		Name: "tzro_restart",
+		Description: "Restart the tzro daemon (tzrod) in-place using process re-exec. " +
+			"The daemon replaces itself with a fresh copy of the same binary, preserving the PID and pidlock. " +
+			"In-flight tasks are interrupted and recovered automatically on boot. " +
+			"The inference sidecar survives via process adoption. " +
+			"Returns the restart status and previous uptime. Proactivity Level: L3 (Reversible Action).",
+	}, handleTzroRestart)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tzro_dashboard",
+		Description: "Check spec status and return the HTTP dashboard URL, age, and status. Triggers initial generation if no spec exists.",
+	}, handleTzroDashboard)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_schedule",
+		Description: "Create, list, toggle, delete, or manually trigger scheduled workflows. " +
+			"Scheduled workflows use standard 5-field cron expressions and run durably inside the tzro daemon — " +
+			"they persist across restarts and do not depend on any conversation or agent session. " +
+			"Actions: create (requires name, cron, tasks), list, toggle (requires workflowId, status), " +
+			"delete (requires workflowId), trigger (requires workflowId for manual immediate execution).",
+	}, handleTzroSchedule)
+
+	// --- Tier 2: Merged action-dispatch tools ---
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_hook",
+		Description: "Manage human-in-the-loop workflow approval hooks. " +
+			"Actions: list (show pending approval requests), approve (approve a paused step by taskId and nodeId).",
+	}, handleTzroHook)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_model",
+		Description: "Manage local LLM models. " +
+			"Actions: list (show available GGUF models with download status and active indicator), " +
+			"set (change active model via modelId, ggufModelPath, or downloadUrl).",
+	}, handleTzroModel)
+
+	// --- Tier 3: Generic API escape hatch ---
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_api",
+		Description: "Generic API tool for less-frequently-used operations. Call named functions directly " +
+			"(completion, classification, compact, web_search, memory_query, memory_ingest, " +
+			"kg_neighborhood, kg_add_entity, rag_context, skills_list, skills_get, skills_relevant, " +
+			"skills_add, observer_events, observer_memories, activity_report, sentinel_alerts, " +
+			"sentinel_wake, configure_tools, schedule, apps_list, apps_install, apps_uninstall, " +
+			"dashboard_regenerate, dashboard_spec) or proxy to daemon HTTP endpoints (paths starting with /).",
+	}, handleTzroApi)
+
+	// --- Infrastructure: Client tool dispatch (MCP protocol-level, not user-facing) ---
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_register_client_tools",
@@ -2314,122 +2721,6 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_client_tool_submit",
 		Description: "Submit execution outcomes for a client-side tool to resume the paused workflow.",
 	}, handleTzroClientToolSubmit)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_model_list",
-		Description: "List available GGUF models from the catalog with download status, active model indicator, and local file paths.",
-	}, handleTzroModelList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_model_set",
-		Description: "Change the active local worker model. Accepts a catalog modelId, a direct ggufModelPath, or a downloadUrl. Stops the current sidecar, cleans up the old managed model file, updates config, and restarts with the new model.",
-	}, handleTzroModelSet)
-
-	// Local model delegation tools — enable cloud-to-local cost arbitrage
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_completion",
-		Description: "Run a prompt through the local on-device LLM for structured text generation. " +
-			"Use this for tasks that don't require frontier-model reasoning: " +
-			"summarization, extraction, reformatting, translation, boilerplate generation, " +
-			"and any task where output structure matters more than world knowledge. " +
-			"Supports optional JSON schema constraint (GBNF grammar) for guaranteed-valid structured output. " +
-			"Zero cost, zero latency to external APIs, fully private." + delegationHint(),
-	}, handleTzroCompletion)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_classification",
-		Description: "Classify arbitrary text into one of a fixed set of categories using the local on-device LLM " +
-			"with grammar-constrained output (GBNF). The model is forced to output exactly one of the provided labels — " +
-			"no hallucination possible. Use for sentiment analysis, intent routing, priority triage, " +
-			"content categorization, or any multi-class classification task. Zero cost, fully private." + delegationHint(),
-	}, handleTzroClassification)
-
-	// Sentinel Agent tools (ADR-0023)
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_activity_report",
-		Description: "Report current agent activity to the Sentinel for proactive context analysis. Called periodically by the cloud agent to enable richer proactive assistance.",
-	}, handleTzroActivityReport)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_sentinel_alerts",
-		Description: "Retrieve proactive insight alerts generated by the Sentinel Agent. Returns alerts filtered by status (default: unread). Marks returned unread alerts as read.",
-	}, handleTzroSentinelAlerts)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_sentinel_wake",
-		Description: "Manually trigger the Sentinel Agent's retrieval-grounded synthesis pipeline outside its normal heartbeat cadence. Use when you want an immediate proactive analysis — e.g., after completing a major code change, before a commit, or when the user explicitly asks for a Sentinel check. Accepts an optional contextHint to bias the analysis toward a specific topic.",
-	}, handleTzroSentinelWake)
-
-	// Direct workflow creation tool
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_workflow",
-		Description: "Create and execute a tzro DAG workflow by directly specifying nodes, edges, " +
-			"and execution parameters. Bypasses the LLM Strategic Planner — use when you have a " +
-			"pre-defined workflow structure. The graph is SCT-expanded (action nodes decomposed into " +
-			"bridge/exec pairs) and Kahn-sorted before execution. Supports dry-run validation, " +
-			"probe nodes, activation thresholds, mutation budgets, and human-in-the-loop approval gates.",
-	}, handleTzroWorkflow)
-
-	// Dashboard tools
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_dashboard",
-		Description: "Check spec status and return the HTTP dashboard URL, age, and status. Triggers initial generation if no spec exists.",
-	}, handleTzroDashboard)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_dashboard_regenerate",
-		Description: "Trigger immediate generation of the system dashboard spec, supporting optional wait blocking parameters.",
-	}, handleTzroDashboardRegenerate)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_dashboard_spec",
-		Description: "Return the current raw system dashboard spec JSON for debugging.",
-	}, handleTzroDashboardSpec)
-
-	// Agent App Package Manager tools (ADR-0031)
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_apps_list",
-		Description: "List all installed Agent Apps (.tzroapp packages) and their current status.",
-	}, handleTzroAppsList)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_apps_install",
-		Description: "Install an Agent App from a .tzroapp archive path. Extracts files, runs SQL migrations, registers tools, and indexes micro-skills.",
-	}, handleTzroAppsInstall)
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "tzro_apps_uninstall",
-		Description: "Uninstall an Agent App by its ID. Soft-disables the app by default (deregisters tools, preserves data). Set purge=true to permanently remove all data and tables.",
-	}, handleTzroAppsUninstall)
-
-	// Scheduled workflow management tool
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_schedule",
-		Description: "Create, list, toggle, delete, or manually trigger scheduled workflows. " +
-			"Scheduled workflows use standard 5-field cron expressions and run durably inside the tzro daemon — " +
-			"they persist across restarts and do not depend on any conversation or agent session. " +
-			"Actions: create (requires name, cron, tasks), list, toggle (requires workflowId, status), " +
-			"delete (requires workflowId), trigger (requires workflowId for manual immediate execution).",
-	}, handleTzroSchedule)
-
-	// Daemon lifecycle management
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_restart",
-		Description: "Restart the tzro daemon (tzrod) in-place using process re-exec. " +
-			"The daemon replaces itself with a fresh copy of the same binary, preserving the PID and pidlock. " +
-			"In-flight tasks are interrupted and recovered automatically on boot. " +
-			"The inference sidecar survives via process adoption. " +
-			"Returns the restart status and previous uptime. Proactivity Level: L3 (Reversible Action).",
-	}, handleTzroRestart)
-
-	// Conversation compaction tool
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "tzro_compact",
-		Description: "Compact a conversation history into a focused summary using the local model. " +
-			"Conversation-aware: preserves user corrections, explicit requirements, and final decisions " +
-			"while compressing assistant reasoning and dropping pleasantries. " +
-			"Use for pre-processing context before tzro_run submission (cost arbitrage — local model instead of frontier tokens)." + delegationHint(),
-	}, handleTzroCompact)
 }
 
 // --- Conversation Compaction MCP Tool ---

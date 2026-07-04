@@ -123,6 +123,7 @@ The compiler reads the Strategist's **Abstract Graph** and dynamically builds a 
    - **Deterministic Nodes (`deterministic`):** Execute the actual tool using the coerced parameters without LLM intervention.
    - **Terminal Synthesis Node (`synthesis`):** Injected at the leaf of the graph to summarize the results of all executions into a cohesive natural-language summary.
 4. **Proactive Binding Splice:** Strips deterministically-known parameter variables from the schema before the model plans, then splices them back in after parameter generation to prevent extraction failures.
+5. **Docgen Category Routing (v0.8.0):** The planner system prompt now includes explicit `Documentation & Exploration Rules (CategoryDocgen)` that mandate a single probe node for documentation generation, function indexing, and architecture analysis tasks. This prevents the planner from misrouting docgen tasks through multi-step action node pipelines, which fail because action nodes cannot observe intermediate exploration results.
 
 ### 3.3. Durable Execution Engine & Checkpointing
 
@@ -131,6 +132,7 @@ The executor processes sorted levels concurrently using Go goroutines:
 - **Cycle Budgets:** A counter (`MaxCycles`) decrements on loop executions, terminating the engine if it reaches zero to avoid infinite looping charges.
 - **Weighted Circuit Breaker (v0.7.3):** The executor computes a time budget per task based on the node composition of the DAG. Each node type has a defined budget (probe: 10min, action: 5min, deterministic/synthesis: 90s). A configurable `circuitBreakerMultiplier` (default 1.0) scales the total budget. When the budget expires, remaining pending nodes are marked `timed_out` and the `terminal_synthesis` node is preserved to produce a coherent final output.
 - **Tool Name Classification Fallback (v0.7.3):** At execution time, if a node references a tool that doesn't exist in the registry, the executor uses local inference to classify the hallucinated name to the closest real tool before failing.
+- **Failure Dampening Initialization (v0.8.0):** The executor automatically initializes the mutation budget (`maxSpawns` and `remainingSpawns`) if unset by the planner, preventing unbounded node spawning. Consecutive failure counters are tracked per-task and reset on successful activation.
 
 ```sql
 CREATE TABLE graph_node_states (
@@ -194,6 +196,7 @@ Decouples structured LLM inference from the core execution loop. Pluggable backe
 - **Relational Knowledge Graph (KG):** Maps cross-system entities and links (e.g. contact belongs to account).
 - **Hybrid Vector Search:** Runs FTS5 keyword indexing first to generate candidate pools, followed by local ONNX cosine similarity ranking.
 - **Neighborhood Multi-Hop Traversal:** Recursively queries adjacent edges up to $N$ hops to build a context subgraph for Graph-RAG injection.
+- **WAL Mode (v0.8.0):** The SQLite database now enables Write-Ahead Logging (`PRAGMA journal_mode=WAL`) on initialization, improving concurrent read/write performance and preventing locking issues during parallel benchmark and probe executions.
 
 ### 3.10. Background Agents & Attention Loop
 
@@ -211,12 +214,31 @@ The `internal/comparison/` package provides a structured framework for evaluatin
 - **ReAct Loop:** Multi-step reasoning for complex judging scenarios.
 - **Structured Reports:** Generates JSON and markdown reports with per-task breakdowns, latencies, token counts, and cost estimates.
 - **CLI Command:** `tzro compare` orchestrates the full comparison pipeline.
+- **Codegen Benchmark Conditions (v0.8.0):** The comparison framework supports codegen-specific conditions (`ConditionTzroCode`, `ConditionTzroDraft`, `ConditionCloudCode`) with language-specific seed files and pseudocode task definitions for evaluating code generation quality across execution modes.
+- **High-Reliability Prompting (v0.8.0):** Benchmark task prompts now employ hardened patterns for 4B local models: explicit technical anchors (`IMPORTANT:` with mandatory signatures), pattern locking (idiomatic code requirements), mandatory tool usage directives (`You MUST use write_file`), and deterministic exit signals (`Save to [PATH] and EXIT`). These patterns achieve 4.0+ quality scores on Tier 4-5 codegen tasks.
+- **Benchmark Run Loop (v0.8.0):** Shell script (`run_loop.sh`) for automated multi-iteration benchmark evaluation with averaging, retry on failure, and CSV summary output.
 
 ### 3.12. Extensibility & Sandboxing
 
 - **Agent Apps:** capability packages (`.tzroapp` archives) containing tool definitions, SQLite migrations, micro-skills, and manifests.
 - **Wazero WASM Sandboxing:** Executed via `wazero` to isolate custom Go or Rust tools with strict memory and filesystem bounds.
 - **Stdio MCP Host Gateway:** Spawns third-party tool servers (e.g., Slack, Postgres) locally over stdio pipes, injecting environment-delegated secrets.
+
+### 3.13. Code Generation Pipeline (`tzro_code`)
+
+The `internal/codegen/` package provides a static DAG pipeline for single-file code generation, exposed via the `tzro_code` MCP tool:
+
+- **Complexity-Based Routing (v0.8.0):** `ClassifyComplexity` evaluates spec length, existing file size, and language to route between **direct mode** (single-pass generation for simple tasks) and **draft mode** (two-phase generate → refine for complex tasks). This replaces the prior static 3-node DAG with dynamic graph construction.
+- **Context Gathering:** `GatherContext` reads the target file (if it exists) and up to 5 sibling files from the same directory, prioritizing same-extension files. Content-aware truncation from `internal/executor` is applied to files exceeding 15K characters (target) or 6K characters (siblings).
+- **Module Context Extraction (v0.8.0):** For Go files, `ExtractModuleContext` parses the package directory to extract exported type signatures, function declarations, and interface definitions — injected into the generation prompt to provide package-level awareness.
+- **Exemplar Injection (v0.8.0):** Language-specific code exemplars are injected into the generation prompt to bias the LLM toward idiomatic patterns (e.g., Go error handling, TypeScript type narrowing).
+- **Diff Mode (v0.8.0):** For updates to large existing files, the pipeline generates a structured diff patch instead of a full-file rewrite. `BuildDiffPrompt` produces a targeted prompt, and `ApplyDiff` applies the patch preserving unchanged sections. This prevents catastrophic file rewrites on minor edits.
+- **Compilation Quality Gate (v0.8.0):** After code generation, `RunCompilationGate` executes language-appropriate compilation checks (`go build`, `tsc --noEmit`, `python -m py_compile`, `node --check`). Failures trigger the repair pipeline.
+- **Edge Thought-Driven Repair (v0.8.0):** `CompilationGateHook` implements `ExecutionHook.AfterNode` to intercept compilation failures. It generates a structured repair prompt containing the original code, compilation errors, and language-specific reference patterns, then spawns a repair node via the executor's neural traversal mechanism. Failure dampening (3 consecutive failures) prevents infinite repair loops.
+- **Prompt Builder:** `BuildCodePrompt` assembles a structured prompt with spec, file path, language, action (create/update), existing content, sibling files, module context, and configurable line cap.
+- **Code Cleaning:** `CleanGeneratedCode` strips markdown fences from LLM output and enforces the `CodeMaxLines` cap (default 500, configurable via `codeMaxLines` in engine config).
+- **`write_file` Tool:** A filesystem tool with `ValidateWritePath` (allows writing to non-existent paths), automatic parent directory creation, backup-on-overwrite with LRU eviction at 50 files, and binary content rejection.
+- **Design Goal:** Structurally encourages compact, single-responsibility files by capping output and requiring a spec + filepath per invocation.
 
 ---
 
@@ -258,6 +280,8 @@ To optimize context usage and prevent the local model from becoming anchored by 
 - **`peek_file` tool:** A low-cost sampling tool that returns the first 20 lines of a file, encouraging the model to perform quick checks rather than costly `read_file` operations.
 - **Active Noise Filtering (`isNoisyEntry`):** Automatically hides OS clutter (`.DS_Store`), dependency trees (`node_modules`), build artifacts (`dist`, `.next`), and log/database files in both `list_dir` and `search_files` to keep the context clean.
 - **Directory Profiling (`computeDirProfile`):** Summarizes directory contents mathematically by file extensions (e.g., "45 .go, 3 .mod, 2 .sum, 8 directories"), providing context grounding without exposing individual filenames.
+- **Regex Pattern Search (v0.8.0):** `search_files` now uses Go `regexp.Compile` instead of substring matching, supporting full regex patterns for more precise codebase exploration. Invalid patterns return a structured error.
+- **Increased Tool Limits (v0.8.0):** `read_file` cap raised from 100 to 500 lines and `list_dir` cap raised from 20 to 100 entries, giving probe nodes access to larger code contexts in a single call.
 
 ### 4.6. Context Compaction API (`tzro_compact`)
 

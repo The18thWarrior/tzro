@@ -36,6 +36,14 @@ _Avoid_: Graph builder, sort pipeline
 A two-tier conditional execution engine that resolves branch skip decisions first via fast deterministic JSONPath comparisons and falls back to semantic Local Model inference if comparison fails, preventing incorrect path skipping.
 _Avoid_: Simple compiler, condition parser, LLM evaluator
 
+**Probe Node**:
+An autonomous execution node type that runs a bounded, multi-step **Thought Chain** exploration loop (research, directory traversal, file reading) using the **Local Model**. Persists its intermediate reasoning and tool outputs to the `thought_chain` table for durability and later recall.
+_Avoid_: Action Node (single-step), research agent, sub-task
+
+**Recall Node**:
+A specialized execution node injected automatically after a **Probe Node** by the **Kahn Compiler**. Offloads the responsibility of synthesis from the explorer to a synthesizer agent. Utilizes a **Map-Reduce Recall** strategy: it first maps the execution history to identify "Signal" vs "Sludge," then performs targeted extraction on the "Signal" chunks, and finally synthesizes an aligned response. This prevents the "Synthesis Cliff" and eliminates massive prefill latency caused by one-shot raw history processing.
+_Avoid_: Synthesis Node (one-shot summarizer), summary step, final report, Rolling Compaction (destructive)
+
 **Local Model**:
 The default-path local LLM workhorse handling all structured work: intent classification, tool call construction, step execution, conversation compaction, and error recovery. Cloud is only invoked when the **Local Model** lacks the knowledge or latency profile required. Backed by a pluggable **Inference Backend**.
 _Avoid_: Local Step Executor (too narrow), system LLM, cloud coder
@@ -44,9 +52,9 @@ _Avoid_: Local Step Executor (too narrow), system LLM, cloud coder
 A pluggable provider abstraction that decouples structured LLM inference calls from the process that hosts the model. Configured at the config level via a backend type and endpoint URL. Implementations include the embedded llama-server sidecar, remote OpenAI-compatible servers (LMStudio, Ollama, vLLM), or a harness callback routing inference through an external agent framework.
 _Avoid_: Model provider, LLM client, API wrapper
 
-**Cloud Model**:
-The exception-path remote LLM invoked only when the **Local Model** lacks sufficient knowledge, reasoning depth, or latency profile. Used for DAG planning, conversational responses requiring world knowledge, and **T2 Supervised** guardrail oversight.
-_Avoid_: Cloud API, remote agent, fallback model
+**Strategic Planner (The Strategist)**:
+The component (often the **Cloud Model**) responsible for compiling a user's intent into an **Abstract Graph**. To minimize latency, the Strategist is "code-blind"—it receives only the **Tool Inventory**, **Micro-Skills**, and a **Shallow Directory Tree** (names only, no signatures, max depth 2) as scaffolding. If the Strategist requires deeper codebase knowledge to plan surgical paths, it **must** delegate that discovery to a **Probe Node**.
+_Avoid_: Planner, DAG Generator
 
 **GBNF Constraint**:
 Logit-level grammar constraints forced onto local worker models. Previously used for deep JSON schemas, now restricted to shallow structural enforcement (e.g., ensuring valid XML wrapper tags) to maximize generation speed while delegating schema coercion to the **Semantic Validator**.

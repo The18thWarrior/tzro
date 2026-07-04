@@ -35,7 +35,9 @@ If you are an AI agent or assistant configured in a user's repository and need t
 - **Conversation**: Manages history, state, and context compaction.
 - **Connection**: Abstract interface handling transport to the local/cloud model backend.
 - **Probe Nodes**: Executed via the local model using a Thought Chain to explore directories and find files dynamically without wasting cloud tokens.
+- **tzro_code**: Offloads code generation and surgical file updates to the local engine using a dedicated 3-node DAG (Context -> Reason -> Write/Patch).
 
 ## How to Delegate to tzro
-When executing tasks that don't require frontier reasoning (e.g. codebase exploration, log searches, web scraping), delegate to `tzro` via the `tzro_run` tool or CLI instead of running them in-context.
+When executing tasks that don't require frontier reasoning (e.g. codebase exploration, log searches, web scraping, or routine code generation), delegate to `tzro` via the `tzro_run` tool, `tzro_code` tool, or CLI instead of running them in-context.
 - **Evaluation Trigger**: If about to make 3 or more sequential filesystem / external tool calls, delegate to `tzro`.
+- **Code Generation**: Use `tzro_code` for all non-complex file creations or updates to existing files.

@@ -26,6 +26,10 @@ type GraphNode struct {
 
 	// Neural traversal fields (ADR-0024)
 	ActivationThreshold float64 `json:"activationThreshold,omitempty"` // Sufficiency gate (0.0-1.0). 0.0 = disabled.
+
+	// Codegen output constraint fields (ADR-0035)
+	OutputFormat   string `json:"outputFormat,omitempty"`   // "source_code" | "" — constrains synthesis output format
+	OutputLanguage string `json:"outputLanguage,omitempty"` // e.g., "go", "typescript" — target language for source_code format
 }
 
 // CompactionLevel controls how aggressively a node's output is compacted
@@ -49,6 +53,7 @@ type ProbeConfig struct {
 	StepBudget      int             `json:"stepBudget"`                // Maximum number of Thought Chain steps before forced synthesis
 	CompactEvery    int             `json:"compactEvery"`              // Rolling compaction frequency (every N steps)
 	CompactionLevel CompactionLevel `json:"compactionLevel,omitempty"` // Controls tool output truncation during compaction. Default: "preserve"
+	TaskContext     string          `json:"taskContext,omitempty"`     // Original task spec/goal — pinned above exploration results so task requirements override workspace conventions
 }
 
 type GraphEdge struct {

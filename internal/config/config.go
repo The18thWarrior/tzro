@@ -65,6 +65,10 @@ type EngineConfig struct {
 	// weights are: probe=10min, action=5min, deterministic/validator=90s.
 	// Default 1.0. Set to 2.0 for lenient mode, 0.5 for aggressive.
 	CircuitBreakerMultiplier float64 `json:"circuitBreakerMultiplier,omitempty"`
+
+	// Code generation (tzro_code): Maximum lines for generated files.
+	// Default 500. Set to 0 to use the default.
+	CodeMaxLines int `json:"codeMaxLines,omitempty"`
 }
 
 type BackendConfig struct {

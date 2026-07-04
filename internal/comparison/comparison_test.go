@@ -84,3 +84,277 @@ func TestAllConditions_ReturnsFiveConditions(t *testing.T) {
 		}
 	}
 }
+
+// --- Codegen task tests ---
+
+func TestLoadTasksByCategory_Codegen_ReturnsAllCodegenTasks(t *testing.T) {
+	tasks, err := LoadTasksByCategory(CategoryCodegen, 0)
+	if err != nil {
+		t.Fatalf("LoadTasksByCategory(codegen, 0) failed: %v", err)
+	}
+	if len(tasks) != 10 {
+		t.Errorf("LoadTasksByCategory(codegen, 0) returned %d tasks, want 10", len(tasks))
+	}
+}
+
+func TestLoadTasksByCategory_Codegen_FiltersByTier(t *testing.T) {
+	for tier := 1; tier <= 5; tier++ {
+		tasks, err := LoadTasksByCategory(CategoryCodegen, tier)
+		if err != nil {
+			t.Fatalf("LoadTasksByCategory(codegen, %d) failed: %v", tier, err)
+		}
+		if len(tasks) != 2 {
+			t.Errorf("LoadTasksByCategory(codegen, %d) returned %d tasks, want 2", tier, len(tasks))
+		}
+
+		// Each tier should have one create and one update
+		var hasCreate, hasUpdate bool
+		for _, task := range tasks {
+			switch task.Action {
+			case "create":
+				hasCreate = true
+			case "update":
+				hasUpdate = true
+			}
+		}
+		if !hasCreate || !hasUpdate {
+			t.Errorf("Tier %d missing create=%v or update=%v task", tier, hasCreate, hasUpdate)
+		}
+	}
+}
+
+func TestLoadTasksByCategory_Docgen_BackwardsCompatible(t *testing.T) {
+	tasks, err := LoadTasksByCategory(CategoryDocgen, 0)
+	if err != nil {
+		t.Fatalf("LoadTasksByCategory(docgen, 0) failed: %v", err)
+	}
+	if len(tasks) != 5 {
+		t.Errorf("LoadTasksByCategory(docgen, 0) returned %d tasks, want 5", len(tasks))
+	}
+
+	// All should have category=docgen
+	for _, task := range tasks {
+		if task.Category != CategoryDocgen {
+			t.Errorf("task %q has category %q, want %q", task.ID, task.Category, CategoryDocgen)
+		}
+	}
+}
+
+func TestLoadTasksByCategory_EmptyCategory_DefaultsToDocgen(t *testing.T) {
+	tasks, err := LoadTasksByCategory("", 0)
+	if err != nil {
+		t.Fatalf("LoadTasksByCategory(\"\", 0) failed: %v", err)
+	}
+	if len(tasks) != 5 {
+		t.Errorf("LoadTasksByCategory(\"\", 0) returned %d tasks, want 5 (docgen default)", len(tasks))
+	}
+}
+
+func TestLoadTasksByCategory_UnknownCategory_ReturnsError(t *testing.T) {
+	_, err := LoadTasksByCategory("bogus", 0)
+	if err == nil {
+		t.Error("LoadTasksByCategory with unknown category should return error")
+	}
+}
+
+func TestCodegenTask_HasRequiredFields(t *testing.T) {
+	tasks, err := LoadTasksByCategory(CategoryCodegen, 0)
+	if err != nil {
+		t.Fatalf("failed to load codegen tasks: %v", err)
+	}
+
+	for _, task := range tasks {
+		if task.Category != CategoryCodegen {
+			t.Errorf("task %q: category = %q, want %q", task.ID, task.Category, CategoryCodegen)
+		}
+		if task.Spec == "" {
+			t.Errorf("task %q: spec is empty", task.ID)
+		}
+		if task.Filepath == "" {
+			t.Errorf("task %q: filepath is empty", task.ID)
+		}
+		if task.Language == "" {
+			t.Errorf("task %q: language is empty", task.ID)
+		}
+		if task.Action != "create" && task.Action != "update" {
+			t.Errorf("task %q: action = %q, want 'create' or 'update'", task.ID, task.Action)
+		}
+		if task.Action == "update" && task.SeedFile == "" {
+			t.Errorf("task %q: update task has empty seedFile", task.ID)
+		}
+		if task.Action == "create" && task.SeedFile != "" {
+			t.Errorf("task %q: create task should not have seedFile, got %q", task.ID, task.SeedFile)
+		}
+		if len(task.QualityRubric.Criteria) == 0 {
+			t.Errorf("task %q: qualityRubric has no criteria", task.ID)
+		}
+	}
+}
+
+func TestCodegenTask_UniqueIDs(t *testing.T) {
+	tasks, err := LoadTasksByCategory(CategoryCodegen, 0)
+	if err != nil {
+		t.Fatalf("failed to load codegen tasks: %v", err)
+	}
+
+	seen := make(map[string]bool)
+	for _, task := range tasks {
+		if seen[task.ID] {
+			t.Errorf("duplicate task ID: %q", task.ID)
+		}
+		seen[task.ID] = true
+	}
+}
+
+func TestReadSeedFile_ValidFile(t *testing.T) {
+	data, err := ReadSeedFile("validate_struct.go")
+	if err != nil {
+		t.Fatalf("ReadSeedFile(validate_struct.go) failed: %v", err)
+	}
+	if len(data) == 0 {
+		t.Error("ReadSeedFile returned empty data")
+	}
+}
+
+func TestReadSeedFile_AllUpdateTaskSeedsExist(t *testing.T) {
+	tasks, err := LoadTasksByCategory(CategoryCodegen, 0)
+	if err != nil {
+		t.Fatalf("failed to load codegen tasks: %v", err)
+	}
+
+	for _, task := range tasks {
+		if task.Action != "update" {
+			continue
+		}
+		data, err := ReadSeedFile(task.SeedFile)
+		if err != nil {
+			t.Errorf("task %q: seed file %q not found: %v", task.ID, task.SeedFile, err)
+		}
+		if len(data) == 0 {
+			t.Errorf("task %q: seed file %q is empty", task.ID, task.SeedFile)
+		}
+	}
+}
+
+func TestReadSeedFile_MissingFileReturnsError(t *testing.T) {
+	_, err := ReadSeedFile("nonexistent.go")
+	if err == nil {
+		t.Error("ReadSeedFile with missing file should return error")
+	}
+}
+
+func TestJudgeSystemPromptForCategory_Codegen(t *testing.T) {
+	prompt := JudgeSystemPromptForCategory(CategoryCodegen)
+	if prompt != codeJudgeSystemPrompt {
+		t.Error("JudgeSystemPromptForCategory(codegen) should return codeJudgeSystemPrompt")
+	}
+}
+
+func TestJudgeSystemPromptForCategory_Docgen(t *testing.T) {
+	prompt := JudgeSystemPromptForCategory(CategoryDocgen)
+	if prompt != judgeSystemPrompt {
+		t.Error("JudgeSystemPromptForCategory(docgen) should return judgeSystemPrompt")
+	}
+}
+
+func TestJudgeSystemPromptForCategory_EmptyDefaultsToDocgen(t *testing.T) {
+	prompt := JudgeSystemPromptForCategory("")
+	if prompt != judgeSystemPrompt {
+		t.Error("JudgeSystemPromptForCategory(\"\") should default to docgen prompt")
+	}
+}
+
+func TestCodegenConditions_IncludesTzroCode(t *testing.T) {
+	conditions := CodegenConditions()
+
+	// Should include tzro_code and cloud_code only
+	var foundTzroCode, foundCloudCode bool
+	for _, c := range conditions {
+		if c == ConditionTzroCode {
+			foundTzroCode = true
+		}
+		if c == ConditionCloudCode {
+			foundCloudCode = true
+		}
+	}
+	if !foundTzroCode {
+		t.Errorf("CodegenConditions() = %v, want %s included", conditions, ConditionTzroCode)
+	}
+	if !foundCloudCode {
+		t.Errorf("CodegenConditions() = %v, want %s included", conditions, ConditionCloudCode)
+	}
+	if len(conditions) != 2 {
+		t.Errorf("CodegenConditions() = %v, want exactly 2 conditions", conditions)
+	}
+
+	// Should NOT include cloud_react (not an apples-to-apples comparison)
+	for _, c := range conditions {
+		if c == ConditionCloudReAct {
+			t.Errorf("CodegenConditions() should not include %s", ConditionCloudReAct)
+		}
+	}
+}
+
+func TestAllConditions_DoesNotIncludeTzroCode(t *testing.T) {
+	for _, c := range AllConditions() {
+		if c == ConditionTzroCode {
+			t.Errorf("AllConditions() should not include %s (codegen-only)", ConditionTzroCode)
+		}
+		if c == ConditionCloudCode {
+			t.Errorf("AllConditions() should not include %s (codegen-only)", ConditionCloudCode)
+		}
+	}
+}
+
+func TestCodegenConditionsForTier_T1(t *testing.T) {
+	conditions := CodegenConditionsForTier(1)
+	assertContains(t, conditions, ConditionCloudCode, "T1")
+	assertContains(t, conditions, ConditionTzroCode, "T1")
+	if len(conditions) != 2 {
+		t.Errorf("CodegenConditionsForTier(1) = %v, want exactly 2 conditions", conditions)
+	}
+}
+
+func TestCodegenConditionsForTier_T2(t *testing.T) {
+	conditions := CodegenConditionsForTier(2)
+	assertContains(t, conditions, ConditionCloudCode, "T2")
+	assertContains(t, conditions, ConditionTzroCode, "T2")
+}
+
+func TestCodegenConditionsForTier_T3(t *testing.T) {
+	conditions := CodegenConditionsForTier(3)
+	assertContains(t, conditions, ConditionCloudCode, "T3")
+	assertContains(t, conditions, ConditionTzroCode, "T3")
+}
+
+func TestCodegenConditionsForTier_T4(t *testing.T) {
+	conditions := CodegenConditionsForTier(4)
+	assertContains(t, conditions, ConditionCloudCode, "T4")
+	assertContains(t, conditions, ConditionTzroCode, "T4")
+}
+
+func TestCodegenConditionsForTier_T5(t *testing.T) {
+	conditions := CodegenConditionsForTier(5)
+	assertContains(t, conditions, ConditionCloudCode, "T5")
+	assertContains(t, conditions, ConditionTzroCode, "T5")
+}
+
+func assertContains(t *testing.T, conditions []string, target, tier string) {
+	t.Helper()
+	for _, c := range conditions {
+		if c == target {
+			return
+		}
+	}
+	t.Errorf("CodegenConditionsForTier(%s) = %v, want %s included", tier, conditions, target)
+}
+
+func assertNotContains(t *testing.T, conditions []string, target, tier string) {
+	t.Helper()
+	for _, c := range conditions {
+		if c == target {
+			t.Errorf("CodegenConditionsForTier(%s) = %v, should NOT include %s", tier, conditions, target)
+			return
+		}
+	}
+}

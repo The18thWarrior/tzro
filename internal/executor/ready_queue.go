@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,8 @@ import (
 type contextKeyType string
 
 const contextKeyNodeID contextKeyType = "nodeID"
+
+
 
 // ExecuteGraphReactive runs the graph using an event-driven ready queue
 // instead of pre-computed topological levels (ADR-0024).
@@ -41,7 +44,23 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 	proactivity.RegisterActiveUserTask(graph.TaskID)
 	defer proactivity.DeregisterActiveUserTask(graph.TaskID)
 
+	// Pre-task GC: Clear KV cache slots from previous tasks to prevent
+	// memory pressure degradation in sequential runs (e.g., benchmarks).
+	_ = inference.GlobalLocalModel.TriggerGC(ctx)
+
+	// Initialize default mutation budget if not set to prevent nil pointer panics on spawn logging/evaluation
+	if graph != nil && graph.MutationBudget == nil {
+		graph.MutationBudget = &compiler.MutationBudget{MaxSpawns: 15, RemainingSpawns: 15}
+	}
+
 	fmt.Fprintf(os.Stderr, "[Executor/RQ] Starting reactive execution for Task %s with %d nodes...\n", graph.TaskID, len(graph.Nodes))
+	
+	// ADR-0040: Auto-sequential for benchmarks to prevent sidecar resource contention.
+	if strings.HasPrefix(graph.TaskID, "comparison_") || strings.HasPrefix(graph.TaskID, "benchmark_") {
+		fmt.Fprintf(os.Stderr, "[Executor/RQ] Benchmark task detected. Enabling node-level sequential execution.\n")
+		e.Sequential = true
+	}
+
 	e.getPublisher().PublishEvent("task_started", graph.TaskID, "", "Task reactive execution initiated")
 
 	// Cache graph for resume
@@ -114,183 +133,104 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 	for len(initialReady) > 0 || !allNodesResolved(graph, resolved) {
 		// Process all currently ready nodes
 		for _, nodeID := range initialReady {
-			wg.Add(1)
-			go func(nID string) {
-				defer wg.Done()
-
-				node := nodeIndex[nID]
+			if e.Sequential {
+				node := nodeIndex[nodeID]
 				if node == nil {
 					errOnce.Do(func() {
-						firstErr = fmt.Errorf("node %s not found in graph", nID)
+						firstErr = fmt.Errorf("node %s not found in graph", nodeID)
 					})
-					return
+					continue
 				}
 
 				// Inject node ID into context for tool implementations
-				nodeCtx := context.WithValue(ctx, contextKeyNodeID, nID)
+				nodeCtx := context.WithValue(ctx, contextKeyNodeID, nodeID)
 				err := e.executeSingleNode(nodeCtx, graph, node, activeHooks)
 
 				mu.Lock()
-				defer mu.Unlock()
-
 				if err != nil {
 					if err == ErrTaskPaused {
 						errOnce.Do(func() { firstErr = ErrTaskPaused })
-						return
+						mu.Unlock()
+						return firstErr
 					}
-					_ = memory.DB.SetNodeState(graph.TaskID, nID, "failed", err.Error())
+					_ = memory.DB.SetNodeState(graph.TaskID, nodeID, "failed", err.Error())
 					_, _ = notification.Send(ctx, "executor", "error",
 						fmt.Sprintf("Action Node '%s' Failed", node.Action), err.Error(),
-						notification.WithTaskID(graph.TaskID), notification.WithTargetID(nID))
+						notification.WithTaskID(graph.TaskID), notification.WithTargetID(nodeID))
 					if statePayload, jerr := json.Marshal(map[string]string{"status": "failed", "output": err.Error()}); jerr == nil {
 						e.getPublisher().PublishStream(stream.StreamChunk{
-							Source: "executor", TaskID: graph.TaskID, NodeID: nID,
+							Source: "executor", TaskID: graph.TaskID, NodeID: nodeID,
 							Type: "node_state", Content: string(statePayload),
 						})
 					}
 					errOnce.Do(func() {
-						firstErr = fmt.Errorf("node %s execution error: %w", nID, err)
+						firstErr = fmt.Errorf("node %s execution error: %w", nodeID, err)
 					})
-					// Mark as resolved even on failure so we don't loop
+					resolved[nodeID] = true
+					if strings.HasPrefix(nodeID, "spawned_") && graph.MutationBudget != nil {
+						graph.MutationBudget.ConsecutiveFailures++
+					}
+					mu.Unlock()
+					continue
+				}
+
+				resolved[nodeID] = true
+				// Handle neural edge traversal synchronously
+				e.handleEdgeTraversal(ctx, graph, nodeIndex, node, resolved, &stepIndex, activeHooks, &firstErr, &errOnce)
+				mu.Unlock()
+			} else {
+				wg.Add(1)
+				go func(nID string) {
+					defer wg.Done()
+
+					node := nodeIndex[nID]
+					if node == nil {
+						errOnce.Do(func() {
+							firstErr = fmt.Errorf("node %s not found in graph", nID)
+						})
+						return
+					}
+
+					// Inject node ID into context for tool implementations
+					nodeCtx := context.WithValue(ctx, contextKeyNodeID, nID)
+					err := e.executeSingleNode(nodeCtx, graph, node, activeHooks)
+
+					mu.Lock()
+					defer mu.Unlock()
+
+					if err != nil {
+						if err == ErrTaskPaused {
+							errOnce.Do(func() { firstErr = ErrTaskPaused })
+							return
+						}
+						_ = memory.DB.SetNodeState(graph.TaskID, nID, "failed", err.Error())
+						_, _ = notification.Send(ctx, "executor", "error",
+							fmt.Sprintf("Action Node '%s' Failed", node.Action), err.Error(),
+							notification.WithTaskID(graph.TaskID), notification.WithTargetID(nID))
+						if statePayload, jerr := json.Marshal(map[string]string{"status": "failed", "output": err.Error()}); jerr == nil {
+							e.getPublisher().PublishStream(stream.StreamChunk{
+								Source: "executor", TaskID: graph.TaskID, NodeID: nID,
+								Type: "node_state", Content: string(statePayload),
+							})
+						}
+						errOnce.Do(func() {
+							firstErr = fmt.Errorf("node %s execution error: %w", nID, err)
+						})
+						// Mark as resolved even on failure so we don't loop
+						resolved[nID] = true
+						if strings.HasPrefix(nID, "spawned_") && graph.MutationBudget != nil {
+							graph.MutationBudget.ConsecutiveFailures++
+						}
+						return
+					}
+
+					// Mark resolved
 					resolved[nID] = true
-					return
-				}
 
-				// Mark resolved
-				resolved[nID] = true
-
-				// --- Neural Edge Traversal (ADR-0024) ---
-				// After a node completes, evaluate each outgoing edge.
-				// If the target has an ActivationThreshold > 0 and an EdgeThoughtGen is configured,
-				// generate an Edge Thought and evaluate it against the threshold.
-				if e.EdgeThoughtGen != nil {
-					// Get source output for edge thought generation
-					sourceOutput := ""
-					if state, ok := memory.DB.GetNodeState(graph.TaskID, nID); ok {
-						sourceOutput = state.Output
-					}
-
-					// Check each outgoing edge from the just-completed node
-					for _, edge := range graph.Edges {
-						if edge.SourceID != nID {
-							continue
-						}
-						targetNode := nodeIndex[edge.TargetID]
-						if targetNode == nil {
-							// Target might be a newly-spawned node not yet in index
-							for i := range graph.Nodes {
-								if graph.Nodes[i].ID == edge.TargetID {
-									targetNode = &graph.Nodes[i]
-									nodeIndex[edge.TargetID] = targetNode
-									break
-								}
-							}
-						}
-						if targetNode == nil || resolved[targetNode.ID] {
-							continue
-						}
-
-						// Only generate edge thoughts for nodes with activation thresholds
-						if !shouldGenerateEdgeThought(targetNode) {
-							// Fire OnEdgeTraversal hook even without edge thought
-							for _, h := range activeHooks {
-								action, herr := h.OnEdgeTraversal(ctx, graph.TaskID, node, targetNode, nil)
-								if herr != nil || action == ActionAbort {
-									break
-								}
-							}
-							continue
-						}
-
-						stepIndex++
-						et, genErr := e.EdgeThoughtGen.GenerateEdgeThought(
-							ctx, graph.TaskID, node, targetNode, sourceOutput, stepIndex,
-						)
-						if genErr != nil {
-							fmt.Fprintf(os.Stderr, "[Executor/RQ] Edge thought generation failed for %s→%s: %v\n",
-								nID, targetNode.ID, genErr)
-							continue
-						}
-
-						// Persist edge thought
-						_ = memory.DB.AddEdgeThought(*et)
-						e.getPublisher().PublishEvent("edge_thought_generated", graph.TaskID, nID,
-							fmt.Sprintf("Edge %s→%s: confidence=%.2f, goalAchieved=%v",
-								nID, targetNode.ID, et.GoalConfidence, et.GoalAchieved))
-
-						// Fire OnEdgeTraversal hooks
-						for _, h := range activeHooks {
-							action, herr := h.OnEdgeTraversal(ctx, graph.TaskID, node, targetNode, et)
-							if herr != nil {
-								fmt.Fprintf(os.Stderr, "[Executor/RQ] OnEdgeTraversal hook error: %v\n", herr)
-								break
-							}
-							if action == ActionAbort {
-								errOnce.Do(func() {
-									firstErr = fmt.Errorf("OnEdgeTraversal hook aborted for edge %s→%s", nID, targetNode.ID)
-								})
-								return
-							}
-						}
-
-						// Evaluate activation threshold
-						activationAction := evaluateActivationThreshold(et, targetNode)
-						fmt.Fprintf(os.Stderr, "[Executor/RQ] Activation gate %s→%s: confidence=%.2f, threshold=%.2f → %s\n",
-							nID, targetNode.ID, et.GoalConfidence, targetNode.ActivationThreshold, activationAction)
-
-						switch activationAction {
-						case ActivationSpawn:
-							// Spawn a new node between source and target
-							spawnedID := fmt.Sprintf("spawned_%s_%d", nID, stepIndex)
-							spawnedNode := compiler.GraphNode{
-								ID:                  spawnedID,
-								Type:                node.Type,
-								Action:              node.Action,
-								Instructions:        fmt.Sprintf("Continue work toward goal. Previous thought: %s", et.Thought),
-								Status:              "pending",
-								ActivationThreshold: 0.0, // Spawned nodes don't gate further
-							}
-
-							spawnErr := ApplySpawn(graph, nID, spawnedNode)
-							if spawnErr != nil {
-								fmt.Fprintf(os.Stderr, "[Executor/RQ] Spawn failed for %s: %v\n", nID, spawnErr)
-								// Budget exhausted or dampened — continue without spawning
-								continue
-							}
-
-							// Update node index with the spawned node
-							nodeIndex[spawnedID] = &graph.Nodes[len(graph.Nodes)-1]
-							_ = memory.DB.SetNodeState(graph.TaskID, spawnedID, "pending", "")
-
-							fmt.Fprintf(os.Stderr, "[Executor/RQ] Spawned node %s between %s and %s (budget: %d remaining)\n",
-								spawnedID, nID, targetNode.ID, graph.MutationBudget.RemainingSpawns)
-							e.getPublisher().PublishEvent("node_spawned", graph.TaskID, spawnedID,
-								fmt.Sprintf("Spawned between %s and %s due to low confidence (%.2f < %.2f)",
-									nID, targetNode.ID, et.GoalConfidence, targetNode.ActivationThreshold))
-
-						case ActivationHalt:
-							// Goal achieved — skip the target and propagate downstream
-							fmt.Fprintf(os.Stderr, "[Executor/RQ] HALT: Goal achieved at edge %s→%s. Skipping downstream.\n",
-								nID, targetNode.ID)
-							_ = memory.DB.SetNodeState(graph.TaskID, targetNode.ID, "skipped", "Goal achieved (halt)")
-							e.getPublisher().PublishEvent("node_skipped", graph.TaskID, targetNode.ID, "Goal achieved (halt)")
-							resolved[targetNode.ID] = true
-							enqueued[targetNode.ID] = true
-							e.propagateSkip(graph, targetNode.ID)
-							// Mark all propagated nodes as resolved
-							for _, gn := range graph.Nodes {
-								if s, ok := memory.DB.GetNodeState(graph.TaskID, gn.ID); ok && s.Status == "skipped" {
-									resolved[gn.ID] = true
-									enqueued[gn.ID] = true
-								}
-							}
-
-						case ActivationContinue:
-							// Confidence sufficient — target will execute normally via enqueueReady
-						}
-					}
-				}
-			}(nodeID)
+					// --- Neural Edge Traversal (ADR-0024) ---
+					e.handleEdgeTraversal(ctx, graph, nodeIndex, node, resolved, &stepIndex, activeHooks, &firstErr, &errOnce)
+				}(nodeID)
+			}
 		}
 
 		// Wait for all in-flight nodes to finish
@@ -346,4 +286,243 @@ func allNodesResolved(graph *compiler.ExecutionGraph, resolved map[string]bool) 
 		}
 	}
 	return true
+}
+
+// buildSpawnChainContext collects outputs from completed spawned nodes in the chain
+// and applies rolling compaction via TruncateSynthesisContext.
+func buildSpawnChainContext(graph *compiler.ExecutionGraph, sourceID, targetID string) string {
+	var steps []SynthesisStep
+	for _, node := range graph.Nodes {
+		if !strings.HasPrefix(node.ID, "spawned_") {
+			continue
+		}
+		if state, ok := memory.DB.GetNodeState(graph.TaskID, node.ID); ok && state.Status == "completed" {
+			output := state.RawOutput
+			if output == "" {
+				output = state.Output
+			}
+			steps = append(steps, SynthesisStep{Thought: node.Instructions, ToolOutput: output})
+		}
+	}
+	if len(steps) == 0 {
+		return ""
+	}
+	return TruncateSynthesisContext(steps)
+}
+
+// findSpawnedNodesInChain returns IDs of spawned nodes between source and target.
+func findSpawnedNodesInChain(graph *compiler.ExecutionGraph, sourceID, targetID string) []string {
+	var spawned []string
+	for _, node := range graph.Nodes {
+		if strings.HasPrefix(node.ID, "spawned_") && strings.Contains(node.ID, sourceID) {
+			spawned = append(spawned, node.ID)
+		}
+	}
+	return spawned
+}
+
+// buildSynthesisInstructions generates format-constrained synthesis instructions.
+func buildSynthesisInstructions(graph *compiler.ExecutionGraph, targetNode *compiler.GraphNode) string {
+	base := fmt.Sprintf("Synthesize all exploration findings for: %s", graph.GoalPrompt)
+	switch targetNode.OutputFormat {
+	case "source_code":
+		return fmt.Sprintf("%s\n\nCRITICAL: Output ONLY compilable %s source code.\nNo markdown, no explanations, no summaries. Complete file content only.", base, targetNode.OutputLanguage)
+	default:
+		return base + "\nProduce a comprehensive, structured final answer."
+	}
+}
+
+// injectSynthesisNode inserts a synthesis node between spawned nodes and the target,
+// re-wiring edges so spawned nodes feed into synthesis, which feeds target.
+func injectSynthesisNode(graph *compiler.ExecutionGraph, sourceID, targetID string, synthNode compiler.GraphNode) {
+	graph.Nodes = append(graph.Nodes, synthNode)
+	var newEdges []compiler.GraphEdge
+	for _, edge := range graph.Edges {
+		if strings.HasPrefix(edge.SourceID, "spawned_") && edge.TargetID == targetID {
+			// Redirect spawned→target to spawned→synth
+			newEdges = append(newEdges, compiler.GraphEdge{SourceID: edge.SourceID, TargetID: synthNode.ID})
+		} else {
+			newEdges = append(newEdges, edge)
+		}
+	}
+	// Add synth → target edge
+	newEdges = append(newEdges, compiler.GraphEdge{SourceID: synthNode.ID, TargetID: targetID})
+	graph.Edges = newEdges
+}
+
+// handleEdgeTraversal handles the neural edge traversal logic after a node completes.
+func (e *ExecutionEngine) handleEdgeTraversal(ctx context.Context, graph *compiler.ExecutionGraph, nodeIndex map[string]*compiler.GraphNode, node *compiler.GraphNode, resolved map[string]bool, stepIndex *int, activeHooks []ExecutionHook, firstErr *error, errOnce *sync.Once) {
+	if e.EdgeThoughtGen == nil {
+		return
+	}
+
+	nID := node.ID
+	sourceOutput := ""
+	if state, ok := memory.DB.GetNodeState(graph.TaskID, nID); ok {
+		sourceOutput = state.Output
+	}
+
+	for _, edge := range graph.Edges {
+		if edge.SourceID != nID {
+			continue
+		}
+		targetNode := nodeIndex[edge.TargetID]
+		if targetNode == nil {
+			for i := range graph.Nodes {
+				if graph.Nodes[i].ID == edge.TargetID {
+					targetNode = &graph.Nodes[i]
+					nodeIndex[edge.TargetID] = targetNode
+					break
+				}
+			}
+		}
+		if targetNode == nil || resolved[targetNode.ID] {
+			continue
+		}
+
+		if !shouldGenerateEdgeThought(targetNode) {
+			for _, h := range activeHooks {
+				action, herr := h.OnEdgeTraversal(ctx, graph.TaskID, node, targetNode, nil)
+				if herr != nil || action == ActionAbort {
+					break
+				}
+			}
+			continue
+		}
+
+		*stepIndex++
+		et, genErr := e.EdgeThoughtGen.GenerateEdgeThought(
+			ctx, graph.TaskID, node, targetNode, sourceOutput, *stepIndex,
+		)
+		if genErr != nil {
+			fmt.Fprintf(os.Stderr, "[Executor/RQ] Edge thought generation failed for %s→%s: %v\n",
+				nID, targetNode.ID, genErr)
+			continue
+		}
+
+		_ = memory.DB.AddEdgeThought(*et)
+		e.getPublisher().PublishEvent("edge_thought_generated", graph.TaskID, nID,
+			fmt.Sprintf("Edge %s→%s: confidence=%.2f, goalAchieved=%v",
+				nID, targetNode.ID, et.GoalConfidence, et.GoalAchieved))
+
+		for _, h := range activeHooks {
+			action, herr := h.OnEdgeTraversal(ctx, graph.TaskID, node, targetNode, et)
+			if herr != nil {
+				fmt.Fprintf(os.Stderr, "[Executor/RQ] OnEdgeTraversal hook error: %v\n", herr)
+				break
+			}
+			if action == ActionAbort {
+				errOnce.Do(func() {
+					*firstErr = fmt.Errorf("OnEdgeTraversal hook aborted for edge %s→%s", nID, targetNode.ID)
+				})
+				return
+			}
+		}
+
+		activationAction := evaluateActivationThreshold(et, targetNode)
+		fmt.Fprintf(os.Stderr, "[Executor/RQ] Activation gate %s→%s: confidence=%.2f, threshold=%.2f → %s\n",
+			nID, targetNode.ID, et.GoalConfidence, targetNode.ActivationThreshold, activationAction)
+
+		if e.ProgressGuard != nil && (activationAction == ActivationHalt || activationAction == ActivationContinue) {
+			if !e.ProgressGuard.VerifySufficientProgress(ctx, graph.GoalPrompt, sourceOutput, et) {
+				fmt.Fprintf(os.Stderr, "[Executor/RQ] Guard OVERRIDE: Hallucinated sufficiency detected for %s→%s. Demoting to SPAWN.\n",
+					nID, targetNode.ID)
+				activationAction = ActivationSpawn
+				et.Thought = "Guard detected insufficient content in output (hallucinated completeness). Continuing exploration."
+			}
+		}
+
+		switch activationAction {
+		case ActivationSpawn:
+			if strings.HasPrefix(nID, "spawned_") && graph.MutationBudget != nil {
+				graph.MutationBudget.ConsecutiveFailures++
+			}
+
+			spawnedID := fmt.Sprintf("spawned_%s_%d", nID, *stepIndex)
+			chainContext := buildSpawnChainContext(graph, nID, targetNode.ID)
+
+			spawnedType := "action"
+			spawnedOutputFormat := targetNode.OutputFormat
+			spawnedOutputLanguage := targetNode.OutputLanguage
+			if node.OutputFormat == "source_code" {
+				spawnedType = "synthesis"
+				spawnedOutputFormat = node.OutputFormat
+				spawnedOutputLanguage = node.OutputLanguage
+			}
+
+			spawnedNode := compiler.GraphNode{
+				ID:                  spawnedID,
+				Type:                spawnedType,
+				Action:              node.Action,
+				AllowedTools:        node.AllowedTools,
+				Instructions:        fmt.Sprintf("Goal: %s\n\nAccumulated Context:\n%s\n\nPrevious step result: %s\n\nContinue working toward the goal.", graph.GoalPrompt, chainContext, et.Thought),
+				Status:              "pending",
+				ActivationThreshold: 0.0,
+				OutputFormat:        spawnedOutputFormat,
+				OutputLanguage:      spawnedOutputLanguage,
+			}
+
+			spawnErr := ApplySpawn(graph, nID, spawnedNode)
+			if spawnErr != nil {
+				fmt.Fprintf(os.Stderr, "[Executor/RQ] Spawn failed for %s: %v\n", nID, spawnErr)
+				continue
+			}
+
+			nodeIndex[spawnedID] = &graph.Nodes[len(graph.Nodes)-1]
+			_ = memory.DB.SetNodeState(graph.TaskID, spawnedID, "pending", "")
+
+			remainingSpawns := 0
+			if graph.MutationBudget != nil {
+				remainingSpawns = graph.MutationBudget.RemainingSpawns
+			}
+			fmt.Fprintf(os.Stderr, "[Executor/RQ] Spawned node %s between %s and %s (budget: %d remaining)\n",
+				spawnedID, nID, targetNode.ID, remainingSpawns)
+			e.getPublisher().PublishEvent("node_spawned", graph.TaskID, spawnedID,
+				fmt.Sprintf("Spawned between %s and %s due to low confidence (%.2f < %.2f)",
+					nID, targetNode.ID, et.GoalConfidence, targetNode.ActivationThreshold))
+
+		case ActivationHalt:
+			if graph.MutationBudget != nil {
+				graph.MutationBudget.ConsecutiveFailures = 0
+			}
+
+			fmt.Fprintf(os.Stderr, "[Executor/RQ] HALT: Goal achieved at edge %s→%s. Skipping downstream.\n",
+				nID, targetNode.ID)
+			_ = memory.DB.SetNodeState(graph.TaskID, targetNode.ID, "skipped", "Goal achieved (halt)")
+			e.getPublisher().PublishEvent("node_skipped", graph.TaskID, targetNode.ID, "Goal achieved (halt)")
+			resolved[targetNode.ID] = true
+			e.propagateSkip(graph, targetNode.ID)
+			for _, gn := range graph.Nodes {
+				if s, ok := memory.DB.GetNodeState(graph.TaskID, gn.ID); ok && s.Status == "skipped" {
+					resolved[gn.ID] = true
+				}
+			}
+
+		case ActivationContinue:
+			if graph.MutationBudget != nil {
+				graph.MutationBudget.ConsecutiveFailures = 0
+			}
+
+			spawnedNodes := findSpawnedNodesInChain(graph, nID, targetNode.ID)
+			sidecarStatus, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
+			sidecarActive := sidecarStatus == "Active" || sidecarStatus == "Adopted"
+			if len(spawnedNodes) > 0 && sidecarActive {
+				synthID := fmt.Sprintf("synth_%s_%s", nID, targetNode.ID)
+				synthNode := compiler.GraphNode{
+					ID:             synthID,
+					Type:           "synthesis",
+					Instructions:   buildSynthesisInstructions(graph, targetNode),
+					Status:         "pending",
+					OutputFormat:   targetNode.OutputFormat,
+					OutputLanguage: targetNode.OutputLanguage,
+				}
+				injectSynthesisNode(graph, nID, targetNode.ID, synthNode)
+				nodeIndex[synthID] = &graph.Nodes[len(graph.Nodes)-1]
+				_ = memory.DB.SetNodeState(graph.TaskID, synthID, "pending", "")
+				fmt.Fprintf(os.Stderr, "[Executor/RQ] Injected synthesis node %s between spawns and %s\n", synthID, targetNode.ID)
+				e.getPublisher().PublishEvent("node_injected", graph.TaskID, synthID,
+					fmt.Sprintf("Synthesis node injected before %s", targetNode.ID))
+			}
+		}
+	}
 }

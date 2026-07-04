@@ -9,11 +9,34 @@ const (
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"
 	ConditionCooperative = "cooperative"
+	ConditionTzroCode    = "tzro_code"  // Unified codegen: direct (simple) or draft+fix (complex)
+	ConditionCloudCode   = "cloud_code" // Static 3-node DAG via codegen package (cloud mode)
 )
 
-// AllConditions returns the canonical ordered list of condition IDs.
+// Task category constants.
+const (
+	CategoryAll     = "" // Run both docgen and codegen
+	CategoryDocgen  = "docgen"
+	CategoryCodegen = "codegen"
+)
+
+// AllConditions returns the canonical ordered list of condition IDs
+// for documentation generation benchmarks.
 func AllConditions() []string {
 	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
+}
+
+// CodegenConditions returns all conditions applicable to code generation benchmarks.
+func CodegenConditions() []string {
+	return []string{ConditionCloudCode, ConditionTzroCode}
+}
+
+// CodegenConditionsForTier returns the conditions to run for a given task tier.
+// All tiers run the same two conditions. The tzro_code condition internally
+// routes via the complexity gate: simple tasks use direct local codegen,
+// complex tasks use the draft+cloud-fix pipeline (formerly tzro_draft).
+func CodegenConditionsForTier(tier int) []string {
+	return []string{ConditionCloudCode, ConditionTzroCode}
 }
 
 // RubricCriterion defines a single quality evaluation dimension.
@@ -28,12 +51,21 @@ type QualityRubric struct {
 	MaxScore float64           `json:"maxScore"`
 }
 
-// ComparisonTask defines a single documentation generation task.
+// ComparisonTask defines a single benchmark task for comparison evaluation.
+// The Category field determines whether the task is a documentation generation
+// task ("docgen") or a code generation task ("codegen").
 type ComparisonTask struct {
-	ID            string        `json:"id"`
-	Tier          int           `json:"tier"`
-	Prompt        string        `json:"prompt"`
-	TargetPaths   []string      `json:"targetPaths"`
+	ID          string   `json:"id"`
+	Category    string   `json:"category"` // "docgen" or "codegen"
+	Tier        int      `json:"tier"`
+	Prompt      string   `json:"prompt"`
+	TargetPaths []string `json:"targetPaths,omitempty"`
+	// Code-generation specific fields (category=codegen)
+	Spec          string        `json:"spec,omitempty"`     // Specification for tzro_code
+	Filepath      string        `json:"filepath,omitempty"` // Target file path for code generation
+	Language      string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
+	Action        string        `json:"action,omitempty"`   // "create" or "update"
+	SeedFile      string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
 	QualityRubric QualityRubric `json:"qualityRubric"`
 }
 
@@ -48,6 +80,7 @@ type ComparisonResult struct {
 	EstCostUSD    float64              `json:"estCostUSD"`
 	ToolCallCount int                  `json:"toolCallCount"`
 	OutputText    string               `json:"outputText"`
+	DraftText     string               `json:"draftText,omitempty"` // Raw local draft before cloud fix (populated when draft mode activates)
 	QualityScore  float64              `json:"qualityScore"`
 	QualityNotes  string               `json:"qualityNotes"`
 	Error         string               `json:"error,omitempty"`

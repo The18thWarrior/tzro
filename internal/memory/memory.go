@@ -116,6 +116,11 @@ func (sdb *SqliteDatabase) Init() error {
 	// Initialize the default Pure Go Embedding Engine for local semantic matching
 	sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
 
+	// Enable WAL mode
+	if _, err := sdb.db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		fmt.Printf("[Memory Warning] Failed to set WAL mode: %v\n", err)
+	}
+
 	// Create tables if they don't exist
 	if err := sdb.createTables(); err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -1244,6 +1249,29 @@ func (sdb *SqliteDatabase) GetThoughtSteps(probeID string) ([]ThoughtStep, error
 	}
 	return steps, nil
 }
+
+// GetThoughtStepByProbeAndIndex retrieves a single thought step by probe ID and step index.
+func (sdb *SqliteDatabase) GetThoughtStepByProbeAndIndex(probeID string, index int) (ThoughtStep, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return ThoughtStep{}, fmt.Errorf("database not initialized")
+	}
+
+	var s ThoughtStep
+	err := sdb.db.QueryRow(
+		`SELECT id, probe_id, task_id, step_index, thought, COALESCE(tool_name,''), COALESCE(tool_args,''), COALESCE(tool_output,''), embedding, created_at
+		FROM thought_chain WHERE probe_id = ? AND step_index = ?`, probeID, index,
+	).Scan(&s.ID, &s.ProbeID, &s.TaskID, &s.StepIndex, &s.Thought,
+		&s.ToolName, &s.ToolArgs, &s.ToolOutput, &s.Embedding, &s.CreatedAt)
+
+	if err != nil {
+		return ThoughtStep{}, err
+	}
+	return s, nil
+}
+
 
 // AddThoughtSummary persists a rolling compaction summary of a Thought Chain.
 func (sdb *SqliteDatabase) AddThoughtSummary(summary ThoughtSummary) error {
