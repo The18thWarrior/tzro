@@ -53,8 +53,9 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		config.GlobalConfig.ModelMode = originalModelMode
 	}()
 
-	// Isolated database per condition run
-	dbFile := fmt.Sprintf("tzro_comparison_%s_%s.db", conditionID, t.ID)
+	// Isolated database per condition run. Append timestamp to avoid SQLite
+	// locking issues (disk I/O error 522) when runs happen in rapid succession.
+	dbFile := fmt.Sprintf("tzro_comparison_%s_%s_%d.db", conditionID, t.ID, time.Now().UnixNano())
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting(dbFile)
 	defer func() {
@@ -438,8 +439,9 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		config.GlobalConfig.ModelMode = originalModelMode
 	}()
 
-	// Isolated database per condition run
-	dbFile := fmt.Sprintf("tzro_comparison_%s_%s.db", conditionID, t.ID)
+	// Isolated database per condition run. Append timestamp to avoid SQLite
+	// locking issues (disk I/O error 522) when runs happen in rapid succession.
+	dbFile := fmt.Sprintf("tzro_comparison_%s_%s_%d.db", conditionID, t.ID, time.Now().UnixNano())
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting(dbFile)
 	defer func() {

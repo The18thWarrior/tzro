@@ -14,6 +14,7 @@ while [ $i -le $ITERATIONS ]; do
     RUN_DIR="$OUTPUT_BASE/run_$i"
     echo "--- Run $i ---"
     ./tzro compare --task "$TASK_ID" --condition "$CONDITION" --output "$RUN_DIR"
+    sleep 2 # Let SQLite file locks release
     
     REPORT_FILE=$(ls $RUN_DIR/comparison_results_*.json 2>/dev/null | head -n 1)
     if [ -f "$REPORT_FILE" ]; then
