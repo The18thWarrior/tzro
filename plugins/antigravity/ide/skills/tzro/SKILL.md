@@ -197,6 +197,15 @@ Use tzro_kg_neighborhood to explore entity relationships starting from a known n
 Use tzro_code to offload code writing.
 - Use mode: "full" for new files (limit 500 lines).
 - Use mode: "diff" for surgical updates to existing files.
+
+## 🚀 High-Reliability Prompting (Tier 4+ Hardening)
+When delegating complex architectural tasks (especially to local 4B models):
+
+1. **Explicit Technical Anchors**: Always use `IMPORTANT:` with a numbered list of mandatory signatures, return types, and error codes.
+2. **Pattern Locking**: Mandate specific idiomatic patterns (e.g., "Use Go closures", "Implement exhaustive type switches").
+3. **Threshold Management**: Set `ActivationThreshold: 0.0` for tasks with known targets to bypass redundant exploration loops.
+4. **Validation Gates**: Follow every `write_file` with a `read_file` or a compile/test check within the same task.
+5. **Deterministic Exit**: Always end complex prompts with a clear "Save to [PATH] and EXIT" signal.
 ```
 
 ## CLI Fallback

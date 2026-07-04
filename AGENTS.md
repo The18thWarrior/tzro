@@ -127,13 +127,15 @@ The Offload Policy applies to **external tool calls** — MCP data-plane tools (
    ```
 4. Read the final cohesive response from the `terminal_synthesis` node once completed.
 
-### Planner Tradeoffs & Design Rules
-When designing prompts for the Strategic Planner (DAG mode), ensure the prompt guides the engine to balance these key design rules:
-- **Strategy vs. Execution**: Let the planner compile the DAG steps logically. Do not attempt to pre-execute steps.
-- **Variable Binding**: Guide the planner to use strict variable binding (`{{nodes.node_id.output.property}}`) to pass data downstream cleanly.
-- **Restricted Tool Spaces**: Explicitly limit node `allowedTools` to the 1-2 tools strictly required for that node's focus area to prevent execution hallucinations.
-- **Conciseness**: Keep the DAG compact (typically 2-4 nodes). Ensure dependencies are cycle-free.
 - **Exploration → Use Probe Nodes**: When a task involves open-ended exploration where the next step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), prompt the planner to use a **Probe Node**. It handles reactive step-at-a-time reasoning natively.
+
+### High-Reliability Prompting (Tier 4+ Optimization)
+When delegating complex architectural tasks to `tzro` (especially using local 4B models), apply these "Hardening" patterns to ensure a 4.0+ quality score:
+
+1. **Explicit Technical Anchors**: Do not just ask for a feature. Use `IMPORTANT:` with a numbered list of mandatory signatures, return types, and error codes.
+2. **Pattern Locking**: Mandate specific idiomatic patterns (e.g., "Use Go closures", "Implement exhaustive type switches"). Local models follow explicit patterns better than abstract goals.
+3. **Threshold Management**: For deterministic codegen where you already know the target files, set `ActivationThreshold: 0.0` in the prompt to prevent redundant "Skepticism Loops."
+4. **Deterministic Exit**: Always end complex prompts with a clear "Save to [PATH] and EXIT" signal to prevent infinite exploration/synthesis.
 
 ### Suggested Prompts to Leverage tzro
 When delegating tasks to `tzro` (using CLI or the `tzro_run` tool), use or adapt the following prompt structures:
