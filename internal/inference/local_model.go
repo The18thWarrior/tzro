@@ -241,7 +241,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--parallel", "1",
 		"--jinja",
 		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
-		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 64K)
+		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 32K)
 		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)
@@ -577,11 +577,39 @@ func (m *LocalModelManager) RestoreAfterChat(ctx context.Context) error {
 
 // getPerformanceCoresCount returns count of Performance P-Cores CGO-free on Mac, or half physical cores
 func (m *LocalModelManager) getPerformanceCoresCount() int {
+	cfg := config.Get()
+
+	// User override takes absolute precedence
+	if cfg.ThreadCount != nil && *cfg.ThreadCount > 0 {
+		return *cfg.ThreadCount
+	}
+
 	logicalCPUs := runtime.NumCPU()
 
-	if runtime.GOOS == "darwin" {
-		// Run Mac-specific sysctl command CGO-free
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		// Apple Silicon: query actual P-core count, then reserve headroom
+		// to reduce sustained thermal pressure on the shared CPU/GPU die.
 		out, err := exec.Command("sysctl", "-n", "hw.perflevel0.logicalcpu").Output()
+		if err == nil {
+			if count, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && count > 0 {
+				// Reserve 2 P-cores for OS + background tasks.
+				// On small chips (M1/M2 base with 4 P-cores), reserve only 1.
+				reserve := 2
+				if count <= 4 {
+					reserve = 1
+				}
+				threads := count - reserve
+				if threads < 2 {
+					threads = 2
+				}
+				return threads
+			}
+		}
+	}
+
+	if runtime.GOOS == "darwin" {
+		// Intel Mac: all cores are symmetric, use physical core count (not HT logical).
+		out, err := exec.Command("sysctl", "-n", "hw.physicalcpu").Output()
 		if err == nil {
 			if count, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && count > 0 {
 				return count
@@ -589,23 +617,43 @@ func (m *LocalModelManager) getPerformanceCoresCount() int {
 		}
 	}
 
-	// Fallback count calculation
+	// Windows/Linux: physical core estimate (logical / 2 for hyperthreading)
 	pCores := logicalCPUs / 2
 	if pCores <= 0 {
 		return 1
 	}
+
+	// When GPU offload is active, CPU threads are mainly for prompt processing.
+	// Cap at min(pCores, 8) to avoid thermal waste on the CPU side.
+	if cfg.GPULayers != nil && *cfg.GPULayers != 0 {
+		if pCores > 8 {
+			pCores = 8
+		}
+	}
+
 	return pCores
 }
 
 // getGPULayerCount returns the number of model layers to offload to GPU.
-// On macOS Apple Silicon (darwin/arm64), unified memory makes full offload free and always safe.
-// On other platforms, defaults to 0 (CPU-only) since GPU availability is uncertain.
+// Platform-aware defaults with user override via config.GPULayers:
+//   - Apple Silicon (darwin/arm64): -1 (all layers on Metal GPU via unified memory)
+//   - Intel Mac (darwin/amd64): 0 (CPU-only; users with AMD GPUs can override)
+//   - Windows/Linux: 0 (CPU-only; users with NVIDIA/AMD GPUs can override)
 func (m *LocalModelManager) getGPULayerCount() int {
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-		return -1 // Offload all layers to Metal GPU — zero PCIe transfer cost on unified memory
+	cfg := config.Get()
+
+	// User override takes absolute precedence
+	if cfg.GPULayers != nil {
+		return *cfg.GPULayers
 	}
-	// Conservative default for Linux/Windows/x86 — no GPU assumed.
-	// Users with discrete GPUs should override via future config option.
+
+	// Platform auto-detection
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return -1 // Full Metal offload on Apple Silicon — most power-efficient path
+	}
+
+	// Intel Mac, Windows, Linux: CPU-only by default.
+	// Users with discrete GPUs can set "gpuLayers": -1 in config.
 	return 0
 }
 

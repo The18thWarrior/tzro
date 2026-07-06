@@ -24,6 +24,8 @@ type EngineConfig struct {
 	GGUFModelPath               string  `json:"ggufModelPath"`                         // path to local gguf model file
 	ModelsDir                   string  `json:"modelsDir"`                             // directory for downloaded models
 	ContextSize                 int     `json:"contextSize,omitempty"`                 // llama-server context window size in tokens (default: 32768)
+	GPULayers                   *int    `json:"gpuLayers,omitempty"`                   // Override GPU layer offload count (-1 = all, 0 = CPU-only, nil = platform auto)
+	ThreadCount                 *int    `json:"threadCount,omitempty"`                 // Override inference thread count (nil = platform auto-detect)
 	MaxRAGContextChars          int     `json:"maxRagContextChars,omitempty"`          // max chars for Graph-RAG context injection (0 = use default 2000)
 
 	// Inference Backend (ADR-0016)
@@ -212,6 +214,8 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
+	GlobalConfig.GPULayers = cfg.GPULayers
+	GlobalConfig.ThreadCount = cfg.ThreadCount
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -246,6 +250,8 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
 	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
+	GlobalConfig.GPULayers = cfg.GPULayers
+	GlobalConfig.ThreadCount = cfg.ThreadCount
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
