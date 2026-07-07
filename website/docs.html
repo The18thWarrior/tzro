@@ -2,6 +2,17 @@
 <html lang="en">
 
 <head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3RP6GW3N0M"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+
+    gtag('config', 'G-3RP6GW3N0M');
+  </script>
+
+  <!-- Page Description -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Documentation — TZRO | Local-First Agentic Execution Engine</title>
@@ -354,7 +365,8 @@
           <code>tzro</code> implements <strong>Inference Arbitrage</strong> — the principle that the right
           model for the job is rarely the most expensive one. By routing execution-level work and even
           code generation to a grammar-locked local engine (via <code>tzro_code</code>), you preserve your cloud budget
-          for what actually requires frontier reasoning: architectural planning, complex judgment, and interactive user dialogue.
+          for what actually requires frontier reasoning: architectural planning, complex judgment, and interactive user
+          dialogue.
         </p>
 
         <div class="docs-callout callout-tip">
@@ -390,7 +402,8 @@
             <h4>Local Go Engine — The Executor</h4>
             <p>
               Handles execution and code generation: directory indexing, file parsing, tool dispatch,
-              database sync, source file generation with compilation validation, and structured output generation. All behind <code>127.0.0.1</code>.
+              database sync, source file generation with compilation validation, and structured output generation. All
+              behind <code>127.0.0.1</code>.
             </p>
           </div>
         </div>
