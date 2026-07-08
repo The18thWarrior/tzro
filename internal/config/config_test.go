@@ -145,3 +145,73 @@ func TestConfig_IsObserverEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestConfig_ProbeStepMaxTokensDefault(t *testing.T) {
+	// Zero value should return the default of 2048
+	configMutex.Lock()
+	saved := GlobalConfig.ProbeStepMaxTokens
+	GlobalConfig.ProbeStepMaxTokens = 0
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.ProbeStepMaxTokens = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetProbeStepMaxTokens()
+	if got != 2048 {
+		t.Errorf("expected default 2048, got %d", got)
+	}
+}
+
+func TestConfig_ProbeStepMaxTokensExplicit(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.ProbeStepMaxTokens
+	GlobalConfig.ProbeStepMaxTokens = 4096
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.ProbeStepMaxTokens = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetProbeStepMaxTokens()
+	if got != 4096 {
+		t.Errorf("expected 4096, got %d", got)
+	}
+}
+
+func TestConfig_AccumulatedContextMaxCharsDefault(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.AccumulatedContextMaxChars
+	GlobalConfig.AccumulatedContextMaxChars = 0
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.AccumulatedContextMaxChars = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetAccumulatedContextMaxChars()
+	if got != 16000 {
+		t.Errorf("expected default 16000, got %d", got)
+	}
+}
+
+func TestConfig_AccumulatedContextMaxCharsExplicit(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.AccumulatedContextMaxChars
+	GlobalConfig.AccumulatedContextMaxChars = 24000
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.AccumulatedContextMaxChars = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetAccumulatedContextMaxChars()
+	if got != 24000 {
+		t.Errorf("expected 24000, got %d", got)
+	}
+}
+

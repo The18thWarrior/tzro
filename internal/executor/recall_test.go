@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"tzro/internal/inference"
 	"tzro/internal/memory"
 )
 
@@ -31,6 +32,18 @@ func (m *mockRecallEngine) Infer(ctx context.Context, systemPrompt, lastResult, 
 	}
 
 	return "Unexpected prompt", nil
+}
+
+func (m *mockRecallEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+	var sys, usr string
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			sys = msg.Content
+		} else if msg.Role == "user" {
+			usr = msg.Content
+		}
+	}
+	return m.Infer(ctx, sys, usr, jsonSchema)
 }
 
 func TestRunRecall_RefinedContext(t *testing.T) {

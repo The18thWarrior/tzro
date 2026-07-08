@@ -24,6 +24,24 @@ import (
 	"tzro/internal/telemetry"
 )
 
+// thinkingContextKey is a private type for the thinking mode context key.
+type thinkingContextKey struct{}
+
+// ThinkingEnabledKey is a context key that callers set to opt-in to thinking
+// mode for unconstrained inference calls. When present (with any non-nil value)
+// and no GBNF schema is active, the local model will generate <think> reasoning
+// tokens before producing output. Use context.WithValue(ctx, ThinkingEnabledKey, true).
+var ThinkingEnabledKey = thinkingContextKey{}
+
+// maxTokensContextKey is a private type for the generation cap context key.
+type maxTokensContextKey struct{}
+
+// MaxTokensKey is a context key that callers set to cap generation tokens per
+// inference call (ADR-0043 Mechanism A). When present with an int value, the
+// local model includes max_tokens in the completion request, preventing runaway
+// generation. Use context.WithValue(ctx, MaxTokensKey, 2048).
+var MaxTokensKey = maxTokensContextKey{}
+
 // InferenceResult holds the model output along with token-level metrics from the server.
 type InferenceResult struct {
 	Content          string  `json:"content"`
@@ -694,7 +712,8 @@ func releaseFileLock(f *os.File) {
 }
 
 // CallLocalModel handles the local structured JSON inference call.
-// It intercepts prompts, suppresses reasoning tags for Qwen3.5 family, and returns structured tool completions.
+// Phase-conditional thinking: enables <think> reasoning when no GBNF schema is
+// active (free-form passes), disables it during grammar-constrained output.
 // Returns an InferenceResult with content and accurate token-level metrics from the server's usage object.
 func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []InferenceMessage, gbnfSchema string) (*InferenceResult, error) {
 	// Build the completion request with optimized sampling parameters
@@ -703,18 +722,38 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		Messages           []map[string]interface{} `json:"messages"`
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
+		MaxTokens          *int                     `json:"max_tokens,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
 		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
 
+	// Phase-conditional thinking: enabled ONLY when the caller explicitly opts in
+	// via context key AND no GBNF grammar is active. This prevents thinking tokens
+	// from consuming the entire generation budget in large unconstrained calls
+	// (e.g., the planner) where gbnfSchema == "" but thinking is not beneficial.
+	enableThinking := gbnfSchema == "" && ctx.Value(ThinkingEnabledKey) != nil
+	templateKwargs := map[string]interface{}{
+		"enable_thinking": enableThinking,
+	}
+	if enableThinking {
+		budget := config.Get().ThinkingBudget
+		if budget <= 0 {
+			budget = 750 // default: cap reasoning tokens to prevent throughput collapse
+		}
+		templateKwargs["thinking_budget"] = budget
+	}
+
 	reqBody := CompletionRequest{
-		Model:       "gemma-4-e4b-it-qat",
-		Messages:    MessagesToMaps(messages),
-		Temperature: 1.0, // Q7: required for min_p to function; GBNF constrains output safety
-		MinP:        0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
-		ChatTemplateKwargs: map[string]interface{}{
-			"enable_thinking": false, // Suppress thinking mode tags for speed on Qwen 3.5 family
-		},
+		Model:              "Qwopus3.5-4B-Coder",
+		Messages:           MessagesToMaps(messages),
+		Temperature:        1.0, // Q7: required for min_p to function; GBNF constrains output safety
+		MinP:               0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
+		ChatTemplateKwargs: templateKwargs,
+	}
+
+	// ADR-0043 Mechanism A: Generation cap via context key
+	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
+		reqBody.MaxTokens = &maxTok
 	}
 
 	if gbnfSchema != "" {
@@ -799,6 +838,9 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		if choice, ok := choices[0].(map[string]interface{}); ok {
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				if content, ok := msg["content"].(string); ok {
+					// Safety: strip residual <think>...</think> tags if the serving
+					// backend didn't fully consume them (belt-and-suspenders).
+					content = StripThinkTags(content)
 					fmt.Fprintf(os.Stderr, "[Llama Sidecar Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
 					RecordGlobalMetrics(promptTokens, completionTokens, duration)
 					if tracker, ok := GetTokenTracker(ctx); ok {
@@ -830,6 +872,33 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	return nil, fmt.Errorf("invalid or empty response choice returned from local model")
 }
 
+// StripThinkTags removes <think>...</think> blocks from model output.
+// When thinking mode is enabled, the serving backend should strip these in the
+// content field, but some backends (especially llama.cpp with certain chat
+// templates) may leak them through. This is a safety net.
+// Exported for use by the executor package (probe.go).
+func StripThinkTags(content string) string {
+	// Fast path: no think tags present
+	if !strings.Contains(content, "<think>") {
+		return content
+	}
+	// Remove all <think>...</think> blocks (possibly multi-line)
+	for {
+		start := strings.Index(content, "<think>")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(content, "</think>")
+		if end == -1 {
+			// Unclosed <think> tag — strip from <think> to end
+			content = content[:start]
+			break
+		}
+		content = content[:start] + content[end+len("</think>"):]
+	}
+	return strings.TrimSpace(content)
+}
+
 type StreamMeta struct {
 	StreamID string
 	Source   string
@@ -855,24 +924,41 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		Messages           []map[string]interface{} `json:"messages"`
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
+		MaxTokens          *int                     `json:"max_tokens,omitempty"`
 		Stream             bool                     `json:"stream"`
 		StreamOptions      *StreamOptionsStruct     `json:"stream_options,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
 		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
 
+	// Phase-conditional thinking (same logic as CallLocalModel)
+	enableThinking := gbnfSchema == "" && ctx.Value(ThinkingEnabledKey) != nil
+	templateKwargs := map[string]interface{}{
+		"enable_thinking": enableThinking,
+	}
+	if enableThinking {
+		budget := config.Get().ThinkingBudget
+		if budget <= 0 {
+			budget = 750
+		}
+		templateKwargs["thinking_budget"] = budget
+	}
+
 	reqBody := CompletionRequest{
-		Model:       "gemma-4-e4b-it-qat",
-		Messages:    MessagesToMaps(messages),
-		Temperature: 1.0,
-		MinP:        0.1,
-		Stream:      true,
+		Model:              "Qwopus3.5-4B-Coder",
+		Messages:           MessagesToMaps(messages),
+		Temperature:        1.0,
+		MinP:               0.1,
+		Stream:             true,
 		StreamOptions: &StreamOptionsStruct{
 			IncludeUsage: true,
 		},
-		ChatTemplateKwargs: map[string]interface{}{
-			"enable_thinking": false,
-		},
+		ChatTemplateKwargs: templateKwargs,
+	}
+
+	// ADR-0043 Mechanism A: Generation cap via context key
+	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
+		reqBody.MaxTokens = &maxTok
 	}
 
 	if gbnfSchema != "" {

@@ -71,6 +71,24 @@ type EngineConfig struct {
 	// Code generation (tzro_code): Maximum lines for generated files.
 	// Default 500. Set to 0 to use the default.
 	CodeMaxLines int `json:"codeMaxLines,omitempty"`
+
+	// Thinking Budget: Maximum reasoning tokens when thinking mode is active
+	// (unconstrained inference passes only — GBNF-constrained calls always
+	// disable thinking). Default 750. Set to 0 to use the default.
+	ThinkingBudget int `json:"thinkingBudget,omitempty"`
+
+	// Two-Tier Context Budget (ADR-0043)
+	// ProbeStepMaxTokens caps generation tokens per probe step inference call.
+	// Prevents runaway generation (observed: 16K tokens collapsing all subsequent
+	// steps to 0.1 t/s). Synthesis calls are NOT capped.
+	// Default 2048. Set to 0 to use the default.
+	ProbeStepMaxTokens int `json:"probeStepMaxTokens,omitempty"`
+
+	// AccumulatedContextMaxChars caps the total characters of accumulated context
+	// injected into downstream DAG nodes. Budget is split evenly across nodes.
+	// Uses content-aware TruncateToolOutput per node (non-destructive — full
+	// output stays in SQLite). Default 16000. Set to 0 to use the default.
+	AccumulatedContextMaxChars int `json:"accumulatedContextMaxChars,omitempty"`
 }
 
 type BackendConfig struct {
@@ -216,6 +234,8 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	GlobalConfig.GPULayers = cfg.GPULayers
 	GlobalConfig.ThreadCount = cfg.ThreadCount
+	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
+	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -252,6 +272,8 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	GlobalConfig.GPULayers = cfg.GPULayers
 	GlobalConfig.ThreadCount = cfg.ThreadCount
+	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
+	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -559,6 +581,35 @@ func GetThermalCloudCooldownMinutes() int {
 	return v
 }
 
+// GetProbeStepMaxTokens returns the configured max generation tokens per probe step
+// inference call (ADR-0043 Mechanism A). Prevents runaway generation that inflates
+// all subsequent probe step prompts.
+// Defaults to 2048 if not explicitly configured or set to a non-positive value.
+func GetProbeStepMaxTokens() int {
+	configMutex.RLock()
+	v := GlobalConfig.ProbeStepMaxTokens
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 2048
+	}
+	return v
+}
+
+// GetAccumulatedContextMaxChars returns the configured max total characters for
+// accumulated context injected into downstream DAG nodes (ADR-0043 Mechanism B).
+// Budget is split evenly across nodes with content-aware per-node truncation.
+// Defaults to 16000 if not explicitly configured or set to a non-positive value.
+func GetAccumulatedContextMaxChars() int {
+	configMutex.RLock()
+	v := GlobalConfig.AccumulatedContextMaxChars
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 16000
+	}
+	return v
+}
 // GetDaemonURL returns the active daemon HTTP URL by checking:
 // 1. A cached/running daemon port in `.tzro/.daemon.port`.
 // 2. The $PORT environment variable.

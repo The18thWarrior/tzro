@@ -507,7 +507,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			schemaStr = ""
 		}
 
-		accumulatedCtx := buildAccumulatedContext(taskID, graph)
+		accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 		staticBase := buildStaticBaseInstruction(true)
 
 		var inferenceResult string
@@ -595,7 +595,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			if useCloud {
 				xmlResult, err = retryWithCloud(ctx, msgs, schemaStr, taskID)
 			} else {
-				xmlResult, err = inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+				// Executor Pass 1 (XML extraction): enable thinking mode for
+				// this single-shot call. The model reasons once about accumulated
+				// context before producing the tool call — high ROI vs probe
+				// where thinking multiplies across 15-20 steps.
+				thinkCtx := context.WithValue(ctx, inference.ThinkingEnabledKey, true)
+				xmlResult, err = inference.GlobalLocalModel.ExecuteStructured(thinkCtx, req)
 			}
 
 			if err != nil {
@@ -769,7 +774,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			schemaStr = ""
 		}
 
-		accumulatedCtx := buildAccumulatedContext(taskID, graph)
+		accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 		var toolArguments map[string]interface{}
 
 		if accumulatedCtx != "" && schemaStr != "" {
@@ -1180,7 +1185,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 
 		systemPrompt := "You are the Local Tactician Node Executor. Summarize and compile all prior action outputs into a final cohesive response."
-		accumulatedCtx := buildAccumulatedContext(taskID, graph)
+		accumulatedCtx := buildAccumulatedContext(taskID, graph, "synthesis")
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
 		req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
@@ -1351,7 +1356,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// P0 Fix (13:00): Use accumulated context architecture instead of flat interpolated prompt.
 	// Upstream node outputs are passed as labeled structured blocks, enabling the bridge
 	// to extract values by key name rather than re-parsing them from prose.
-	accumulatedCtx := buildAccumulatedContext(taskID, graph)
+	accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 
 	var systemPrompt string
 	if isCacheExploration {

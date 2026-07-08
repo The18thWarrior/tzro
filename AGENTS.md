@@ -212,6 +212,7 @@ Alerts are automatically marked as `read` when retrieved via `tzro_sentinel_aler
 
 
 
+
 <!-- BEGIN TZRO INSTRUCTIONS -->
 
 # tzro — Durable Local-First Execution Engine & Delegation Instructions
@@ -382,7 +383,16 @@ Use `tzro_code` to offload the expensive writing of code to the local engine.
   - `mode: "full"` (default for new files): Rewrites the whole file. Limited to 500 lines.
   - `mode: "diff"` (default for existing files > 200 lines): Uses structured JSON hunks for surgical edits. Required for files > 500 lines.
 - **Context**: The tool automatically reads the target file and 5 sibling files for context.
-- **Verification**: You (the frontier model) should review the generated code for correctness, as the local model may produce drafts that need minor polish.
+- **Verification**: You (the frontier model) should review the generated code for correctness.
+
+## 🚀 High-Reliability Prompting (4B Model Hardening)
+To achieve frontier-level results (4.0+ quality) on a 4B local model:
+
+1. **Explicit Technical Anchors**: Do not just ask for a feature. Use `IMPORTANT:` with a numbered list of mandatory signatures, return types, and error codes.
+2. **Pattern Locking**: Mandate specific idiomatic patterns (e.g., "Use Go closures", "Implement exhaustive type switches"). Local models follow explicit patterns better than abstract goals.
+3. **Deterministic Routing**: Set `ActivationThreshold: 0.0` for tasks with known targets to bypass redundant exploration loops.
+4. **Validation Gates**: Every significant `write_file` should be followed by a `read_file` or a compile/test check within the same task.
+5. **Deterministic Exit**: Always end complex prompts with a clear "Save to [PATH] and EXIT" signal to prevent infinite probe synthesis.
 
 ---
 

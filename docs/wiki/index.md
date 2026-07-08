@@ -100,6 +100,11 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0033: Daemon Re-exec Restart via MCP](../adr/0033-daemon-re-exec-restart-via-mcp.md) - Graceful daemon restart via MCP tool with re-exec pattern.
 - [ADR-0034: Three-Bucket Metric Separation](../adr/0034-three-bucket-metric-separation.md) - Separates DAG structural, pipeline compaction, and local offloading savings into independently measurable benchmark buckets.
 - [ADR-0035: Complete Edge Thought Migration and Codegen Quality Pipeline](../adr/0035-complete-edge-thought-migration-and-codegen-quality-pipeline.md) - Completes ADR-0024 production wiring and builds codegen validation, output constraints, and complexity routing on top.
+- [ADR-0036: Edge Thought Driven Codegen Repair](../adr/0036-edge-thought-driven-codegen-repair.md) - Edge Thought evaluation for codegen quality repair via dynamic node spawning.
+- [ADR-0037: Recall Node for Discovery-Synthesis Alignment](../adr/0037-recall-node-for-discovery-synthesis-alignment.md) - Decouples synthesis from exploration by injecting Recall nodes downstream of Probes with Map-Reduce recall.
+- [ADR-0042: Map-Reduce Recall and Shallow Planning](../adr/0042-map-reduce-recall-and-shallow-planning.md) - Multi-pass Recall synthesis and code-blind Strategist to reduce wall clock time and token waste.
+- [ADR-0043: Two-Tier Context Budget](../adr/0043-two-tier-context-budget.md) - Probe step generation cap (max_tokens via context key) and per-node accumulated context truncation to prevent local model speed collapse from oversized prompts.
+- [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md) - Splits context assembly into synthesis-path (untruncated validators, no ceiling) and mid-DAG-path (tiered allocation, dynamic ceiling). Supersedes ADR-0043 Mechanism B.
 
 ## Ingested Sources
 

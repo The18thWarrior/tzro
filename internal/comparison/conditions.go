@@ -240,13 +240,17 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		relCodegenPath, _ := filepath.Rel(projectRoot, codegenTargetPath)
 		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, relCodegenPath)
 	} else if t.Category == CategoryDocgen {
-		// For docgen tasks, inform the agent that it should work within the isolated directory
+		// For docgen tasks, the agent should READ source code from the project root
+		// (where the actual codebase lives) but WRITE output files to the isolated
+		// sandbox directory. Previously the prompt told the agent to read AND write
+		// from the sandbox, which was empty for most files — causing all docgen
+		// benchmarks to produce empty or error output.
 		relOutputDir, err := filepath.Rel(projectRoot, testOutputDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison Warning] failed to get relative path for %s: %v. Using absolute path.\n", testOutputDir, err)
 			relOutputDir = testOutputDir
 		}
-		taskPrompt = fmt.Sprintf("%s\n\nThe target files have been copied to an isolated directory for this task. You should read from and write to this directory: %s", taskPrompt, relOutputDir)
+		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: Read and explore source code from the project root directory (not from the output directory). Write all output files to this isolated output directory: %s", taskPrompt, relOutputDir)
 	}
 
 	startTime := time.Now()

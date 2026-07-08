@@ -47,10 +47,23 @@ type EdgeThoughtInference interface {
 }
 
 // shouldGenerateEdgeThought returns true if the target node has a non-zero
-// activation threshold, indicating that an edge thought should be generated
-// for incoming edges. Threshold 0.0 = disabled (zero overhead for deterministic nodes).
+// activation threshold AND is not a structurally-deterministic node type.
+//
+// Recall, synthesis, and semantic_validator nodes are protected by the
+// Deterministic Shield (evaluateActivationThreshold) which always returns
+// ActivationContinue for them — so generating an edge thought is pure waste.
+// Skipping the inference call saves ~10-15s per structurally-deterministic edge.
 func shouldGenerateEdgeThought(targetNode *compiler.GraphNode) bool {
-	return targetNode.ActivationThreshold > 0.0
+	if targetNode.ActivationThreshold <= 0.0 {
+		return false
+	}
+	// These node types must always execute regardless of edge thought result.
+	// The Deterministic Shield prevents halting them, so skip the inference call.
+	switch targetNode.Type {
+	case "recall", "synthesis", "semantic_validator":
+		return false
+	}
+	return true
 }
 
 // evaluateActivationThreshold compares the edge thought's confidence score

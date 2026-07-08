@@ -129,6 +129,11 @@ _Avoid_: Use Edge Thought instead
 A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
 _Avoid_: Text parser, JSON clean filter
 
+**Accumulated Context**:
+The structured collection of completed upstream node outputs injected into each DAG node's prompt to provide execution history for parameter extraction and decision-making. Bounded by a node count window (`maxAccumulatedContextNodes`) and a total character budget (`accumulatedContextMaxChars`, ADR-0043) with content-aware per-node truncation. Distinct from **Edge Thought** (reasoning state) — Accumulated Context is raw data, not reasoning.
+_Avoid_: Edge Thought (reasoning, not data), session history, prompt context
+
+
 **Two-Tier Cache GC**:
 An automated resource recovery mechanism that clears idle context slots immediately upon Task completion (Tier 1) and gracefully recycles the local inference sidecar process if RSS memory usage exceeds limits during idle windows (Tier 2).
 _Avoid_: Memory cleaner, server killer, process resetter
