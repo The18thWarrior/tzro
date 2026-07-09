@@ -4,7 +4,19 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-09T10:33:00-07:00] tdd | MCTS Multi-Branch Edge Thought Evaluation (ADR-0045) — COMPLETE
+
+- **Activity**: Full TDD implementation of multi-branch Edge Thought evaluation, constrained to single-slot sidecar operation. Grilling session resolved 9 design decisions. Red-green TDD loop with 58 new tests across 3 packages. All ready queue wiring complete.
+- **Decisions Captured**: ADR-0045 (single-slot MCTS), MCTS as Edge Thought mode, in-memory shadow state, post-commit backtracking dropped, streaming scoped to node-to-user, Compiler infers MCTSBranches, spawned nodes always single-shot, PreFlect as ExecutionHook, Confidence Tier gates before multi-branch.
+- **New Files**: `speculation.go`, `value_function.go`, `multi_branch.go`, `spawn_depth.go`, `preflect_hook.go`, `compiler/defaults.go`, `docs/adr/0045-single-slot-mcts-evaluation.md`
+- **Modified Files**: `config.go`, `compiler.go`, `ready_queue.go` (5 integration points), `executor.go` (StreamOutput gating), `CONTEXT.md`
+- **Ready Queue Integration**: PreFlect hook registration, ApplyDefaults wiring, spawn depth enforcement (canSpawnAtDepth + MCTSBranches=0), MaxDepth init from config, evaluateMultiBranch in ActivationContinue path
+- **Test Results**: 58/58 pass. Full build clean.
+
+---
+
 ## [2026-07-07T15:12:00-07:00] tdd | ADR-0044 Implementation — Synthesis-Aware Context Assembly
+
 
 - **Activity**: TDD implementation of ADR-0044 in `internal/executor/executor_context.go`. Red-green cycle with 6 new behavior tests.
 - **Changes**:

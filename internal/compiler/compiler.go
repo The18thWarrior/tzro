@@ -30,6 +30,10 @@ type GraphNode struct {
 	// Codegen output constraint fields (ADR-0035)
 	OutputFormat   string `json:"outputFormat,omitempty"`   // "source_code" | "" — constrains synthesis output format
 	OutputLanguage string `json:"outputLanguage,omitempty"` // e.g., "go", "typescript" — target language for source_code format
+
+	// Multi-branch Edge Thought evaluation (ADR-0045)
+	MCTSBranches int  `json:"mctsBranches,omitempty"` // K candidates for multi-branch mode. 0 = single-shot.
+	StreamOutput bool `json:"streamOutput,omitempty"` // Stream token generation to StreamBus for TUI consumption.
 }
 
 // CompactionLevel controls how aggressively a node's output is compacted
@@ -79,6 +83,7 @@ type MutationBudget struct {
 	MaxSpawns           int `json:"maxSpawns"`
 	RemainingSpawns     int `json:"remainingSpawns"`
 	ConsecutiveFailures int `json:"consecutiveFailures"` // Dampening counter
+	MaxDepth            int `json:"maxDepth,omitempty"`  // ADR-0045: recursive AGoT spawn depth limit
 }
 
 // CompileAndSort sorts the execution graph into sequential parallel levels.

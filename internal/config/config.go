@@ -89,6 +89,14 @@ type EngineConfig struct {
 	// Uses content-aware TruncateToolOutput per node (non-destructive — full
 	// output stays in SQLite). Default 16000. Set to 0 to use the default.
 	AccumulatedContextMaxChars int `json:"accumulatedContextMaxChars,omitempty"`
+
+	// Multi-Branch Edge Thought Evaluation (ADR-0045)
+	// MCTSMaxDepth caps the recursive AGoT spawn depth. Default 3.
+	MCTSMaxDepth int `json:"mctsMaxDepth,omitempty"`
+	// MCTSMaxSimulations is K candidates per multi-branch decision point. Default 3.
+	MCTSMaxSimulations int `json:"mctsMaxSimulations,omitempty"`
+	// MCTSSpeculationCeil is the max proactivity level for real execution in rollouts. Default 2 (L2-Suggest).
+	MCTSSpeculationCeil int `json:"mctsSpeculationCeil,omitempty"`
 }
 
 type BackendConfig struct {
@@ -236,6 +244,9 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.ThreadCount = cfg.ThreadCount
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
+	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
+	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -274,6 +285,9 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.ThreadCount = cfg.ThreadCount
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
+	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
+	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -620,6 +634,52 @@ func GetAccumulatedContextMaxChars() int {
 	}
 	return v
 }
+
+// GetMCTSMaxDepth returns the configured maximum recursive AGoT spawn depth.
+// Defaults to 3 if not explicitly configured or set to a non-positive value.
+func GetMCTSMaxDepth() int {
+	configMutex.RLock()
+	v := GlobalConfig.MCTSMaxDepth
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 3
+	}
+	return v
+}
+
+// GetMCTSMaxSimulations returns the configured K candidates per multi-branch
+// Edge Thought decision point (ADR-0045).
+// Defaults to 3 if not explicitly configured or set to a non-positive value.
+func GetMCTSMaxSimulations() int {
+	configMutex.RLock()
+	v := GlobalConfig.MCTSMaxSimulations
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 3
+	}
+	return v
+}
+
+// GetMCTSSpeculationCeil returns the maximum tool proactivity level at which
+// real execution is allowed during multi-branch rollout evaluation. Tools above
+// this ceiling are imagined (L3) or blocked (L4). See ADR-0045.
+// Defaults to 2 (L2-Suggest) if not explicitly configured.
+func GetMCTSSpeculationCeil() int {
+	configMutex.RLock()
+	v := GlobalConfig.MCTSSpeculationCeil
+	configMutex.RUnlock()
+
+	// 0 is the zero value but also a valid ceiling (L0-only).
+	// Use -1 sentinel or check if explicitly set. Since the config
+	// pattern uses "0 = use default", we treat 0 as "use default 2".
+	if v <= 0 {
+		return 2
+	}
+	return v
+}
+
 // GetDaemonURL returns the active daemon HTTP URL by checking:
 // 1. A cached/running daemon port in `.tzro/.daemon.port`.
 // 2. The $PORT environment variable.

@@ -1189,7 +1189,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
 		req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
-		req.StreamMeta = &meta
+		// ADR-0045: Token-level streaming gated by compiler-set StreamOutput flag.
+		// DefaultNodeFields sets StreamOutput=true for synthesis nodes.
+		if node.StreamOutput {
+			req.StreamMeta = &meta
+		}
 		req.TaskID = taskID
 
 		inferenceResult, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)

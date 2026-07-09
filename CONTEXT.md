@@ -110,12 +110,20 @@ A daemon-resident service and CLI subcommand (`install`, `uninstall`, `list`, `p
 _Avoid_: App Store, registry, installer wizard
 
 **Edge Thought**:
-A compact reasoning state generated on a DAG edge traversal by the **Local Model**, summarizing what execution has learned so far and how confident it is that the task goal can be achieved. Generated when the executor traverses an edge whose target node has a non-zero **Activation Threshold**. Persisted to SQLite for durability. Serves as the primary reasoning context for downstream nodes, with raw upstream data included on-demand for structured parameter extraction.
-_Avoid_: Short-term memory, session context, accumulated context (raw data, not reasoning)
+A compact reasoning state generated on a DAG edge traversal by the **Local Model**, summarizing what execution has learned so far and how confident it is that the task goal can be achieved. Generated when the executor traverses an edge whose target node has a non-zero **Activation Threshold**. Persisted to SQLite for durability. Operates in two evaluation modes: **single-shot** (default — generates one confidence score, makes a binary Continue/Spawn/Halt decision) and **multi-branch** (MCTS — generates K candidate actions, evaluates each via the **Speculation Fence**, scores them with a **Value Function**, and commits the highest-reward candidate). The evaluation mode is determined by the node's MCTS configuration. Both modes share the same trigger point (`evaluateActivationThreshold`) and the same spawn/continue/halt output contract.
+_Avoid_: Short-term memory, session context, accumulated context (raw data, not reasoning), MCTS rollout (not a separate mechanism — it is a mode of Edge Thought evaluation)
 
 **Activation Threshold**:
 A per-node sufficiency gate (0.0–1.0) that determines whether an **Edge Thought**'s goal confidence warrants dynamic graph mutation. When the incoming Edge Thought's confidence falls below the target node's Activation Threshold, the **Local Model** spawns a new node to perform additional work before the target executes. A threshold of 0.0 disables Edge Thought generation and spawn evaluation entirely. Set by the **Cloud Model** at planning time or defaulted by the **Kahn Compiler** based on node type.
 _Avoid_: New Thought Threshold, firing threshold, trigger condition
+
+**Speculation Fence**:
+A safety boundary within the **Edge Thought** multi-branch evaluation mode that classifies each tool by its **Tool Proactivity Level** to determine whether it can be executed during speculative candidate evaluation. Tools at or below the configured ceiling (default L2/Suggest) execute for real during rollouts. Tools at L3 (Reversible Action) are simulated — the **Local Model** imagines their output without executing. Tools at L4 (External Side Effect) are blocked entirely — candidates requiring L4 tools during speculative evaluation are pruned. Only the committed winning candidate executes L3+ tools for real.
+_Avoid_: Sandbox, isolation layer, tool filter
+
+**Value Function**:
+A scoring mechanism that evaluates candidate action quality during multi-branch **Edge Thought** evaluation. Operates in two tiers: **Heuristic** (default — zero-inference scoring via key term coverage, output shape, error markers, and **GoalProgressGuard** pass/fail) and **LLM** (reserved for planner-designated critical nodes — uses the **Local Model** with GBNF-constrained output to produce a calibrated 0.0–1.0 score). Both tiers produce a continuous reward signal, replacing the binary Continue/Spawn/Halt gate of single-shot mode with ranked candidate selection.
+_Avoid_: Confidence score (Edge Thought's goalConfidence is the single-shot equivalent, not the multi-branch scoring), reward model, evaluator agent
 
 **Probe Node** _(deprecated)_:
 Superseded by **Edge Thought** and **Activation Threshold**, which generalize the Probe's reactive behavior to all DAG nodes. Existing DAGs emitting `type: "probe"` are silently treated as action nodes with a high Activation Threshold and allocated mutation budget.
