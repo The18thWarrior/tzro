@@ -72,12 +72,12 @@ func TestLoadTasks_InvalidTierReturnsError(t *testing.T) {
 	}
 }
 
-func TestAllConditions_ReturnsFiveConditions(t *testing.T) {
+func TestAllConditions_ReturnsSixConditions(t *testing.T) {
 	conditions := AllConditions()
-	if len(conditions) != 5 {
-		t.Errorf("AllConditions() returned %d, want 5", len(conditions))
+	if len(conditions) != 6 {
+		t.Errorf("AllConditions() returned %d, want 6", len(conditions))
 	}
-	expected := []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
+	expected := []string{ConditionCloudReAct, ConditionLocalReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
 	for i, c := range conditions {
 		if c != expected[i] {
 			t.Errorf("AllConditions()[%d] = %q, want %q", i, c, expected[i])

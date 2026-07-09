@@ -175,7 +175,7 @@ func init() {
 	compareCmd.Flags().StringVarP(&compareOutputDir, "output", "o", "", "Output directory for results (required)")
 	compareCmd.Flags().StringVar(&compareCategory, "category", "", "Task category: docgen, codegen, or empty for both (default: both)")
 	compareCmd.Flags().IntVarP(&compareTier, "tier", "t", 0, "Run a specific tier (1-5), or 0 for all")
-	compareCmd.Flags().StringVarP(&compareCondition, "condition", "c", "", "Run a specific condition (cloud_react, cloud_dag, local_only, cooperative, tzro_code)")
+	compareCmd.Flags().StringVarP(&compareCondition, "condition", "c", "", "Run a specific condition (cloud_react, local_react, cloud_dag, local_only, cooperative, tzro_code)")
 	compareCmd.Flags().StringVar(&compareTask, "task", "", "Run a specific task ID")
 	compareCmd.Flags().Float64Var(&comparePromptPrice, "prompt-price", defaultPricing.PromptPer1KTokens, "Price per 1K prompt tokens (USD)")
 	compareCmd.Flags().Float64Var(&compareComplPrice, "completion-price", defaultPricing.CompletionPer1KTokens, "Price per 1K completion tokens (USD)")

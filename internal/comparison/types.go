@@ -5,6 +5,7 @@ import "tzro/internal/inference"
 // Condition IDs for the 2×2 execution matrix.
 const (
 	ConditionCloudReAct  = "cloud_react"
+	ConditionLocalReAct  = "local_react"  // ReAct loop on local model (DAG-free baseline)
 	ConditionCloudDAGRaw = "cloud_dag_raw"
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"
@@ -23,7 +24,7 @@ const (
 // AllConditions returns the canonical ordered list of condition IDs
 // for documentation generation benchmarks.
 func AllConditions() []string {
-	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
+	return []string{ConditionCloudReAct, ConditionLocalReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
 }
 
 // CodegenConditions returns all conditions applicable to code generation benchmarks.

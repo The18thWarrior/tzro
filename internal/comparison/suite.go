@@ -204,6 +204,8 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 					} else {
 						result, err = RunReAct(ctx, task, opts.Pricing)
 					}
+				} else if conditionID == ConditionLocalReAct {
+					result, err = RunLocalReAct(ctx, task, opts.Pricing, opts.OutputDir)
 				} else if conditionID == ConditionTzroCode {
 					result, err = RunCodegenCondition(ctx, conditionID, "cooperative", task, opts.Pricing, opts.OutputDir)
 				} else if conditionID == ConditionCloudCode {

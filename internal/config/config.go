@@ -508,6 +508,16 @@ func GetRestrictedDirectories() []string {
 	return dirs
 }
 
+// GetExplicitMMProjPath returns the explicitly configured multimodal projector path.
+// Unlike GetMMProjModelPath, this does NOT auto-detect by scanning the models directory.
+// Used by the sidecar launcher to avoid loading an incompatible mmproj for non-catalog models.
+func GetExplicitMMProjPath() string {
+	configMutex.RLock()
+	explicit := GlobalConfig.MMProjModelPath
+	configMutex.RUnlock()
+	return explicit
+}
+
 // GetMMProjModelPath resolves the multimodal projector model path.
 // If explicitly configured, uses that path. Otherwise auto-detects by scanning
 // the models directory for a file matching *mmproj*.gguf.

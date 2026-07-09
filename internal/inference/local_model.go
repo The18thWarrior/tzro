@@ -285,7 +285,42 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	}
 
 	// 9. Multimodal projector for vision support (PDF OCR, image analysis)
-	mmProjPath := config.GetMMProjModelPath()
+	// Only load mmproj if it's verified compatible with the active model.
+	// The auto-detect glob in GetMMProjModelPath picks up any *mmproj*.gguf file,
+	// which crashes llama-server when embedding dimensions mismatch (e.g., loading
+	// a Qwen mmproj with an LFM model). We resolve this by checking the catalog:
+	// - Catalog model with CompanionMMProj: use the catalog's mmproj filename
+	// - Non-catalog model (custom download): only use explicitly configured mmproj
+	mmProjPath := ""
+	if catalogEntry != nil && catalogEntry.CompanionMMProj != nil {
+		// Model is in catalog with a known-compatible mmproj — check if it exists on disk
+		candidateMmproj := []string{
+			filepath.Join(modelsDir, catalogEntry.CompanionMMProj.Filename),
+		}
+		if activeModelDir != modelsDir {
+			candidateMmproj = append(candidateMmproj, filepath.Join(activeModelDir, catalogEntry.CompanionMMProj.Filename))
+		}
+		for _, p := range candidateMmproj {
+			if _, err := os.Stat(p); err == nil {
+				mmProjPath = p
+				break
+			}
+		}
+		if mmProjPath == "" {
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Catalog mmproj '%s' not found on disk, vision disabled\n", catalogEntry.CompanionMMProj.Filename)
+		}
+	} else {
+		// Non-catalog model: only use explicitly configured mmproj (never auto-detect)
+		configMutex := config.GetExplicitMMProjPath()
+		if configMutex != "" {
+			if _, err := os.Stat(configMutex); err == nil {
+				mmProjPath = configMutex
+			}
+		}
+		if mmProjPath == "" {
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Non-catalog model detected, skipping auto-detected mmproj to avoid architecture mismatch\n")
+		}
+	}
 	if mmProjPath != "" {
 		args = append(args, "--mmproj", mmProjPath)
 		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Vision projector loaded: %s\n", mmProjPath)
