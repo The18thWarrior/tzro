@@ -125,13 +125,13 @@ _Avoid_: Sandbox, isolation layer, tool filter
 A scoring mechanism that evaluates candidate action quality during multi-branch **Edge Thought** evaluation. Operates in two tiers: **Heuristic** (default — zero-inference scoring via key term coverage, output shape, error markers, and **GoalProgressGuard** pass/fail) and **LLM** (reserved for planner-designated critical nodes — uses the **Local Model** with GBNF-constrained output to produce a calibrated 0.0–1.0 score). Both tiers produce a continuous reward signal, replacing the binary Continue/Spawn/Halt gate of single-shot mode with ranked candidate selection.
 _Avoid_: Confidence score (Edge Thought's goalConfidence is the single-shot equivalent, not the multi-branch scoring), reward model, evaluator agent
 
-**Probe Node** _(deprecated)_:
-Superseded by **Edge Thought** and **Activation Threshold**, which generalize the Probe's reactive behavior to all DAG nodes. Existing DAGs emitting `type: "probe"` are silently treated as action nodes with a high Activation Threshold and allocated mutation budget.
-_Avoid_: Use Edge Thought and Activation Threshold instead
+**Probe Node**:
+An autonomous execution node type that runs a bounded, multi-step **Thought Chain** exploration loop (research, directory traversal, file reading) using the **Local Model**. Persists its intermediate reasoning and tool outputs to the `thought_chain` table for durability and later recall. Coexists with **Edge Thought** — Probe Nodes handle dedicated multi-step exploration where reasoning continuity within a single DAG node is critical (each step sees the full accumulated thought chain), while **Edge Thoughts** handle reactive exploration via dynamic node spawning on action nodes.
+_Avoid_: Action Node (single-step), research agent, sub-task
 
-**Thought Chain** _(deprecated)_:
-Superseded by **Edge Thought**. The Thought Chain's internal step loop is replaced by dynamic node spawning via the Activation Threshold, where each tool call becomes a checkpointed DAG node rather than a hidden internal step.
-_Avoid_: Use Edge Thought instead
+**Thought Chain**:
+The internal step loop within a **Probe Node** where each iteration generates a reasoning thought, dispatches a tool call, and feeds the result back into the next iteration. Provides reasoning continuity — every step sees the full accumulated context from prior steps within the same node. Complements **Edge Thought** (which operates between separate DAG nodes) by providing within-node exploration where context fidelity matters more than checkpointing granularity.
+_Avoid_: Edge Thought (between-node), conversation history, chat loop
 
 **Compaction Pipeline**:
 A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.

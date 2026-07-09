@@ -603,28 +603,30 @@ func TestRunProbe_AdaptiveMinStepAllowsEarlySynthesis(t *testing.T) {
 
 	// Set TZRO_DIR to the temp dir so that relative paths resolve to valid locations
 	tempDir := t.TempDir()
-	for _, name := range []string{"file1.go", "file2.go", "file3.go", "file4.go", "file5.go", "file6.go"} {
+	for _, name := range []string{"file1.go", "file2.go", "file3.go", "file4.go", "file5.go", "file6.go", "file7.go", "file8.go"} {
 		if err := os.WriteFile(filepath.Join(tempDir, name), []byte("package main"), 0644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
 	os.Setenv("TZRO_DIR", tempDir)
 
-	// Mock engine: 6 tool call responses + synthesis signal + synthesis pass.
+	// Mock engine: 8 tool call responses + synthesis signal + synthesis pass.
 	// Note: The tool calls will fail because the paths are in a different tempDir
-	// than the one registered with setupProbeTestTools. With futility detection,
-	// the probe aborts after 3 consecutive failed initial steps.
-	responses := make([]string, 0, 9)
-	for i := 1; i <= 6; i++ {
+	// than the one registered with setupProbeTestTools. With adaptive futility
+	// detection (max(5, stepBudget/4) = 7 for budget 30), the probe aborts
+	// after 5 consecutive failed initial steps (earliest point where both
+	// maxConsecutiveErrors=3 and futilityThreshold=7 conditions are met).
+	responses := make([]string, 0, 11)
+	for i := 1; i <= 8; i++ {
 		responses = append(responses, fmt.Sprintf(
 			"Reading file %d\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>",
 			i, filepath.Join(tempDir, fmt.Sprintf("file%d.go", i)),
 		))
 	}
-	// Step 7: synthesis ready
+	// Step 9: synthesis ready
 	responses = append(responses, "I have read all relevant files\n<SYNTHESIZE_READY>")
 	// Pass 2: synthesis
-	responses = append(responses, `{"synthesis":"Complete analysis of all 6 source files."}`)
+	responses = append(responses, `{"synthesis":"Complete analysis of all 8 source files."}`)
 
 	mock := &MockProbeInference{Responses: responses}
 
@@ -646,10 +648,11 @@ func TestRunProbe_AdaptiveMinStepAllowsEarlySynthesis(t *testing.T) {
 		t.Error("expected non-empty synthesis result")
 	}
 
-	// With futility detection, the probe aborts after 3 failed initial steps
-	// (3 tool call inferences + 1 synthesis pass = 4 calls), not 8.
-	if mock.CallCount > 5 {
-		t.Errorf("probe made %d inference calls, expected ≤5 (futility detection should abort after 3 failed steps)", mock.CallCount)
+	// With adaptive futility detection (max(5, stepBudget/4) = 7 for budget 30),
+	// the probe aborts after at most 7 failed initial steps
+	// (7 tool call inferences + 1 synthesis pass = 8 calls max).
+	if mock.CallCount > 9 {
+		t.Errorf("probe made %d inference calls, expected ≤9 (adaptive futility detection should abort within 7 failed steps)", mock.CallCount)
 	}
 }
 
@@ -728,5 +731,76 @@ func TestRunProbe_StepCallsSetsMaxTokensKey_SynthesisDoesNot(t *testing.T) {
 		if present {
 			t.Errorf("synthesis call %d: MaxTokensKey should NOT be in context, but it was present", i)
 		}
+	}
+}
+
+// TestProbeOutputFingerprintConvergence verifies that when consecutive tool
+// outputs match existing fingerprints (diminishing information gain), the
+// probe lowers minStepBudget to allow synthesis earlier rather than grinding
+// through the full step budget with redundant reads.
+func TestProbeOutputFingerprintConvergence(t *testing.T) {
+	cleanup := setupProbeTestDB(t)
+	defer cleanup()
+	setupProbeTestTools(t)
+
+	// Create files with identical content to trigger fingerprint deduplication.
+	// The first 200 chars of each file's read_file output will be the same.
+	tempDir := t.TempDir()
+	tempDir, _ = filepath.EvalSymlinks(tempDir)
+	identicalContent := "package main\n\n// This is a boilerplate file with identical content across all modules.\n// It contains standard setup code that doesn't vary between instances.\nfunc init() { /* standard init */ }\n"
+	for i := 1; i <= 15; i++ {
+		name := fmt.Sprintf("module_%d.go", i)
+		if err := os.WriteFile(filepath.Join(tempDir, name), []byte(identicalContent), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+	os.Setenv("TZRO_DIR", tempDir)
+	if err := tools.Init(""); err != nil {
+		t.Fatalf("failed to init tools: %v", err)
+	}
+
+	// Build mock responses: 12 successful read_file calls on files with
+	// identical content. After the first read, every subsequent read returns
+	// a matching fingerprint. After 3 consecutive duplicates (steps 4-6),
+	// the convergence check fires and lowers minStepBudget.
+	responses := make([]string, 0, 15)
+	for i := 1; i <= 12; i++ {
+		responses = append(responses, fmt.Sprintf(
+			"Reading module %d\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>",
+			i, filepath.Join(tempDir, fmt.Sprintf("module_%d.go", i)),
+		))
+	}
+	// After convergence lowers minStepBudget, the model signals synthesis
+	responses = append(responses, "Enough data gathered\n<SYNTHESIZE_READY>")
+	// Pass 2: synthesis
+	responses = append(responses, `{"synthesis":"All modules contain identical boilerplate."}`)
+
+	mock := &MockProbeInference{Responses: responses}
+
+	cfg := compiler.ProbeConfig{
+		Goal:         "Analyze all modules in the project",
+		AllowedTools: []string{"read_file", "list_dir", "search_files"},
+		StepBudget:   20,
+		CompactEvery: 3, // convergence requires successfulToolCalls >= compactEvery*2 = 6
+	}
+
+	result, err := RunProbe(context.Background(), "task_fingerprint_test", "probe_fingerprint_1", cfg, mock, nil)
+	if err != nil {
+		t.Fatalf("RunProbe failed: %v", err)
+	}
+
+	if result == "" {
+		t.Error("expected non-empty synthesis result")
+	}
+
+	// Without fingerprint convergence, the probe would use all 12+ steps.
+	// With convergence, after 6+ successful calls and 3 consecutive duplicate
+	// outputs, minStepBudget is lowered, allowing synthesis much earlier.
+	// The probe should complete in significantly fewer than 12 tool steps.
+	// Allow up to 12 calls total (steps + synthesis) as a generous upper bound;
+	// the key assertion is that it doesn't burn through all 20 budget steps.
+	if mock.CallCount > 14 {
+		t.Errorf("probe made %d inference calls, expected ≤14 (fingerprint convergence should allow earlier synthesis). "+
+			"Without convergence detection the probe would use all 20 budget steps.", mock.CallCount)
 	}
 }

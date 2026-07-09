@@ -177,12 +177,34 @@ func RunProbe(
 	// successful calls, abort the probe immediately. This prevents burning the
 	// entire step budget (15-20 steps × ~10s each) when the probe can't even
 	// get started (e.g., wrong directory, no files found, malformed tool calls).
-	const futilityThreshold = 3
+	// Dynamic: scales with step budget so large-budget probes get more recovery
+	// attempts (e.g., stepBudget 30 → threshold 7, stepBudget 10 → threshold 5).
+	futilityThreshold := stepBudget / 4
+	if futilityThreshold < 5 {
+		futilityThreshold = 5
+	}
+
+	// Diagnostic tracking for futility abort: records tool name and error
+	// for each failed step so the abort log shows WHY calls failed.
+	type failedDetail struct {
+		step   int
+		tool   string
+		errMsg string
+	}
+	var failedToolDetails []failedDetail
 
 	// Successful tool call counter: tracks unique successful tool invocations
 	// (calls that returned actual content, not errors). Used to adaptively
 	// lower the minimum step budget when the probe has made substantial progress.
 	var successfulToolCalls int
+
+	// Output fingerprint tracking: detects diminishing information gain during
+	// exploration. When 3 consecutive successful tool outputs match existing
+	// fingerprints (first 200 chars), the probe lowers minStepBudget to allow
+	// synthesis instead of grinding through redundant exploration steps.
+	outputFingerprints := make(map[string]bool)
+	var consecutiveDuplicateOutputs int
+	const maxConsecutiveDuplicateOutputs = 3
 
 	// minStepBudget is the minimum number of steps a probe must take before
 	// synthesis is allowed. Prevents premature termination when the model
@@ -311,6 +333,7 @@ func RunProbe(
 
 			if !allowedToolSet[toolName] {
 				toolOutput = fmt.Sprintf("Error: tool '%s' is not in the allowed tools set", toolName)
+				failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: toolOutput})
 			} else {
 				args := chainStep.Arguments
 				if args == nil {
@@ -323,15 +346,42 @@ func RunProbe(
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
 					consecutiveErrors++
+					failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: toolOutput})
 				} else {
 					toolOutput = result
 					// Detect tool-level errors: tools return JSON with "success":false
 					// for validation failures, nonexistent paths, etc. (no Go error).
 					if isToolError(result) {
 						consecutiveErrors++
+						failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: truncate(result, 200)})
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
+
+						// Output fingerprint convergence check (Fix B):
+						// Track first 200 chars of each successful output. When
+						// 3 consecutive outputs match existing fingerprints,
+						// the probe is reading redundant content — unlock synthesis.
+						fingerprint := strings.TrimSpace(result)
+						if len(fingerprint) > 200 {
+							fingerprint = fingerprint[:200]
+						}
+						if outputFingerprints[fingerprint] {
+							consecutiveDuplicateOutputs++
+						} else {
+							consecutiveDuplicateOutputs = 0
+							outputFingerprints[fingerprint] = true
+						}
+
+						// When enough exploration has occurred and outputs are repeating,
+						// lower minStepBudget to allow synthesis on the next step.
+						if consecutiveDuplicateOutputs >= maxConsecutiveDuplicateOutputs &&
+							step >= minStepBudget &&
+							successfulToolCalls >= compactEvery*2 {
+							fmt.Fprintf(os.Stderr, "[Probe] Node %s: %d consecutive duplicate outputs detected at step %d. Lowering min step budget to allow synthesis.\n",
+								probeID, consecutiveDuplicateOutputs, step)
+							minStepBudget = step // Allow synthesis on the next step
+						}
 					}
 				}
 				if bytes, err := json.Marshal(args); err == nil {
@@ -356,6 +406,9 @@ func RunProbe(
 				// (15 steps × 10s) when the probe can't get started at all.
 				if step <= futilityThreshold && successfulToolCalls == 0 {
 					fmt.Fprintf(os.Stderr, "[Probe] FUTILITY ABORT: Node %s has %d/%d initial steps ALL failed with zero successful calls. Aborting probe loop.\n", probeID, step, futilityThreshold)
+					for _, d := range failedToolDetails {
+						fmt.Fprintf(os.Stderr, "[Probe]   step %d: tool=%s error=%s\n", d.step, d.tool, truncate(d.errMsg, 150))
+					}
 					// Persist the final step before breaking
 					thoughtStep := memory.ThoughtStep{
 						ID:         fmt.Sprintf("%s_step_%d", probeID, step),
