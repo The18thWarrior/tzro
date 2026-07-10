@@ -835,10 +835,10 @@ func RemoveDashboardLock() {
 
 // routerModelMaxBytes is the maximum size for auto-detected router models.
 // Models larger than this are assumed to be worker-class and skipped.
-const routerModelMaxBytes = 1 * 1024 * 1024 * 1024 // 1 GB
+const routerModelMaxBytes = 2 * 1024 * 1024 * 1024 // 2 GB — accommodates MiniCPM5 1B Q8_0 (~1.2 GB)
 
 // autoDetectRouterModel scans the models directory for a small GGUF file
-// (< 1GB) that is distinct from the worker model and companion files
+// (< 2GB) that is distinct from the worker model and companion files
 // (mmproj, MTP draft models). Returns the absolute path to the smallest
 // qualifying model, or empty string if none found.
 func autoDetectRouterModel(workerPath string) string {

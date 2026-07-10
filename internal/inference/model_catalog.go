@@ -10,8 +10,10 @@ type ModelEntry struct {
 	DownloadURL  string `json:"downloadUrl"`
 	Filename     string `json:"filename"`
 	Description  string `json:"description"`
-	ToolCallTier string `json:"toolCallTier"`
-	IsDefault    bool   `json:"isDefault"`
+	ToolCallTier    string `json:"toolCallTier"`
+	IsDefault       bool   `json:"isDefault"`
+	Role            string `json:"role,omitempty"`            // "router" | "worker" | "" (empty = worker)
+	IsDefaultRouter bool   `json:"isDefaultRouter,omitempty"` // true = default router model for dual-sidecar
 
 	// CompanionMMProj is the optional multimodal projector for vision-capable models.
 	// When non-nil, this projector is auto-downloaded alongside the base model to enable
@@ -216,6 +218,20 @@ var modelCatalog = []ModelEntry{
 		Description:  "Meta Llama 3.2 3B with limited tool calling",
 		ToolCallTier: "limited",
 	},
+	// Router models — small, fast models for classification, routing, and probe navigation
+	{
+		ID:              "minicpm5-1b-opus-fable5",
+		DisplayName:     "MiniCPM5 1B Claude Opus Fable5 Thinking",
+		Params:          "1B",
+		SizeBytes:       1267597312,
+		SizeLabel:       "~1.2 GB",
+		DownloadURL:     "https://huggingface.co/GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-GGUF/resolve/main/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf?download=true",
+		Filename:        "MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf",
+		Description:     "MiniCPM5 1B distilled from Claude Opus traces with thinking — optimized for fast routing, classification, and probe navigation",
+		ToolCallTier:    "good",
+		Role:            "router",
+		IsDefaultRouter: true,
+	},
 }
 
 // GetCatalog returns the full model catalog.
@@ -243,7 +259,7 @@ func FindModelByFilename(filename string) *ModelEntry {
 	return nil
 }
 
-// GetDefaultModel returns the default model entry.
+// GetDefaultModel returns the default worker model entry.
 func GetDefaultModel() *ModelEntry {
 	for i := range modelCatalog {
 		if modelCatalog[i].IsDefault {
@@ -251,4 +267,26 @@ func GetDefaultModel() *ModelEntry {
 		}
 	}
 	return &modelCatalog[0]
+}
+
+// GetDefaultRouterModel returns the default router model entry.
+// Returns nil if no model is marked as the default router.
+func GetDefaultRouterModel() *ModelEntry {
+	for i := range modelCatalog {
+		if modelCatalog[i].IsDefaultRouter {
+			return &modelCatalog[i]
+		}
+	}
+	return nil
+}
+
+// FindRouterModels returns all catalog entries with Role == "router".
+func FindRouterModels() []ModelEntry {
+	var models []ModelEntry
+	for _, m := range modelCatalog {
+		if m.Role == "router" {
+			models = append(models, m)
+		}
+	}
+	return models
 }
