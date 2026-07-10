@@ -416,7 +416,7 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		graph = codegen.BuildPseudocodeExpansionDAG(taskID, args.Pseudocode, args.Spec, args.Filepath, language, maxLines, codeCtx)
 	} else {
 		// Classify complexity (informational — used for logging and benchmark routing)
-		tier := classifyCodeComplexity(args.Spec, codeCtx)
+		tier := codegen.ClassifyCodeComplexity(args.Spec, codeCtx)
 		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, proceeding with direct generation for %s\n", tier, args.Filepath)
 
 		switch mode {
