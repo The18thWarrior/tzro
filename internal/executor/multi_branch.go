@@ -90,7 +90,7 @@ Generate %d candidate approaches.`,
 		TaskID:     taskID,
 	}
 
-	result, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	result, err := inference.ExecuteRouterStructured(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("multi-branch inference failed: %w", err)
 	}

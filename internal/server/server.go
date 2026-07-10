@@ -188,7 +188,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Intent & Complexity classification
-	intent := classifier.Classify(r.Context(), req.Message, inference.GlobalLocalModel)
+	intent := classifier.Classify(r.Context(), req.Message)
 
 	// Collect configured tools names for complexity checks
 	daemonsConfig := mcp.GlobalRegistry.GetList()
@@ -196,7 +196,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	for k := range daemonsConfig {
 		toolNames = append(toolNames, k)
 	}
-	complexity := classifier.ClassifyComplexity(r.Context(), req.Message, toolNames, inference.GlobalLocalModel)
+	complexity := classifier.ClassifyComplexity(r.Context(), req.Message, toolNames)
 
 	resp := ChatResponse{
 		Intent:     intent,

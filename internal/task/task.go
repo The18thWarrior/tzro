@@ -204,7 +204,7 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 
 	// 1. Classify complexity for routing decision
 	toolNames := collectToolNames()
-	complexityTier := classifier.ClassifyComplexity(ctx, prompt, toolNames, inference.GlobalLocalModel)
+	complexityTier := classifier.ClassifyComplexity(ctx, prompt, toolNames)
 
 	// 2. Assemble routing context
 	routingCtx := routing.RoutingContext{

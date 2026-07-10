@@ -360,10 +360,10 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 
 	// Router sidecar overrides: smaller context, no speculative decoding, no vision
 	if m.Role == "router" {
-		// Override ctx-size to 2048 for router (short I/O tasks)
+		// Override ctx-size to 16384 for router (smaller than worker's 32K but enough for probe chains)
 		for i, a := range args {
 			if a == "--ctx-size" && i+1 < len(args) {
-				args[i+1] = "2048"
+				args[i+1] = "16384"
 			}
 			if a == "--n-predict" && i+1 < len(args) {
 				args[i+1] = "1024" // Router outputs are short
@@ -385,7 +385,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			cleanArgs = append(cleanArgs, a)
 		}
 		args = cleanArgs
-		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=2048 (lightweight routing mode)\n")
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384 (routing mode, no speculative decoding)\n")
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)

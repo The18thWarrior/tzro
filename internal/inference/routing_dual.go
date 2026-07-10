@@ -43,6 +43,26 @@ func CallWorkerStream(ctx context.Context, messages []InferenceMessage, jsonSche
 	return GlobalWorkerModel.CallLocalModelStream(ctx, messages, jsonSchema, meta)
 }
 
+// ExecuteRouterStructured routes a StructuredInferenceRequest through the router
+// sidecar (fast, small model). Use for: classification, confidence checks, edge
+// thought generation, parameter extraction, branch evaluation, binding resolution.
+//
+// Falls back to the worker sidecar transparently if the router is unavailable.
+func ExecuteRouterStructured(ctx context.Context, req StructuredInferenceRequest) (string, error) {
+	if isRouterAvailable() {
+		return GlobalRouterModel.ExecuteStructured(ctx, req)
+	}
+	fmt.Fprintln(os.Stderr, "[Inference] Router sidecar unavailable, falling back to worker for structured call")
+	return GlobalWorkerModel.ExecuteStructured(ctx, req)
+}
+
+// ExecuteWorkerStructured routes a StructuredInferenceRequest through the worker
+// sidecar (quality, large model). Use for: code generation, complex reasoning,
+// DAG planning, synthesis, primary tool parameter extraction.
+func ExecuteWorkerStructured(ctx context.Context, req StructuredInferenceRequest) (string, error) {
+	return GlobalWorkerModel.ExecuteStructured(ctx, req)
+}
+
 // isRouterAvailable returns true if the router sidecar is running and healthy.
 func isRouterAvailable() bool {
 	status, _, _, _, _ := GlobalRouterModel.GetStatusInfo()

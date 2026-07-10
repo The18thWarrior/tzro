@@ -724,23 +724,27 @@ func GetCodeModelPath() string {
 }
 
 // GetRouterModelPath returns the configured router sidecar model path.
-// If not configured or the file doesn't exist, returns empty string
-// (caller should fall back to single-sidecar mode).
+// If not explicitly configured, auto-detects a small GGUF model (< 1GB)
+// from the models directory that is distinct from the worker model and
+// companion files (mmproj, MTP). Returns empty string if no suitable
+// router model is found (caller should fall back to single-sidecar mode).
 func GetRouterModelPath() string {
 	configMutex.RLock()
 	routerPath := GlobalConfig.RouterModelPath
+	workerPath := GlobalConfig.GGUFModelPath
 	configMutex.RUnlock()
 
-	if routerPath == "" {
-		return ""
+	if routerPath != "" {
+		// Explicitly configured — resolve relative paths against ModelsDir
+		if !filepath.IsAbs(routerPath) {
+			routerPath = filepath.Join(GetModelsDir(), filepath.Base(routerPath))
+		}
+		return routerPath
 	}
 
-	// Resolve relative paths against ModelsDir
-	if !filepath.IsAbs(routerPath) {
-		routerPath = filepath.Join(GetModelsDir(), filepath.Base(routerPath))
-	}
-
-	return routerPath
+	// Auto-detect: scan models directory for a small GGUF file
+	// that is not the worker model or a companion file.
+	return autoDetectRouterModel(workerPath)
 }
 
 // GetDaemonURL returns the active daemon HTTP URL by checking:
@@ -827,4 +831,71 @@ func ReadDashboardLock() *DashboardLock {
 func RemoveDashboardLock() {
 	lockFile := ResolvePath(".dashboard.lock")
 	_ = os.Remove(lockFile)
+}
+
+// routerModelMaxBytes is the maximum size for auto-detected router models.
+// Models larger than this are assumed to be worker-class and skipped.
+const routerModelMaxBytes = 1 * 1024 * 1024 * 1024 // 1 GB
+
+// autoDetectRouterModel scans the models directory for a small GGUF file
+// (< 1GB) that is distinct from the worker model and companion files
+// (mmproj, MTP draft models). Returns the absolute path to the smallest
+// qualifying model, or empty string if none found.
+func autoDetectRouterModel(workerPath string) string {
+	modelsDir := GetModelsDir()
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		return ""
+	}
+
+	workerBase := filepath.Base(workerPath)
+
+	var bestPath string
+	var bestSize int64
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+
+		// Must be a .gguf file
+		if !strings.HasSuffix(strings.ToLower(name), ".gguf") {
+			continue
+		}
+
+		// Skip the worker model itself
+		if name == workerBase {
+			continue
+		}
+
+		// Skip companion files: mmproj (vision projectors) and MTP draft models.
+		// These are architecture-specific auxiliary files, not standalone models.
+		lowerName := strings.ToLower(name)
+		if strings.Contains(lowerName, "mmproj") || strings.Contains(lowerName, "-mtp") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		size := info.Size()
+		if size <= 0 || size > routerModelMaxBytes {
+			continue
+		}
+
+		// Pick the smallest qualifying model
+		if bestPath == "" || size < bestSize {
+			bestPath = filepath.Join(modelsDir, name)
+			bestSize = size
+		}
+	}
+
+	if bestPath != "" {
+		fmt.Fprintf(os.Stderr, "[Config] Auto-detected router model: %s (%d MB)\n", filepath.Base(bestPath), bestSize/(1024*1024))
+	}
+
+	return bestPath
 }

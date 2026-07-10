@@ -80,7 +80,7 @@ func resolveBindingSemantic(ctx context.Context, rawOutput string, bindingKey st
 	req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
 	req.TaskID = "" // No task association — this is a lightweight utility call
 
-	result, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	result, err := inference.ExecuteRouterStructured(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("semantic binding resolution failed for '%s': %w", bindingKey, err)
 	}

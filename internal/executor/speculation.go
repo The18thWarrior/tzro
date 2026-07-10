@@ -85,8 +85,8 @@ func ImagineToolOutput(ctx context.Context, toolName string, args map[string]int
 		TaskID: "imagination",
 	}
 
-	if inference.GlobalLocalModel != nil {
-		result, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	if inference.GlobalWorkerModel != nil {
+		result, err := inference.ExecuteRouterStructured(ctx, req)
 		if err == nil && result != "" {
 			return result, nil
 		}
