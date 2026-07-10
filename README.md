@@ -202,15 +202,16 @@ For real-time observability, the MCP server exposes two URI templates for push n
 
 ---
 
-## 🆕 v0.8.0 Highlights
+## 🆕 v0.9.0 Highlights
 
-- **Local Code Generation** — `tzro_code` generates or modifies source files entirely on the local model. Complexity-based routing picks single-pass or two-phase draft generation, module context is extracted from neighboring files, and a compilation quality gate auto-repairs failures via edge thought-driven DAG mutation.
-- **High-Reliability Prompting** — Hardened prompt patterns for 4B local models achieve 4.0+ quality scores on Tier 4–5 codegen tasks using explicit technical anchors, pattern locking, and deterministic exit signals.
-- **Docgen Category Routing** — The planner now mandates single-probe-node plans for documentation, function indexing, and architecture analysis — preventing misrouting through rigid action pipelines.
-- **Regex Pattern Search** — `search_files` upgraded from substring matching to full regex support for more precise codebase exploration.
-- **Expanded Tool Limits** — `read_file` cap raised from 100→500 lines, `list_dir` cap raised from 20→100 entries.
-- **SQLite WAL Mode** — Memory subsystem enables Write-Ahead Logging for concurrent read/write performance.
-- **Automated Benchmark Runner** — Multi-iteration evaluation loop with retry, averaging, and CSV output.
+- **Dual-Sidecar Inference Architecture** — Two independent llama-server processes run concurrently: a fast router model (e.g., MiniCPM5-1B) for classification, tool selection, and Probe navigation, and a larger worker model for code generation and complex reasoning. Automatic fallback from router to worker when the router is unavailable.
+- **Multi-Branch MCTS Evaluation (ADR-0045)** — Edge Thought evaluation now generates K candidate actions in a single inference call, evaluates each through speculative rollouts with a Speculation Fence (real/imagined/blocked tool execution), and selects the highest-scoring candidate via a heuristic value function.
+- **Two-Tier Context Budget (ADR-0043/0044)** — Accumulated context assembly uses tiered per-node output budgets (recall > validator > action > probe > deterministic) with a dynamic ceiling. Synthesis nodes bypass the ceiling for full-fidelity output.
+- **Adaptive Probe Futility Detection** — Probes abort early when all initial steps fail, with a dynamic threshold that scales with step budget. Output fingerprint convergence detects diminishing information gain from repeated tool calls.
+- **KV Cache Prefix Sharing** — Probe system prompts are hoisted outside the step loop, enabling llama-server's cache-reuse window to skip ~500-1000 tokens of redundant KV computation per step.
+- **Hot-Swappable Model Management** — The engine temporarily swaps to a code-specialized GGUF model for codegen tasks, then lazily restores the default model after completion.
+- **PreFlect Hook** — Corrective micro-skills (SOPs) from the skill store are proactively injected into node instructions before execution, implementing pre-flight correction for known failure modes.
+- **Spawn Depth Tracking** — Nested spawn ancestry is tracked and enforced via `MutationBudget.MaxDepth` to prevent infinite recursive spawning.
 
 ---
 

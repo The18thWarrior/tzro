@@ -133,6 +133,9 @@ The executor processes sorted levels concurrently using Go goroutines:
 - **Weighted Circuit Breaker (v0.7.3):** The executor computes a time budget per task based on the node composition of the DAG. Each node type has a defined budget (probe: 10min, action: 5min, deterministic/synthesis: 90s). A configurable `circuitBreakerMultiplier` (default 1.0) scales the total budget. When the budget expires, remaining pending nodes are marked `timed_out` and the `terminal_synthesis` node is preserved to produce a coherent final output.
 - **Tool Name Classification Fallback (v0.7.3):** At execution time, if a node references a tool that doesn't exist in the registry, the executor uses local inference to classify the hallucinated name to the closest real tool before failing.
 - **Failure Dampening Initialization (v0.8.0):** The executor automatically initializes the mutation budget (`maxSpawns` and `remainingSpawns`) if unset by the planner, preventing unbounded node spawning. Consecutive failure counters are tracked per-task and reset on successful activation.
+- **Two-Tier Context Budget (v0.9.0, ADR-0043/0044):** The accumulated context assembly now uses tiered per-node output budgets based on node type: recall(8x) > validator(6x) > action(4x) > probe(2x) > deterministic(1x). A dynamic ceiling of `min(nodeCount × 4096, 32000)` characters bounds total context size. Synthesis nodes bypass the ceiling and receive untruncated recall/validator outputs to preserve fidelity.
+- **Spawn Depth Tracking (v0.9.0):** `countSpawnDepth()` tracks nested spawn ancestry by counting `spawned_` prefix levels in node IDs. `canSpawnAtDepth()` enforces `MutationBudget.MaxDepth` to prevent infinite recursive spawning. Spawned nodes always use single-shot mode (never multi-branch).
+- **PreFlect Hook (v0.9.0):** The `PreFlectHook` execution hook injects corrective micro-skills (SOPs) into node instructions before execution. It queries the skill store for skills matching the node's tool action and prepends their SOP content, implementing proactive "pre-flight correction" for known failure modes.
 
 ```sql
 CREATE TABLE graph_node_states (
@@ -156,6 +159,10 @@ CREATE TABLE graph_node_states (
   - **Tabular data:** Retains 3 sample rows plus summary statistics.
   - **Text/prose:** Middle-out elision (keep first and last 30 lines).
   - Truncation budget: 160K characters (~40K tokens). Applied oldest-first, preserving the most recent tool results intact.
+- **Adaptive Futility Thresholds (v0.9.0):** Probes abort early when ALL initial steps return errors with zero successful calls. The threshold scales dynamically: `max(5, stepBudget/4)`. Failed step diagnostics (step number, tool name, error message) are logged for debugging.
+- **Output Fingerprint Convergence (v0.9.0):** Tracks the first 200 characters of each successful tool output. After 3 consecutive duplicate outputs (indicating diminishing information gain), the minimum step budget is lowered to allow synthesis instead of redundant exploration.
+- **KV Cache Prefix Sharing (v0.9.0):** The system prompt (goal + tool schemas) is hoisted outside the step loop. This ensures the llama-server's `--cache-reuse` window matches system message tokens on every step, avoiding ~500-1000 tokens of redundant KV computation per step.
+- **Router Sidecar Routing (v0.9.0):** Probe thought chain steps route through the router sidecar (fast, small model) for tool-selection decisions. Falls back to the worker sidecar transparently when the router is unavailable.
 
 ### 3.5. Neural Edge Traversal & Activation Thresholds
 
@@ -169,6 +176,18 @@ To handle open-ended exploration dynamically, `tzro` uses **Activation Threshold
   - `Confidence < Threshold` → The engine dynamically spawns a new node to gather the missing details (e.g. read a file, query a database) and inserts it into the graph.
   - `Goal Achieved == true` → Skips the target node and cascades skip statuses downstream.
 - **Safety Dampening:** If 3 consecutive spawned nodes fail, further spawning is suppressed. A **Mutation Budget** restricts total spawns per task.
+
+#### Multi-Branch MCTS Evaluation (v0.9.0, ADR-0045)
+
+For nodes with `MCTSBranches > 0`, the engine generates K candidate actions in a single inference call using a GBNF-constrained JSON schema, then evaluates each through speculative rollouts:
+
+- **Single-Slot K-Candidate Generation:** The Local Model outputs a ranked JSON array of K alternative approaches with self-assessed scores, avoiding the need for n=K parallel inference batching.
+- **Speculation Fence:** Uses the Proactivity Ladder to classify each candidate's tool call:
+  - `Level ≤ ceil` → **SpecReal**: Execute the real tool during evaluation.
+  - `Level > ceil && ≤ L3` → **SpecImagined**: The Local Model simulates the tool's output via `ImagineToolOutput`.
+  - `Level > ceil && > L3` → **SpecBlocked**: Candidate is pruned.
+- **Heuristic Value Function:** Scores candidates using four weighted signals: output quality (0.3), key term coverage from goal prompt (0.3), anti-hallucination GoalProgressGuard (0.2), and dampened model self-assessment (0.2 × 0.7x dampening).
+- **Branch Safety:** Spawned nodes always use single-shot mode (never multi-branch) to prevent exponential branching. Spawn depth is tracked and enforced via `MutationBudget.MaxDepth`.
 
 ### 3.6. Plan Repair Pipeline (v0.7.3)
 
@@ -184,6 +203,11 @@ Decouples structured LLM inference from the core execution loop. Pluggable backe
 - **llama-server sidecar:** Embeds a local llama-server running GGUF weights (e.g. Qwen-3.5 4B).
 - **External Servers:** Integrates OpenAI-compatible local APIs (LMStudio, Ollama, vLLM).
 - **Harness Callback:** Redirects inference programmatically through an external agent framework.
+- **Dual-Sidecar Architecture (v0.9.0):** Two independent llama-server processes run concurrently:
+  - **Router Sidecar:** A fast, small model (e.g., MiniCPM5-1B) for classification, tool selection, parameter extraction, Probe navigation, edge thought scoring, and validation passes. Exposed via `CallRouter()` / `ExecuteRouterStructured()`.
+  - **Worker Sidecar:** A larger quality model for code generation, complex reasoning, DAG planning, synthesis, and long-form output. Exposed via `CallWorker()` / `ExecuteWorkerStructured()`.
+  - **Automatic Fallback:** When the router sidecar is unavailable (not configured, stopped, or unhealthy), all router calls transparently fall back to the worker sidecar with a logged warning.
+  - **Hot-Swappable Model Management (v0.9.0):** The engine can temporarily swap to a code-specialized GGUF model for codegen tasks, then lazily restore the default model after completion. Swap failures fall back to the active model without error.
 
 ### 3.8. Input-Output Normalization Seams
 

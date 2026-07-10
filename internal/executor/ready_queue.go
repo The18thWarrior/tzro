@@ -24,8 +24,6 @@ type contextKeyType string
 
 const contextKeyNodeID contextKeyType = "nodeID"
 
-
-
 // ExecuteGraphReactive runs the graph using an event-driven ready queue
 // instead of pre-computed topological levels (ADR-0024).
 //
@@ -81,7 +79,7 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 	compiler.ApplyDefaults(graph)
 
 	fmt.Fprintf(os.Stderr, "[Executor/RQ] Starting reactive execution for Task %s with %d nodes...\n", graph.TaskID, len(graph.Nodes))
-	
+
 	// ADR-0040: Auto-sequential for benchmarks to prevent sidecar resource contention.
 	if strings.HasPrefix(graph.TaskID, "comparison_") || strings.HasPrefix(graph.TaskID, "benchmark_") {
 		fmt.Fprintf(os.Stderr, "[Executor/RQ] Benchmark task detected. Enabling node-level sequential execution.\n")

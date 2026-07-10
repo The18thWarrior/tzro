@@ -40,16 +40,16 @@ func TestRunComparisonSuite_RunsSingleConditionForFilteredTier(t *testing.T) {
 				Choices: []struct {
 					Message struct {
 						Content          *string         `json:"content"`
-					ReasoningContent *string         `json:"reasoning_content,omitempty"`
-						ToolCalls []reactToolCall `json:"tool_calls,omitempty"`
+						ReasoningContent *string         `json:"reasoning_content,omitempty"`
+						ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
 					} `json:"message"`
 					FinishReason string `json:"finish_reason"`
 				}{
 					{
 						Message: struct {
 							Content          *string         `json:"content"`
-					ReasoningContent *string         `json:"reasoning_content,omitempty"`
-							ToolCalls []reactToolCall `json:"tool_calls,omitempty"`
+							ReasoningContent *string         `json:"reasoning_content,omitempty"`
+							ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
 						}{
 							ToolCalls: []reactToolCall{
 								{
@@ -80,16 +80,16 @@ func TestRunComparisonSuite_RunsSingleConditionForFilteredTier(t *testing.T) {
 				Choices: []struct {
 					Message struct {
 						Content          *string         `json:"content"`
-					ReasoningContent *string         `json:"reasoning_content,omitempty"`
-						ToolCalls []reactToolCall `json:"tool_calls,omitempty"`
+						ReasoningContent *string         `json:"reasoning_content,omitempty"`
+						ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
 					} `json:"message"`
 					FinishReason string `json:"finish_reason"`
 				}{
 					{
 						Message: struct {
 							Content          *string         `json:"content"`
-					ReasoningContent *string         `json:"reasoning_content,omitempty"`
-							ToolCalls []reactToolCall `json:"tool_calls,omitempty"`
+							ReasoningContent *string         `json:"reasoning_content,omitempty"`
+							ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
 						}{
 							Content: &finalContent,
 						},

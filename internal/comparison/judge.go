@@ -21,7 +21,7 @@ var codeFenceRe = regexp.MustCompile("(?s)^\\s*```(?:json)?\\s*\n(.*?)\\s*```\\s
 
 func stripCodeFences(s string) string {
 	s = strings.TrimSpace(s)
-	
+
 	// 1. Try to find content between triple backticks
 	// This regex finds the first occurrence of ```[lang] ... ``` and captures the content
 	re := regexp.MustCompile("(?s)```(?:[a-zA-Z]+)?\\s*\n?(.*?)\\s*```")

@@ -772,7 +772,6 @@ func (m *LocalModelManager) getGPULayerCount() int {
 	return 0
 }
 
-
 // allocateRandomPort asks the OS for a random free port by briefly binding to :0,
 // then immediately releasing it for llama-server to use.
 func allocateRandomPort() (int, error) {
@@ -1043,11 +1042,11 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	}
 
 	reqBody := CompletionRequest{
-		Model:              "Qwopus3.5-4B-Coder",
-		Messages:           MessagesToMaps(messages),
-		Temperature:        1.0,
-		MinP:               0.1,
-		Stream:             true,
+		Model:       "Qwopus3.5-4B-Coder",
+		Messages:    MessagesToMaps(messages),
+		Temperature: 1.0,
+		MinP:        0.1,
+		Stream:      true,
 		StreamOptions: &StreamOptionsStruct{
 			IncludeUsage: true,
 		},

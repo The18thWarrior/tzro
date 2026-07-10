@@ -16,7 +16,7 @@ func TestRepro_CacheFunctionIndex_Cooperative(t *testing.T) {
 
 	ctx := context.Background()
 	config.Load()
-	
+
 	tasks, err := LoadTasks(1) // cache_function_index is Tier 1
 	if err != nil {
 		t.Fatalf("Failed to load tasks: %v", err)

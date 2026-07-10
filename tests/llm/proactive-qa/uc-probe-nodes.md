@@ -31,6 +31,13 @@ A local AI coding agent wants to explore an unfamiliar codebase or perform high-
 - [ ] The Probe Node successfully triggers a forced synthesis of all findings if the maximum step budget is exhausted without converging.
 - [ ] The synthesis pass applies content-aware truncation to tool outputs: code is truncated at bracket nesting boundaries preserving signatures, tabular data retains sample rows, and prose uses middle-out elision.
 - [ ] Staging and committing changes handles Probe Node configurations correctly.
+- [ ] Adaptive futility thresholds dynamically scale with step budget (stepBudget/4, minimum 5) to abort early when ALL initial steps return errors with zero successful calls.
+- [ ] Futility abort logs diagnostic details for each failed step including step number, tool name, and error message.
+- [ ] Output fingerprint convergence tracks the first 200 characters of each successful tool output; after 3 consecutive duplicate outputs, minStepBudget is lowered to allow synthesis instead of redundant exploration.
+- [ ] KV cache prefix sharing hoists the system prompt (goal + tool schemas) outside the step loop so the llama-server's --cache-reuse window avoids ~500-1000 tokens of redundant KV computation per step.
+- [ ] Probe thought chain steps route through the router sidecar (fast, small model) for tool-selection decisions, not the worker sidecar.
+- [ ] When the router sidecar is unavailable, probe steps transparently fall back to the worker sidecar.
+- [ ] The `InferMessages` method on ProbeInferenceEngine enables pre-segmented message arrays for maximum KV cache prefix reuse.
 - [ ] When a node has a non-zero activation threshold, the executor generates an Edge Thought on each incoming edge after the source node completes.
 - [ ] Edge Thoughts produce a goal confidence score (0.0–1.0) and a goal-achieved boolean via GBNF-constrained local inference.
 - [ ] When edge thought confidence ≥ activation threshold, the target node executes normally.
@@ -56,6 +63,10 @@ A local AI coding agent wants to explore an unfamiliar codebase or perform high-
 - Three consecutive spawned nodes fail — verify failure dampening suppresses the 4th spawn and the target node runs with available context.
 - Mutation budget exhausted — verify the executor stops spawning and proceeds with existing nodes.
 - Edge thought signals goal achieved on the first edge — verify all downstream nodes are skipped and the task produces a synthesis from completed nodes only.
+- Probe with stepBudget 8 — futility threshold should be 5 (minimum clamp), verify abort after 5 consecutive errors.
+- Probe with stepBudget 40 — futility threshold should be 10 (40/4), verify extended recovery window.
+- Probe reads the same file 4 times in a row — verify output fingerprint convergence triggers after 3 duplicates and lowers minStepBudget.
+- Router sidecar crashes during probe step 3 of 15 — verify transparent fallback to worker for remaining steps.
 
 ## Anti-Patterns to Watch For
 

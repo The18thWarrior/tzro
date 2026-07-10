@@ -266,7 +266,7 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			if req.StreamMeta != nil {
 				nodeID = req.StreamMeta.NodeID
 			}
-			
+
 			// ADR-0040: Low-stakes requests (like validators) bypass thermal escalation
 			// to avoid burning cloud tokens on simple structured extraction.
 			if !req.IsLowStakes {

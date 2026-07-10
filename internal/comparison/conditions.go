@@ -53,8 +53,6 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		config.GlobalConfig.ModelMode = originalModelMode
 	}()
 
-
-
 	// Isolated database per condition run. Append timestamp to avoid SQLite
 	// locking issues (disk I/O error 522) when runs happen in rapid succession.
 	dbFile := fmt.Sprintf("tzro_comparison_%s_%s_%d.db", conditionID, t.ID, time.Now().UnixNano())
@@ -469,8 +467,6 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		}
 	}
 
-
-
 	// Create a directory for the codegen output (inside OutputDir if provided)
 	var testOutputDir string
 	var cleanup func()
@@ -841,6 +837,7 @@ declare function clearInterval(id: any): void;
 `
 	_ = os.WriteFile(filepath.Join(typingsDir, "index.d.ts"), []byte(nodeShim), 0644)
 }
+
 // copyFile copies a single file from src to dst.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)

@@ -5,7 +5,7 @@ import "tzro/internal/inference"
 // Condition IDs for the 2×2 execution matrix.
 const (
 	ConditionCloudReAct  = "cloud_react"
-	ConditionLocalReAct  = "local_react"  // ReAct loop on local model (DAG-free baseline)
+	ConditionLocalReAct  = "local_react" // ReAct loop on local model (DAG-free baseline)
 	ConditionCloudDAGRaw = "cloud_dag_raw"
 	ConditionCloudDAG    = "cloud_dag"
 	ConditionLocalOnly   = "local_only"

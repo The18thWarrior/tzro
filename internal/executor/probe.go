@@ -790,6 +790,7 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inf
 
 	return msgs
 }
+
 // compactThoughtChain creates a rolling summary of recent thought chain steps.
 // The compactionLevel parameter controls how aggressively tool outputs are
 // truncated in the compaction prompt. With CompactAggressive, outputs are

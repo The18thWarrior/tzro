@@ -10,13 +10,13 @@ import (
 // inference call, each representing a different approach to achieving the
 // current node's objective.
 type Candidate struct {
-	Action    string                 `json:"action"`              // Human-readable action description
-	ToolName  string                 `json:"toolName"`            // Target tool name
-	Args      map[string]interface{} `json:"args,omitempty"`      // Tool arguments
-	Reasoning string                 `json:"reasoning"`           // Why this approach was chosen
-	SelfScore float64                `json:"selfScore"`           // Model's self-assessed score (0.0-1.0)
-	Score     float64                `json:"-"`                   // Value Function score (set externally)
-	Output    string                 `json:"-"`                   // Tool output (set during rollout evaluation)
+	Action    string                 `json:"action"`         // Human-readable action description
+	ToolName  string                 `json:"toolName"`       // Target tool name
+	Args      map[string]interface{} `json:"args,omitempty"` // Tool arguments
+	Reasoning string                 `json:"reasoning"`      // Why this approach was chosen
+	SelfScore float64                `json:"selfScore"`      // Model's self-assessed score (0.0-1.0)
+	Score     float64                `json:"-"`              // Value Function score (set externally)
+	Output    string                 `json:"-"`              // Tool output (set during rollout evaluation)
 }
 
 // ValueFunction evaluates candidate action quality during multi-branch

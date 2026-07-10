@@ -58,7 +58,7 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 
 	for step < maxSteps {
 		step++
-		
+
 		// 1. Infer next action
 		// Include refinedContext in the prompt if not empty
 		currentPrompt := systemPrompt
@@ -82,7 +82,7 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 		case "fetch_details":
 			nodeID, _ := args["node_id"].(string)
 			stepIdx, _ := args["step_index"].(float64)
-			
+
 			stepData, err := memory.DB.GetThoughtStepByProbeAndIndex(taskID+"_"+nodeID, int(stepIdx))
 			if err != nil {
 				lastResult = fmt.Sprintf("Error fetching details: %v", err)
@@ -128,7 +128,7 @@ Goal: %s
 %s
 
 Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext)
-	
+
 	return engine.Infer(ctx, synthPrompt, lastResult, "")
 }
 

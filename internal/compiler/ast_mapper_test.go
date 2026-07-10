@@ -45,7 +45,7 @@ func TestGenerateShallowMap(t *testing.T) {
 
 	// Create some dummy Go files with signatures
 	files := map[string]string{
-		filepath.Join(tmpDir, "cmd", "tzro", "main.go"):             "package main\ntype Config struct{}\nfunc main(){}",
+		filepath.Join(tmpDir, "cmd", "tzro", "main.go"):            "package main\ntype Config struct{}\nfunc main(){}",
 		filepath.Join(tmpDir, "internal", "compiler", "mapper.go"): "package compiler\nfunc GenerateMap(){} ",
 		filepath.Join(tmpDir, "pkg", "utils", "helpers.go"):        "package utils\ntype Helper interface{}",
 	}

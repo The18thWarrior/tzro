@@ -31,6 +31,8 @@ A developer wants the engine to automatically decide whether to plan and execute
 - [ ] Plan repair runs up to 2 attempts before escalating to cloud planning.
 - [ ] At execution time, if a node references a hallucinated tool, the executor's tool name classifier maps it to the closest real tool using local inference.
 - [ ] When cloud escalation is blocked (local_only privacy mode), confidence checks are skipped since cloud is unavailable as a fallback.
+- [ ] Intent classification and complexity scoring are dispatched to the router sidecar (fast, small model), not the worker sidecar.
+- [ ] When the router sidecar is unavailable, intent classification falls back to the worker sidecar transparently.
 
 ## Edge Cases to Probe
 

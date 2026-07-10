@@ -659,10 +659,10 @@ func TestRunProbe_AdaptiveMinStepAllowsEarlySynthesis(t *testing.T) {
 // ContextCapturingMock records whether MaxTokensKey was present in context for
 // each InferMessages (step) vs Infer (synthesis) call.
 type ContextCapturingMock struct {
-	Responses              []string
-	CallCount              int
-	StepMaxTokensPresent   []bool // one entry per InferMessages call
-	SynthMaxTokensPresent  []bool // one entry per Infer call
+	Responses             []string
+	CallCount             int
+	StepMaxTokensPresent  []bool // one entry per InferMessages call
+	SynthMaxTokensPresent []bool // one entry per Infer call
 }
 
 func (m *ContextCapturingMock) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {

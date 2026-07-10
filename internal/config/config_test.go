@@ -247,4 +247,3 @@ func TestConfig_RouterModelPath_PersistsToConfig(t *testing.T) {
 		t.Errorf("expected RouterModelPath 'router-model.gguf', got %q", got)
 	}
 }
-

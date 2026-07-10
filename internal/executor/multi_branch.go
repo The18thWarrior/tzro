@@ -236,4 +236,3 @@ func evaluateMultiBranch(
 		node.ID, best.Action, best.ToolName, best.Score)
 	return &best, nil
 }
-

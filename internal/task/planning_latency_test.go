@@ -20,14 +20,14 @@ func (m *latencyMockBackend) CallModel(ctx context.Context, messages []inference
 func (m *latencyMockBackend) CallModelStream(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, meta inference.StreamMeta) (*inference.InferenceResult, error) {
 	return nil, nil
 }
-func (m *latencyMockBackend) Status() string { return "active" }
+func (m *latencyMockBackend) Status() string                  { return "active" }
 func (m *latencyMockBackend) Start(ctx context.Context) error { return nil }
-func (m *latencyMockBackend) Stop() error { return nil }
+func (m *latencyMockBackend) Stop() error                     { return nil }
 
 func TestPlan_ShallowMapIntegration(t *testing.T) {
 	ctx := context.Background()
 	mock := &latencyMockBackend{}
-	
+
 	// Save current working directory
 	oldWd, _ := os.Getwd()
 	// Find repo root (heuristic: look for go.mod)
@@ -58,7 +58,7 @@ func TestPlan_ShallowMapIntegration(t *testing.T) {
 	for _, msg := range mock.CapturedMessages {
 		if msg.Role == "system" {
 			// t.Logf("Captured System Prompt: %s", msg.Content)
-			
+
 			// Extract map section
 			startIdx := strings.Index(msg.Content, "## Static Repository Map Scaffolding:")
 			if startIdx == -1 {
@@ -73,7 +73,7 @@ func TestPlan_ShallowMapIntegration(t *testing.T) {
 			if strings.Contains(mapContent, "internal/task/") {
 				foundShallow = true
 			}
-			
+
 			// Look for evidence of full AST signatures in the mapContent
 			if strings.Contains(mapContent, "### File:") || strings.Contains(mapContent, "func ") || strings.Contains(mapContent, "type ") {
 				foundSignatures = true
