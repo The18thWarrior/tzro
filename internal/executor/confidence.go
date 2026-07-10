@@ -129,10 +129,3 @@ func checkAndUpdateConfidence(taskID string, sufficient bool) {
 	}
 }
 
-// ResetConfidenceState clears confidence tracking for a task (e.g., on task completion).
-func ResetConfidenceState(taskID string) {
-	globalConfidenceState.mu.Lock()
-	defer globalConfidenceState.mu.Unlock()
-	delete(globalConfidenceState.consecutiveFails, taskID)
-	delete(globalConfidenceState.forceCloudByTask, taskID)
-}

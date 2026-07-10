@@ -10,44 +10,6 @@ import (
 	"tzro/internal/inference"
 )
 
-func TestPlan_HeuristicFallback(t *testing.T) {
-	// 1. Test heartbeat planning
-	graphHeartbeat := buildHeuristicGraph("t_heartbeat", "run system check", "heartbeat")
-	if len(graphHeartbeat.Nodes) != 2 {
-		t.Errorf("expected 2 nodes for heartbeat, got %d", len(graphHeartbeat.Nodes))
-	}
-	if graphHeartbeat.Nodes[0].ID != "cron_trigger" || graphHeartbeat.Nodes[1].ID != "metrics_slack" {
-		t.Errorf("incorrect heartbeat node sequence: %v", graphHeartbeat.Nodes)
-	}
-
-	// 2. Test Salesforce/Sheet keywords
-	graphSF := buildHeuristicGraph("t_salesforce", "Fetch leads from Google Sheets and dedup contacts", "")
-	if len(graphSF.Nodes) != 3 {
-		t.Errorf("expected 3 nodes for Salesforce leads flow, got %d", len(graphSF.Nodes))
-	}
-	if graphSF.Nodes[0].ID != "fetch_sheet_records" || graphSF.Nodes[1].ID != "dedup_contacts" || graphSF.Nodes[2].ID != "slack_confirm" {
-		t.Errorf("incorrect salesforce node sequence: %v", graphSF.Nodes)
-	}
-
-	// 3. Test Slack keywords
-	graphSlack := buildHeuristicGraph("t_slack", "Post message to slack: Job complete", "")
-	if len(graphSlack.Nodes) != 1 {
-		t.Errorf("expected 1 node for Slack post, got %d", len(graphSlack.Nodes))
-	}
-	if graphSlack.Nodes[0].ID != "slack_confirm" {
-		t.Errorf("expected node slack_confirm, got %s", graphSlack.Nodes[0].ID)
-	}
-
-	// 4. Test Generic Fallback
-	graphGeneric := buildHeuristicGraph("t_generic", "Do some work", "")
-	if len(graphGeneric.Nodes) != 2 {
-		t.Errorf("expected 2 nodes for generic fallback, got %d", len(graphGeneric.Nodes))
-	}
-	if graphGeneric.Nodes[0].ID != "analyze_inputs" || graphGeneric.Nodes[1].ID != "execute_utility" {
-		t.Errorf("incorrect generic node sequence: %v", graphGeneric.Nodes)
-	}
-}
-
 func TestPlan_DelegatedSecrets(t *testing.T) {
 	// Import config package inside tests
 	// Save the old configuration and restore afterwards

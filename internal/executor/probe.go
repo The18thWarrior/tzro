@@ -855,35 +855,6 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 	return memory.DB.AddThoughtSummary(summary)
 }
 
-// forceSynthesis generates a forced synthesis when the step budget is exhausted.
-func forceSynthesis(ctx context.Context, probeID, taskID string, engine ProbeInferenceEngine) (string, error) {
-	// Gather all state
-	summary, _ := memory.DB.GetLatestSummary(probeID)
-	steps, _ := memory.DB.GetThoughtSteps(probeID)
-
-	var context string
-	if summary.Summary != "" {
-		context += "Summary: " + summary.Summary + "\n"
-	}
-	// Include tool outputs with intelligent truncation (same as runSynthesisPass)
-	var synthSteps []SynthesisStep
-	for _, s := range steps {
-		synthSteps = append(synthSteps, SynthesisStep{
-			StepIndex:  s.StepIndex,
-			Thought:    s.Thought,
-			ToolOutput: s.ToolOutput,
-		})
-	}
-	context += TruncateSynthesisContext(synthSteps)
-
-	systemPrompt := "You have exhausted your exploration budget. Based on everything discovered so far, produce a comprehensive synthesis of your findings. Be thorough and include all relevant details."
-	result, err := engine.Infer(ctx, systemPrompt, context, "")
-	if err != nil {
-		return "Probe budget exhausted. Unable to synthesize findings.", nil
-	}
-	return result, nil
-}
-
 // sanitizeToolName attempts to recover a valid tool name from garbled model output.
 // The 4B model sometimes concatenates reasoning into the tool field, producing names
 // like "list_dir_dir_contents_path_or_file_name_and_path_if_file_is_specified".

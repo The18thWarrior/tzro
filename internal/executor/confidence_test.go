@@ -5,10 +5,18 @@ import (
 	"tzro/internal/config"
 )
 
+// resetConfidenceStateForTest clears confidence tracking for a task (test cleanup helper).
+func resetConfidenceStateForTest(taskID string) {
+	globalConfidenceState.mu.Lock()
+	defer globalConfidenceState.mu.Unlock()
+	delete(globalConfidenceState.consecutiveFails, taskID)
+	delete(globalConfidenceState.forceCloudByTask, taskID)
+}
+
 func TestConfidenceTierSufficient(t *testing.T) {
 	// When no force cloud is set, IsForceCloud should return false
 	taskID := "test-confidence-sufficient"
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 
 	if IsForceCloud(taskID) {
 		t.Error("expected IsForceCloud to be false for fresh task")
@@ -20,12 +28,12 @@ func TestConfidenceTierSufficient(t *testing.T) {
 		t.Error("expected IsForceCloud to remain false after sufficient assessment")
 	}
 
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 }
 
 func TestConfidenceTierInsufficient(t *testing.T) {
 	taskID := "test-confidence-insufficient"
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 
 	// Simulate one insufficient assessment — should not trigger fallback yet (threshold=3)
 	checkAndUpdateConfidence(taskID, false)
@@ -38,12 +46,12 @@ func TestConfidenceTierInsufficient(t *testing.T) {
 		t.Error("expected IsForceCloud to be false after 2 insufficient (threshold=3)")
 	}
 
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 }
 
 func TestConfidenceTierStickyWithDecay(t *testing.T) {
 	taskID := "test-confidence-sticky"
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 
 	// Hit threshold of 3 consecutive insufficient
 	checkAndUpdateConfidence(taskID, false)
@@ -68,9 +76,9 @@ func TestConfidenceTierStickyWithDecay(t *testing.T) {
 	}
 
 	// Clean up
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 	if IsForceCloud(taskID) {
-		t.Error("expected IsForceCloud to be false after ResetConfidenceState")
+		t.Error("expected IsForceCloud to be false after resetConfidenceStateForTest")
 	}
 }
 
@@ -78,7 +86,7 @@ func TestConfidenceThresholdConfigurable(t *testing.T) {
 	// This test verifies the threshold is read from config.
 	// We test indirectly via the default threshold of 3.
 	taskID := "test-confidence-threshold"
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 
 	// Two insufficient should not trigger (default threshold is 3)
 	checkAndUpdateConfidence(taskID, false)
@@ -93,7 +101,7 @@ func TestConfidenceThresholdConfigurable(t *testing.T) {
 		t.Error("expected IsForceCloud to be true at 3 == threshold(3)")
 	}
 
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 }
 
 func TestConfidenceSchema(t *testing.T) {
@@ -118,7 +126,7 @@ func TestConfidenceStrictLocal(t *testing.T) {
 	config.Override(&cfg)
 
 	taskID := "test-confidence-strict-local"
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 
 	// Even if we hit 3 consecutive insufficient assessments, IsForceCloud must remain false
 	checkAndUpdateConfidence(taskID, false)
@@ -129,5 +137,5 @@ func TestConfidenceStrictLocal(t *testing.T) {
 		t.Error("expected IsForceCloud to be false under strict-local privacy level")
 	}
 
-	ResetConfidenceState(taskID)
+	resetConfidenceStateForTest(taskID)
 }
