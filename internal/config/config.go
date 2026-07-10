@@ -75,7 +75,15 @@ type EngineConfig struct {
 	// Code generation (tzro_code): Optional dedicated GGUF model path for code
 	// generation tasks. When set, the sidecar hot-swaps to this model before
 	// codegen and restores the default model afterward. Empty = use GGUFModelPath.
+	// Deprecated: Use RouterModelPath for dual-sidecar architecture instead.
 	CodeModelPath string `json:"codeModelPath,omitempty"`
+
+	// Dual-sidecar: Optional GGUF model path for the router sidecar.
+	// The router handles fast routing tasks (tool selection, Probe navigation,
+	// classification, validation) while the worker (GGUFModelPath) handles
+	// code generation, planning, and complex reasoning.
+	// Empty = single-sidecar mode (existing behavior).
+	RouterModelPath string `json:"routerModelPath,omitempty"`
 
 	// Thinking Budget: Maximum reasoning tokens when thinking mode is active
 	// (unconstrained inference passes only — GBNF-constrained calls always
@@ -253,6 +261,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
+	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -295,6 +304,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
+	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -711,6 +721,26 @@ func GetCodeModelPath() string {
 	}
 
 	return codePath
+}
+
+// GetRouterModelPath returns the configured router sidecar model path.
+// If not configured or the file doesn't exist, returns empty string
+// (caller should fall back to single-sidecar mode).
+func GetRouterModelPath() string {
+	configMutex.RLock()
+	routerPath := GlobalConfig.RouterModelPath
+	configMutex.RUnlock()
+
+	if routerPath == "" {
+		return ""
+	}
+
+	// Resolve relative paths against ModelsDir
+	if !filepath.IsAbs(routerPath) {
+		routerPath = filepath.Join(GetModelsDir(), filepath.Base(routerPath))
+	}
+
+	return routerPath
 }
 
 // GetDaemonURL returns the active daemon HTTP URL by checking:

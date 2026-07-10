@@ -2,6 +2,10 @@ package inference
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"sync"
+
 	"tzro/internal/config"
 	"tzro/internal/telemetry"
 )
@@ -29,27 +33,74 @@ func NewBackend(cfg config.BackendConfig, publisher telemetry.EventPublisher) In
 	case "openai-compatible":
 		return NewRemoteOpenAIBackend(cfg, publisher)
 	case "llama-server":
-		return NewLlamaServerBackend(GlobalLocalModel, publisher)
+		return NewLlamaServerBackend(GlobalWorkerModel, publisher)
 	default:
 		// Default if type is empty or unrecognized (e.g. during transition/bootstrap)
-		return NewLlamaServerBackend(GlobalLocalModel, publisher)
+		return NewLlamaServerBackend(GlobalWorkerModel, publisher)
 	}
 }
 
-// StopActive gracefully stops whichever inference backend is currently active.
-// Prefers the pluggable ActiveBackend; falls back to the embedded GlobalLocalModel.
+// StopActive gracefully stops all inference backends.
+// Stops both the worker and router sidecars, plus any pluggable ActiveBackend.
 func StopActive() error {
+	var firstErr error
+
 	if ActiveBackend != nil {
-		return ActiveBackend.Stop()
+		if err := ActiveBackend.Stop(); err != nil {
+			firstErr = err
+		}
+	} else {
+		if err := GlobalWorkerModel.Stop(); err != nil {
+			firstErr = err
+		}
 	}
-	return GlobalLocalModel.Stop()
+
+	// Stop router sidecar (independent of ActiveBackend)
+	if err := GlobalRouterModel.Stop(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	return firstErr
 }
 
-// StartActive starts whichever inference backend is currently configured.
-// Prefers the pluggable ActiveBackend; falls back to the embedded GlobalLocalModel.
+// StartActive starts all inference backends.
+// Starts both the worker and router sidecars in parallel.
+// The router only starts if routerModelPath is configured.
 func StartActive(ctx context.Context) error {
-	if ActiveBackend != nil {
-		return ActiveBackend.Start(ctx)
+	var workerErr, routerErr error
+	var wg sync.WaitGroup
+
+	// Start worker (or ActiveBackend)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if ActiveBackend != nil {
+			workerErr = ActiveBackend.Start(ctx)
+		} else {
+			workerErr = GlobalWorkerModel.Start(ctx)
+		}
+	}()
+
+	// Start router if configured
+	routerPath := config.GetRouterModelPath()
+	if routerPath != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Set the model path before starting
+			GlobalRouterModel.GGUFModelPath = routerPath
+			routerErr = GlobalRouterModel.Start(ctx)
+			if routerErr != nil {
+				fmt.Fprintf(os.Stderr, "[Inference] Router sidecar failed to start: %v (falling back to single-sidecar mode)\n", routerErr)
+			}
+		}()
 	}
-	return GlobalLocalModel.Start(ctx)
+
+	wg.Wait()
+
+	// Worker failure is fatal; router failure is non-fatal (graceful fallback)
+	if workerErr != nil {
+		return workerErr
+	}
+	return nil
 }

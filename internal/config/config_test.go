@@ -215,3 +215,36 @@ func TestConfig_AccumulatedContextMaxCharsExplicit(t *testing.T) {
 	}
 }
 
+func TestConfig_RouterModelPath_PersistsToConfig(t *testing.T) {
+	// Create an isolated config file
+	tempDir, err := os.MkdirTemp("", "tzro-config-router-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	oldConfigPath := configPath
+	configPath = filepath.Join(tempDir, "config.json")
+	defer func() { configPath = oldConfigPath }()
+
+	// Save with routerModelPath set
+	cfg := &EngineConfig{
+		ModelMode:       "cooperative",
+		GGUFModelPath:   "worker-model.gguf",
+		RouterModelPath: "router-model.gguf",
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Reload and verify
+	if err := Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	got := GlobalConfig.RouterModelPath
+	if got != "router-model.gguf" {
+		t.Errorf("expected RouterModelPath 'router-model.gguf', got %q", got)
+	}
+}
+

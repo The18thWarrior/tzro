@@ -30,15 +30,13 @@ type ProbeInferenceEngine interface {
 	InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error)
 }
 
-// DefaultProbeInference wraps the global inference backend for production use.
+// DefaultProbeInference wraps the router sidecar for production Probe steps.
+// Probe Thought Chain steps are navigation decisions (tool selection, short outputs)
+// that benefit from the router model's speed over the worker's quality.
 type DefaultProbeInference struct{}
 
 func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
-	backend := inference.ActiveBackend
-	if backend == nil {
-		return "", fmt.Errorf("no active inference backend")
-	}
-	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
+	result, err := inference.CallRouter(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 	if err != nil {
 		return "", err
 	}
@@ -47,11 +45,7 @@ func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPro
 
 // InferMessages sends a pre-segmented message array to maximize KV cache prefix reuse.
 func (d *DefaultProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
-	backend := inference.ActiveBackend
-	if backend == nil {
-		return "", fmt.Errorf("no active inference backend")
-	}
-	result, err := backend.CallModel(ctx, messages, jsonSchema)
+	result, err := inference.CallRouter(ctx, messages, jsonSchema)
 	if err != nil {
 		return "", err
 	}

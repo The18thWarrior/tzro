@@ -653,14 +653,14 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Sync sidecar startup setting change
+		// Sync sidecar startup setting change — manages both worker and router
 		if cfg.SidecarEnabled {
 			go func() {
-				_ = inference.GlobalLocalModel.Start(context.Background())
+				_ = inference.StartActive(context.Background())
 			}()
 		} else {
 			go func() {
-				_ = inference.GlobalLocalModel.Stop()
+				_ = inference.StopActive()
 			}()
 		}
 
@@ -675,15 +675,29 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 func handleSidecar(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
-		status, port, pid, progress, modelPath := inference.GlobalLocalModel.GetStatusInfo()
+		wStatus, wPort, wPid, wProgress, wModel := inference.GlobalWorkerModel.GetStatusInfo()
+		rStatus, rPort, rPid, _, rModel := inference.GlobalRouterModel.GetStatusInfo()
+
+		resp := map[string]interface{}{
+			"activePort":       wPort,
+			"activePid":        wPid,
+			"status":           wStatus,
+			"manifestProgress": wProgress,
+			"ggufModelPath":    wModel,
+		}
+
+		// Include router info if configured
+		if rModel != "" || rStatus != "Stopped" {
+			resp["router"] = map[string]interface{}{
+				"status":        rStatus,
+				"activePort":    rPort,
+				"activePid":     rPid,
+				"ggufModelPath": rModel,
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"activePort":       port,
-			"activePid":        pid,
-			"status":           status,
-			"manifestProgress": progress,
-			"ggufModelPath":    modelPath,
-		})
+		_ = json.NewEncoder(w).Encode(resp)
 		return
 	}
 
@@ -699,9 +713,9 @@ func handleSidecar(w http.ResponseWriter, r *http.Request) {
 		var err error
 		switch body.Action {
 		case "start":
-			err = inference.GlobalLocalModel.Start(context.Background())
+			err = inference.StartActive(context.Background())
 		case "stop":
-			err = inference.GlobalLocalModel.Stop()
+			err = inference.StopActive()
 		case "erase_cache":
 			err = inference.GlobalLocalModel.TriggerGC(context.Background())
 			cacheDir := filepath.Join(".tzro", "cache")
