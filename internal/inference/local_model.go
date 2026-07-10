@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"tzro/internal/config"
@@ -68,6 +69,12 @@ type LocalModelManager struct {
 	consecutiveSpeedFail       map[string]int
 	thermalCloudEscalationTime map[string]time.Time // taskID → when thermal cloud escalation was triggered
 	fallbackMutex              sync.RWMutex
+
+	// Lazy code model restoration: tracks whether a code-specific model is
+	// currently loaded so non-codegen calls can lazily swap back to the default.
+	codeModelActive  bool   // true when code model is loaded instead of default
+	defaultModelPath string // original model path to restore to
+	codegenActive    int32  // atomic: >0 while codegen goroutines are executing
 }
 
 func (m *LocalModelManager) getPublisher() telemetry.EventPublisher {
@@ -708,6 +715,147 @@ func (m *LocalModelManager) getGPULayerCount() int {
 	// Intel Mac, Windows, Linux: CPU-only by default.
 	// Users with discrete GPUs can set "gpuLayers": -1 in config.
 	return 0
+}
+
+// SwapModelForTask hot-swaps the sidecar to a different GGUF model for a
+// specific workload (e.g., a code-tuned model for codegen). Unlike activateModel
+// in tools_model.go, this does NOT persist the swap to config or delete the
+// original model — it's a temporary in-memory swap.
+//
+// Returns the original model path (for use with RestoreModel) and any error.
+// If the requested model is already loaded, this is a no-op.
+func (m *LocalModelManager) SwapModelForTask(ctx context.Context, newModelPath string) (originalPath string, err error) {
+	m.mutex.Lock()
+	originalPath = m.GGUFModelPath
+	m.mutex.Unlock()
+
+	// Already loaded — no-op
+	if originalPath == newModelPath {
+		return originalPath, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] Hot-swapping model for task: %s → %s\n", filepath.Base(originalPath), filepath.Base(newModelPath))
+
+	// Stop → update in-memory path → restart
+	if stopErr := m.Stop(); stopErr != nil {
+		return originalPath, fmt.Errorf("failed to stop sidecar for model swap: %w", stopErr)
+	}
+
+	m.mutex.Lock()
+	m.GGUFModelPath = newModelPath
+	m.mutex.Unlock()
+
+	// Update global config in-memory only (not persisted to disk)
+	cfg := config.Get()
+	cfg.GGUFModelPath = newModelPath
+	config.Override(&cfg)
+
+	if startErr := m.Start(ctx); startErr != nil {
+		// Attempt to restore original model on failure
+		m.mutex.Lock()
+		m.GGUFModelPath = originalPath
+		m.mutex.Unlock()
+		cfg.GGUFModelPath = originalPath
+		config.Override(&cfg)
+		_ = m.Start(ctx)
+		return originalPath, fmt.Errorf("failed to start sidecar with code model: %w", startErr)
+	}
+
+	// Mark code model as active for lazy restoration by EnsureDefaultModel
+	m.mutex.Lock()
+	m.codeModelActive = true
+	m.defaultModelPath = originalPath
+	m.mutex.Unlock()
+
+	// Wait for server to become healthy
+	for attempt := range 10 {
+		health := m.ProbeHealth(ctx)
+		if health == SidecarHealthReady {
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Code model ready after %dms\n", (attempt+1)*500)
+			return originalPath, nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	fmt.Fprintln(os.Stderr, "[Llama Sidecar] Warning: code model loaded but health probe didn't confirm ready within 5s")
+	return originalPath, nil
+}
+
+// RestoreModel swaps the sidecar back to the original model after a task-specific
+// model swap. This is the counterpart to SwapModelForTask.
+func (m *LocalModelManager) RestoreModel(ctx context.Context, originalPath string) {
+	m.mutex.Lock()
+	currentPath := m.GGUFModelPath
+	m.mutex.Unlock()
+
+	if currentPath == originalPath {
+		return // Already on the original model
+	}
+
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] Restoring default model: %s → %s\n", filepath.Base(currentPath), filepath.Base(originalPath))
+
+	if stopErr := m.Stop(); stopErr != nil {
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Warning: failed to stop sidecar for restore: %v\n", stopErr)
+	}
+
+	m.mutex.Lock()
+	m.GGUFModelPath = originalPath
+	m.mutex.Unlock()
+
+	cfg := config.Get()
+	cfg.GGUFModelPath = originalPath
+	config.Override(&cfg)
+
+	if startErr := m.Start(ctx); startErr != nil {
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Warning: failed to restart sidecar with original model: %v\n", startErr)
+	}
+
+	m.mutex.Lock()
+	m.codeModelActive = false
+	m.defaultModelPath = ""
+	m.mutex.Unlock()
+}
+
+// MarkCodegenActive increments the codegen-in-progress counter.
+// While this counter is > 0, EnsureDefaultModel is a no-op, preventing
+// the default model from being restored mid-codegen.
+func (m *LocalModelManager) MarkCodegenActive() {
+	atomic.AddInt32(&m.codegenActive, 1)
+}
+
+// MarkCodegenDone decrements the codegen-in-progress counter.
+func (m *LocalModelManager) MarkCodegenDone() {
+	atomic.AddInt32(&m.codegenActive, -1)
+}
+
+// EnsureDefaultModel lazily restores the sidecar to the default model if a
+// previous codegen task left the code model loaded. Called at the top of
+// ExecuteStructured so non-codegen inference automatically gets the right model.
+//
+// No-op when:
+//   - No code model swap has occurred (codeModelActive == false)
+//   - A codegen task is currently in progress (codegenActive > 0)
+//   - The default model is already loaded
+func (m *LocalModelManager) EnsureDefaultModel(ctx context.Context) {
+	// Fast path: no code model swap has occurred
+	m.mutex.Lock()
+	if !m.codeModelActive || m.defaultModelPath == "" {
+		m.mutex.Unlock()
+		return
+	}
+	m.mutex.Unlock()
+
+	// Don't restore while codegen is running
+	if atomic.LoadInt32(&m.codegenActive) > 0 {
+		return
+	}
+
+	m.mutex.Lock()
+	defaultPath := m.defaultModelPath
+	m.mutex.Unlock()
+
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] Lazy restore: codegen finished, restoring default model\n")
+	m.RestoreModel(ctx, defaultPath)
 }
 
 // allocateRandomPort asks the OS for a random free port by briefly binding to :0,

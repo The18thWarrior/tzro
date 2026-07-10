@@ -434,8 +434,26 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 
 	doneChan := make(chan execResult, 1)
 
+	// Code model hot-swap: if a dedicated code model is configured, swap to it
+	// before execution. The default model is lazily restored by EnsureDefaultModel
+	// in ExecuteStructured when the next non-codegen inference call comes in.
+	codeModelPath := config.GetCodeModelPath()
+	if codeModelPath != "" {
+		_, swapErr := inference.GlobalLocalModel.SwapModelForTask(ctx, codeModelPath)
+		if swapErr != nil {
+			fmt.Fprintf(os.Stderr, "[tzro_code] Code model swap failed, proceeding with default model: %v\n", swapErr)
+		}
+	}
+
+	// Mark codegen active so EnsureDefaultModel doesn't restore mid-execution.
+	// This allows consecutive tzro_code calls to skip redundant model swaps.
+	inference.GlobalLocalModel.MarkCodegenActive()
+
 	go func() {
+		defer inference.GlobalLocalModel.MarkCodegenDone()
+
 		// Register the compilation gate hook for this task's execution.
+
 		// It runs the compiler on source_code nodes and enriches their output
 		// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
 		compilationHook := &codegen.CompilationGateHook{

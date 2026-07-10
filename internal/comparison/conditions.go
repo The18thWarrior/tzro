@@ -53,6 +53,18 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		config.GlobalConfig.ModelMode = originalModelMode
 	}()
 
+	// Code model hot-swap: for codegen tasks, use the dedicated code model
+	// (if configured) to match real MCP tzro_code behavior.
+	if t.Category == CategoryCodegen {
+		if codeModelPath := config.GetCodeModelPath(); codeModelPath != "" {
+			if _, swapErr := inference.GlobalLocalModel.SwapModelForTask(ctx, codeModelPath); swapErr != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Code model swap failed for %s, using default: %v\n", t.ID, swapErr)
+			}
+			inference.GlobalLocalModel.MarkCodegenActive()
+			defer inference.GlobalLocalModel.MarkCodegenDone()
+		}
+	}
+
 	// Isolated database per condition run. Append timestamp to avoid SQLite
 	// locking issues (disk I/O error 522) when runs happen in rapid succession.
 	dbFile := fmt.Sprintf("tzro_comparison_%s_%s_%d.db", conditionID, t.ID, time.Now().UnixNano())
@@ -490,6 +502,16 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 				time.Sleep(1 * time.Second)
 			}
 		}
+	}
+
+	// Code model hot-swap: use the dedicated code model (if configured) to
+	// match real MCP tzro_code behavior during benchmark runs.
+	if codeModelPath := config.GetCodeModelPath(); codeModelPath != "" {
+		if _, swapErr := inference.GlobalLocalModel.SwapModelForTask(ctx, codeModelPath); swapErr != nil {
+			fmt.Fprintf(os.Stderr, "[Comparison] Code model swap failed for %s, using default: %v\n", t.ID, swapErr)
+		}
+		inference.GlobalLocalModel.MarkCodegenActive()
+		defer inference.GlobalLocalModel.MarkCodegenDone()
 	}
 
 	// Create a directory for the codegen output (inside OutputDir if provided)

@@ -113,6 +113,10 @@ type HeuristicIntentResult struct {
 
 // ExecuteStructured encapsulates cooperative routing rules, local heuristics, and HTTP cloud client fallbacks.
 func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req StructuredInferenceRequest) (string, error) {
+	// Lazy code model restoration: if a previous tzro_code call left the code
+	// model loaded and no codegen is currently running, swap back to the default.
+	m.EnsureDefaultModel(ctx)
+
 	m.initMaps()
 	cfg := config.Get()
 

@@ -72,6 +72,11 @@ type EngineConfig struct {
 	// Default 500. Set to 0 to use the default.
 	CodeMaxLines int `json:"codeMaxLines,omitempty"`
 
+	// Code generation (tzro_code): Optional dedicated GGUF model path for code
+	// generation tasks. When set, the sidecar hot-swaps to this model before
+	// codegen and restores the default model afterward. Empty = use GGUFModelPath.
+	CodeModelPath string `json:"codeModelPath,omitempty"`
+
 	// Thinking Budget: Maximum reasoning tokens when thinking mode is active
 	// (unconstrained inference passes only — GBNF-constrained calls always
 	// disable thinking). Default 750. Set to 0 to use the default.
@@ -247,6 +252,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -288,6 +294,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -678,6 +685,32 @@ func GetMCTSSpeculationCeil() int {
 		return 2
 	}
 	return v
+}
+
+// GetCodeModelPath returns the configured dedicated code model path.
+// If not explicitly configured or file doesn't exist, returns empty string
+// (caller should fall back to the default GGUFModelPath).
+func GetCodeModelPath() string {
+	configMutex.RLock()
+	codePath := GlobalConfig.CodeModelPath
+	configMutex.RUnlock()
+
+	if codePath == "" {
+		return ""
+	}
+
+	// Resolve relative paths against ModelsDir
+	if !filepath.IsAbs(codePath) {
+		codePath = filepath.Join(GetModelsDir(), filepath.Base(codePath))
+	}
+
+	// Verify the file actually exists
+	if _, err := os.Stat(codePath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "[Config] CodeModelPath configured but file not found: %s\n", codePath)
+		return ""
+	}
+
+	return codePath
 }
 
 // GetDaemonURL returns the active daemon HTTP URL by checking:
