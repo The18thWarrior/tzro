@@ -24,6 +24,24 @@ import (
 	"tzro/internal/telemetry"
 )
 
+// thinkingContextKey is a private type for the thinking mode context key.
+type thinkingContextKey struct{}
+
+// ThinkingEnabledKey is a context key that callers set to opt-in to thinking
+// mode for unconstrained inference calls. When present (with any non-nil value)
+// and no GBNF schema is active, the local model will generate <think> reasoning
+// tokens before producing output. Use context.WithValue(ctx, ThinkingEnabledKey, true).
+var ThinkingEnabledKey = thinkingContextKey{}
+
+// maxTokensContextKey is a private type for the generation cap context key.
+type maxTokensContextKey struct{}
+
+// MaxTokensKey is a context key that callers set to cap generation tokens per
+// inference call (ADR-0043 Mechanism A). When present with an int value, the
+// local model includes max_tokens in the completion request, preventing runaway
+// generation. Use context.WithValue(ctx, MaxTokensKey, 2048).
+var MaxTokensKey = maxTokensContextKey{}
+
 // InferenceResult holds the model output along with token-level metrics from the server.
 type InferenceResult struct {
 	Content          string  `json:"content"`
@@ -40,6 +58,7 @@ type LocalModelManager struct {
 	Status                     string `json:"status"` // "Stopped" | "Starting" | "Active" | "Adopted"
 	ManifestProgress           int    `json:"manifestProgress"`
 	GGUFModelPath              string `json:"ggufModelPath"`
+	Role                       string `json:"role"` // "router" | "worker" — identifies sidecar role for port/lock file naming
 	checkpointFile             string
 	isPreempted                bool
 	cmd                        *exec.Cmd
@@ -64,9 +83,12 @@ func resolveTzroPath(relPath string) string {
 	return config.ResolvePath(relPath)
 }
 
-var GlobalLocalModel = &LocalModelManager{
+// GlobalWorkerModel is the primary sidecar — handles code generation, planning,
+// complex reasoning, and long-form synthesis.
+var GlobalWorkerModel = &LocalModelManager{
 	Status:           "Stopped",
-	ManifestProgress: 100, // Preloaded defaults
+	ManifestProgress: 100,
+	Role:             "worker",
 	healthClient: &http.Client{
 		Timeout: 3 * time.Second,
 	},
@@ -78,6 +100,34 @@ var GlobalLocalModel = &LocalModelManager{
 	forceCloudFallback:         make(map[string]bool),
 	consecutiveSpeedFail:       make(map[string]int),
 	thermalCloudEscalationTime: make(map[string]time.Time),
+}
+
+// GlobalRouterModel is the lightweight routing sidecar — handles tool selection,
+// Probe navigation, classification, and validator passes.
+var GlobalRouterModel = &LocalModelManager{
+	Status:           "Stopped",
+	ManifestProgress: 100,
+	Role:             "router",
+	healthClient: &http.Client{
+		Timeout: 3 * time.Second,
+	},
+	inferenceClient:            &http.Client{},
+	forceCloudFallback:         make(map[string]bool),
+	consecutiveSpeedFail:       make(map[string]int),
+	thermalCloudEscalationTime: make(map[string]time.Time),
+}
+
+// GlobalLocalModel is a backward-compatibility alias for GlobalWorkerModel.
+// Deprecated: Use GlobalWorkerModel or GlobalRouterModel directly.
+var GlobalLocalModel = GlobalWorkerModel
+
+// sidecarFilePrefix returns the filesystem prefix for this sidecar's lock/port files.
+// Router: .llama-router  Worker: .llama-server (backward compatible)
+func (m *LocalModelManager) sidecarFilePrefix() string {
+	if m.Role == "router" {
+		return ".llama-router"
+	}
+	return ".llama-server"
 }
 
 // Start launches the llama-server child process or adopts an existing running server socket
@@ -102,14 +152,14 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 
 	// Acquire exclusive filesystem lock to prevent concurrent llama-server spawning
 	// across processes (tzro-mcp and tzrod race on simultaneous IDE restart).
-	lockPath := resolveTzroPath(filepath.Join(".tzro", ".llama-server.lock"))
+	lockPath := resolveTzroPath(filepath.Join(".tzro", m.sidecarFilePrefix()+".lock"))
 	lockFile, lockErr := acquireFileLock(lockPath)
 	if lockErr != nil {
 		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Warning: could not acquire startup lock: %v\n", lockErr)
 	}
 	defer releaseFileLock(lockFile)
 
-	portFile := resolveTzroPath(filepath.Join(".tzro", ".llama-server.port"))
+	portFile := resolveTzroPath(filepath.Join(".tzro", m.sidecarFilePrefix()+".port"))
 
 	// 1. Attempt Server Process Adoption across reloads.
 	// After acquiring the flock, another process may have started the server
@@ -267,10 +317,75 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	}
 
 	// 9. Multimodal projector for vision support (PDF OCR, image analysis)
-	mmProjPath := config.GetMMProjModelPath()
+	// Only load mmproj if it's verified compatible with the active model.
+	// The auto-detect glob in GetMMProjModelPath picks up any *mmproj*.gguf file,
+	// which crashes llama-server when embedding dimensions mismatch (e.g., loading
+	// a Qwen mmproj with an LFM model). We resolve this by checking the catalog:
+	// - Catalog model with CompanionMMProj: use the catalog's mmproj filename
+	// - Non-catalog model (custom download): only use explicitly configured mmproj
+	mmProjPath := ""
+	if catalogEntry != nil && catalogEntry.CompanionMMProj != nil {
+		// Model is in catalog with a known-compatible mmproj — check if it exists on disk
+		candidateMmproj := []string{
+			filepath.Join(modelsDir, catalogEntry.CompanionMMProj.Filename),
+		}
+		if activeModelDir != modelsDir {
+			candidateMmproj = append(candidateMmproj, filepath.Join(activeModelDir, catalogEntry.CompanionMMProj.Filename))
+		}
+		for _, p := range candidateMmproj {
+			if _, err := os.Stat(p); err == nil {
+				mmProjPath = p
+				break
+			}
+		}
+		if mmProjPath == "" {
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Catalog mmproj '%s' not found on disk, vision disabled\n", catalogEntry.CompanionMMProj.Filename)
+		}
+	} else {
+		// Non-catalog model: only use explicitly configured mmproj (never auto-detect)
+		configMutex := config.GetExplicitMMProjPath()
+		if configMutex != "" {
+			if _, err := os.Stat(configMutex); err == nil {
+				mmProjPath = configMutex
+			}
+		}
+		if mmProjPath == "" {
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Non-catalog model detected, skipping auto-detected mmproj to avoid architecture mismatch\n")
+		}
+	}
 	if mmProjPath != "" {
 		args = append(args, "--mmproj", mmProjPath)
 		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Vision projector loaded: %s\n", mmProjPath)
+	}
+
+	// Router sidecar overrides: smaller context, no speculative decoding, no vision
+	if m.Role == "router" {
+		// Override ctx-size to 16384 for router (smaller than worker's 32K but enough for probe chains)
+		for i, a := range args {
+			if a == "--ctx-size" && i+1 < len(args) {
+				args[i+1] = "16384"
+			}
+			if a == "--n-predict" && i+1 < len(args) {
+				args[i+1] = "1024" // Router outputs are short
+			}
+		}
+		// Remove speculative decoding args (overkill for router)
+		var cleanArgs []string
+		skip := false
+		for _, a := range args {
+			if a == "--spec-type" || a == "--spec-draft-model" || a == "--spec-draft-n-max" ||
+				a == "--slot-save-path" || a == "--cache-reuse" || a == "--mmproj" {
+				skip = true
+				continue
+			}
+			if skip {
+				skip = false
+				continue
+			}
+			cleanArgs = append(cleanArgs, a)
+		}
+		args = cleanArgs
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384 (routing mode, no speculative decoding)\n")
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
@@ -303,7 +418,7 @@ func (m *LocalModelManager) Stop() error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	portFile := resolveTzroPath(filepath.Join(".tzro", ".llama-server.port"))
+	portFile := resolveTzroPath(filepath.Join(".tzro", m.sidecarFilePrefix()+".port"))
 	_ = os.Remove(portFile)
 
 	if m.Status == "Stopped" {
@@ -694,7 +809,8 @@ func releaseFileLock(f *os.File) {
 }
 
 // CallLocalModel handles the local structured JSON inference call.
-// It intercepts prompts, suppresses reasoning tags for Qwen3.5 family, and returns structured tool completions.
+// Phase-conditional thinking: enables <think> reasoning when no GBNF schema is
+// active (free-form passes), disables it during grammar-constrained output.
 // Returns an InferenceResult with content and accurate token-level metrics from the server's usage object.
 func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []InferenceMessage, gbnfSchema string) (*InferenceResult, error) {
 	// Build the completion request with optimized sampling parameters
@@ -703,18 +819,38 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		Messages           []map[string]interface{} `json:"messages"`
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
+		MaxTokens          *int                     `json:"max_tokens,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
 		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
 
+	// Phase-conditional thinking: enabled ONLY when the caller explicitly opts in
+	// via context key AND no GBNF grammar is active. This prevents thinking tokens
+	// from consuming the entire generation budget in large unconstrained calls
+	// (e.g., the planner) where gbnfSchema == "" but thinking is not beneficial.
+	enableThinking := gbnfSchema == "" && ctx.Value(ThinkingEnabledKey) != nil
+	templateKwargs := map[string]interface{}{
+		"enable_thinking": enableThinking,
+	}
+	if enableThinking {
+		budget := config.Get().ThinkingBudget
+		if budget <= 0 {
+			budget = 750 // default: cap reasoning tokens to prevent throughput collapse
+		}
+		templateKwargs["thinking_budget"] = budget
+	}
+
 	reqBody := CompletionRequest{
-		Model:       "gemma-4-e4b-it-qat",
-		Messages:    MessagesToMaps(messages),
-		Temperature: 1.0, // Q7: required for min_p to function; GBNF constrains output safety
-		MinP:        0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
-		ChatTemplateKwargs: map[string]interface{}{
-			"enable_thinking": false, // Suppress thinking mode tags for speed on Qwen 3.5 family
-		},
+		Model:              "Qwopus3.5-4B-Coder",
+		Messages:           MessagesToMaps(messages),
+		Temperature:        1.0, // Q7: required for min_p to function; GBNF constrains output safety
+		MinP:               0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
+		ChatTemplateKwargs: templateKwargs,
+	}
+
+	// ADR-0043 Mechanism A: Generation cap via context key
+	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
+		reqBody.MaxTokens = &maxTok
 	}
 
 	if gbnfSchema != "" {
@@ -799,6 +935,9 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		if choice, ok := choices[0].(map[string]interface{}); ok {
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
 				if content, ok := msg["content"].(string); ok {
+					// Safety: strip residual <think>...</think> tags if the serving
+					// backend didn't fully consume them (belt-and-suspenders).
+					content = StripThinkTags(content)
 					fmt.Fprintf(os.Stderr, "[Llama Sidecar Metrics] Prompt tokens: %d, Generated %d tokens in %.2fs (Speed: %.1f t/s)\n", promptTokens, completionTokens, duration, speed)
 					RecordGlobalMetrics(promptTokens, completionTokens, duration)
 					if tracker, ok := GetTokenTracker(ctx); ok {
@@ -830,6 +969,33 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	return nil, fmt.Errorf("invalid or empty response choice returned from local model")
 }
 
+// StripThinkTags removes <think>...</think> blocks from model output.
+// When thinking mode is enabled, the serving backend should strip these in the
+// content field, but some backends (especially llama.cpp with certain chat
+// templates) may leak them through. This is a safety net.
+// Exported for use by the executor package (probe.go).
+func StripThinkTags(content string) string {
+	// Fast path: no think tags present
+	if !strings.Contains(content, "<think>") {
+		return content
+	}
+	// Remove all <think>...</think> blocks (possibly multi-line)
+	for {
+		start := strings.Index(content, "<think>")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(content, "</think>")
+		if end == -1 {
+			// Unclosed <think> tag — strip from <think> to end
+			content = content[:start]
+			break
+		}
+		content = content[:start] + content[end+len("</think>"):]
+	}
+	return strings.TrimSpace(content)
+}
+
 type StreamMeta struct {
 	StreamID string
 	Source   string
@@ -855,14 +1021,28 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		Messages           []map[string]interface{} `json:"messages"`
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
+		MaxTokens          *int                     `json:"max_tokens,omitempty"`
 		Stream             bool                     `json:"stream"`
 		StreamOptions      *StreamOptionsStruct     `json:"stream_options,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
 		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
 
+	// Phase-conditional thinking (same logic as CallLocalModel)
+	enableThinking := gbnfSchema == "" && ctx.Value(ThinkingEnabledKey) != nil
+	templateKwargs := map[string]interface{}{
+		"enable_thinking": enableThinking,
+	}
+	if enableThinking {
+		budget := config.Get().ThinkingBudget
+		if budget <= 0 {
+			budget = 750
+		}
+		templateKwargs["thinking_budget"] = budget
+	}
+
 	reqBody := CompletionRequest{
-		Model:       "gemma-4-e4b-it-qat",
+		Model:       "Qwopus3.5-4B-Coder",
 		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0,
 		MinP:        0.1,
@@ -870,9 +1050,12 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		StreamOptions: &StreamOptionsStruct{
 			IncludeUsage: true,
 		},
-		ChatTemplateKwargs: map[string]interface{}{
-			"enable_thinking": false,
-		},
+		ChatTemplateKwargs: templateKwargs,
+	}
+
+	// ADR-0043 Mechanism A: Generation cap via context key
+	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
+		reqBody.MaxTokens = &maxTok
 	}
 
 	if gbnfSchema != "" {

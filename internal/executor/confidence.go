@@ -83,7 +83,7 @@ func assessConfidenceTier(ctx context.Context, messages []inference.InferenceMes
 		TaskID:     taskID,
 	}
 
-	result, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	result, err := inference.ExecuteRouterStructured(ctx, req)
 	if err != nil {
 		// On assessment failure, assume sufficient to avoid blocking execution
 		fmt.Fprintf(os.Stderr, "[ConfidenceTier] Assessment call failed for task %s: %v — defaulting to sufficient\n", taskID, err)
@@ -129,10 +129,3 @@ func checkAndUpdateConfidence(taskID string, sufficient bool) {
 	}
 }
 
-// ResetConfidenceState clears confidence tracking for a task (e.g., on task completion).
-func ResetConfidenceState(taskID string) {
-	globalConfidenceState.mu.Lock()
-	defer globalConfidenceState.mu.Unlock()
-	delete(globalConfidenceState.consecutiveFails, taskID)
-	delete(globalConfidenceState.forceCloudByTask, taskID)
-}

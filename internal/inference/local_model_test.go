@@ -306,3 +306,126 @@ func TestTwoTierGarbageCollection(t *testing.T) {
 		t.Errorf("expected TriggerGC to flush both slot 0 and 1, got: %v", slotErased)
 	}
 }
+
+func TestStripThinkTags(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "no think tags",
+			input:    `<ACTION>{"tool":"read_file","arguments":{"path":"/foo"}}</ACTION>`,
+			expected: `<ACTION>{"tool":"read_file","arguments":{"path":"/foo"}}</ACTION>`,
+		},
+		{
+			name:     "single think block before content",
+			input:    "<think>I should read the file first to understand the structure.</think>\n<ACTION>{\"tool\":\"read_file\"}</ACTION>",
+			expected: "<ACTION>{\"tool\":\"read_file\"}</ACTION>",
+		},
+		{
+			name:     "multi-line think block",
+			input:    "<think>\nLet me reason about this.\nThe file is at /foo/bar.\n</think>\n<SYNTHESIZE_READY>",
+			expected: "<SYNTHESIZE_READY>",
+		},
+		{
+			name:     "unclosed think tag",
+			input:    "<think>partial reasoning without closing tag",
+			expected: "",
+		},
+		{
+			name:     "multiple think blocks",
+			input:    "<think>first thought</think>some content<think>second thought</think>more content",
+			expected: "some contentmore content",
+		},
+		{
+			name:     "empty think block",
+			input:    "<think></think>actual content",
+			expected: "actual content",
+		},
+		{
+			name:     "no content after stripping",
+			input:    "<think>just thinking</think>",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := StripThinkTags(tt.input)
+			if result != tt.expected {
+				t.Errorf("StripThinkTags(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMaxTokensKey_PropagatesThroughCallLocalModel(t *testing.T) {
+	var capturedBody map[string]interface{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Capture the request body
+		decoder := json.NewDecoder(r.Body)
+		decoder.Decode(&capturedBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "ok"}}],
+			"usage": {"prompt_tokens": 10, "completion_tokens": 5}
+		}`))
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	mgr := &LocalModelManager{
+		ActivePort:      port,
+		Status:          "Active",
+		inferenceClient: http.DefaultClient,
+	}
+
+	msgs := []InferenceMessage{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "usr"},
+	}
+
+	// Test 1: WITH MaxTokensKey — max_tokens should be present
+	ctx := context.WithValue(context.Background(), MaxTokensKey, 2048)
+	_, err = mgr.CallLocalModel(ctx, msgs, "")
+	if err != nil {
+		t.Fatalf("CallLocalModel with MaxTokensKey failed: %v", err)
+	}
+
+	maxTokensRaw, exists := capturedBody["max_tokens"]
+	if !exists {
+		t.Fatal("expected max_tokens in request body when MaxTokensKey is set")
+	}
+	maxTokensVal, ok := maxTokensRaw.(float64) // JSON numbers decode as float64
+	if !ok {
+		t.Fatalf("max_tokens is not a number: %T", maxTokensRaw)
+	}
+	if int(maxTokensVal) != 2048 {
+		t.Errorf("expected max_tokens=2048, got %d", int(maxTokensVal))
+	}
+
+	// Test 2: WITHOUT MaxTokensKey — max_tokens should NOT be present
+	capturedBody = nil
+	ctx2 := context.Background()
+	_, err = mgr.CallLocalModel(ctx2, msgs, "")
+	if err != nil {
+		t.Fatalf("CallLocalModel without MaxTokensKey failed: %v", err)
+	}
+
+	if _, exists := capturedBody["max_tokens"]; exists {
+		t.Error("max_tokens should NOT be in request body when MaxTokensKey is not set")
+	}
+}

@@ -4,7 +4,89 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
-## [2026-06-29T20:43:00-07:00] grill-with-docs | Codegen Quality Pipeline — Edge Thought Migration (ADR-0035)
+## [2026-07-09T10:33:00-07:00] tdd | MCTS Multi-Branch Edge Thought Evaluation (ADR-0045) — COMPLETE
+
+- **Activity**: Full TDD implementation of multi-branch Edge Thought evaluation, constrained to single-slot sidecar operation. Grilling session resolved 9 design decisions. Red-green TDD loop with 58 new tests across 3 packages. All ready queue wiring complete.
+- **Decisions Captured**: ADR-0045 (single-slot MCTS), MCTS as Edge Thought mode, in-memory shadow state, post-commit backtracking dropped, streaming scoped to node-to-user, Compiler infers MCTSBranches, spawned nodes always single-shot, PreFlect as ExecutionHook, Confidence Tier gates before multi-branch.
+- **New Files**: `speculation.go`, `value_function.go`, `multi_branch.go`, `spawn_depth.go`, `preflect_hook.go`, `compiler/defaults.go`, `docs/adr/0045-single-slot-mcts-evaluation.md`
+- **Modified Files**: `config.go`, `compiler.go`, `ready_queue.go` (5 integration points), `executor.go` (StreamOutput gating), `CONTEXT.md`
+- **Ready Queue Integration**: PreFlect hook registration, ApplyDefaults wiring, spawn depth enforcement (canSpawnAtDepth + MCTSBranches=0), MaxDepth init from config, evaluateMultiBranch in ActivationContinue path
+- **Test Results**: 58/58 pass. Full build clean.
+
+---
+
+## [2026-07-07T15:12:00-07:00] tdd | ADR-0044 Implementation — Synthesis-Aware Context Assembly
+
+
+- **Activity**: TDD implementation of ADR-0044 in `internal/executor/executor_context.go`. Red-green cycle with 6 new behavior tests.
+- **Changes**:
+  - `executor_context.go`: Added `callingNodeType` parameter to `buildAccumulatedContext`. Synthesis path fetches validator/recall outputs untruncated, caps deterministic at 256 chars. Standard path uses tiered per-type allocation (recall:8, action:6, probe:2, deterministic:1) within dynamic ceiling `min(nodeCount*4096, 32000)`.
+  - `executor.go`: Updated 4 call sites to pass `node.Type` (or `"synthesis"` for the terminal synthesis node).
+  - `accumulated_context_test.go`: 8 tests total (2 existing updated + 6 new): regression preservation, superseded probe skipping, tiered allocation, dynamic ceiling, synthesis deterministic capping, synthesis untruncated fetch.
+- **Test Results**: 8/8 pass. Full executor suite passes. `go build ./...` clean.
+- **Files Modified**: `executor_context.go`, `executor.go`, `accumulated_context_test.go`
+
+---
+
+## [2026-07-07T14:41:00-07:00] grill-with-docs | Synthesis-Aware Context Assembly and Tiered Budgets (ADR-0044)
+
+- **Activity**: Grill-with-docs session resolved 9 design decisions for fixing two systemic root causes identified in the results-full-3 benchmark evaluation: (1) terminal synthesis nodes returning execution metadata instead of generated content, and (2) per-node context truncation dropping spec requirements before codegen nodes.
+- **Key Decisions**:
+  - Synthesis nodes get a separate context assembly path with untruncated validator/recall `RawOutput` from SQLite — no per-node budget ceiling.
+  - Deterministic node outputs are capped at 256 chars when assembling for synthesis (preserves write confirmations without wasting budget).
+  - Mid-DAG nodes get tiered per-type allocation: recall(8) > validator(6) > action(4) > probe(2) > deterministic(1).
+  - Dynamic ceiling replaces fixed 16K: `min(nodeCount * 4096, 32000)`. Scales with task size, caps at 32K.
+  - Synthesis accepts speed hit as terminal node — quality > latency since it doesn't cascade.
+  - No new cloud escalation policy — existing ConfidenceTier gate handles expensive cases.
+- **ADR Created**: [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md)
+- **Root Benchmark**: [results-full-3 evaluation](file:///Users/jp/.gemini/antigravity-ide/brain/4d24368a-4df2-42cb-a827-beffde1f9b50/benchmark_evaluation_run3.md) — quality regressed 3.47 → 2.95, 6/15 tasks failed (<2.0), 7 planning mismatches from metadata leaking into synthesis.
+
+---
+
+## [2026-07-07T12:21:00-07:00] grill-with-docs | Two-Tier Context Budget (ADR-0043)
+
+- **Activity**: Grill-with-docs session resolved 8 design decisions for preventing local model speed collapse from oversized prompt contexts. Benchmark analysis (results-full-2) traced the problem to two distinct sources: (1) probe step generating 16,384 tokens in a single call, inflating all subsequent steps to 17K+ prompt tokens, and (2) DAG accumulated context growing to 48K chars from large recall node outputs containing 30 ADR files.
+- **Key Decisions**:
+  - Two separate mechanisms (not a unified "context budget") — they operate at different seams
+  - Mechanism A: Probe step generation cap via context key on `CallLocalModel` (`max_tokens`), default 2048, configurable
+  - Mechanism B: Per-node output truncation at collection time in `buildAccumulatedContext`, default 16K total with even split, configurable
+  - Non-destructive: full output stays in SQLite for terminal synthesis
+  - Truncated probe steps treated as no-op (existing futility detection handles)
+  - `maxAccumulatedContextNodes = 6` stays hardcoded; char budget is the primary control
+  - Synthesis calls uncapped (they're supposed to be long)
+  - Context key pattern (like `ThinkingEnabledKey`) avoids breaking `InferenceBackend` interface
+- **Terms Resolved**:
+  - Added **Accumulated Context** to CONTEXT.md — the structured collection of completed upstream node outputs, distinct from Edge Thought (reasoning state)
+- **ADRs Created**:
+  - [ADR-0043: Two-Tier Context Budget](../adr/0043-two-tier-context-budget.md)
+- **Files Created/Modified**:
+  - [NEW] [0043-two-tier-context-budget.md](../adr/0043-two-tier-context-budget.md)
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Added Accumulated Context glossary entry)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-07-07T12:50:00-07:00] tdd | Two-Tier Context Budget Implementation (ADR-0043)
+
+- **Activity**: TDD implementation of ADR-0043 across 6 vertical slices, all RED→GREEN verified. Full test suite (30 packages) passes with zero regressions.
+- **Mechanism A** (Probe Step Generation Cap):
+  - `MaxTokensKey` context key in `inference` package (same pattern as `ThinkingEnabledKey`)
+  - `max_tokens` field added to both streaming and non-streaming `CompletionRequest` structs
+  - Probe step loop injects configured cap (default 2048) via `stepCtx`; synthesis calls uncapped
+- **Mechanism B** (Accumulated Context Truncation):
+  - Per-node truncation via `TruncateToolOutput` in `buildAccumulatedContext`
+  - Even budget split: `perNodeBudget = totalBudget / len(completed)`
+  - Default 16K total chars, configurable via `accumulatedContextMaxChars`
+- **Tests Added**: 8 new tests across 3 packages (config, inference, executor)
+- **Files Created/Modified**:
+  - [MODIFY] [config.go](../../internal/config/config.go) (Added fields, Save/Override copies, getters)
+  - [MODIFY] [local_model.go](../../internal/inference/local_model.go) (MaxTokensKey, max_tokens field)
+  - [MODIFY] [probe.go](../../internal/executor/probe.go) (stepCtx injection, import alias)
+  - [MODIFY] [executor_context.go](../../internal/executor/executor_context.go) (Per-node truncation)
+  - [NEW] [accumulated_context_test.go](../../internal/executor/accumulated_context_test.go) (Mechanism B tests)
+  - [MODIFY] [config_test.go](../../internal/config/config_test.go) (Config getter tests)
+  - [MODIFY] [local_model_test.go](../../internal/inference/local_model_test.go) (MaxTokensKey test)
+  - [MODIFY] [probe_test.go](../../internal/executor/probe_test.go) (Context-capturing mock test)
+
+
 
 - **Activity**: Grill-with-docs session resolved 10 design decisions for completing the ADR-0024 Edge Thought migration and building a codegen quality pipeline on top. Discovered that ADR-0024 infrastructure (edge_thought.go, ready_queue.go, mutation.go, 14 tests) was fully implemented on 2026-06-07 but never wired into production — `GlobalEngine` has no `EdgeThoughtInference`, `task.go` still calls `ExecuteGraph` instead of `ExecuteGraphReactive`.
 - **Key Decisions**:

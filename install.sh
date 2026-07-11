@@ -86,6 +86,7 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
 
     echo "mock model content" > "${INSTALL_DIR}/models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"
     echo "mock mmproj" > "${INSTALL_DIR}/models/mmproj-F32.gguf"
+    echo "mock router model" > "${INSTALL_DIR}/models/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf"
     
     echo "#!/bin/sh" > "${INSTALL_DIR}/bin/tzro-mcp"
     echo "echo 'mock tzro-mcp'" >> "${INSTALL_DIR}/bin/tzro-mcp"
@@ -202,6 +203,7 @@ EOF
   "speedFloor": 5,
   "sidecarEnabled": false,
   "ggufModelPath": "models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
+  "routerModelPath": "models/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf",
   "modelsDir": "",
   "confidenceThreshold": 3,
   "executorNodeDelayMs": 800,
@@ -259,6 +261,35 @@ CONFIG_EOF
     else
         echo -e "  ${GREEN}✔ Vision projector already present${NC}"
     fi
+
+    # Provision Router Model GGUF (~1.2 GB MiniCPM5 1B Claude Opus Fable5 Thinking Q8_0)
+    ROUTER_GGUF_PATH="${INSTALL_DIR}/models/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf"
+    ROUTER_GGUF_URL="https://huggingface.co/GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-GGUF/resolve/main/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf?download=true"
+
+    ROUTER_IS_PLACEHOLDER=false
+    if [ -f "${ROUTER_GGUF_PATH}" ]; then
+        FILE_SIZE=$(wc -c < "${ROUTER_GGUF_PATH}" 2>/dev/null | tr -d '[:space:]' || echo 0)
+        if [ -n "${FILE_SIZE}" ] && [ "${FILE_SIZE}" -lt 1000 ]; then
+            if [ "$(cat "${ROUTER_GGUF_PATH}" 2>/dev/null)" = "tzro-model-gguf-placeholder" ]; then
+                ROUTER_IS_PLACEHOLDER=true
+            fi
+        fi
+    fi
+
+    if [ ! -f "${ROUTER_GGUF_PATH}" ] || [ "${ROUTER_IS_PLACEHOLDER}" = "true" ]; then
+        echo -e "  Downloading router model MiniCPM5 1B (~1.2 GB)..."
+        echo -e "  ${DIM}Source: huggingface.co/GnLOLot/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-GGUF${NC}"
+        ROUTER_TMP="${ROUTER_GGUF_PATH}.download"
+        if curl -fSL --progress-bar -o "${ROUTER_TMP}" "${ROUTER_GGUF_URL}"; then
+            mv "${ROUTER_TMP}" "${ROUTER_GGUF_PATH}"
+            echo -e "  ${GREEN}✔ Router model downloaded${NC}"
+        else
+            rm -f "${ROUTER_TMP}"
+            echo -e "  ${YELLOW}⚠ Router model download failed. The engine will run in single-sidecar mode until downloaded from Settings.${NC}"
+        fi
+    else
+        echo -e "  ${GREEN}✔ Router model already present${NC}"
+    fi
 fi
 
 if [ "${OS}" = "Darwin" ]; then
@@ -301,6 +332,7 @@ echo -e "  ${BOLD}Llama Sidecar:${NC}       ${INSTALL_DIR}/bin/llama-server"
 echo -e "  ${BOLD}Daemon:${NC}              ${INSTALL_DIR}/bin/tzrod"
 echo -e "  ${BOLD}MCP Server:${NC}          ${INSTALL_DIR}/bin/tzro-mcp"
 echo -e "  ${BOLD}Tactician Model:${NC}     ${INSTALL_DIR}/models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"
+echo -e "  ${BOLD}Router Model:${NC}        ${INSTALL_DIR}/models/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf"
 echo -e "  ${BOLD}Vision Projector:${NC}    ${INSTALL_DIR}/models/mmproj-F32.gguf"
 echo -e "=========================================================="
 

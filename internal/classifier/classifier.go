@@ -85,8 +85,8 @@ const ComplexitySchema = `{
   "required": ["complexity"]
 }`
 
-// Classify delegating to unified ExecuteStructured seam in inference package
-func Classify(ctx context.Context, prompt string, localModel *inference.LocalModelManager) IntentResult {
+// Classify routes intent classification through the router sidecar.
+func Classify(ctx context.Context, prompt string) IntentResult {
 	// First, check if the prompt triggers Workflow Promotion
 	matched := FindMatchedToolsAndSkills(prompt)
 	toolCapTriggered := CalculateBFSNeighborhoodToolCount(matched) > 12
@@ -114,7 +114,7 @@ func Classify(ctx context.Context, prompt string, localModel *inference.LocalMod
 
 	req := inference.NewSimpleRequest(IntentSystemPrompt, prompt, IntentResultSchema)
 
-	resContent, err := localModel.ExecuteStructured(ctx, req)
+	resContent, err := inference.ExecuteRouterStructured(ctx, req)
 	if err == nil {
 		var result IntentResult
 		if json.Unmarshal([]byte(resContent), &result) == nil {
@@ -134,8 +134,8 @@ func Classify(ctx context.Context, prompt string, localModel *inference.LocalMod
 	}
 }
 
-// ClassifyComplexity delegating to unified ExecuteStructured seam in inference package
-func ClassifyComplexity(ctx context.Context, prompt string, toolNames []string, localModel *inference.LocalModelManager) string {
+// ClassifyComplexity routes complexity classification through the router sidecar.
+func ClassifyComplexity(ctx context.Context, prompt string, toolNames []string) string {
 	// Check if the prompt triggers Workflow Promotion
 	matched := FindMatchedToolsAndSkills(prompt)
 	toolCapTriggered := CalculateBFSNeighborhoodToolCount(matched) > 12 || CalculateBFSNeighborhoodToolCount(toolNames) > 12
@@ -148,7 +148,7 @@ func ClassifyComplexity(ctx context.Context, prompt string, toolNames []string, 
 	req := inference.NewSimpleRequest(ComplexitySystemPrompt, prompt, ComplexitySchema)
 	req.ToolNames = toolNames
 
-	resContent, err := localModel.ExecuteStructured(ctx, req)
+	resContent, err := inference.ExecuteRouterStructured(ctx, req)
 	if err == nil {
 		var result struct {
 			Complexity string `json:"complexity"`

@@ -113,6 +113,7 @@ type HeuristicIntentResult struct {
 
 // ExecuteStructured encapsulates cooperative routing rules, local heuristics, and HTTP cloud client fallbacks.
 func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req StructuredInferenceRequest) (string, error) {
+
 	m.initMaps()
 	cfg := config.Get()
 
@@ -265,7 +266,7 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			if req.StreamMeta != nil {
 				nodeID = req.StreamMeta.NodeID
 			}
-			
+
 			// ADR-0040: Low-stakes requests (like validators) bypass thermal escalation
 			// to avoid burning cloud tokens on simple structured extraction.
 			if !req.IsLowStakes {

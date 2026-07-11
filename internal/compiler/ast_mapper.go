@@ -137,7 +137,7 @@ func GenerateShallowMap(workspaceRoot string, maxDepth int) (string, error) {
 				if strings.HasPrefix(info.Name(), ".") || info.Name() == "vendor" || info.Name() == "node_modules" {
 					return filepath.SkipDir
 				}
-				
+
 				relPath, _ := filepath.Rel(workspaceRoot, path)
 				sb.WriteString(fmt.Sprintf("- %s/\n", relPath))
 			}

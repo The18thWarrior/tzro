@@ -34,6 +34,9 @@ An AI coding agent wants to generate or modify a single source file by providing
 - [ ] Module context extraction provides package-level type signatures and exports to the generation prompt for Go files.
 - [ ] The max line cap is enforced — generated output exceeding the cap is truncated with a warning.
 - [ ] Markdown fence stripping removes spurious code fences from LLM output before writing.
+- [ ] Hot-swappable model management allows the engine to temporarily swap to a code-specialized GGUF model for generation, then lazily restore the default model after completion.
+- [ ] Model swap is transparent to the caller — `tzro_code` returns generated code regardless of which model served the request.
+- [ ] If the code-specialized model fails to load, generation falls back to the current active model without error.
 
 ## Edge Cases to Probe
 

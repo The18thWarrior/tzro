@@ -1272,7 +1272,6 @@ func (sdb *SqliteDatabase) GetThoughtStepByProbeAndIndex(probeID string, index i
 	return s, nil
 }
 
-
 // AddThoughtSummary persists a rolling compaction summary of a Thought Chain.
 func (sdb *SqliteDatabase) AddThoughtSummary(summary ThoughtSummary) error {
 	sdb.mutex.Lock()

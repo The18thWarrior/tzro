@@ -195,28 +195,15 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		inference.ActiveBackend = oldBackend
 	}()
 
-	// Auto-start sidecar if not already running, then wait for health
-	status, activePort, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
+	// Auto-start both worker and router sidecars if not already running.
+	// StartActive starts both in parallel (router only if routerModelPath is configured).
+	status, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
 	if status == "Stopped" {
-		if err := inference.GlobalLocalModel.Start(ctx); err != nil {
+		if err := inference.StartActive(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", conditionID, err)
 		} else {
-			// Wait for the sidecar to become healthy (64K context can take 10-20s to load)
-			_, activePort, _, _, _ = inference.GlobalLocalModel.GetStatusInfo()
-			fmt.Fprintf(os.Stderr, "[Comparison] Waiting for sidecar health on port %d...\n", activePort)
-			for attempt := range 30 {
-				healthURL := fmt.Sprintf("http://localhost:%d/health", activePort)
-				resp, err := http.Get(healthURL)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					resp.Body.Close()
-					fmt.Fprintf(os.Stderr, "[Comparison] Sidecar healthy after %d attempts\n", attempt+1)
-					break
-				}
-				if resp != nil {
-					resp.Body.Close()
-				}
-				time.Sleep(1 * time.Second)
-			}
+			waitForSidecarHealth("worker", inference.GlobalWorkerModel)
+			waitForSidecarHealth("router", inference.GlobalRouterModel)
 		}
 	}
 
@@ -240,13 +227,17 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		relCodegenPath, _ := filepath.Rel(projectRoot, codegenTargetPath)
 		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, relCodegenPath)
 	} else if t.Category == CategoryDocgen {
-		// For docgen tasks, inform the agent that it should work within the isolated directory
+		// For docgen tasks, the agent should READ source code from the project root
+		// (where the actual codebase lives) but WRITE output files to the isolated
+		// sandbox directory. Previously the prompt told the agent to read AND write
+		// from the sandbox, which was empty for most files — causing all docgen
+		// benchmarks to produce empty or error output.
 		relOutputDir, err := filepath.Rel(projectRoot, testOutputDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison Warning] failed to get relative path for %s: %v. Using absolute path.\n", testOutputDir, err)
 			relOutputDir = testOutputDir
 		}
-		taskPrompt = fmt.Sprintf("%s\n\nThe target files have been copied to an isolated directory for this task. You should read from and write to this directory: %s", taskPrompt, relOutputDir)
+		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: Read and explore source code from the project root directory (not from the output directory). Write all output files to this isolated output directory: %s", taskPrompt, relOutputDir)
 	}
 
 	startTime := time.Now()
@@ -465,26 +456,14 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		inference.ActiveBackend = oldBackend
 	}()
 
-	// Auto-start sidecar if needed
-	status, activePort, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
+	// Auto-start both worker and router sidecars if needed.
+	status, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
 	if status == "Stopped" {
-		if err := inference.GlobalLocalModel.Start(ctx); err != nil {
+		if err := inference.StartActive(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", conditionID, err)
 		} else {
-			_, activePort, _, _, _ = inference.GlobalLocalModel.GetStatusInfo()
-			for attempt := range 30 {
-				healthURL := fmt.Sprintf("http://localhost:%d/health", activePort)
-				resp, err := http.Get(healthURL)
-				if err == nil && resp.StatusCode == http.StatusOK {
-					resp.Body.Close()
-					fmt.Fprintf(os.Stderr, "[Comparison] Sidecar healthy after %d attempts\n", attempt+1)
-					break
-				}
-				if resp != nil {
-					resp.Body.Close()
-				}
-				time.Sleep(1 * time.Second)
-			}
+			waitForSidecarHealth("worker", inference.GlobalWorkerModel)
+			waitForSidecarHealth("router", inference.GlobalRouterModel)
 		}
 	}
 
@@ -858,6 +837,7 @@ declare function clearInterval(id: any): void;
 `
 	_ = os.WriteFile(filepath.Join(typingsDir, "index.d.ts"), []byte(nodeShim), 0644)
 }
+
 // copyFile copies a single file from src to dst.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
@@ -909,4 +889,29 @@ func copyDir(src, dst string) error {
 		}
 	}
 	return nil
+}
+
+// waitForSidecarHealth blocks until a sidecar's /health endpoint returns 200 OK,
+// or gives up after 30 attempts (1s apart). Does nothing if the sidecar is in
+// "Stopped" state (i.e., not configured or failed to start).
+func waitForSidecarHealth(label string, model *inference.LocalModelManager) {
+	status, activePort, _, _, _ := model.GetStatusInfo()
+	if strings.ToLower(status) == "stopped" || activePort == 0 {
+		return // not configured or didn't start
+	}
+	fmt.Fprintf(os.Stderr, "[Comparison] Waiting for %s sidecar health on port %d...\n", label, activePort)
+	for attempt := range 30 {
+		healthURL := fmt.Sprintf("http://localhost:%d/health", activePort)
+		resp, err := http.Get(healthURL)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar healthy after %d attempts\n", label, attempt+1)
+			return
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(1 * time.Second)
+	}
+	fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar health check timed out on port %d\n", label, activePort)
 }

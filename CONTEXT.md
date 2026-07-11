@@ -110,24 +110,37 @@ A daemon-resident service and CLI subcommand (`install`, `uninstall`, `list`, `p
 _Avoid_: App Store, registry, installer wizard
 
 **Edge Thought**:
-A compact reasoning state generated on a DAG edge traversal by the **Local Model**, summarizing what execution has learned so far and how confident it is that the task goal can be achieved. Generated when the executor traverses an edge whose target node has a non-zero **Activation Threshold**. Persisted to SQLite for durability. Serves as the primary reasoning context for downstream nodes, with raw upstream data included on-demand for structured parameter extraction.
-_Avoid_: Short-term memory, session context, accumulated context (raw data, not reasoning)
+A compact reasoning state generated on a DAG edge traversal by the **Local Model**, summarizing what execution has learned so far and how confident it is that the task goal can be achieved. Generated when the executor traverses an edge whose target node has a non-zero **Activation Threshold**. Persisted to SQLite for durability. Operates in two evaluation modes: **single-shot** (default — generates one confidence score, makes a binary Continue/Spawn/Halt decision) and **multi-branch** (MCTS — generates K candidate actions, evaluates each via the **Speculation Fence**, scores them with a **Value Function**, and commits the highest-reward candidate). The evaluation mode is determined by the node's MCTS configuration. Both modes share the same trigger point (`evaluateActivationThreshold`) and the same spawn/continue/halt output contract.
+_Avoid_: Short-term memory, session context, accumulated context (raw data, not reasoning), MCTS rollout (not a separate mechanism — it is a mode of Edge Thought evaluation)
 
 **Activation Threshold**:
 A per-node sufficiency gate (0.0–1.0) that determines whether an **Edge Thought**'s goal confidence warrants dynamic graph mutation. When the incoming Edge Thought's confidence falls below the target node's Activation Threshold, the **Local Model** spawns a new node to perform additional work before the target executes. A threshold of 0.0 disables Edge Thought generation and spawn evaluation entirely. Set by the **Cloud Model** at planning time or defaulted by the **Kahn Compiler** based on node type.
 _Avoid_: New Thought Threshold, firing threshold, trigger condition
 
-**Probe Node** _(deprecated)_:
-Superseded by **Edge Thought** and **Activation Threshold**, which generalize the Probe's reactive behavior to all DAG nodes. Existing DAGs emitting `type: "probe"` are silently treated as action nodes with a high Activation Threshold and allocated mutation budget.
-_Avoid_: Use Edge Thought and Activation Threshold instead
+**Speculation Fence**:
+A safety boundary within the **Edge Thought** multi-branch evaluation mode that classifies each tool by its **Tool Proactivity Level** to determine whether it can be executed during speculative candidate evaluation. Tools at or below the configured ceiling (default L2/Suggest) execute for real during rollouts. Tools at L3 (Reversible Action) are simulated — the **Local Model** imagines their output without executing. Tools at L4 (External Side Effect) are blocked entirely — candidates requiring L4 tools during speculative evaluation are pruned. Only the committed winning candidate executes L3+ tools for real.
+_Avoid_: Sandbox, isolation layer, tool filter
 
-**Thought Chain** _(deprecated)_:
-Superseded by **Edge Thought**. The Thought Chain's internal step loop is replaced by dynamic node spawning via the Activation Threshold, where each tool call becomes a checkpointed DAG node rather than a hidden internal step.
-_Avoid_: Use Edge Thought instead
+**Value Function**:
+A scoring mechanism that evaluates candidate action quality during multi-branch **Edge Thought** evaluation. Operates in two tiers: **Heuristic** (default — zero-inference scoring via key term coverage, output shape, error markers, and **GoalProgressGuard** pass/fail) and **LLM** (reserved for planner-designated critical nodes — uses the **Local Model** with GBNF-constrained output to produce a calibrated 0.0–1.0 score). Both tiers produce a continuous reward signal, replacing the binary Continue/Spawn/Halt gate of single-shot mode with ranked candidate selection.
+_Avoid_: Confidence score (Edge Thought's goalConfidence is the single-shot equivalent, not the multi-branch scoring), reward model, evaluator agent
+
+**Probe Node**:
+An autonomous execution node type that runs a bounded, multi-step **Thought Chain** exploration loop (research, directory traversal, file reading) using the **Local Model**. Persists its intermediate reasoning and tool outputs to the `thought_chain` table for durability and later recall. Coexists with **Edge Thought** — Probe Nodes handle dedicated multi-step exploration where reasoning continuity within a single DAG node is critical (each step sees the full accumulated thought chain), while **Edge Thoughts** handle reactive exploration via dynamic node spawning on action nodes.
+_Avoid_: Action Node (single-step), research agent, sub-task
+
+**Thought Chain**:
+The internal step loop within a **Probe Node** where each iteration generates a reasoning thought, dispatches a tool call, and feeds the result back into the next iteration. Provides reasoning continuity — every step sees the full accumulated context from prior steps within the same node. Complements **Edge Thought** (which operates between separate DAG nodes) by providing within-node exploration where context fidelity matters more than checkpointing granularity.
+_Avoid_: Edge Thought (between-node), conversation history, chat loop
 
 **Compaction Pipeline**:
 A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
 _Avoid_: Text parser, JSON clean filter
+
+**Accumulated Context**:
+The structured collection of completed upstream node outputs injected into each DAG node's prompt to provide execution history for parameter extraction and decision-making. Bounded by a node count window (`maxAccumulatedContextNodes`) and a total character budget (`accumulatedContextMaxChars`, ADR-0043) with content-aware per-node truncation. Distinct from **Edge Thought** (reasoning state) — Accumulated Context is raw data, not reasoning.
+_Avoid_: Edge Thought (reasoning, not data), session history, prompt context
+
 
 **Two-Tier Cache GC**:
 An automated resource recovery mechanism that clears idle context slots immediately upon Task completion (Tier 1) and gracefully recycles the local inference sidecar process if RSS memory usage exceeds limits during idle windows (Tier 2).

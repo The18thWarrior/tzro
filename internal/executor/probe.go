@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 	"tzro/internal/compiler"
-	"tzro/internal/config"
+	cfgpkg "tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/tools"
@@ -21,17 +21,31 @@ import (
 // a mock returns canned GBNF-constrained JSON responses.
 type ProbeInferenceEngine interface {
 	Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error)
+	// InferMessages sends a pre-segmented message array to the model.
+	// This enables KV cache prefix sharing: the system prompt + tool schemas
+	// (segment 1) stay identical across probe steps, so the llama-server's
+	// --cache-reuse window can skip re-processing those tokens on every step.
+	// Returns (content, error). Callers that don't implement this get a
+	// default fallback that extracts system+user from the messages slice.
+	InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error)
 }
 
-// DefaultProbeInference wraps the global inference backend for production use.
+// DefaultProbeInference wraps the router sidecar for production Probe steps.
+// Probe Thought Chain steps are navigation decisions (tool selection, short outputs)
+// that benefit from the router model's speed over the worker's quality.
 type DefaultProbeInference struct{}
 
 func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
-	backend := inference.ActiveBackend
-	if backend == nil {
-		return "", fmt.Errorf("no active inference backend")
+	result, err := inference.CallRouter(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
+	if err != nil {
+		return "", err
 	}
-	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
+	return result.Content, nil
+}
+
+// InferMessages sends a pre-segmented message array to maximize KV cache prefix reuse.
+func (d *DefaultProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+	result, err := inference.CallRouter(ctx, messages, jsonSchema)
 	if err != nil {
 		return "", err
 	}
@@ -153,10 +167,38 @@ func RunProbe(
 	var consecutiveErrors int
 	const maxConsecutiveErrors = 3
 
+	// Futility detection: if ALL of the first N steps return errors with zero
+	// successful calls, abort the probe immediately. This prevents burning the
+	// entire step budget (15-20 steps × ~10s each) when the probe can't even
+	// get started (e.g., wrong directory, no files found, malformed tool calls).
+	// Dynamic: scales with step budget so large-budget probes get more recovery
+	// attempts (e.g., stepBudget 30 → threshold 7, stepBudget 10 → threshold 5).
+	futilityThreshold := stepBudget / 4
+	if futilityThreshold < 5 {
+		futilityThreshold = 5
+	}
+
+	// Diagnostic tracking for futility abort: records tool name and error
+	// for each failed step so the abort log shows WHY calls failed.
+	type failedDetail struct {
+		step   int
+		tool   string
+		errMsg string
+	}
+	var failedToolDetails []failedDetail
+
 	// Successful tool call counter: tracks unique successful tool invocations
 	// (calls that returned actual content, not errors). Used to adaptively
 	// lower the minimum step budget when the probe has made substantial progress.
 	var successfulToolCalls int
+
+	// Output fingerprint tracking: detects diminishing information gain during
+	// exploration. When 3 consecutive successful tool outputs match existing
+	// fingerprints (first 200 chars), the probe lowers minStepBudget to allow
+	// synthesis instead of grinding through redundant exploration steps.
+	outputFingerprints := make(map[string]bool)
+	var consecutiveDuplicateOutputs int
+	const maxConsecutiveDuplicateOutputs = 3
 
 	// minStepBudget is the minimum number of steps a probe must take before
 	// synthesis is allowed. Prevents premature termination when the model
@@ -172,27 +214,54 @@ func RunProbe(
 	}
 
 	// Pass 1: High-Entropy Tool Loop
+	//
+	// KV Cache Prefix Sharing (ADR-0021 extension for probes):
+	// The system prompt (goal + tool schemas) is identical across all steps.
+	// By hoisting it outside the loop, we ensure the llama-server's
+	// --cache-reuse 2048 window matches the system message tokens on every
+	// step, avoiding ~500-1000 tokens of redundant KV computation per step.
+	// Over 20 steps at ~10s each, this can save 3-5s per step (60-100s total).
+	systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
+
 	for step := 1; step <= stepBudget; step++ {
-		systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
 		userPrompt, err := buildProbeUserPrompt(probeID, step, lastToolOutput)
 		if err != nil {
 			return "", fmt.Errorf("failed to build probe prompt at step %d: %w", step, err)
 		}
 
-		// Call Local Model WITHOUT constraint
-		rawResponse, err := engine.Infer(ctx, systemPrompt, userPrompt, "")
+		// Build segmented messages to maximize KV cache prefix reuse:
+		//   Segment 1 (system): static goal + tool schemas — identical every step
+		//   Segment 2 (user→assistant): accumulated context — grows but prefix is stable
+		//   Segment 3 (user): per-step volatile query — changes every step
+		probeMessages := buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID)
+
+		// Call Local Model WITHOUT constraint. Probe steps are routing decisions
+		// (which file/tool to use next) — thinking mode is NOT enabled here
+		// because the per-step overhead (10-30s) multiplies across 15-20 steps,
+		// adding 150-500s without proportional quality gain.
+		//
+		// ADR-0043 Mechanism A: Cap generation per step to prevent runaway output
+		// (observed: 16K tokens in a single step collapsed all subsequent calls
+		// to 0.1 t/s). Synthesis calls remain uncapped.
+		stepCtx := context.WithValue(ctx, inference.MaxTokensKey, cfgpkg.GetProbeStepMaxTokens())
+		rawResponse, err := engine.InferMessages(stepCtx, probeMessages, "")
 		if err != nil {
 			return "", fmt.Errorf("probe inference failed at step %d: %w", step, err)
 		}
+
+		// Strip <think>...</think> blocks before tag extraction. The thinking
+		// content is reasoning noise — we preserve it in NextThought for logging
+		// but must not let it interfere with <SYNTHESIZE_READY> or <ACTION> detection.
+		cleanedResponse := inference.StripThinkTags(rawResponse)
 
 		var isSynthesisReady bool
 		toolOutput := ""
 		var toolArgsStr string
 		var toolName string
 		var chainStep ThoughtChainStep
-		chainStep.NextThought = rawResponse
+		chainStep.NextThought = rawResponse // preserve full response including thinking for logs
 
-		if strings.Contains(rawResponse, "<SYNTHESIZE_READY>") {
+		if strings.Contains(cleanedResponse, "<SYNTHESIZE_READY>") {
 			// Adaptive minimum: allow early synthesis if the probe has made
 			// substantial successful progress (successfulToolCalls >= minStepBudget - 2).
 			// This prevents forcing counter-productive extra exploration when
@@ -227,9 +296,9 @@ func RunProbe(
 			isSynthesisReady = true
 			chainStep.Action = "synthesize"
 		} else {
-			// Extract <ACTION> tag
+			// Extract <ACTION> tag from cleaned response (think-tags already stripped)
 			actionRe := regexp.MustCompile("(?s)<ACTION>(.*?)</ACTION>")
-			matches := actionRe.FindStringSubmatch(rawResponse)
+			matches := actionRe.FindStringSubmatch(cleanedResponse)
 			if len(matches) > 1 {
 				var parsed struct {
 					Tool      string                 `json:"tool"`
@@ -258,6 +327,7 @@ func RunProbe(
 
 			if !allowedToolSet[toolName] {
 				toolOutput = fmt.Sprintf("Error: tool '%s' is not in the allowed tools set", toolName)
+				failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: toolOutput})
 			} else {
 				args := chainStep.Arguments
 				if args == nil {
@@ -270,15 +340,42 @@ func RunProbe(
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
 					consecutiveErrors++
+					failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: toolOutput})
 				} else {
 					toolOutput = result
 					// Detect tool-level errors: tools return JSON with "success":false
 					// for validation failures, nonexistent paths, etc. (no Go error).
 					if isToolError(result) {
 						consecutiveErrors++
+						failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: truncate(result, 200)})
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
+
+						// Output fingerprint convergence check (Fix B):
+						// Track first 200 chars of each successful output. When
+						// 3 consecutive outputs match existing fingerprints,
+						// the probe is reading redundant content — unlock synthesis.
+						fingerprint := strings.TrimSpace(result)
+						if len(fingerprint) > 200 {
+							fingerprint = fingerprint[:200]
+						}
+						if outputFingerprints[fingerprint] {
+							consecutiveDuplicateOutputs++
+						} else {
+							consecutiveDuplicateOutputs = 0
+							outputFingerprints[fingerprint] = true
+						}
+
+						// When enough exploration has occurred and outputs are repeating,
+						// lower minStepBudget to allow synthesis on the next step.
+						if consecutiveDuplicateOutputs >= maxConsecutiveDuplicateOutputs &&
+							step >= minStepBudget &&
+							successfulToolCalls >= compactEvery*2 {
+							fmt.Fprintf(os.Stderr, "[Probe] Node %s: %d consecutive duplicate outputs detected at step %d. Lowering min step budget to allow synthesis.\n",
+								probeID, consecutiveDuplicateOutputs, step)
+							minStepBudget = step // Allow synthesis on the next step
+						}
 					}
 				}
 				if bytes, err := json.Marshal(args); err == nil {
@@ -296,6 +393,34 @@ func RunProbe(
 					"WARNING: %d consecutive tool calls have failed. You should synthesize your findings using what you have gathered so far. Output <SYNTHESIZE_READY> to produce your final answer.",
 					consecutiveErrors,
 				)
+
+				// Futility detection: if we're still within the first N steps
+				// and have ZERO successful calls, abort immediately rather than
+				// burning through the remaining budget. This saves ~150s
+				// (15 steps × 10s) when the probe can't get started at all.
+				if step <= futilityThreshold && successfulToolCalls == 0 {
+					fmt.Fprintf(os.Stderr, "[Probe] FUTILITY ABORT: Node %s has %d/%d initial steps ALL failed with zero successful calls. Aborting probe loop.\n", probeID, step, futilityThreshold)
+					for _, d := range failedToolDetails {
+						fmt.Fprintf(os.Stderr, "[Probe]   step %d: tool=%s error=%s\n", d.step, d.tool, truncate(d.errMsg, 150))
+					}
+					// Persist the final step before breaking
+					thoughtStep := memory.ThoughtStep{
+						ID:         fmt.Sprintf("%s_step_%d", probeID, step),
+						ProbeID:    probeID,
+						TaskID:     taskID,
+						StepIndex:  step,
+						Thought:    chainStep.NextThought,
+						ToolName:   toolName,
+						ToolArgs:   toolArgsStr,
+						ToolOutput: "FUTILITY ABORT: All initial tool calls failed. Proceeding to synthesis with available context.",
+						CreatedAt:  time.Now().Unix(),
+					}
+					if err := memory.DB.AddThoughtStep(thoughtStep); err != nil {
+						fmt.Fprintf(os.Stderr, "[Probe Error] Failed to add thought step: %v\n", err)
+					}
+					break // Exit the probe loop → fall through to synthesis
+				}
+
 				// Persist the step with the warning
 				thoughtStep := memory.ThoughtStep{
 					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
@@ -581,34 +706,13 @@ func buildToolSchemaReference(allowedTools []string) string {
 	return sb.String()
 }
 
-// buildProbeUserPrompt builds the user prompt from persisted thought chain state.
+// buildProbeUserPrompt builds the per-step volatile user prompt.
+// The accumulated context (compaction summary + recent steps) is now handled
+// by buildProbeSegmentedMessages as segment 2-3 of the segmented message format,
+// so this function only contains the per-step volatile content: last tool output
+// and the step query. This separation enables KV cache prefix sharing.
 func buildProbeUserPrompt(probeID string, stepNum int, lastToolOutput string) (string, error) {
 	var prompt string
-
-	// Include latest compaction summary if available
-	summary, err := memory.DB.GetLatestSummary(probeID)
-	if err == nil && summary.Summary != "" {
-		prompt += fmt.Sprintf("## Previous Exploration Summary\n%s\n\n", summary.Summary)
-	}
-
-	// Include recent unccompacted steps
-	steps, err := memory.DB.GetThoughtSteps(probeID)
-	if err == nil && len(steps) > 0 {
-		// Only include the most recent steps (after last compaction)
-		recentStart := 0
-		if len(steps) > 5 {
-			recentStart = len(steps) - 5
-		}
-		prompt += "## Recent Steps\n"
-		for _, s := range steps[recentStart:] {
-			prompt += fmt.Sprintf("- Step %d: %s", s.StepIndex, s.Thought)
-			if s.ToolName != "" {
-				prompt += fmt.Sprintf(" [used: %s]", s.ToolName)
-			}
-			prompt += "\n"
-		}
-		prompt += "\n"
-	}
 
 	// Include last tool output
 	if lastToolOutput != "" {
@@ -617,6 +721,74 @@ func buildProbeUserPrompt(probeID string, stepNum int, lastToolOutput string) (s
 
 	prompt += fmt.Sprintf("Step %d: What should we do next?", stepNum)
 	return prompt, nil
+}
+
+// buildProbeSegmentedMessages constructs a multi-segment message array optimized
+// for KV cache prefix sharing across probe steps. The layout mirrors the executor's
+// buildSegmentedMessages (ADR-0021) but adapted for probe exploration:
+//
+//  1. {system, staticSystemPrompt}   — goal + tool schemas; IDENTICAL every step
+//  2. {user, accumulatedContext}      — compaction summary + recent steps; stable prefix
+//  3. {assistant, ack}               — synthetic turn boundary (only if context exists)
+//  4. {user, perStepQuery}           — last tool output + step prompt; changes every step
+//
+// With --cache-reuse 2048, the llama-server reuses the KV cache for any prefix
+// that matches between consecutive requests. Since segment 1 is identical and
+// segment 2-3 grows incrementally, most of the prefix is reusable, avoiding
+// ~500-1000 tokens of redundant computation per step.
+func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inference.InferenceMessage {
+	var msgs []inference.InferenceMessage
+
+	// Segment 1: Static system prompt (goal + tool schemas) — identical every step
+	msgs = append(msgs, inference.InferenceMessage{
+		Role:    "system",
+		Content: systemPrompt,
+	})
+
+	// Segments 2-3: Accumulated context from compaction + recent steps
+	// This grows over time but the prefix (earlier compaction summaries) is stable
+	var accumulatedCtx strings.Builder
+	summary, err := memory.DB.GetLatestSummary(probeID)
+	if err == nil && summary.Summary != "" {
+		accumulatedCtx.WriteString("## Previous Exploration Summary\n")
+		accumulatedCtx.WriteString(summary.Summary)
+		accumulatedCtx.WriteString("\n\n")
+	}
+	steps, err := memory.DB.GetThoughtSteps(probeID)
+	if err == nil && len(steps) > 0 {
+		recentStart := 0
+		if len(steps) > 5 {
+			recentStart = len(steps) - 5
+		}
+		accumulatedCtx.WriteString("## Recent Steps\n")
+		for _, s := range steps[recentStart:] {
+			accumulatedCtx.WriteString(fmt.Sprintf("- Step %d: %s", s.StepIndex, s.Thought))
+			if s.ToolName != "" {
+				accumulatedCtx.WriteString(fmt.Sprintf(" [used: %s]", s.ToolName))
+			}
+			accumulatedCtx.WriteString("\n")
+		}
+		accumulatedCtx.WriteString("\n")
+	}
+
+	if accumulatedCtx.Len() > 0 {
+		msgs = append(msgs, inference.InferenceMessage{
+			Role:    "user",
+			Content: accumulatedCtx.String(),
+		})
+		msgs = append(msgs, inference.InferenceMessage{
+			Role:    "assistant",
+			Content: "I have reviewed the exploration context. Ready for the next step.",
+		})
+	}
+
+	// Segment 4: Per-step volatile content (last tool output + step query)
+	msgs = append(msgs, inference.InferenceMessage{
+		Role:    "user",
+		Content: userPrompt,
+	})
+
+	return msgs
 }
 
 // compactThoughtChain creates a rolling summary of recent thought chain steps.
@@ -681,35 +853,6 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 	}
 
 	return memory.DB.AddThoughtSummary(summary)
-}
-
-// forceSynthesis generates a forced synthesis when the step budget is exhausted.
-func forceSynthesis(ctx context.Context, probeID, taskID string, engine ProbeInferenceEngine) (string, error) {
-	// Gather all state
-	summary, _ := memory.DB.GetLatestSummary(probeID)
-	steps, _ := memory.DB.GetThoughtSteps(probeID)
-
-	var context string
-	if summary.Summary != "" {
-		context += "Summary: " + summary.Summary + "\n"
-	}
-	// Include tool outputs with intelligent truncation (same as runSynthesisPass)
-	var synthSteps []SynthesisStep
-	for _, s := range steps {
-		synthSteps = append(synthSteps, SynthesisStep{
-			StepIndex:  s.StepIndex,
-			Thought:    s.Thought,
-			ToolOutput: s.ToolOutput,
-		})
-	}
-	context += TruncateSynthesisContext(synthSteps)
-
-	systemPrompt := "You have exhausted your exploration budget. Based on everything discovered so far, produce a comprehensive synthesis of your findings. Be thorough and include all relevant details."
-	result, err := engine.Infer(ctx, systemPrompt, context, "")
-	if err != nil {
-		return "Probe budget exhausted. Unable to synthesize findings.", nil
-	}
-	return result, nil
 }
 
 // sanitizeToolName attempts to recover a valid tool name from garbled model output.
@@ -825,7 +968,7 @@ func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, th
 		if pathStr, ok := pathVal.(string); ok && pathStr != "" {
 			// Resolve relative paths to absolute
 			if !filepath.IsAbs(pathStr) {
-				resolved := config.ResolvePath(pathStr)
+				resolved := cfgpkg.ResolvePath(pathStr)
 				if resolved != pathStr {
 					fmt.Fprintf(os.Stderr, "[Probe] Resolved relative path: '%s' -> '%s' for tool '%s'\n", pathStr, resolved, toolName)
 					args["path"] = resolved
@@ -840,7 +983,7 @@ func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, th
 	if extracted != "" {
 		// Resolve relative paths to absolute using TZRO_DIR
 		if !filepath.IsAbs(extracted) {
-			resolved := config.ResolvePath(extracted)
+			resolved := cfgpkg.ResolvePath(extracted)
 			if resolved != extracted {
 				fmt.Fprintf(os.Stderr, "[Probe] Resolved rescued path: '%s' -> '%s' for tool '%s'\n", extracted, resolved, toolName)
 				extracted = resolved

@@ -507,7 +507,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			schemaStr = ""
 		}
 
-		accumulatedCtx := buildAccumulatedContext(taskID, graph)
+		accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 		staticBase := buildStaticBaseInstruction(true)
 
 		var inferenceResult string
@@ -595,7 +595,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			if useCloud {
 				xmlResult, err = retryWithCloud(ctx, msgs, schemaStr, taskID)
 			} else {
-				xmlResult, err = inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+				// Executor Pass 1 (XML extraction): enable thinking mode for
+				// this single-shot call. The model reasons once about accumulated
+				// context before producing the tool call — high ROI vs probe
+				// where thinking multiplies across 15-20 steps.
+				thinkCtx := context.WithValue(ctx, inference.ThinkingEnabledKey, true)
+				xmlResult, err = inference.ExecuteWorkerStructured(thinkCtx, req)
 			}
 
 			if err != nil {
@@ -646,7 +651,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			refineReq.StreamMeta = &refineMeta
 			refineReq.TaskID = taskID
 
-			refineResult, refineErr := inference.GlobalLocalModel.ExecuteStructured(ctx, refineReq)
+			refineResult, refineErr := inference.ExecuteRouterStructured(ctx, refineReq)
 			if refineErr == nil {
 				var check map[string]interface{}
 				if json.Unmarshal([]byte(refineResult), &check) == nil {
@@ -769,7 +774,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			schemaStr = ""
 		}
 
-		accumulatedCtx := buildAccumulatedContext(taskID, graph)
+		accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 		var toolArguments map[string]interface{}
 
 		if accumulatedCtx != "" && schemaStr != "" {
@@ -786,7 +791,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 				IsLowStakes: true,
 			}
 
-			detResult, detErr := inference.GlobalLocalModel.ExecuteStructured(ctx, detReq)
+			detResult, detErr := inference.ExecuteRouterStructured(ctx, detReq)
 			if detErr == nil {
 				// Use extractToolArguments which handles recursive tool_arguments unwrapping
 				toolArguments = extractToolArguments(detResult)
@@ -1180,14 +1185,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 
 		systemPrompt := "You are the Local Tactician Node Executor. Summarize and compile all prior action outputs into a final cohesive response."
-		accumulatedCtx := buildAccumulatedContext(taskID, graph)
+		accumulatedCtx := buildAccumulatedContext(taskID, graph, "synthesis")
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
 		req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
-		req.StreamMeta = &meta
+		// ADR-0045: Token-level streaming gated by compiler-set StreamOutput flag.
+		// DefaultNodeFields sets StreamOutput=true for synthesis nodes.
+		if node.StreamOutput {
+			req.StreamMeta = &meta
+		}
 		req.TaskID = taskID
 
-		inferenceResult, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+		inferenceResult, err := inference.ExecuteWorkerStructured(ctx, req)
 		if err != nil {
 			return fmt.Errorf("synthesis node execution failed: %w", err)
 		}
@@ -1351,7 +1360,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// P0 Fix (13:00): Use accumulated context architecture instead of flat interpolated prompt.
 	// Upstream node outputs are passed as labeled structured blocks, enabling the bridge
 	// to extract values by key name rather than re-parsing them from prose.
-	accumulatedCtx := buildAccumulatedContext(taskID, graph)
+	accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 
 	var systemPrompt string
 	if isCacheExploration {
@@ -1387,7 +1396,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		req.TaskID = taskID
 	}
 
-	inferenceResult, err = inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	inferenceResult, err = inference.ExecuteWorkerStructured(ctx, req)
 	if err != nil {
 		return fmt.Errorf("node execution failed: %w", err)
 	}
@@ -2561,7 +2570,7 @@ func (e *ExecutionEngine) evaluateBranchCondition(ctx context.Context, graph *co
 	req := inference.NewSimpleRequest("You are the Branch Condition Evaluator. Your job is to evaluate if a given condition is satisfied based on the provided execution history and context. Respond strictly with JSON.", userPrompt, schema)
 	req.TaskID = graph.TaskID
 
-	resStr, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	resStr, err := inference.ExecuteRouterStructured(ctx, req)
 	if err != nil {
 		return false, fmt.Errorf("local model branch semantic evaluation call failed: %w", err)
 	}

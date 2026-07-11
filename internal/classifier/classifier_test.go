@@ -14,26 +14,29 @@ import (
 )
 
 func TestClassifyHeuristic(t *testing.T) {
-	// Setup LocalModelManager with Stopped/Inactive status to force heuristics fallback
-	mgr := inference.GlobalLocalModel
-	mgr.Status = "Stopped"
+	// Force heuristics fallback by ensuring both router and worker are stopped.
+	// Classify now routes through ExecuteRouterStructured → GlobalRouterModel,
+	// which falls back to GlobalWorkerModel when router is unavailable.
+	// With both stopped, ExecuteStructured falls through to heuristic fallback.
+	inference.GlobalRouterModel.Status = "Stopped"
+	inference.GlobalWorkerModel.Status = "Stopped"
 
 	ctx := context.Background()
 
 	// 1. Ambiguous intent should default to chat
-	res1 := Classify(ctx, "tell me a story", mgr)
+	res1 := Classify(ctx, "tell me a story")
 	if res1.Type != "chat" {
 		t.Errorf("expected chat, got %s", res1.Type)
 	}
 
 	// 2. Scheduled/cron text should fallback deterministically to heartbeat
-	res2 := Classify(ctx, "run every 5 minutes: check uptime", mgr)
+	res2 := Classify(ctx, "run every 5 minutes: check uptime")
 	if res2.Type != "heartbeat" {
 		t.Errorf("expected heartbeat, got %s", res2.Type)
 	}
 
 	// 3. Research keywords should fallback to research
-	res3 := Classify(ctx, "analyze system performance logs", mgr)
+	res3 := Classify(ctx, "analyze system performance logs")
 	if res3.Type != "research" {
 		t.Errorf("expected research, got %s", res3.Type)
 	}
@@ -60,15 +63,22 @@ func TestClassifyLLM(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	// Update local manager status to mock active sidecar
-	mgr := inference.GlobalLocalModel
-	mgr.Status = "Active"
+	// Classify goes through ExecuteRouterStructured → GlobalRouterModel.
+	// Point the router at the mock server.
+	savedStatus := inference.GlobalRouterModel.Status
+	savedPort := inference.GlobalRouterModel.ActivePort
+	defer func() {
+		inference.GlobalRouterModel.Status = savedStatus
+		inference.GlobalRouterModel.ActivePort = savedPort
+	}()
+
 	listenerAddr := server.Listener.Addr().String()
 	_, portStr, _ := netSplitHostPort(listenerAddr)
-	mgr.ActivePort = parseInt(portStr)
+	inference.GlobalRouterModel.ActivePort = parseInt(portStr)
+	inference.GlobalRouterModel.Status = "Active"
 
 	ctx := context.Background()
-	res := Classify(ctx, "research tzro project", mgr)
+	res := Classify(ctx, "research tzro project")
 
 	if res.Type != "research" {
 		t.Errorf("expected research, got %s", res.Type)
@@ -95,15 +105,21 @@ func TestClassifyComplexityLLM(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	mgr := inference.GlobalLocalModel
-	mgr.Status = "Active"
+	savedStatus := inference.GlobalRouterModel.Status
+	savedPort := inference.GlobalRouterModel.ActivePort
+	defer func() {
+		inference.GlobalRouterModel.Status = savedStatus
+		inference.GlobalRouterModel.ActivePort = savedPort
+	}()
+
 	listenerAddr := server.Listener.Addr().String()
 	_, portStr, _ := netSplitHostPort(listenerAddr)
-	mgr.ActivePort = parseInt(portStr)
+	inference.GlobalRouterModel.ActivePort = parseInt(portStr)
+	inference.GlobalRouterModel.Status = "Active"
 
 	ctx := context.Background()
 	prompt := "do something complex with salesforce and postgres"
-	complexity := ClassifyComplexity(ctx, prompt, []string{"salesforce_query", "postgres_insert"}, mgr)
+	complexity := ClassifyComplexity(ctx, prompt, []string{"salesforce_query", "postgres_insert"})
 
 	if complexity != "T1" {
 		t.Errorf("expected T1 complexity, got %s", complexity)
@@ -112,19 +128,19 @@ func TestClassifyComplexityLLM(t *testing.T) {
 
 func TestClassifyComplexityHeuristicFallback(t *testing.T) {
 	// Stopped sidecar should fallback to complexity heuristics
-	mgr := inference.GlobalLocalModel
-	mgr.Status = "Stopped"
+	inference.GlobalRouterModel.Status = "Stopped"
+	inference.GlobalWorkerModel.Status = "Stopped"
 
 	ctx := context.Background()
 
 	// Short request -> T0
-	c1 := ClassifyComplexity(ctx, "hello there", []string{"some_tool"}, mgr)
+	c1 := ClassifyComplexity(ctx, "hello there", []string{"some_tool"})
 	if c1 != "T0" {
 		t.Errorf("expected T0 for short query, got %s", c1)
 	}
 
 	// Bulk keywords -> T1 fallback
-	c2 := ClassifyComplexity(ctx, "bulk delete records from database", []string{"some_tool"}, mgr)
+	c2 := ClassifyComplexity(ctx, "bulk delete records from database", []string{"some_tool"})
 	if c2 != "T1" {
 		t.Errorf("expected T1 for bulk query, got %s", c2)
 	}
@@ -178,12 +194,12 @@ func TestMain(m *testing.M) {
 }
 
 func TestTaskToWorkflowPromotionEngine_TemporalAndHITL(t *testing.T) {
-	mgr := inference.GlobalLocalModel
-	mgr.Status = "Stopped" // Force heuristic fallbacks
+	inference.GlobalRouterModel.Status = "Stopped"
+	inference.GlobalWorkerModel.Status = "Stopped"
 	ctx := context.Background()
 
 	// 1. Semantic Temporal Delay trigger
-	res1 := Classify(ctx, "Wait 3 days and notify me when Salesforce updates the status", mgr)
+	res1 := Classify(ctx, "Wait 3 days and notify me when Salesforce updates the status")
 	if res1.Type != "workflow" {
 		t.Errorf("expected workflow due to temporal wait trigger, got %s", res1.Type)
 	}
@@ -206,15 +222,15 @@ func TestTaskToWorkflowPromotionEngine_TemporalAndHITL(t *testing.T) {
 	}
 
 	// 2. ClassifyComplexity returns T2 for temporal triggers
-	c1 := ClassifyComplexity(ctx, "Run every Monday at 9am: verify db integrity", []string{"postgres_insert"}, mgr)
+	c1 := ClassifyComplexity(ctx, "Run every Monday at 9am: verify db integrity", []string{"postgres_insert"})
 	if c1 != "T2" {
 		t.Errorf("expected T2 for cron trigger prompt, got %s", c1)
 	}
 }
 
 func TestTaskToWorkflowPromotionEngine_ToolCap(t *testing.T) {
-	mgr := inference.GlobalLocalModel
-	mgr.Status = "Stopped"
+	inference.GlobalRouterModel.Status = "Stopped"
+	inference.GlobalWorkerModel.Status = "Stopped"
 	ctx := context.Background()
 
 	// Seed knowledge graph to simulate tool/skill neighborhood BFS > 12 tools
@@ -244,7 +260,7 @@ func TestTaskToWorkflowPromotionEngine_ToolCap(t *testing.T) {
 
 	// Now run Classify on a prompt that references the sheet records tool
 	prompt := "Sync spreadsheet records using fetch_sheet_records and postgres"
-	res := Classify(ctx, prompt, mgr)
+	res := Classify(ctx, prompt)
 
 	if res.Type != "workflow" {
 		t.Errorf("expected promoted workflow due to BFS tool cap > 12, got %s", res.Type)
@@ -255,7 +271,7 @@ func TestTaskToWorkflowPromotionEngine_ToolCap(t *testing.T) {
 	}
 
 	// Check complexity
-	comp := ClassifyComplexity(ctx, prompt, []string{"fetch_sheet_records"}, mgr)
+	comp := ClassifyComplexity(ctx, prompt, []string{"fetch_sheet_records"})
 	if comp != "T2" {
 		t.Errorf("expected complexity promoted to T2 due to BFS tool cap, got %s", comp)
 	}

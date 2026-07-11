@@ -86,7 +86,7 @@ Respond with ONLY valid JSON matching the schema below. No markdown fences.`
 
 	req := inference.NewSimpleRequest(PruneSystemPrompt, userPrompt, PruneSchema)
 
-	resContent, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	resContent, err := inference.ExecuteRouterStructured(ctx, req)
 	if err != nil {
 		return nil, err
 	}

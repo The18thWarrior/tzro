@@ -416,7 +416,7 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		graph = codegen.BuildPseudocodeExpansionDAG(taskID, args.Pseudocode, args.Spec, args.Filepath, language, maxLines, codeCtx)
 	} else {
 		// Classify complexity (informational — used for logging and benchmark routing)
-		tier := classifyCodeComplexity(args.Spec, codeCtx)
+		tier := codegen.ClassifyCodeComplexity(args.Spec, codeCtx)
 		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, proceeding with direct generation for %s\n", tier, args.Filepath)
 
 		switch mode {
@@ -435,7 +435,9 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 	doneChan := make(chan execResult, 1)
 
 	go func() {
+
 		// Register the compilation gate hook for this task's execution.
+
 		// It runs the compiler on source_code nodes and enriches their output
 		// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
 		compilationHook := &codegen.CompilationGateHook{
@@ -1582,29 +1584,6 @@ func handleTzroClassification(ctx context.Context, req *mcp.CallToolRequest, arg
 		}, nil, nil
 	}
 
-	// Resolve the active inference backend
-	backend := inference.ActiveBackend
-	if backend == nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: `{"error": "no inference backend configured"}`},
-			},
-			IsError: true,
-		}, nil, nil
-	}
-
-	// Auto-start if stopped
-	if strings.ToLower(backend.Status()) == "stopped" {
-		if err := backend.Start(ctx); err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: fmt.Sprintf(`{"error": "local model failed to start: %s"}`, err.Error())},
-				},
-				IsError: true,
-			}, nil, nil
-		}
-	}
-
 	// Build classification system prompt
 	systemPrompt := "You are a classification agent. Classify the input into exactly one of the provided categories. Respond with ONLY valid JSON matching the schema."
 	if args.Context != "" {
@@ -1635,7 +1614,8 @@ func handleTzroClassification(ctx context.Context, req *mcp.CallToolRequest, arg
 		"required": ["category", "confidence", "reasoning"]
 	}`, string(categoriesJSON))
 
-	result, err := backend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
+	// Route classification to the router sidecar — GBNF-constrained, fast output
+	result, err := inference.CallRouter(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{

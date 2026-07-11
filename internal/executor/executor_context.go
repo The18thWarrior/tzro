@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"tzro/internal/compiler"
+	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 )
@@ -35,7 +36,20 @@ const maxAccumulatedContextNodes = 6
 // for a task and formats them as labeled structured blocks. This replaces template
 // interpolation for LLM-facing prompts, giving the GBNF bridge clean structured
 // data to extract from. Only the last [maxAccumulatedContextNodes] completed nodes
-// are included to bound memory pressure — individual outputs are never truncated.
+// are included to bound memory pressure.
+//
+// ADR-0044: When callingNodeType is "synthesis", applies synthesis-specific assembly:
+// - Validator and recall node outputs are fetched untruncated (no per-node budget)
+// - Deterministic node outputs are capped at 256 chars
+// - No global ceiling on total context size
+//
+// For all other callingNodeType values, applies standard tiered allocation:
+// - Dynamic ceiling: min(nodeCount * 4096, 32000)
+// - Tiered per-node budgets: recall(8) > validator(6) > action(4) > probe(2) > deterministic(1)
+//
+// ADR-0043 Mechanism B (superseded by ADR-0044): Per-node output is truncated using
+// content-aware TruncateToolOutput. This is non-destructive — full output remains
+// in SQLite for terminal synthesis and debugging.
 //
 // Output format:
 //
@@ -43,7 +57,7 @@ const maxAccumulatedContextNodes = 6
 //	<raw_output or cleaned output>
 //
 // The graph parameter is used to look up tool names for each node ID.
-func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph) string {
+func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, callingNodeType string) string {
 	states := memory.DB.GetAllNodeStates(taskID)
 	if len(states) == 0 {
 		return ""
@@ -143,20 +157,104 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph) stri
 		sb.WriteString(fmt.Sprintf("[... %d earlier completed nodes omitted ...]\n\n", skipped))
 	}
 
-	for _, cn := range completed {
-		toolName := nodeToolMap[cn.nodeID]
+	// ADR-0044: Synthesis-aware context assembly with tiered budgets.
+	// Two paths depending on the calling node type.
+	isSynthesis := callingNodeType == "synthesis"
+
+	// Compute per-node budgets based on calling node type.
+	type budgetEntry struct {
+		nodeID string
+		output string
+		budget int // -1 means untruncated
+	}
+	budgeted := make([]budgetEntry, len(completed))
+
+	if isSynthesis {
+		// Synthesis path (ADR-0044 Mechanism A):
+		// - Validator (action nodes with _validator suffix or any action) and recall nodes: untruncated
+		// - Deterministic nodes: capped at 256 chars
+		// - No global ceiling
+		for i, cn := range completed {
+			ntype := nodeTypeMap[cn.nodeID]
+			switch ntype {
+			case "recall":
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // untruncated
+			case "deterministic":
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, 256}
+			default:
+				// action, probe, synthesis, etc. — untruncated for synthesis caller
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+			}
+		}
+	} else {
+		// Standard path (ADR-0044 Mechanism B+C):
+		// Dynamic ceiling: min(nodeCount * 4096, 32000)
+		// Tiered per-node budgets by type weight.
+		dynamicCeiling := len(completed) * 4096
+		hardCap := 32000
+		configCeiling := config.GetAccumulatedContextMaxChars()
+		if configCeiling > 0 && configCeiling < hardCap {
+			hardCap = configCeiling
+		}
+		if dynamicCeiling > hardCap {
+			dynamicCeiling = hardCap
+		}
+
+		// Compute total weight for tiered allocation
+		typeWeights := map[string]int{
+			"recall":        8,
+			"action":        6, // covers validators (action type with _validator suffix)
+			"probe":         2,
+			"deterministic": 1,
+		}
+		defaultWeight := 4 // for unknown types (synthesis, sub_dag, etc.)
+
+		totalWeight := 0
+		nodeWeights := make([]int, len(completed))
+		for i, cn := range completed {
+			ntype := nodeTypeMap[cn.nodeID]
+			w, ok := typeWeights[ntype]
+			if !ok {
+				w = defaultWeight
+			}
+			nodeWeights[i] = w
+			totalWeight += w
+		}
+
+		if totalWeight == 0 {
+			totalWeight = 1 // safety
+		}
+
+		for i, cn := range completed {
+			perNodeBudget := (nodeWeights[i] * dynamicCeiling) / totalWeight
+			if perNodeBudget < 256 {
+				perNodeBudget = 256 // absolute floor
+			}
+			budgeted[i] = budgetEntry{cn.nodeID, cn.output, perNodeBudget}
+		}
+	}
+
+	for _, be := range budgeted {
+		toolName := nodeToolMap[be.nodeID]
 		if toolName == "" {
 			toolName = "unknown"
 		}
 
-		sb.WriteString(fmt.Sprintf("--- %s (%s) [completed] ---\n", cn.nodeID, toolName))
-		sb.WriteString(cn.output)
+		output := be.output
+		if be.budget >= 0 && len(output) > be.budget {
+			output = TruncateToolOutput(output, be.budget)
+			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Truncated node %s output from %d to %d chars (budget: %d per node)\n",
+				be.nodeID, len(be.output), len(output), be.budget)
+		}
+
+		sb.WriteString(fmt.Sprintf("--- %s (%s) [completed] ---\n", be.nodeID, toolName))
+		sb.WriteString(output)
 		sb.WriteString("\n\n")
 	}
 
 	result := sb.String()
-	fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Built %d chars of structured context from %d completed nodes (of %d total, %d skipped)\n",
-		len(result), len(completed), len(completed)+skipped, skipped)
+	fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Built %d chars of structured context from %d completed nodes (of %d total, %d skipped, synthesis=%v)\n",
+		len(result), len(completed), len(completed)+skipped, skipped, isSynthesis)
 
 	return result
 }

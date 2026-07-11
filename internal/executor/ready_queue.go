@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tzro/internal/compiler"
+	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/notification"
@@ -22,8 +23,6 @@ import (
 type contextKeyType string
 
 const contextKeyNodeID contextKeyType = "nodeID"
-
-
 
 // ExecuteGraphReactive runs the graph using an event-driven ready queue
 // instead of pre-computed topological levels (ADR-0024).
@@ -53,8 +52,34 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 		graph.MutationBudget = &compiler.MutationBudget{MaxSpawns: 15, RemainingSpawns: 15}
 	}
 
+	// ADR-0045: Initialize MaxDepth from config if not explicitly set by planner
+	if graph.MutationBudget != nil && graph.MutationBudget.MaxDepth <= 0 {
+		graph.MutationBudget.MaxDepth = config.GetMCTSMaxDepth()
+	}
+
+	// ADR-0045: Register PreFlect hook for corrective micro-skill injection (task-scoped)
+	// Note: We append directly to e.hooks because we already hold e.mutex.Lock().
+	preflectHook := &PreFlectHook{
+		SkillFinder: func(toolName string) []memory.Skill {
+			return memory.DB.GetRelevantSkills("corrective: "+toolName, 3)
+		},
+	}
+	e.hooks = append(e.hooks, preflectHook)
+	defer func() {
+		// Remove PreFlect hook after execution (still under e.mutex)
+		for i, h := range e.hooks {
+			if h == preflectHook {
+				e.hooks = append(e.hooks[:i], e.hooks[i+1:]...)
+				break
+			}
+		}
+	}()
+
+	// ADR-0045: Apply compiler-inferred defaults (MCTSBranches, StreamOutput) based on node type
+	compiler.ApplyDefaults(graph)
+
 	fmt.Fprintf(os.Stderr, "[Executor/RQ] Starting reactive execution for Task %s with %d nodes...\n", graph.TaskID, len(graph.Nodes))
-	
+
 	// ADR-0040: Auto-sequential for benchmarks to prevent sidecar resource contention.
 	if strings.HasPrefix(graph.TaskID, "comparison_") || strings.HasPrefix(graph.TaskID, "benchmark_") {
 		fmt.Fprintf(os.Stderr, "[Executor/RQ] Benchmark task detected. Enabling node-level sequential execution.\n")
@@ -438,6 +463,13 @@ func (e *ExecutionEngine) handleEdgeTraversal(ctx context.Context, graph *compil
 				graph.MutationBudget.ConsecutiveFailures++
 			}
 
+			// ADR-0045: Enforce spawn depth limit
+			if !canSpawnAtDepth(graph, nID) {
+				fmt.Fprintf(os.Stderr, "[Executor/RQ] Spawn BLOCKED for %s→%s: depth limit reached (maxDepth=%d)\n",
+					nID, targetNode.ID, graph.MutationBudget.MaxDepth)
+				continue
+			}
+
 			spawnedID := fmt.Sprintf("spawned_%s_%d", nID, *stepIndex)
 			chainContext := buildSpawnChainContext(graph, nID, targetNode.ID)
 
@@ -458,6 +490,7 @@ func (e *ExecutionEngine) handleEdgeTraversal(ctx context.Context, graph *compil
 				Instructions:        fmt.Sprintf("Goal: %s\n\nAccumulated Context:\n%s\n\nPrevious step result: %s\n\nContinue working toward the goal.", graph.GoalPrompt, chainContext, et.Thought),
 				Status:              "pending",
 				ActivationThreshold: 0.0,
+				MCTSBranches:        0, // ADR-0045: Spawned nodes always single-shot
 				OutputFormat:        spawnedOutputFormat,
 				OutputLanguage:      spawnedOutputLanguage,
 			}
@@ -503,6 +536,27 @@ func (e *ExecutionEngine) handleEdgeTraversal(ctx context.Context, graph *compil
 				graph.MutationBudget.ConsecutiveFailures = 0
 			}
 
+			// ADR-0045: Multi-branch evaluation for nodes with MCTSBranches > 0.
+			// Generates K candidates, classifies via Speculation Fence, scores via
+			// Value Function, and injects the winning strategy into the target node.
+			if shouldUseMultiBranch(targetNode) {
+				ceil := config.GetMCTSSpeculationCeil()
+				winner, mbErr := evaluateMultiBranch(ctx, targetNode, graph.GoalPrompt, sourceOutput, ceil)
+				if mbErr != nil {
+					fmt.Fprintf(os.Stderr, "[Executor/RQ] MultiBranch error for %s: %v — continuing single-shot\n",
+						targetNode.ID, mbErr)
+				} else if winner != nil {
+					// Inject winning strategy into node instructions
+					targetNode.Instructions = fmt.Sprintf("Strategy: %s\nReasoning: %s\n\n%s",
+						winner.Action, winner.Reasoning, targetNode.Instructions)
+					if winner.ToolName != "" {
+						targetNode.Action = winner.ToolName
+					}
+					e.getPublisher().PublishEvent("multi_branch_selected", graph.TaskID, targetNode.ID,
+						fmt.Sprintf("Selected candidate: %s (tool=%s, score=%.3f)",
+							winner.Action, winner.ToolName, winner.Score))
+				}
+			}
 			spawnedNodes := findSpawnedNodesInChain(graph, nID, targetNode.ID)
 			sidecarStatus, _, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()
 			sidecarActive := sidecarStatus == "Active" || sidecarStatus == "Adopted"

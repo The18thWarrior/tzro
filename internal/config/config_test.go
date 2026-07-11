@@ -145,3 +145,105 @@ func TestConfig_IsObserverEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestConfig_ProbeStepMaxTokensDefault(t *testing.T) {
+	// Zero value should return the default of 2048
+	configMutex.Lock()
+	saved := GlobalConfig.ProbeStepMaxTokens
+	GlobalConfig.ProbeStepMaxTokens = 0
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.ProbeStepMaxTokens = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetProbeStepMaxTokens()
+	if got != 2048 {
+		t.Errorf("expected default 2048, got %d", got)
+	}
+}
+
+func TestConfig_ProbeStepMaxTokensExplicit(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.ProbeStepMaxTokens
+	GlobalConfig.ProbeStepMaxTokens = 4096
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.ProbeStepMaxTokens = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetProbeStepMaxTokens()
+	if got != 4096 {
+		t.Errorf("expected 4096, got %d", got)
+	}
+}
+
+func TestConfig_AccumulatedContextMaxCharsDefault(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.AccumulatedContextMaxChars
+	GlobalConfig.AccumulatedContextMaxChars = 0
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.AccumulatedContextMaxChars = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetAccumulatedContextMaxChars()
+	if got != 16000 {
+		t.Errorf("expected default 16000, got %d", got)
+	}
+}
+
+func TestConfig_AccumulatedContextMaxCharsExplicit(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.AccumulatedContextMaxChars
+	GlobalConfig.AccumulatedContextMaxChars = 24000
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.AccumulatedContextMaxChars = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetAccumulatedContextMaxChars()
+	if got != 24000 {
+		t.Errorf("expected 24000, got %d", got)
+	}
+}
+
+func TestConfig_RouterModelPath_PersistsToConfig(t *testing.T) {
+	// Create an isolated config file
+	tempDir, err := os.MkdirTemp("", "tzro-config-router-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	oldConfigPath := configPath
+	configPath = filepath.Join(tempDir, "config.json")
+	defer func() { configPath = oldConfigPath }()
+
+	// Save with routerModelPath set
+	cfg := &EngineConfig{
+		ModelMode:       "cooperative",
+		GGUFModelPath:   "worker-model.gguf",
+		RouterModelPath: "router-model.gguf",
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Reload and verify
+	if err := Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	got := GlobalConfig.RouterModelPath
+	if got != "router-model.gguf" {
+		t.Errorf("expected RouterModelPath 'router-model.gguf', got %q", got)
+	}
+}

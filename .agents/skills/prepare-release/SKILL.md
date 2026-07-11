@@ -43,8 +43,9 @@ Execute these phases **in strict order**. Never skip a phase. Never proceed past
 │  Phase 4: Proactive QA             (tzro MCP QA, fix loop)         │
 │  Phase 5: Lint + Format            (pnpm prepare:format, fix)      │
 │  Phase 6: Update Architecture Docs  (docs/ARCHITECTURE.md)         │
-│  Phase 7: Generate Release Notes   (docs/release-notes/)           │
-│  Phase 8: Stage + Commit           (git add, commit)               │
+│  Phase 7: Update README             (README.md)                    │
+│  Phase 8: Generate Release Notes   (docs/release-notes/)           │
+│  Phase 9: Stage + Commit           (git add, commit)               │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -223,7 +224,34 @@ Inspect the changes in the release (either using `git diff --cached` or `git dif
 
 ---
 
-### Phase 7 — Generate Release Notes
+### Phase 7 — Update README
+
+Inspect the changes in the release (either `git diff --cached` or `git diff $FROM_COMMIT..HEAD` depending on whether `FROM_COMMIT` is set) and review [README.md](file:///Users/jp/Desktop/Repos/tzro/README.md) for any sections that are now stale.
+
+**Sections to check:**
+
+| README Section | What to verify |
+|:---|:---|
+| **MCP Tool Interface** (tool count & tables) | If tools were added, removed, renamed, or moved between tiers, update the tool tables and the `## 📡 MCP Tool Interface — N Tools` heading count |
+| **Version Highlights** (`## 🆕 vX.Y.Z Highlights`) | If a new version is being released, replace the highlights section with a bullet list summarizing the major user-facing changes in this release |
+| **Quickstart** (`## ⚡ Quickstart`) | If install scripts, binary names, or setup steps changed, update the quickstart commands |
+| **Architecture diagram** | If the delegation flow changed (new MCP tiers, new sidecar components), update the ASCII diagram |
+| **Performance matrix** | If benchmark numbers or resource footprint changed materially, update the comparison table |
+| **MCP Server Integration** (config examples) | If environment variables, binary paths, or supported clients changed, update the JSON snippets |
+| **Development & Testing** | If build/test commands changed (e.g., new test runner, new lint script), update the commands |
+
+**Execution protocol:**
+1. Diff the files of interest against the README content. Identify any sections where the README contradicts or omits the current state.
+2. Apply **only factual corrections** — do not rewrite prose style, marketing copy, or section ordering unless something is factually wrong.
+3. If no README sections are stale, proceed silently.
+4. Stage the updated README:
+   ```bash
+   git add README.md
+   ```
+
+---
+
+### Phase 8 — Generate Release Notes
 
 **REQUIRED SUB-SKILL:** Execute `writing-release-notes`
 
@@ -237,7 +265,7 @@ The QA Summary section should incorporate findings from Phase 4.
 
 ---
 
-### Phase 8 — Stage + Commit
+### Phase 9 — Stage + Commit
 
 **Step 1 — Final stage:**
 
@@ -345,13 +373,14 @@ git diff --name-only $FROM_COMMIT..HEAD -- '*.tsx' '*.ts' | head -20
 
 ## 6. Phase Dependencies
 
-| Phase     | Requires                  | Produces             |
-| :-------- | :------------------------ | :------------------- |
-| 1. Stage  | Working directory changes | Staged files         |
-| 2. Specs  | Staged files              | `uc-*.md` specs      |
-| 3. Tests  | Codebase                  | Green test suite     |
-| 4. QA     | tzro daemon + specs       | QA report, bug fixes |
-| 5. Lint   | Codebase                  | Clean formatting     |
-| 6. Arch   | Codebase + diff           | Updated ARCHITECTURE.md|
-| 7. Notes  | QA report + diff          | Release notes file   |
-| 8. Commit | All above green           | Git commit           |
+| Phase      | Requires                  | Produces               |
+| :--------- | :------------------------ | :--------------------- |
+| 1. Stage   | Working directory changes | Staged files           |
+| 2. Specs   | Staged files              | `uc-*.md` specs        |
+| 3. Tests   | Codebase                  | Green test suite       |
+| 4. QA      | tzro daemon + specs       | QA report, bug fixes   |
+| 5. Lint    | Codebase                  | Clean formatting       |
+| 6. Arch    | Codebase + diff           | Updated ARCHITECTURE.md|
+| 7. README  | Codebase + diff           | Updated README.md      |
+| 8. Notes   | QA report + diff          | Release notes file     |
+| 9. Commit  | All above green           | Git commit             |

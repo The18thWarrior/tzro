@@ -71,6 +71,45 @@ type EngineConfig struct {
 	// Code generation (tzro_code): Maximum lines for generated files.
 	// Default 500. Set to 0 to use the default.
 	CodeMaxLines int `json:"codeMaxLines,omitempty"`
+
+	// Code generation (tzro_code): Optional dedicated GGUF model path for code
+	// generation tasks. When set, the sidecar hot-swaps to this model before
+	// codegen and restores the default model afterward. Empty = use GGUFModelPath.
+	// Deprecated: Use RouterModelPath for dual-sidecar architecture instead.
+	CodeModelPath string `json:"codeModelPath,omitempty"`
+
+	// Dual-sidecar: Optional GGUF model path for the router sidecar.
+	// The router handles fast routing tasks (tool selection, Probe navigation,
+	// classification, validation) while the worker (GGUFModelPath) handles
+	// code generation, planning, and complex reasoning.
+	// Empty = single-sidecar mode (existing behavior).
+	RouterModelPath string `json:"routerModelPath,omitempty"`
+
+	// Thinking Budget: Maximum reasoning tokens when thinking mode is active
+	// (unconstrained inference passes only — GBNF-constrained calls always
+	// disable thinking). Default 750. Set to 0 to use the default.
+	ThinkingBudget int `json:"thinkingBudget,omitempty"`
+
+	// Two-Tier Context Budget (ADR-0043)
+	// ProbeStepMaxTokens caps generation tokens per probe step inference call.
+	// Prevents runaway generation (observed: 16K tokens collapsing all subsequent
+	// steps to 0.1 t/s). Synthesis calls are NOT capped.
+	// Default 2048. Set to 0 to use the default.
+	ProbeStepMaxTokens int `json:"probeStepMaxTokens,omitempty"`
+
+	// AccumulatedContextMaxChars caps the total characters of accumulated context
+	// injected into downstream DAG nodes. Budget is split evenly across nodes.
+	// Uses content-aware TruncateToolOutput per node (non-destructive — full
+	// output stays in SQLite). Default 16000. Set to 0 to use the default.
+	AccumulatedContextMaxChars int `json:"accumulatedContextMaxChars,omitempty"`
+
+	// Multi-Branch Edge Thought Evaluation (ADR-0045)
+	// MCTSMaxDepth caps the recursive AGoT spawn depth. Default 3.
+	MCTSMaxDepth int `json:"mctsMaxDepth,omitempty"`
+	// MCTSMaxSimulations is K candidates per multi-branch decision point. Default 3.
+	MCTSMaxSimulations int `json:"mctsMaxSimulations,omitempty"`
+	// MCTSSpeculationCeil is the max proactivity level for real execution in rollouts. Default 2 (L2-Suggest).
+	MCTSSpeculationCeil int `json:"mctsSpeculationCeil,omitempty"`
 }
 
 type BackendConfig struct {
@@ -216,6 +255,13 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	GlobalConfig.GPULayers = cfg.GPULayers
 	GlobalConfig.ThreadCount = cfg.ThreadCount
+	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
+	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
+	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
+	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.CodeModelPath = cfg.CodeModelPath
+	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -252,6 +298,13 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	GlobalConfig.GPULayers = cfg.GPULayers
 	GlobalConfig.ThreadCount = cfg.ThreadCount
+	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
+	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
+	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
+	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.CodeModelPath = cfg.CodeModelPath
+	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -486,6 +539,16 @@ func GetRestrictedDirectories() []string {
 	return dirs
 }
 
+// GetExplicitMMProjPath returns the explicitly configured multimodal projector path.
+// Unlike GetMMProjModelPath, this does NOT auto-detect by scanning the models directory.
+// Used by the sidecar launcher to avoid loading an incompatible mmproj for non-catalog models.
+func GetExplicitMMProjPath() string {
+	configMutex.RLock()
+	explicit := GlobalConfig.MMProjModelPath
+	configMutex.RUnlock()
+	return explicit
+}
+
 // GetMMProjModelPath resolves the multimodal projector model path.
 // If explicitly configured, uses that path. Otherwise auto-detects by scanning
 // the models directory for a file matching *mmproj*.gguf.
@@ -557,6 +620,131 @@ func GetThermalCloudCooldownMinutes() int {
 		return 5
 	}
 	return v
+}
+
+// GetProbeStepMaxTokens returns the configured max generation tokens per probe step
+// inference call (ADR-0043 Mechanism A). Prevents runaway generation that inflates
+// all subsequent probe step prompts.
+// Defaults to 2048 if not explicitly configured or set to a non-positive value.
+func GetProbeStepMaxTokens() int {
+	configMutex.RLock()
+	v := GlobalConfig.ProbeStepMaxTokens
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 2048
+	}
+	return v
+}
+
+// GetAccumulatedContextMaxChars returns the configured max total characters for
+// accumulated context injected into downstream DAG nodes (ADR-0043 Mechanism B).
+// Budget is split evenly across nodes with content-aware per-node truncation.
+// Defaults to 16000 if not explicitly configured or set to a non-positive value.
+func GetAccumulatedContextMaxChars() int {
+	configMutex.RLock()
+	v := GlobalConfig.AccumulatedContextMaxChars
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 16000
+	}
+	return v
+}
+
+// GetMCTSMaxDepth returns the configured maximum recursive AGoT spawn depth.
+// Defaults to 3 if not explicitly configured or set to a non-positive value.
+func GetMCTSMaxDepth() int {
+	configMutex.RLock()
+	v := GlobalConfig.MCTSMaxDepth
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 3
+	}
+	return v
+}
+
+// GetMCTSMaxSimulations returns the configured K candidates per multi-branch
+// Edge Thought decision point (ADR-0045).
+// Defaults to 3 if not explicitly configured or set to a non-positive value.
+func GetMCTSMaxSimulations() int {
+	configMutex.RLock()
+	v := GlobalConfig.MCTSMaxSimulations
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 3
+	}
+	return v
+}
+
+// GetMCTSSpeculationCeil returns the maximum tool proactivity level at which
+// real execution is allowed during multi-branch rollout evaluation. Tools above
+// this ceiling are imagined (L3) or blocked (L4). See ADR-0045.
+// Defaults to 2 (L2-Suggest) if not explicitly configured.
+func GetMCTSSpeculationCeil() int {
+	configMutex.RLock()
+	v := GlobalConfig.MCTSSpeculationCeil
+	configMutex.RUnlock()
+
+	// 0 is the zero value but also a valid ceiling (L0-only).
+	// Use -1 sentinel or check if explicitly set. Since the config
+	// pattern uses "0 = use default", we treat 0 as "use default 2".
+	if v <= 0 {
+		return 2
+	}
+	return v
+}
+
+// GetCodeModelPath returns the configured dedicated code model path.
+// If not explicitly configured or file doesn't exist, returns empty string
+// (caller should fall back to the default GGUFModelPath).
+func GetCodeModelPath() string {
+	configMutex.RLock()
+	codePath := GlobalConfig.CodeModelPath
+	configMutex.RUnlock()
+
+	if codePath == "" {
+		return ""
+	}
+
+	// Resolve relative paths against ModelsDir
+	if !filepath.IsAbs(codePath) {
+		codePath = filepath.Join(GetModelsDir(), filepath.Base(codePath))
+	}
+
+	// Verify the file actually exists
+	if _, err := os.Stat(codePath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "[Config] CodeModelPath configured but file not found: %s\n", codePath)
+		return ""
+	}
+
+	return codePath
+}
+
+// GetRouterModelPath returns the configured router sidecar model path.
+// If not explicitly configured, auto-detects a small GGUF model (< 1GB)
+// from the models directory that is distinct from the worker model and
+// companion files (mmproj, MTP). Returns empty string if no suitable
+// router model is found (caller should fall back to single-sidecar mode).
+func GetRouterModelPath() string {
+	configMutex.RLock()
+	routerPath := GlobalConfig.RouterModelPath
+	workerPath := GlobalConfig.GGUFModelPath
+	configMutex.RUnlock()
+
+	if routerPath != "" {
+		// Explicitly configured — resolve relative paths against ModelsDir
+		if !filepath.IsAbs(routerPath) {
+			routerPath = filepath.Join(GetModelsDir(), filepath.Base(routerPath))
+		}
+		return routerPath
+	}
+
+	// Auto-detect: scan models directory for a small GGUF file
+	// that is not the worker model or a companion file.
+	return autoDetectRouterModel(workerPath)
 }
 
 // GetDaemonURL returns the active daemon HTTP URL by checking:
@@ -643,4 +831,71 @@ func ReadDashboardLock() *DashboardLock {
 func RemoveDashboardLock() {
 	lockFile := ResolvePath(".dashboard.lock")
 	_ = os.Remove(lockFile)
+}
+
+// routerModelMaxBytes is the maximum size for auto-detected router models.
+// Models larger than this are assumed to be worker-class and skipped.
+const routerModelMaxBytes = 2 * 1024 * 1024 * 1024 // 2 GB — accommodates MiniCPM5 1B Q8_0 (~1.2 GB)
+
+// autoDetectRouterModel scans the models directory for a small GGUF file
+// (< 2GB) that is distinct from the worker model and companion files
+// (mmproj, MTP draft models). Returns the absolute path to the smallest
+// qualifying model, or empty string if none found.
+func autoDetectRouterModel(workerPath string) string {
+	modelsDir := GetModelsDir()
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		return ""
+	}
+
+	workerBase := filepath.Base(workerPath)
+
+	var bestPath string
+	var bestSize int64
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+
+		// Must be a .gguf file
+		if !strings.HasSuffix(strings.ToLower(name), ".gguf") {
+			continue
+		}
+
+		// Skip the worker model itself
+		if name == workerBase {
+			continue
+		}
+
+		// Skip companion files: mmproj (vision projectors) and MTP draft models.
+		// These are architecture-specific auxiliary files, not standalone models.
+		lowerName := strings.ToLower(name)
+		if strings.Contains(lowerName, "mmproj") || strings.Contains(lowerName, "-mtp") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		size := info.Size()
+		if size <= 0 || size > routerModelMaxBytes {
+			continue
+		}
+
+		// Pick the smallest qualifying model
+		if bestPath == "" || size < bestSize {
+			bestPath = filepath.Join(modelsDir, name)
+			bestSize = size
+		}
+	}
+
+	if bestPath != "" {
+		fmt.Fprintf(os.Stderr, "[Config] Auto-detected router model: %s (%d MB)\n", filepath.Base(bestPath), bestSize/(1024*1024))
+	}
+
+	return bestPath
 }

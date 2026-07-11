@@ -108,6 +108,20 @@ func conditionsForCategory(category, conditionOverride string) []string {
 	return AllConditions()
 }
 
+// codegenModelMode maps a condition ID to the model mode used by
+// RunCodegenCondition. Cloud-prefixed conditions use "cloud",
+// local_only uses "local", everything else uses "cooperative".
+func codegenModelMode(conditionID string) string {
+	switch conditionID {
+	case ConditionCloudCode, ConditionCloudReAct, ConditionCloudDAG, ConditionCloudDAGRaw:
+		return "cloud"
+	case ConditionLocalOnly, ConditionLocalReAct:
+		return "local"
+	default:
+		return "cooperative"
+	}
+}
+
 // RunComparisonSuite runs the full comparison benchmark.
 // It loads tasks, runs all conditions for each task sequentially,
 // judges each output, and generates the final report.
@@ -198,16 +212,19 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 					}()
 				}
 
-				if conditionID == ConditionCloudReAct {
+				if g.category == CategoryCodegen {
+					// All codegen tasks use RunCodegenCondition (GatherContext →
+					// BuildCodeDAG → CompilationGateHook → WriteCodeFile). This
+					// mirrors the actual MCP tzro_code execution path.
+					result, err = RunCodegenCondition(ctx, conditionID, codegenModelMode(conditionID), task, opts.Pricing, opts.OutputDir)
+				} else if conditionID == ConditionCloudReAct {
 					if opts.ReactEndpoint != "" {
 						result, err = RunReActWithEndpoint(ctx, task, opts.Pricing, opts.ReactEndpoint)
 					} else {
 						result, err = RunReAct(ctx, task, opts.Pricing)
 					}
-				} else if conditionID == ConditionTzroCode {
-					result, err = RunCodegenCondition(ctx, conditionID, "cooperative", task, opts.Pricing, opts.OutputDir)
-				} else if conditionID == ConditionCloudCode {
-					result, err = RunCodegenCondition(ctx, conditionID, "cloud", task, opts.Pricing, opts.OutputDir)
+				} else if conditionID == ConditionLocalReAct {
+					result, err = RunLocalReAct(ctx, task, opts.Pricing, opts.OutputDir)
 				} else {
 					result, err = RunDAGCondition(ctx, conditionID, task, opts.Pricing, opts.OutputDir)
 				}

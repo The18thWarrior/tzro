@@ -108,7 +108,7 @@ relevance to the target node's goal. Return JSON matching the schema.`,
 	}
 
 	// Execute inference.
-	result, err := inference.GlobalLocalModel.ExecuteStructured(ctx, req)
+	result, err := inference.ExecuteRouterStructured(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("inference failed: %w", err)
 	}

@@ -204,7 +204,7 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 
 	// 1. Classify complexity for routing decision
 	toolNames := collectToolNames()
-	complexityTier := classifier.ClassifyComplexity(ctx, prompt, toolNames, inference.GlobalLocalModel)
+	complexityTier := classifier.ClassifyComplexity(ctx, prompt, toolNames)
 
 	// 2. Assemble routing context
 	routingCtx := routing.RoutingContext{
@@ -733,107 +733,4 @@ func cleanJSONString(s string) string {
 		s = strings.TrimSpace(s)
 	}
 	return s
-}
-
-func buildHeuristicGraph(taskID, prompt, intentType string) *compiler.ExecutionGraph {
-	lower := strings.ToLower(prompt)
-	var nodes []compiler.GraphNode
-	var edges []compiler.GraphEdge
-
-	if intentType == "heartbeat" {
-		nodes = []compiler.GraphNode{
-			{
-				ID:           "cron_trigger",
-				Type:         "deterministic",
-				Action:       "postgres_insert",
-				Instructions: "Initialize database sync tick pulse",
-				AllowedTools: []string{"postgres_insert"},
-				Status:       "pending",
-			},
-			{
-				ID:           "metrics_slack",
-				Type:         "action",
-				Action:       "slack_message",
-				Instructions: "Push system health heartbeats check alert",
-				AllowedTools: []string{"slack_message"},
-				Status:       "pending",
-			},
-		}
-		edges = []compiler.GraphEdge{
-			{SourceID: "cron_trigger", TargetID: "metrics_slack"},
-		}
-	} else if strings.Contains(lower, "salesforce") || strings.Contains(lower, "sheet") || strings.Contains(lower, "lead") || strings.Contains(lower, "query") {
-		nodes = []compiler.GraphNode{
-			{
-				ID:           "fetch_sheet_records",
-				Type:         "action",
-				Action:       "salesforce_query",
-				Instructions: "Query bulk lead rows from Google Sheets pipeline",
-				AllowedTools: []string{"salesforce_query"},
-				Status:       "pending",
-			},
-			{
-				ID:           "dedup_contacts",
-				Type:         "deterministic",
-				Action:       "postgres_insert",
-				Instructions: "Run SQLite matching checks and remove duplicates",
-				AllowedTools: []string{"postgres_insert"},
-				Status:       "pending",
-			},
-			{
-				ID:           "slack_confirm",
-				Type:         "action",
-				Action:       "slack_message",
-				Instructions: "Post sync reports summary channel",
-				AllowedTools: []string{"slack_message"},
-				Status:       "pending",
-			},
-		}
-		edges = []compiler.GraphEdge{
-			{SourceID: "fetch_sheet_records", TargetID: "dedup_contacts"},
-			{SourceID: "dedup_contacts", TargetID: "slack_confirm"},
-		}
-	} else if strings.Contains(lower, "slack") || strings.Contains(lower, "message") || strings.Contains(lower, "post") {
-		nodes = []compiler.GraphNode{
-			{
-				ID:           "slack_confirm",
-				Type:         "action",
-				Action:       "slack_message",
-				Instructions: prompt,
-				AllowedTools: []string{"slack_message"},
-				Status:       "pending",
-			},
-		}
-	} else {
-		// Generic T1 task
-		nodes = []compiler.GraphNode{
-			{
-				ID:           "analyze_inputs",
-				Type:         "deterministic",
-				Action:       "salesforce_query",
-				Instructions: "Parse parameters and query resource mappings",
-				AllowedTools: []string{"salesforce_query"},
-				Status:       "pending",
-			},
-			{
-				ID:           "execute_utility",
-				Type:         "action",
-				Action:       "postgres_insert",
-				Instructions: prompt,
-				AllowedTools: []string{"postgres_insert"},
-				Status:       "pending",
-			},
-		}
-		edges = []compiler.GraphEdge{
-			{SourceID: "analyze_inputs", TargetID: "execute_utility"},
-		}
-	}
-
-	return &compiler.ExecutionGraph{
-		TaskID:    taskID,
-		Nodes:     nodes,
-		Edges:     edges,
-		MaxCycles: 5,
-		CreatedAt: time.Now().Unix(),
-	}
 }
