@@ -698,6 +698,14 @@ func createCacheEnvelope(payload string) (string, CacheEnvelope) {
 		}
 	}
 
+	// P0 Fix: Sanitize column names in the envelope to match the SQL table.
+	// MaterializeTable applies sanitizeColumnName (which strips non-alphanumeric
+	// chars like '?'), but the envelope was reporting the original raw names.
+	// This mismatch caused the model to generate SQL like:
+	//   SELECT * FROM cache_... WHERE Target_Account? = 'Yes'
+	// which fails because the column is actually Target_Account_ in SQLite.
+	envelope = sanitizeEnvelopeFieldNames(envelope)
+
 	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
 	return string(envJSON), envelope
 }

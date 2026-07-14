@@ -356,6 +356,42 @@ func sanitizeColumnNames(names []string) []string {
 	return result
 }
 
+// sanitizeEnvelopeFieldNames remaps all field name references in a CacheEnvelope
+// to use the sanitized column names (matching the SQL table schema). Without this,
+// the envelope reports original names like "Target_Account?" but the SQL table
+// column is "Target_Account_", causing every model-generated query to fail.
+func sanitizeEnvelopeFieldNames(env CacheEnvelope) CacheEnvelope {
+	// Remap Fields slice
+	sanitized := make([]string, len(env.Fields))
+	for i, f := range env.Fields {
+		sanitized[i] = sanitizeColumnName(f)
+	}
+	env.Fields = sanitized
+
+	// Remap FieldTypes map
+	newFieldTypes := make(map[string]string, len(env.FieldTypes))
+	for k, v := range env.FieldTypes {
+		newFieldTypes[sanitizeColumnName(k)] = v
+	}
+	env.FieldTypes = newFieldTypes
+
+	// Remap SampleRecord map
+	newSample := make(map[string]interface{}, len(env.SampleRecord))
+	for k, v := range env.SampleRecord {
+		newSample[sanitizeColumnName(k)] = v
+	}
+	env.SampleRecord = newSample
+
+	// Remap EnumValues map
+	newEnums := make(map[string][]string, len(env.EnumValues))
+	for k, v := range env.EnumValues {
+		newEnums[sanitizeColumnName(k)] = v
+	}
+	env.EnumValues = newEnums
+
+	return env
+}
+
 // envelopeFieldTypesToSQLite converts CacheEnvelope.FieldTypes to SQLite column types.
 func envelopeFieldTypesToSQLite(fieldTypes map[string]string) map[string]string {
 	result := make(map[string]string, len(fieldTypes))

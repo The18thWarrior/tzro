@@ -680,3 +680,104 @@ func mustMarshalJSON(t *testing.T, v interface{}) string {
 
 var _ = os.Remove // suppress unused import
 var _ = time.Now  // suppress unused import
+
+// ========================
+// P0 Fix Tests: Column Name Sanitization
+// ========================
+
+func TestSanitizeEnvelopeFieldNames(t *testing.T) {
+	env := CacheEnvelope{
+		Fields:     []string{"Name", "Target_Account?", "Email.Address", "Age"},
+		FieldTypes: map[string]string{"Name": "string", "Target_Account?": "string", "Email.Address": "string", "Age": "float64"},
+		SampleRecord: map[string]interface{}{
+			"Name":            "Alice",
+			"Target_Account?": "Yes",
+			"Email.Address":   "alice@example.com",
+			"Age":             30,
+		},
+		EnumValues: map[string][]string{
+			"Target_Account?": {"Yes", "No"},
+		},
+	}
+
+	result := sanitizeEnvelopeFieldNames(env)
+
+	// Check Fields
+	expectedFields := map[string]bool{
+		"Name":            true,
+		"Target_Account_": true,
+		"Email_Address":   true,
+		"Age":             true,
+	}
+	for _, f := range result.Fields {
+		if !expectedFields[f] {
+			t.Errorf("unexpected field name: %s", f)
+		}
+	}
+
+	// Check FieldTypes
+	if _, ok := result.FieldTypes["Target_Account_"]; !ok {
+		t.Error("FieldTypes should have sanitized key 'Target_Account_'")
+	}
+	if _, ok := result.FieldTypes["Target_Account?"]; ok {
+		t.Error("FieldTypes should NOT have original key 'Target_Account?'")
+	}
+
+	// Check SampleRecord
+	if _, ok := result.SampleRecord["Target_Account_"]; !ok {
+		t.Error("SampleRecord should have sanitized key 'Target_Account_'")
+	}
+
+	// Check EnumValues
+	if vals, ok := result.EnumValues["Target_Account_"]; !ok {
+		t.Error("EnumValues should have sanitized key 'Target_Account_'")
+	} else if len(vals) != 2 {
+		t.Errorf("expected 2 enum values, got %d", len(vals))
+	}
+}
+
+func TestMaterializeTable_SpecialCharColumns(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	rawPayload := `[
+		{"Name": "Alice", "Target_Account?": "Yes", "Count#": 10},
+		{"Name": "Bob", "Target_Account?": "No", "Count#": 20}
+	]`
+	columnTypes := map[string]string{
+		"Name":            "TEXT",
+		"Target_Account?": "TEXT",
+		"Count#":          "INTEGER",
+	}
+
+	cacheID := fmt.Sprintf("cache_%d", time.Now().UnixNano())
+	err := MaterializeTable(cacheID, rawPayload, columnTypes, "test_task")
+	if err != nil {
+		t.Fatalf("MaterializeTable failed: %v", err)
+	}
+
+	// Query using sanitized column names
+	result, err := ExecuteSQL(context.Background(), cacheID,
+		fmt.Sprintf("SELECT Target_Account_, Count_ FROM %s WHERE Target_Account_ = 'Yes'", cacheID))
+	if err != nil {
+		t.Fatalf("SQL query with sanitized column names failed: %v", err)
+	}
+
+	// Parse and verify
+	var rows []map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &rows); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(rows))
+	}
+
+	// Verify the envelope also uses sanitized names
+	envJSON, _ := createCacheEnvelope(rawPayload)
+	if strings.Contains(envJSON, "Target_Account?") {
+		t.Error("envelope should NOT contain unsanitized column name 'Target_Account?'")
+	}
+	if !strings.Contains(envJSON, "Target_Account_") {
+		t.Error("envelope should contain sanitized column name 'Target_Account_'")
+	}
+}

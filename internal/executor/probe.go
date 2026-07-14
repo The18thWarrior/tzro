@@ -722,9 +722,24 @@ You analyze data from upstream nodes using a systematic approach:
 1. First, check the accumulated context for a cacheId from an upstream data source.
 2. If a cacheId is available:
    - Use 'introspect_cache' to understand the data schema (column names, types, sample records)
+   - IMPORTANT: Use the EXACT column names from introspect_cache in your SQL queries
    - Use 'sql_cached_data' to query the data using standard SQL
    - The table name is the cacheId itself (e.g., SELECT * FROM cache_178...)
 3. If no cacheId is available, synthesize your analysis from the raw text data in the accumulated context.
+
+## Data Quality Best Practices
+- ALWAYS start with SELECT COUNT(*) to verify the total record count
+- Check for empty/blank values: SELECT COUNT(*) FROM cache_X WHERE ColName IS NULL OR TRIM(ColName) = ''
+- Use COALESCE to handle NULLs: SELECT COALESCE(ColName, 'Unspecified') as ColName
+- Use TRIM() to clean whitespace: SELECT TRIM(ColName) as ColName
+- When grouping text data, first run SELECT DISTINCT ColName to see the actual values — look for duplicates caused by case differences, typos, or mixed formats (e.g., state abbreviations mixed with country names)
+- Validate your results: if a GROUP BY total doesn't match the overall COUNT(*), investigate why
+
+## Text Matching and Filtering
+- For exact value lookups, use LIKE with wildcards for resilience: WHERE ColName LIKE '%%value%%'
+- For case-insensitive matching: WHERE LOWER(ColName) = LOWER('value')
+- When filtering by a company or category name, always try case-insensitive LIKE first
+
 
 Common SQL patterns for data analysis:
 - Count all records: SELECT COUNT(*) FROM cache_<id>
