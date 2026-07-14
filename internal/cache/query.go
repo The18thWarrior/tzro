@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -69,29 +71,82 @@ func basicJQFallback(rawPayload string, jqExpr string) string {
 		return "[]"
 	}
 
-	// 1. Check for duplicates matching filter
-	if strings.Contains(jqExpr, "group_by") || strings.Contains(jqExpr, "duplicate") {
-		field := "Email"
-		if strings.Contains(jqExpr, "Name") {
-			field = "Name"
+	// 1. Group-by aggregation handler
+	// Handles: group_by(.Field) | map({key: ..., count: length}) | sort_by(-.count)
+	// The 4B model consistently generates complex group_by expressions with if/else
+	// and // operators that fail in external jq. This fallback extracts the field name
+	// and performs proper aggregation with count, percentage, and descending sort.
+	if strings.Contains(jqExpr, "group_by") {
+		// Extract field name from group_by(.FieldName) pattern
+		fieldRe := regexp.MustCompile(`group_by\(\s*\.([a-zA-Z0-9_]+)`)
+		fieldMatches := fieldRe.FindStringSubmatch(jqExpr)
+		field := ""
+		if len(fieldMatches) > 1 {
+			field = fieldMatches[1]
 		}
-
-		groupMap := make(map[string][]interface{})
-		for _, item := range records {
-			if obj, ok := item.(map[string]interface{}); ok {
-				if val, ok := obj[field].(string); ok && val != "" {
-					groupMap[val] = append(groupMap[val], obj)
-				}
+		if field == "" {
+			// Try broader extraction: any .FieldName in the expression
+			dotFieldRe := regexp.MustCompile(`\.([A-Z][a-zA-Z0-9_]+)`)
+			dotMatches := dotFieldRe.FindStringSubmatch(jqExpr)
+			if len(dotMatches) > 1 {
+				field = dotMatches[1]
 			}
 		}
 
+		if field != "" {
+			groupMap := make(map[string]int)
+			for _, item := range records {
+				if obj, ok := item.(map[string]interface{}); ok {
+					val := ""
+					if v, ok := obj[field].(string); ok {
+						val = strings.TrimSpace(v)
+					}
+					if val == "" {
+						val = "Unspecified"
+					}
+					groupMap[val]++
+				}
+			}
+
+			total := len(records)
+			type groupResult struct {
+				Key        string  `json:"key"`
+				Count      int     `json:"count"`
+				Percentage float64 `json:"percentage"`
+			}
+			var results []groupResult
+			for k, c := range groupMap {
+				pct := float64(c) / float64(total) * 100
+				pct = math.Round(pct*10) / 10 // Round to 1 decimal
+				results = append(results, groupResult{Key: k, Count: c, Percentage: pct})
+			}
+			// Sort descending by count
+			sort.Slice(results, func(i, j int) bool {
+				return results[i].Count > results[j].Count
+			})
+			resBytes, _ := json.MarshalIndent(results, "", "  ")
+			return string(resBytes)
+		}
+
+		// Legacy duplicate detection fallback
+		dupField := "Email"
+		if strings.Contains(jqExpr, "Name") {
+			dupField = "Name"
+		}
+		dupMap := make(map[string][]interface{})
+		for _, item := range records {
+			if obj, ok := item.(map[string]interface{}); ok {
+				if val, ok := obj[dupField].(string); ok && val != "" {
+					dupMap[val] = append(dupMap[val], obj)
+				}
+			}
+		}
 		var duplicates []interface{}
-		for _, list := range groupMap {
+		for _, list := range dupMap {
 			if len(list) > 1 {
 				duplicates = append(duplicates, list...)
 			}
 		}
-
 		resBytes, _ := json.MarshalIndent(duplicates, "", "  ")
 		return string(resBytes)
 	}

@@ -926,3 +926,112 @@ func TestWriteFile_CountsLines(t *testing.T) {
 		t.Errorf("expected 5 lines, got %v", linesWritten)
 	}
 }
+
+// ── Phase 3: read_file tabular routing integration tests ─────────────────
+
+func TestReadFile_CSVRoute_ReturnsProfile(t *testing.T) {
+	// Setup DB for cache.StoreFileRef
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_readfile_test.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_readfile_test.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	// Resolve symlinks to match PathValidator's internal resolution (macOS /var → /private/var)
+	tmpDir, _ = filepath.EvalSymlinks(tmpDir)
+	csvPath := filepath.Join(tmpDir, "leads.csv")
+	csvContent := "name,email,status,score\nAlice,alice@test.com,active,95\nBob,bob@test.com,pending,87\nCharlie,charlie@test.com,active,100\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := NewPathValidator([]string{tmpDir})
+	tool := NewReadFileTool(v)
+
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path": csvPath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data, ok := res.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected data map, got %T", res.Data)
+	}
+
+	// Should have dataProfile (not raw content)
+	if _, hasProfile := data["dataProfile"]; !hasProfile {
+		t.Error("expected 'dataProfile' key in response for CSV file")
+	}
+
+	// Should NOT have raw content key
+	if _, hasContent := data["content"]; hasContent {
+		t.Error("CSV file should NOT return raw 'content', should return dataProfile")
+	}
+
+	// Should have cacheId
+	if _, hasCacheID := data["cacheId"]; !hasCacheID {
+		t.Error("expected 'cacheId' key in response for CSV file")
+	}
+
+	// Should have hint
+	if res.Hint == "" {
+		t.Error("expected hint about tabular data tools")
+	}
+}
+
+func TestReadFile_RegularFile_StillReturnsRawContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpDir, _ = filepath.EvalSymlinks(tmpDir)
+	txtPath := filepath.Join(tmpDir, "readme.txt")
+	if err := os.WriteFile(txtPath, []byte("hello world\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := NewPathValidator([]string{tmpDir})
+	tool := NewReadFileTool(v)
+
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path": txtPath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+
+	// Should have raw content for regular text files
+	content, ok := data["content"].(string)
+	if !ok || !strings.Contains(content, "hello world") {
+		t.Errorf("expected raw content for txt file, got: %v", data)
+	}
+
+	// Should NOT have dataProfile
+	if _, hasProfile := data["dataProfile"]; hasProfile {
+		t.Error("regular text file should NOT return dataProfile")
+	}
+}

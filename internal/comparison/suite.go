@@ -17,6 +17,9 @@ var docgenTaskDataFS embed.FS
 //go:embed testdata/codegen_tasks.json
 var codegenTaskDataFS embed.FS
 
+//go:embed testdata/datanal_tasks.json
+var datanalTaskDataFS embed.FS
+
 //go:embed testdata/codegen_seeds/*
 var codegenSeedsFS embed.FS
 
@@ -36,6 +39,8 @@ func LoadTasksByCategory(category string, tierFilter int) ([]ComparisonTask, err
 	switch category {
 	case CategoryCodegen:
 		data, err = codegenTaskDataFS.ReadFile("testdata/codegen_tasks.json")
+	case CategoryDatanal:
+		data, err = datanalTaskDataFS.ReadFile("testdata/datanal_tasks.json")
 	case CategoryDocgen, "":
 		data, err = docgenTaskDataFS.ReadFile("testdata/docgen_tasks.json")
 	default:
@@ -105,6 +110,9 @@ func conditionsForCategory(category, conditionOverride string) []string {
 	if category == CategoryCodegen {
 		return CodegenConditions()
 	}
+	if category == CategoryDatanal {
+		return DatanalConditions()
+	}
 	return AllConditions()
 }
 
@@ -141,7 +149,7 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 	switch opts.Category {
 	case CategoryAll:
 		// Run both categories with their respective condition sets
-		for _, cat := range []string{CategoryDocgen, CategoryCodegen} {
+		for _, cat := range []string{CategoryDocgen, CategoryCodegen, CategoryDatanal} {
 			tasks, err := LoadTasksByCategory(cat, opts.Tier)
 			if err != nil {
 				// If a category has no tasks for this tier, skip it rather than failing
@@ -272,7 +280,14 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 				var score float64
 				var notes string
 
-				score, notes, err = JudgeOutputWithOptions(ctx, taskResults[i].OutputText, task.QualityRubric, opts.JudgeEndpoint, g.category)
+				// For datanal tasks, inject expected answer into the judge input
+				judgeOutput := taskResults[i].OutputText
+				if g.category == CategoryDatanal && task.ExpectedAnswer != "" {
+					judgeOutput = fmt.Sprintf("## Model Output\n\n%s\n\n## Expected Correct Answer\n\n%s",
+						taskResults[i].OutputText, task.ExpectedAnswer)
+				}
+
+				score, notes, err = JudgeOutputWithOptions(ctx, judgeOutput, task.QualityRubric, opts.JudgeEndpoint, g.category)
 
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[Comparison] Judge error for %s/%s: %v\n",

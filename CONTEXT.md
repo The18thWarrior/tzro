@@ -129,6 +129,10 @@ _Avoid_: Confidence score (Edge Thought's goalConfidence is the single-shot equi
 An autonomous execution node type that runs a bounded, multi-step **Thought Chain** exploration loop (research, directory traversal, file reading) using the **Local Model**. Persists its intermediate reasoning and tool outputs to the `thought_chain` table for durability and later recall. Coexists with **Edge Thought** — Probe Nodes handle dedicated multi-step exploration where reasoning continuity within a single DAG node is critical (each step sees the full accumulated thought chain), while **Edge Thoughts** handle reactive exploration via dynamic node spawning on action nodes.
 _Avoid_: Action Node (single-step), research agent, sub-task
 
+**Analyze Node**:
+An abstract execution node type that runs a bounded **Thought Chain** data analysis loop using the **Local Model**. Automatically equipped with cache exploration tools (`introspect_cache`, `read_cached_data`, `jq_cached_data`) by the **Kahn Compiler**. When upstream data is tabular (routed through the **Data Profiler**), the Thought Chain uses cache tools for aggregation, filtering, and grouping. When upstream data is non-tabular, gracefully degrades to synthesis over accumulated context. Gives the **Strategic Planner** a clean "analyze this data" abstraction without exposing cache implementation details.
+_Avoid_: Probe Node (codebase exploration), Action Node (single tool call), Cache Bridge Node (deterministic hydration)
+
 **Thought Chain**:
 The internal step loop within a **Probe Node** where each iteration generates a reasoning thought, dispatches a tool call, and feeds the result back into the next iteration. Provides reasoning continuity — every step sees the full accumulated context from prior steps within the same node. Complements **Edge Thought** (which operates between separate DAG nodes) by providing within-node exploration where context fidelity matters more than checkpointing granularity.
 _Avoid_: Edge Thought (between-node), conversation history, chat loop
@@ -229,6 +233,14 @@ _Avoid_: Alert queue, message panel
 **Tool Proactivity Level**:
 A **Proactivity Ladder** tier annotation declared per tool at registration time, enabling the execution harness to deterministically gate tool dispatch against a **Workflow**'s approved ceiling. Built-in tools are hardcoded per tool. **MCP Host** tools default to L3 (unknown side effects). Harness-forwarded tools default to L1 (explicitly trusted by the external framework). Overridable in tool or server configuration.
 _Avoid_: Tool permission, tool safety rating, capability flag
+
+**Data Profiler**:
+A content-aware detection and statistical analysis layer within `read_file` that identifies tabular file formats (CSV, TSV, Excel, large JSON arrays) and replaces raw line dumping with a structured profile — column schema, type inference, null rates, cardinality, adaptive sample rows, and a **Disk-Backed JQ Cache** reference. Non-tabular files bypass the profiler and return raw content.
+_Avoid_: File analyzer, data importer, schema extractor
+
+**Cache Bridge Node**:
+A lightweight deterministic node auto-injected by the **Kahn Compiler** (at compile time) or **Executor** (at runtime) between a node that produced a **Disk-Backed JQ Cache** envelope and its downstream consumers. Unconditionally hydrates the cache data using `jq_cached_data` so downstream nodes receive queryable results rather than opaque envelope metadata. Injected only when no downstream node already has cache exploration tools in its `allowedTools`.
+_Avoid_: Cache adapter, data loader node, bridge step
 
 ---
 

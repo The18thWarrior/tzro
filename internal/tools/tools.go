@@ -103,21 +103,7 @@ func GetSchema(name string) (string, error) {
 		}
 	}
 
-	// Default fallback schema if not found anywhere
-	fallbackSchema := `{
-		"type": "object",
-		"properties": {
-			"tool_arguments": {
-				"type": "object",
-				"properties": {
-					"query": { "type": "string" }
-				},
-				"required": ["query"]
-			}
-		},
-		"required": ["tool_arguments"]
-	}`
-	return fallbackSchema, nil
+	return "", fmt.Errorf("tool %q not found in registry or MCP daemons", name)
 }
 
 // Call executes a tool by name with the given arguments.

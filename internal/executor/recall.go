@@ -19,18 +19,30 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 	maxSteps := 8
 	step := 0
 
-	// 1. Build initial manifest of discoveries (metadata only)
+	// 1. Build initial manifest of discoveries (metadata + synthesis outputs)
 	manifest := ""
 	for _, nodeID := range upstreamNodeIDs {
+		manifest += fmt.Sprintf("### Node: %s\n", nodeID)
+
+		// Include the upstream node's completed synthesis output first.
+		// This is the high-quality, already-synthesized result from the
+		// probe/analyze node — much more useful than raw step previews.
+		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok && state.RawOutput != "" {
+			manifest += fmt.Sprintf("#### Synthesis Output:\n%s\n\n", state.RawOutput)
+		}
+
+		// Then include step-level detail as supporting evidence
 		steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID)
 		if err != nil {
 			continue
 		}
-		manifest += fmt.Sprintf("### Node: %s\n", nodeID)
-		for _, s := range steps {
-			if s.ToolName != "" {
-				preview := truncate(s.ToolOutput, 100)
-				manifest += fmt.Sprintf("- Step %d: %s(%s) -> %s\n", s.StepIndex, s.ToolName, s.ToolArgs, preview)
+		if len(steps) > 0 {
+			manifest += "#### Exploration Steps:\n"
+			for _, s := range steps {
+				if s.ToolName != "" {
+					preview := truncate(s.ToolOutput, 100)
+					manifest += fmt.Sprintf("- Step %d: %s(%s) -> %s\n", s.StepIndex, s.ToolName, s.ToolArgs, preview)
+				}
 			}
 		}
 	}
@@ -121,13 +133,24 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 
 	// Final Synthesis Pass (Reduce)
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s executing final synthesis (Reduce Phase).\n", recallNodeID)
+
+	// If the model short-circuited the recall loop (signaled SYNTHESIZE_READY
+	// without calling update_refined_context), refinedContext will be empty.
+	// Fall back to the manifest which already contains the upstream probe's
+	// synthesis output and step-level details — sufficient for final synthesis.
+	synthesisInput := refinedContext
+	if strings.TrimSpace(synthesisInput) == "" {
+		synthesisInput = manifest
+		fmt.Fprintf(os.Stderr, "[Recall] Node %s: refinedContext empty, falling back to manifest (%d chars)\n", recallNodeID, len(manifest))
+	}
+
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
 
 ## Refined Discovery Context (Verified Facts):
 %s
 
-Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext)
+Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, synthesisInput)
 
 	return engine.Infer(ctx, synthPrompt, lastResult, "")
 }

@@ -221,7 +221,15 @@ func RunProbe(
 	// --cache-reuse 2048 window matches the system message tokens on every
 	// step, avoiding ~500-1000 tokens of redundant KV computation per step.
 	// Over 20 steps at ~10s each, this can save 3-5s per step (60-100s total).
-	systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
+	// Select system prompt based on node type.
+	// Analyze nodes (identified by cache tools in allowedTools) get a data analysis
+	// prompt; probe nodes get the codebase exploration prompt.
+	var systemPrompt string
+	if isAnalyzeConfig(config.AllowedTools) {
+		systemPrompt = buildAnalyzeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
+	} else {
+		systemPrompt = buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
+	}
 
 	for step := 1; step <= stepBudget; step++ {
 		userPrompt, err := buildProbeUserPrompt(probeID, step, lastToolOutput)
@@ -231,9 +239,10 @@ func RunProbe(
 
 		// Build segmented messages to maximize KV cache prefix reuse:
 		//   Segment 1 (system): static goal + tool schemas — identical every step
+		//   Segment 1.5 (user→assistant): upstream DAG context — stable across all steps
 		//   Segment 2 (user→assistant): accumulated context — grows but prefix is stable
 		//   Segment 3 (user): per-step volatile query — changes every step
-		probeMessages := buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID)
+		probeMessages := buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID, config.UpstreamContext)
 
 		// Call Local Model WITHOUT constraint. Probe steps are routing decisions
 		// (which file/tool to use next) — thinking mode is NOT enabled here
@@ -643,6 +652,76 @@ If a path fails with "does not exist", DO NOT call list_dir or read_file on that
 Do not assume documentation files describe implementation — verify by reading source code.`, taskContextSection, goal, toolList, toolSchemas)
 }
 
+// isAnalyzeConfig returns true if the allowed tools contain cache tools,
+// indicating this is an analyze node's Thought Chain rather than a probe.
+func isAnalyzeConfig(allowedTools []string) bool {
+	for _, t := range allowedTools {
+		if t == "introspect_cache" || t == "jq_cached_data" || t == "read_cached_data" {
+			return true
+		}
+	}
+	return false
+}
+
+// buildAnalyzeSystemPrompt constructs the system prompt for an Analyze Node's
+// Thought Chain. Unlike the probe prompt (codebase exploration), this teaches
+// the model to use cache exploration tools for data analysis, filtering, and
+// aggregation. When no cached data is available, it degrades to synthesis.
+func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext string) string {
+	toolList := ""
+	for i, t := range allowedTools {
+		if i > 0 {
+			toolList += ", "
+		}
+		toolList += t
+	}
+
+	toolSchemas := buildToolSchemaReference(allowedTools)
+
+	var taskContextSection string
+	if taskContext != "" {
+		taskContextSection = fmt.Sprintf(`
+## Task Specification (PRIORITY — follow these requirements over workspace conventions)
+%s
+
+`, taskContext)
+	}
+
+	return fmt.Sprintf(`You are an Analyze Node — an autonomous data analysis agent.
+%sYour goal: %s
+
+You have access to these tools: [%s]
+
+## Tool Parameter Reference
+%s
+
+## Data Analysis Strategy
+You analyze data from upstream nodes using a systematic approach:
+
+1. First, check the accumulated context for a cacheId from an upstream data source.
+2. If a cacheId is available:
+   - Use 'introspect_cache' to understand the data schema (column names, types, sample records)
+   - Use 'jq_cached_data' to query, filter, aggregate, count, group, and sort the data
+   - Use 'read_cached_data' to page through records if you need to inspect raw data
+3. If no cacheId is available, synthesize your analysis from the raw text data in the accumulated context.
+
+Common jq patterns for data analysis:
+- Count all records: '. | length'
+- Group and count: 'group_by(.FieldName) | map({key: .[0].FieldName, count: length}) | sort_by(-.count)'
+- Filter rows: '[.[] | select(.FieldName == "value")]'
+- Unique values: '[.[].FieldName] | unique'
+- Top N: 'sort_by(-.count) | .[:5]'
+
+On each step, reason about what analysis to perform next.
+If you need to use a tool, output an XML tag: <ACTION>{"tool": "tool_name", "arguments": {"param": "value"}}</ACTION>.
+If you have gathered enough information and are ready to synthesize a final answer, output <SYNTHESIZE_READY>.
+
+IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
+
+Be systematic. Start by understanding the data schema, then build your analysis incrementally.
+If a jq filter returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas)
+}
+
 // buildToolSchemaReference generates a compact reference block describing each tool's
 // parameters. Extracts the inner properties from the GBNF schema envelope.
 func buildToolSchemaReference(allowedTools []string) string {
@@ -736,7 +815,7 @@ func buildProbeUserPrompt(probeID string, stepNum int, lastToolOutput string) (s
 // that matches between consecutive requests. Since segment 1 is identical and
 // segment 2-3 grows incrementally, most of the prefix is reusable, avoiding
 // ~500-1000 tokens of redundant computation per step.
-func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inference.InferenceMessage {
+func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID, upstreamContext string) []inference.InferenceMessage {
 	var msgs []inference.InferenceMessage
 
 	// Segment 1: Static system prompt (goal + tool schemas) — identical every step
@@ -744,6 +823,22 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inf
 		Role:    "system",
 		Content: systemPrompt,
 	})
+
+	// Segment 1.5: Upstream DAG context — outputs from completed upstream nodes.
+	// This is STABLE across all steps (never changes during the probe loop).
+	// For analyze nodes, this contains the cacheId and data profile from the
+	// upstream read_file execution. For probe nodes downstream of other nodes,
+	// this contains their synthesis outputs.
+	if upstreamContext != "" {
+		msgs = append(msgs, inference.InferenceMessage{
+			Role:    "user",
+			Content: "## Upstream Node Outputs (from completed DAG steps)\n" + upstreamContext,
+		})
+		msgs = append(msgs, inference.InferenceMessage{
+			Role:    "assistant",
+			Content: "I have reviewed the upstream node outputs. I can see the data context from prior steps.",
+		})
+	}
 
 	// Segments 2-3: Accumulated context from compaction + recent steps
 	// This grows over time but the prefix (earlier compaction summaries) is stable

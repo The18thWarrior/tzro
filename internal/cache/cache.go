@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,10 @@ type CacheEnvelope struct {
 type CacheStore interface {
 	// Store handles envelope creation, writes to SQLite, backups to file, and returns the envelope JSON string and CacheID.
 	Store(ctx context.Context, rawPayload string) (envelopeStr string, cacheID string, err error)
+
+	// StoreFileRef stores a reference to an on-disk file (path only, no content copy).
+	// Returns the generated cacheID.
+	StoreFileRef(ctx context.Context, filePath string, envelopeJSON string) (cacheID string, err error)
 
 	// Introspect retrieves the cache envelope JSON string (with DB lookup and file fallback).
 	Introspect(ctx context.Context, cacheID string) string
@@ -228,6 +233,24 @@ func (s *sqlCacheStore) Store(ctx context.Context, rawPayload string) (string, s
 	return envelopeStr, cacheID, nil
 }
 
+func (s *sqlCacheStore) StoreFileRef(ctx context.Context, filePath string, envelopeJSON string) (string, error) {
+	cacheID := fmt.Sprintf("cache_%d", time.Now().UnixNano())
+
+	db := memory.DB.RawDB()
+	if db == nil {
+		return "", fmt.Errorf("database not available")
+	}
+
+	createdAt := time.Now().Unix()
+	_, err := db.Exec(`INSERT OR REPLACE INTO disk_cache (cache_id, raw_payload, envelope_json, file_path, created_at)
+		VALUES (?, '', ?, ?, ?)`, cacheID, envelopeJSON, filePath, createdAt)
+	if err != nil {
+		return "", fmt.Errorf("failed to store file reference: %w", err)
+	}
+
+	return cacheID, nil
+}
+
 func (s *sqlCacheStore) Introspect(ctx context.Context, cacheID string) string {
 	db := memory.DB.RawDB()
 	if db != nil {
@@ -323,6 +346,14 @@ func (s *sqlCacheStore) getRawPayload(cacheID string) string {
 			RecordCacheHit()
 			return rawPayload
 		}
+
+		// Check for file_path reference (path-only cache entry)
+		var filePath string
+		err = db.QueryRow("SELECT COALESCE(file_path, '') FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&filePath)
+		if err == nil && filePath != "" {
+			RecordCacheHit()
+			return s.readFileAsJSON(filePath)
+		}
 	}
 
 	// Fallback to disk file
@@ -334,6 +365,78 @@ func (s *sqlCacheStore) getRawPayload(cacheID string) string {
 	}
 	RecordCacheHit()
 	return string(bytes)
+}
+
+// readFileAsJSON reads a file and converts it to JSON format.
+// For CSV/TSV files, converts to a JSON array of objects.
+// For other files, reads raw content.
+func (s *sqlCacheStore) readFileAsJSON(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	switch ext {
+	case ".csv", ".tsv":
+		return csvToJSON(filePath, ext)
+	default:
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Sprintf("Error: failed to read file at '%s': %v", filePath, err)
+		}
+		return string(data)
+	}
+}
+
+// csvToJSON converts a CSV/TSV file to a JSON array of objects.
+func csvToJSON(filePath string, ext string) string {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to open file at '%s': %v", filePath, err)
+	}
+	defer file.Close()
+
+	delimiter := ","
+	if ext == ".tsv" {
+		delimiter = "\t"
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+
+	if !scanner.Scan() {
+		return "[]"
+	}
+	headerLine := scanner.Text()
+	// Strip BOM
+	headerLine = strings.TrimPrefix(headerLine, "\xEF\xBB\xBF")
+	headerLine = strings.TrimPrefix(headerLine, "\uFEFF")
+
+	headers := strings.Split(headerLine, delimiter)
+	for i := range headers {
+		headers[i] = strings.TrimSpace(headers[i])
+	}
+
+	var records []map[string]interface{}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, delimiter)
+		record := make(map[string]interface{})
+		for i, h := range headers {
+			var val string
+			if i < len(fields) {
+				val = strings.TrimSpace(fields[i])
+			}
+			record[h] = val
+		}
+		records = append(records, record)
+	}
+
+	resBytes, err := json.Marshal(records)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to marshal CSV to JSON: %v", err)
+	}
+	return string(resBytes)
 }
 
 // Private compaction helpers

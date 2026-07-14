@@ -4,6 +4,16 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-13T11:56:00-07:00] grill-with-docs | Data Profiler & Cache Bridge Node (ADR-0046) — SPEC COMPLETE
+
+- **Activity**: Grill-with-docs session resolving 11 design branches for content-aware tabular file profiling in `read_file` and deterministic Cache Bridge Node injection. No code changes — design only.
+- **Decisions Captured**: ADR-0046 (Data Profiler and Cache Bridge Node). Routing rules (csv/tsv always, xlsx/xls always, json conditional >200 lines or >10KB). Excel via excelize/v2 with multi-sheet summary (all sheets summarized, first sheet profiled). Deterministic column pruning only (no LLM at read time). Two-layer Cache Bridge injection (compile-time in Kahn Compiler + runtime post-execution hook) with deduplication. Unconditional bridge firing. Adaptive sample sizing (5→3→1, 10K char budget). TSV format for samples. CSV edge cases (assume headers, sniff delimiters, BOM/encoding fallback). Streaming parse with cardinality cap at 1000. Path-reference caching (no file copy). peek_file raw + hint. Probe allowedTools auto-expansion with cache tools.
+- **New Glossary Terms**: Data Profiler, Cache Bridge Node (added to CONTEXT.md)
+- **New Files**: `docs/adr/0046-data-profiler-and-cache-bridge-node.md`, `docs/working-specs/data-profiler-and-cache-bridge-node.md`
+- **Modified Files**: `CONTEXT.md` (2 new glossary terms), `docs/wiki/index.md` (ADR + spec linked)
+- **Implementation Files (planned)**: `internal/tools/tabular.go`, `internal/tools/excel.go`, modifications to `filesystem.go`, `cache.go`, `sct_compiler.go`, `ready_queue.go`
+
+
 ## [2026-07-09T10:33:00-07:00] tdd | MCTS Multi-Branch Edge Thought Evaluation (ADR-0045) — COMPLETE
 
 - **Activity**: Full TDD implementation of multi-branch Edge Thought evaluation, constrained to single-slot sidecar operation. Grilling session resolved 9 design decisions. Red-green TDD loop with 58 new tests across 3 packages. All ready queue wiring complete.

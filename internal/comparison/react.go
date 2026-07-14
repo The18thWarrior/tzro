@@ -83,6 +83,8 @@ type reactCompletionResponse struct {
 
 const reactSystemPrompt = `You are a documentation generator. You have access to filesystem tools to explore a Go codebase. Read the relevant source files, understand the code, and produce the requested documentation. Call tools as needed. When you have gathered enough information, output the final documentation as markdown.`
 
+const reactDatanalSystemPrompt = `You are a data analyst. You have access to filesystem and data tools to read and query structured data files. Read the specified data file, analyze it, and answer the question precisely. When working with CSV/tabular data, use the appropriate tools to access cached data if a cacheId is provided.`
+
 // buildReActTools creates the OpenAI-compatible tool definitions and a dispatch map.
 func buildReActTools() ([]reactToolDef, map[string]*tools.BaseAgentTool) {
 	// Create a path validator rooted at the project directory
@@ -174,8 +176,14 @@ func RunReActWithEndpoint(ctx context.Context, task ComparisonTask, pricing Pric
 
 	toolDefs, dispatch := buildReActTools()
 
+	// Select system prompt based on task category
+	sysPrompt := reactSystemPrompt
+	if task.Category == CategoryDatanal {
+		sysPrompt = reactDatanalSystemPrompt
+	}
+
 	messages := []reactMessage{
-		{Role: "system", Content: reactSystemPrompt},
+		{Role: "system", Content: sysPrompt},
 		{Role: "user", Content: task.Prompt},
 	}
 

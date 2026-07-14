@@ -20,6 +20,7 @@ _Map of system features, product requirements, and specs._
 - [MCP Singleton Guard](features/mcp-singleton-guard.md) - PID lockfile preventing duplicate tzro-mcp instances when multiple IDE language servers spawn MCP children. (Sources: 1 | Last Updated: 2026-06-09)
 - [Response Resolver](features/response-resolver.md) - Three-tier output resolution cascade (recursive key search + KV-line + semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator. (Sources: 1 | Last Updated: 2026-06-10)
 - [Dual-Audience Hardening](features/dual-audience-hardening.md) - Secure local-first loopback, MCP-to-daemon delegation proxy, and complete Package Manager CLI/MCP integration. (Sources: 1 | Last Updated: 2026-06-15)
+- [Data Profiler & Cache Bridge Node](../working-specs/data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file with deterministic Cache Bridge Node injection for CSV, TSV, Excel, and large JSON. (Sources: 1 | Last Updated: 2026-07-13)
 
 ## Bugs & Post-Mortems
 
@@ -105,6 +106,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0042: Map-Reduce Recall and Shallow Planning](../adr/0042-map-reduce-recall-and-shallow-planning.md) - Multi-pass Recall synthesis and code-blind Strategist to reduce wall clock time and token waste.
 - [ADR-0043: Two-Tier Context Budget](../adr/0043-two-tier-context-budget.md) - Probe step generation cap (max_tokens via context key) and per-node accumulated context truncation to prevent local model speed collapse from oversized prompts.
 - [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md) - Splits context assembly into synthesis-path (untruncated validators, no ceiling) and mid-DAG-path (tiered allocation, dynamic ceiling). Supersedes ADR-0043 Mechanism B.
+- [ADR-0046: Data Profiler and Cache Bridge Node](../adr/0046-data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file, path-referenced caching, and two-layer deterministic Cache Bridge Node injection. Narrows ADR-0019 bypass to non-tabular files.
 
 ## Ingested Sources
 

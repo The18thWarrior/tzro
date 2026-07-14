@@ -439,3 +439,112 @@ func TestProcess_IntegrationPruning(t *testing.T) {
 		t.Errorf("expected row 1 %q, got %q", expectedRow1, lines[1])
 	}
 }
+
+// ── Phase 2: Cache Path Reference tests ─────────────────────────────────
+
+func TestStoreFileRef_StoresPathAndEnvelope(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_cache_fileref_test.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_cache_fileref_test.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+
+	// Create a CSV file
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "leads.csv")
+	if err := os.WriteFile(csvPath, []byte("name,email,status\nAlice,alice@test.com,active\nBob,bob@test.com,pending\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	envelopeJSON := `{"cacheId": "test_ref_123", "format": "csv", "rowCount": 2}`
+	cacheID, err := DefaultStore.StoreFileRef(ctx, csvPath, envelopeJSON)
+	if err != nil {
+		t.Fatalf("StoreFileRef failed: %v", err)
+	}
+	if cacheID == "" {
+		t.Error("cacheID should not be empty")
+	}
+
+	// Verify: envelope_json stored in DB
+	db := memory.DB.RawDB()
+	var storedEnvelope string
+	var storedFilePath string
+	err = db.QueryRow("SELECT envelope_json, file_path FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&storedEnvelope, &storedFilePath)
+	if err != nil {
+		t.Fatalf("failed to query stored record: %v", err)
+	}
+	if storedEnvelope != envelopeJSON {
+		t.Errorf("stored envelope = %q, want %q", storedEnvelope, envelopeJSON)
+	}
+	if storedFilePath != csvPath {
+		t.Errorf("stored file_path = %q, want %q", storedFilePath, csvPath)
+	}
+
+	// raw_payload should be empty (path reference, not copied)
+	var rawPayload string
+	err = db.QueryRow("SELECT COALESCE(raw_payload, '') FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&rawPayload)
+	if err != nil {
+		t.Fatalf("failed to query raw_payload: %v", err)
+	}
+	if rawPayload != "" {
+		t.Errorf("raw_payload should be empty for file reference, got %d bytes", len(rawPayload))
+	}
+}
+
+func TestGetRawPayload_ReadsFromFilePath(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_cache_fileref_test2.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_cache_fileref_test2.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+
+	// Create a CSV file with known content
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "data.csv")
+	csvContent := "id,name,score\n1,Alice,95\n2,Bob,87\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	envelopeJSON := `{"format": "csv"}`
+	cacheID, err := DefaultStore.StoreFileRef(ctx, csvPath, envelopeJSON)
+	if err != nil {
+		t.Fatalf("StoreFileRef failed: %v", err)
+	}
+
+	// getRawPayload should read from the CSV file and convert to JSON
+	store := &sqlCacheStore{}
+	raw := store.getRawPayload(cacheID)
+
+	// For CSV file references, getRawPayload converts to JSON array
+	if strings.HasPrefix(raw, "Error:") {
+		t.Fatalf("getRawPayload returned error: %s", raw)
+	}
+
+	// Should be valid JSON (converted from CSV)
+	var records []map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &records); err != nil {
+		t.Fatalf("getRawPayload should return valid JSON for CSV file ref, got: %s (err: %v)", raw, err)
+	}
+	if len(records) != 2 {
+		t.Errorf("expected 2 records, got %d", len(records))
+	}
+	if records[0]["name"] != "Alice" {
+		t.Errorf("first record name = %q, want %q", records[0]["name"], "Alice")
+	}
+}
+

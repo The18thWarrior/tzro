@@ -58,7 +58,6 @@ func FindMatchedToolsAndSkills(prompt string) []string {
 
 	// 1. Hardcoded standard tools
 	hardcodedTools := []string{
-		"salesforce_query", "slack_message", "postgres_insert", "jq_cached_data",
 		"fetch_sheet_records", "dedup_contacts", "slack_confirm", "cron_trigger", "metrics_slack",
 	}
 	for _, t := range hardcodedTools {

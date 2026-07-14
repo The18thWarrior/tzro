@@ -7,7 +7,7 @@ import (
 
 type GraphNode struct {
 	ID              string                 `json:"id"`
-	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe" | "sub_dag"
+	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe" | "analyze" | "sub_dag"
 	Action          string                 `json:"action"`              // Target tool name or Sub-DAG template name
 	Instructions    string                 `json:"instructions"`        // Core step instruction
 	AllowedTools    []string               `json:"allowedTools"`        // Whitelist of permitted tools
@@ -58,6 +58,7 @@ type ProbeConfig struct {
 	CompactEvery    int             `json:"compactEvery"`              // Rolling compaction frequency (every N steps)
 	CompactionLevel CompactionLevel `json:"compactionLevel,omitempty"` // Controls tool output truncation during compaction. Default: "preserve"
 	TaskContext     string          `json:"taskContext,omitempty"`     // Original task spec/goal — pinned above exploration results so task requirements override workspace conventions
+	UpstreamContext string          `json:"upstreamContext,omitempty"` // Accumulated context from completed upstream nodes — injected by executor so the probe can see upstream outputs (e.g., cacheId from read_file)
 }
 
 type GraphEdge struct {

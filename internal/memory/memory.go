@@ -212,6 +212,7 @@ func (sdb *SqliteDatabase) createTables() error {
 			cache_id TEXT PRIMARY KEY,
 			raw_payload TEXT,
 			envelope_json TEXT,
+			file_path TEXT,
 			created_at INTEGER
 		);`,
 		`CREATE TABLE IF NOT EXISTS workflows (
@@ -365,6 +366,11 @@ func (sdb *SqliteDatabase) createTables() error {
 	}
 	if err := sdb.ensureColumnExistsTx(tx, "workflow_executions", "tool_calls_consumed", "INTEGER DEFAULT 0"); err != nil {
 		return fmt.Errorf("failed to migrate workflow_executions schema (tool_calls_consumed): %w", err)
+	}
+
+	// Data Profiler: file_path column for path-reference cache entries
+	if err := sdb.ensureColumnExistsTx(tx, "disk_cache", "file_path", "TEXT"); err != nil {
+		return fmt.Errorf("failed to migrate disk_cache schema (file_path): %w", err)
 	}
 
 	return tx.Commit()

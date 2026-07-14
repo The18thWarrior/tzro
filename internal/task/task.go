@@ -312,17 +312,10 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 
 	isBenchmark := strings.Contains(taskID, "multi_turn_") || strings.Contains(taskID, "cfb_case_") || strings.Contains(taskID, "bfcl_case_") || strings.Contains(taskID, "tzro_dag_case_")
 
-	if !isBenchmark {
-		toolsInfo = append(toolsInfo, "- Tool 'salesforce_query': Query records from Salesforce CRM system")
-		toolsInfo = append(toolsInfo, "- Tool 'slack_message': Send alert message to slack channel")
-		toolsInfo = append(toolsInfo, "- Tool 'postgres_insert': Insert rows into PostgreSQL database")
-		toolsInfo = append(toolsInfo, "- Tool 'jq_cached_data': Execute offline JQ extraction query on disk cache envelopes")
-	}
-
 	// Ingest globally registered tools (including dynamic benchmark mock tools and standalone tools)
 	for _, t := range tools.GetList() {
 		name := t.Name()
-		if !isBenchmark && (name == "salesforce_query" || name == "slack_message" || name == "postgres_insert" || name == "jq_cached_data" || name == "list_tools") {
+		if !isBenchmark && name == "list_tools" {
 			continue
 		}
 		if isBenchmark && name == "list_tools" {
@@ -411,24 +404,27 @@ Target JSON Structure:
 }
 
 ### Schema Details:
-1. "type": Must be one of "action", "conditional", "loop", or "probe".
-2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
-3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
+1. "type": Must be one of "action", "conditional", "loop", "probe", or "analyze".
+2. "action": The target tool name from inventory. For probe and analyze nodes, set this field to an empty string "".
+3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action", "analyze", or other type nodes, omit this field entirely.
 4. "instructions": Provide natural language goals or variables to read/write.
 5. "activationThreshold": Sufficiency gate threshold (0.0 - 1.0) to enable Edge Thoughts and neural traversal for incoming edges. Defaults to 0.7 for action nodes in codegen tasks, 0.0 (disabled) otherwise.
 
 ### Probe Node Guidance:
 When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
 
+### Analyze Node Guidance:
+When the request involves analyzing, aggregating, filtering, counting, grouping, ranking, or summarizing data from a file or upstream data source, you MUST emit a node of type "analyze" instead of guessing tool names for data operations. The analyze node runs an internal data exploration loop and handles data access automatically. Set the "instructions" field to describe the analysis goal in natural language (e.g., "Count leads by country, return top 5 sorted by count"). Do NOT specify allowedTools or probeConfig for analyze nodes — the execution engine provisions them automatically. For analyze tasks that require reading a file first, plan an upstream action node with read_file, then an analyze node downstream.
+
 ## Design Rules:
 1. Strategy only: You NEVER execute tools yourself. Plan the steps logically.
 2. Data flow: For parameters whose values come from an upstream tool's response, declare them in 'dynamicBindings' as {"param_name": "upstream_node_id.output.property_name"}. These are resolved at execution time. Do NOT write upstream output values into the 'instructions' field — they are not available at planning time.
 3. allowedTools limit: Restrict the local worker's action space at each node. Only include the 1-2 tools absolutely necessary.
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
-5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
+5. Probe vs. Action vs. Analyze routing: If the task requires reactive exploration, use a probe node. If the task requires data analysis/aggregation/filtering, use an analyze node. If the exact tool parameters are known upfront, use an action node.
 6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
 7. EXPLORATION ROUTING RULE (CRITICAL): For tasks involving codebase exploration, directory traversal, file reading, documentation generation, code indexing, architecture analysis, or ANY task where the next step depends on what was just discovered, you MUST emit a SINGLE probe node. Action nodes are too rigid for exploration and will fail. Any plan that decomposes documentation or indexing into multiple action nodes is WRONG.
-8. TOOL CONFORMANCE (CRITICAL): You MUST only reference tools from the Available Tool Inventory above. Do NOT invent, hallucinate, or guess tool names that are not listed. If you are unsure whether a tool exists, use a probe node with filesystem tools instead of guessing tool names. Any plan referencing non-existent tools will be rejected.
+8. TOOL CONFORMANCE (CRITICAL): You MUST only reference tools from the Available Tool Inventory above. Do NOT invent, hallucinate, or guess tool names that are not listed. If you need to analyze data, use an analyze node. If you are unsure whether a tool exists, use a probe or analyze node instead of guessing tool names. Any plan referencing non-existent tools will be rejected.
 9. PROBE-FIRST POLICY (LATENCY OPTIMIZATION): You are provided with only a SHALLOW directory tree. If the user request references specific files, functions, or deep paths not visible in the shallow map, you MUST plan a "probe" node to discover the exact paths rather than guessing them.
 
 ### Code Generation Rules (ADR-0035):
@@ -524,17 +520,10 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 
 	isBenchmark := strings.Contains(taskID, "multi_turn_") || strings.Contains(taskID, "cfb_case_") || strings.Contains(taskID, "bfcl_case_") || strings.Contains(taskID, "tzro_dag_case_")
 
-	if !isBenchmark {
-		toolsInfo = append(toolsInfo, "- Tool 'salesforce_query': Query records from Salesforce CRM system")
-		toolsInfo = append(toolsInfo, "- Tool 'slack_message': Send alert message to slack channel")
-		toolsInfo = append(toolsInfo, "- Tool 'postgres_insert': Insert rows into PostgreSQL database")
-		toolsInfo = append(toolsInfo, "- Tool 'jq_cached_data': Execute offline JQ extraction query on disk cache envelopes")
-	}
-
 	// Ingest globally registered tools (including dynamic benchmark mock tools and standalone tools)
 	for _, t := range tools.GetList() {
 		name := t.Name()
-		if !isBenchmark && (name == "salesforce_query" || name == "slack_message" || name == "postgres_insert" || name == "jq_cached_data" || name == "list_tools") {
+		if !isBenchmark && name == "list_tools" {
 			continue
 		}
 		if isBenchmark && name == "list_tools" {

@@ -910,12 +910,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		return nil
 	}
 
-	// 1.3 Probe node: autonomous Thought Chain exploration (ADR-0019)
-	// We have restored the native probe execution path to prevent the quality loss
-	// associated with flattening exploration into single action nodes (ADR-0035 rollback).
-	if node.Type == "probe" {
+	// 1.3 Probe/Analyze node: autonomous Thought Chain exploration (ADR-0019)
+	// Analyze nodes use the same Thought Chain execution but with a data-analysis-specific
+	// system prompt and cache tools instead of filesystem exploration tools.
+	if node.Type == "probe" || node.Type == "analyze" {
 		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Probe: "+node.Instructions)
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, strings.Title(node.Type)+": "+node.Instructions)
 
 		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
 			e.getPublisher().PublishStream(stream.StreamChunk{
@@ -942,6 +942,25 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		// suggests different patterns. Only set if not already provided by planner.
 		if probeConfig.TaskContext == "" && graph.GoalPrompt != "" {
 			probeConfig.TaskContext = graph.GoalPrompt
+		}
+
+		// Inject accumulated context from completed upstream nodes so the
+		// probe/analyze Thought Chain can see outputs from prior DAG steps
+		// (e.g., cacheId from an upstream read_file execution). Without this,
+		// analyze nodes have no way to discover the cacheId and must guess,
+		// causing futility aborts when all cache lookups fail.
+		if probeConfig.UpstreamContext == "" {
+			upstreamCtx := buildAccumulatedContext(taskID, graph, node.Type)
+			if upstreamCtx != "" {
+				// Enrich analyze nodes with introspect_cache schema so the probe
+				// sees the actual data shape (flat JSON array) and column names,
+				// enabling correct jq filter generation.
+				if isAnalyzeConfig(node.AllowedTools) {
+					upstreamCtx = enrichCacheBridgeContext(ctx, upstreamCtx, node.Instructions)
+				}
+				probeConfig.UpstreamContext = upstreamCtx
+				fmt.Fprintf(os.Stderr, "[Executor] Injected %d chars of upstream context into %s node %s\n", len(upstreamCtx), node.Type, node.ID)
+			}
 		}
 
 		// Collect binding keys that downstream nodes need from this probe's output.
@@ -1032,7 +1051,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 					parentID := edge.SourceID
 					// Check if parent is a probe
 					for _, n := range graph.Nodes {
-						if n.ID == parentID && n.Type == "probe" {
+						if n.ID == parentID && (n.Type == "probe" || n.Type == "analyze") {
 							upstreamNodeIDs = append(upstreamNodeIDs, parentID)
 						}
 					}
@@ -1361,6 +1380,13 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// Upstream node outputs are passed as labeled structured blocks, enabling the bridge
 	// to extract values by key name rather than re-parsing them from prose.
 	accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
+
+	// Schema enrichment for cache bridge nodes: inject introspect_cache output
+	// so the model sees the actual data shape (flat JSON array) rather than
+	// assuming the dataProfile envelope structure from upstream output.
+	if isCacheExploration && node.Action == "jq_cached_data" {
+		accumulatedCtx = enrichCacheBridgeContext(ctx, accumulatedCtx, interpolatedPrompt)
+	}
 
 	var systemPrompt string
 	if isCacheExploration {

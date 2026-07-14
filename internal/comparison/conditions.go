@@ -238,6 +238,9 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			relOutputDir = testOutputDir
 		}
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: Read and explore source code from the project root directory (not from the output directory). Write all output files to this isolated output directory: %s", taskPrompt, relOutputDir)
+	} else if t.Category == CategoryDatanal {
+		// For datanal tasks, the CSV file is at helpers/LeadSuccess.csv relative to the project root.
+		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: The data file is located in the project directory at: %s/helpers/LeadSuccess.csv", taskPrompt, projectRoot)
 	}
 
 	startTime := time.Now()

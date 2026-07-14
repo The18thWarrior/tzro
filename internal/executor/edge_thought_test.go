@@ -88,6 +88,49 @@ func TestShouldGenerateEdgeThought(t *testing.T) {
 	if !shouldGenerateEdgeThought(&compiler.GraphNode{ActivationThreshold: 1.0}) {
 		t.Error("should generate edge thought when threshold is 1.0")
 	}
+	// Analyze and probe nodes should never generate edge thoughts (Deterministic Shield).
+	if shouldGenerateEdgeThought(&compiler.GraphNode{Type: "analyze", ActivationThreshold: 0.7}) {
+		t.Error("should not generate edge thought for analyze nodes")
+	}
+	if shouldGenerateEdgeThought(&compiler.GraphNode{Type: "probe", ActivationThreshold: 0.7}) {
+		t.Error("should not generate edge thought for probe nodes")
+	}
+}
+
+// TestEvaluateActivationThresholdAnalyzeProtected verifies that analyze nodes
+// are protected by the Deterministic Shield — goalAchieved=true should NOT halt them.
+func TestEvaluateActivationThresholdAnalyzeProtected(t *testing.T) {
+	et := &memory.EdgeThought{
+		GoalConfidence: 0.95,
+		GoalAchieved:   true,
+	}
+	targetNode := &compiler.GraphNode{
+		Type:                "analyze",
+		ActivationThreshold: 0.7,
+	}
+
+	action := evaluateActivationThreshold(et, targetNode)
+	if action != ActivationContinue {
+		t.Errorf("expected ActivationContinue for analyze node with goalAchieved=true, got %v", action)
+	}
+}
+
+// TestEvaluateActivationThresholdProbeProtected verifies that probe nodes
+// are protected by the Deterministic Shield — goalAchieved=true should NOT halt them.
+func TestEvaluateActivationThresholdProbeProtected(t *testing.T) {
+	et := &memory.EdgeThought{
+		GoalConfidence: 0.95,
+		GoalAchieved:   true,
+	}
+	targetNode := &compiler.GraphNode{
+		Type:                "probe",
+		ActivationThreshold: 0.7,
+	}
+
+	action := evaluateActivationThreshold(et, targetNode)
+	if action != ActivationContinue {
+		t.Errorf("expected ActivationContinue for probe node with goalAchieved=true, got %v", action)
+	}
 }
 
 // MockEdgeThoughtInference implements EdgeThoughtInference for testing.
