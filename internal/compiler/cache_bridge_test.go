@@ -44,8 +44,8 @@ func TestSCT_InjectsCacheBridgeForTabularReference(t *testing.T) {
 			if node.Type != "action" {
 				t.Errorf("cache bridge Type = %q, want %q", node.Type, "action")
 			}
-			if node.Action != "jq_cached_data" {
-				t.Errorf("cache bridge Action = %q, want %q", node.Action, "jq_cached_data")
+			if node.Action != "sql_cached_data" {
+				t.Errorf("cache bridge Action = %q, want %q", node.Action, "sql_cached_data")
 			}
 			if node.ActivationThreshold != 0.0 {
 				t.Errorf("cache bridge ActivationThreshold = %f, want 0.0", node.ActivationThreshold)
@@ -53,12 +53,12 @@ func TestSCT_InjectsCacheBridgeForTabularReference(t *testing.T) {
 			// Should have cache tools
 			hasTools := false
 			for _, tool := range node.AllowedTools {
-				if tool == "jq_cached_data" {
+				if tool == "sql_cached_data" {
 					hasTools = true
 				}
 			}
 			if !hasTools {
-				t.Error("cache bridge should have jq_cached_data in AllowedTools")
+				t.Error("cache bridge should have sql_cached_data in AllowedTools")
 			}
 		}
 	}
@@ -101,9 +101,9 @@ func TestSCT_SkipsBridgeWhenDownstreamHasCacheTools(t *testing.T) {
 			{
 				ID:           "step_2",
 				Type:         "action",
-				Action:       "jq_cached_data",
-				Instructions: "Query the cached data using jq",
-				AllowedTools: []string{"jq_cached_data", "introspect_cache"},
+				Action:       "sql_cached_data",
+				Instructions: "Query the cached data using SQL",
+				AllowedTools: []string{"sql_cached_data", "introspect_cache"},
 				Status:       "pending",
 			},
 		},
@@ -195,7 +195,7 @@ func TestSCT_ProbeAllowedToolsExpansion(t *testing.T) {
 			}
 			hasCacheTool := false
 			for _, tool := range node.ProbeConfig.AllowedTools {
-				if tool == "jq_cached_data" || tool == "introspect_cache" || tool == "read_cached_data" {
+				if tool == "sql_cached_data" || tool == "introspect_cache" {
 					hasCacheTool = true
 					break
 				}
@@ -237,7 +237,7 @@ func TestSCT_ProbeWithReadFileGetsExpansion(t *testing.T) {
 		if node.ID == "explore_project" && node.Type == "probe" {
 			hasCacheTool := false
 			for _, tool := range node.ProbeConfig.AllowedTools {
-				if tool == "jq_cached_data" {
+				if tool == "sql_cached_data" {
 					hasCacheTool = true
 					break
 				}

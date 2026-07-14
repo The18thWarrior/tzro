@@ -17,12 +17,12 @@ import (
 // and returns an enriched context string that tells the model the real data shape.
 //
 // Problem: The upstream read_file output contains a `dataProfile` envelope, but
-// jq_cached_data operates on a flat JSON array of records. Without this enrichment,
+// sql_cached_data operates on materialized tables in the ephemeral query DB. Without this enrichment,
 // the model generates filters like `.dataProfile.columns[]` which fail with
 // "Cannot index array with string".
 //
 // This function bridges the gap by showing the model what the cached data actually
-// looks like before it generates a jq filter.
+// looks like before it generates a SQL query.
 func enrichCacheBridgeContext(ctx context.Context, accumulatedCtx, interpolatedPrompt string) string {
 	// Extract cacheId from accumulated context or interpolated prompt
 	cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
@@ -43,17 +43,17 @@ func enrichCacheBridgeContext(ctx context.Context, accumulatedCtx, interpolatedP
 	enrichment := fmt.Sprintf(`
 
 ## CACHE DATA SCHEMA (from introspect_cache)
-The cached data for cacheId '%s' is a **flat JSON array of record objects**.
-It is NOT wrapped in a dataProfile envelope. Do NOT use .dataProfile in jq filters.
+The cached data for cacheId '%s' is stored in a SQL table named '%s'.
+Query it using standard SQL via the sql_cached_data tool.
 
-Correct jq filter patterns:
-- Count records: '. | length'
-- Group by field: 'group_by(.FieldName) | map({key: .[0].FieldName, count: length})'
-- Filter: '[.[] | select(.FieldName == "value")]'
-- Unique values: '[.[].FieldName] | unique'
+Example SQL patterns:
+- Count records: SELECT COUNT(*) FROM %s
+- Group by field: SELECT FieldName, COUNT(*) as cnt FROM %s GROUP BY FieldName ORDER BY cnt DESC
+- Filter: SELECT * FROM %s WHERE FieldName = 'value'
+- Unique values: SELECT DISTINCT FieldName FROM %s
 
 Schema introspection result:
-%s`, match, schema)
+%s`, match, match, match, match, match, match, schema)
 
 	fmt.Fprintf(os.Stderr, "[Executor] Enriched cache bridge context with introspect_cache for %s\n", match)
 	return accumulatedCtx + enrichment
@@ -61,7 +61,7 @@ Schema introspection result:
 
 
 // cacheToolNames are the tools that indicate cache access capability.
-var cacheToolNames = []string{"introspect_cache", "read_cached_data", "jq_cached_data"}
+var cacheToolNames = []string{"introspect_cache", "sql_cached_data"}
 
 // maybeInjectCacheBridge checks if a completed node's output contains cacheId
 // and dataProfile markers. If so, and no downstream node already has cache tools,
@@ -100,10 +100,10 @@ func (e *ExecutionEngine) maybeInjectCacheBridge(
 	bridgeNode := compiler.GraphNode{
 		ID:     bridgeID,
 		Type:   "action",
-		Action: "jq_cached_data",
+		Action: "sql_cached_data",
 		Instructions: "Query the cached tabular data from the upstream node's Data Profile. " +
-			"Use the cacheId from the upstream output to access the data via jq_cached_data. " +
-			"Return the most relevant subset of data for the downstream task.",
+			"Use the cacheId from the upstream output. " +
+			"Execute: SELECT * FROM cache_<id> LIMIT 100 to return a representative sample.",
 		AllowedTools:        cacheToolNames,
 		Status:              "pending",
 		ActivationThreshold: 0.0,

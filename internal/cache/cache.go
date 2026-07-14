@@ -41,8 +41,8 @@ type CacheStore interface {
 	// Read retrieves offset-based paginated slice of records from the cache (with DB lookup and file fallback).
 	Read(ctx context.Context, cacheID string, limit, offset int) string
 
-	// Query runs a standard JQ expression query (using the decoupled QueryEngine).
-	Query(ctx context.Context, cacheID, jqExpr string) string
+	// Query runs a SQL query against the materialized cache table in the ephemeral query DB.
+	Query(ctx context.Context, cacheID, sqlExpr string) string
 }
 
 // resolveTzroPath delegates to config.ResolvePath — canonical TZRO_DIR resolution.
@@ -219,6 +219,13 @@ func (s *sqlCacheStore) Store(ctx context.Context, rawPayload string) (string, s
 		}
 	}
 
+	// Materialize in ephemeral query DB
+	columnTypes := envelopeFieldTypesToSQLite(envelope.FieldTypes)
+	if err := MaterializeTable(cacheID, rawPayload, columnTypes, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "[Cache] Materialization warning: %v\n", err)
+		// Non-fatal — SQL queries will lazily re-materialize
+	}
+
 	// Backup file cache
 	cacheFileDir := resolveTzroPath(filepath.Join(".tzro", "cache"))
 	if err := os.MkdirAll(cacheFileDir, 0755); err != nil {
@@ -246,6 +253,15 @@ func (s *sqlCacheStore) StoreFileRef(ctx context.Context, filePath string, envel
 		VALUES (?, '', ?, ?, ?)`, cacheID, envelopeJSON, filePath, createdAt)
 	if err != nil {
 		return "", fmt.Errorf("failed to store file reference: %w", err)
+	}
+
+	// Materialize in ephemeral query DB from the file
+	columnTypes := extractColumnTypesFromEnvelope(envelopeJSON)
+	rawJSON := s.readFileAsJSON(filePath)
+	if !strings.HasPrefix(rawJSON, "Error:") {
+		if err := MaterializeTable(cacheID, rawJSON, columnTypes, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "[Cache] File materialization warning: %v\n", err)
+		}
 	}
 
 	return cacheID, nil
@@ -327,14 +343,12 @@ func (s *sqlCacheStore) Read(ctx context.Context, cacheID string, limit, offset 
 	return string(resBytes)
 }
 
-func (s *sqlCacheStore) Query(ctx context.Context, cacheID, jqExpr string) string {
-	rawPayload := s.getRawPayload(cacheID)
-	if strings.HasPrefix(rawPayload, "Error:") {
-		return rawPayload
+func (s *sqlCacheStore) Query(ctx context.Context, cacheID, sqlExpr string) string {
+	result, err := ExecuteSQL(ctx, cacheID, sqlExpr)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err)
 	}
-
-	// Delegate to the decoupled QueryEngine seam
-	return DefaultQueryEngine.Query(ctx, rawPayload, jqExpr)
+	return result
 }
 
 func (s *sqlCacheStore) getRawPayload(cacheID string) string {

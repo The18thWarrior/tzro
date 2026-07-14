@@ -656,7 +656,7 @@ Do not assume documentation files describe implementation — verify by reading 
 // indicating this is an analyze node's Thought Chain rather than a probe.
 func isAnalyzeConfig(allowedTools []string) bool {
 	for _, t := range allowedTools {
-		if t == "introspect_cache" || t == "jq_cached_data" || t == "read_cached_data" {
+		if t == "introspect_cache" || t == "sql_cached_data" {
 			return true
 		}
 	}
@@ -701,16 +701,17 @@ You analyze data from upstream nodes using a systematic approach:
 1. First, check the accumulated context for a cacheId from an upstream data source.
 2. If a cacheId is available:
    - Use 'introspect_cache' to understand the data schema (column names, types, sample records)
-   - Use 'jq_cached_data' to query, filter, aggregate, count, group, and sort the data
-   - Use 'read_cached_data' to page through records if you need to inspect raw data
+   - Use 'sql_cached_data' to query the data using standard SQL
+   - The table name is the cacheId itself (e.g., SELECT * FROM cache_178...)
 3. If no cacheId is available, synthesize your analysis from the raw text data in the accumulated context.
 
-Common jq patterns for data analysis:
-- Count all records: '. | length'
-- Group and count: 'group_by(.FieldName) | map({key: .[0].FieldName, count: length}) | sort_by(-.count)'
-- Filter rows: '[.[] | select(.FieldName == "value")]'
-- Unique values: '[.[].FieldName] | unique'
-- Top N: 'sort_by(-.count) | .[:5]'
+Common SQL patterns for data analysis:
+- Count all records: SELECT COUNT(*) FROM cache_<id>
+- Group and count: SELECT Sector, COUNT(*) as cnt FROM cache_<id> GROUP BY Sector ORDER BY cnt DESC
+- Handle blanks: SELECT COALESCE(Sector, 'Unspecified') as Sector, COUNT(*) as cnt FROM cache_<id> GROUP BY COALESCE(Sector, 'Unspecified')
+- Filter rows: SELECT * FROM cache_<id> WHERE Status = 'Active'
+- Unique values: SELECT DISTINCT Sector FROM cache_<id>
+- Top N: SELECT * FROM cache_<id> ORDER BY Revenue DESC LIMIT 5
 
 On each step, reason about what analysis to perform next.
 If you need to use a tool, output an XML tag: <ACTION>{"tool": "tool_name", "arguments": {"param": "value"}}</ACTION>.
@@ -719,7 +720,7 @@ If you have gathered enough information and are ready to synthesize a final answ
 IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
 
 Be systematic. Start by understanding the data schema, then build your analysis incrementally.
-If a jq filter returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas)
+If a SQL query returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas)
 }
 
 // buildToolSchemaReference generates a compact reference block describing each tool's

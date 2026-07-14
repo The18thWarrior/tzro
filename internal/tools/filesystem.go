@@ -79,8 +79,8 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 					"path":        resolvedPath,
 					"cacheId":     profile.CacheID,
 				})
-				result.Hint = "This is a tabular data file. Use introspect_cache, read_cached_data, or jq_cached_data with the cacheId to explore the data."
-				result.RelatedTools = []string{"introspect_cache", "read_cached_data", "jq_cached_data"}
+				result.Hint = "This is a tabular data file. Use introspect_cache and sql_cached_data with the cacheId to explore the data."
+				result.RelatedTools = []string{"introspect_cache", "sql_cached_data"}
 				return result, nil
 			}
 
@@ -99,8 +99,8 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 						"path":        resolvedPath,
 						"cacheId":     profile.CacheID,
 					})
-					result.Hint = "This is a large JSON data file. Use introspect_cache, read_cached_data, or jq_cached_data with the cacheId to explore the data."
-					result.RelatedTools = []string{"introspect_cache", "read_cached_data", "jq_cached_data"}
+					result.Hint = "This is a large JSON data file. Use introspect_cache and sql_cached_data with the cacheId to explore the data."
+					result.RelatedTools = []string{"introspect_cache", "sql_cached_data"}
 					return result, nil
 				}
 				// Falls through to raw read if JSON profiling fails

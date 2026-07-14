@@ -58,6 +58,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [Cooperative Local Cloud DAG Execution](../cooperative-local-cloud-dag-execution.md) - Hybrid model of local and remote coordination.
 - [Hybrid Cloud Local Worker Execution](../hybrid-cloud-local-worker-execution.md) - Remote task dispatching mechanisms.
 - [Disk-Backed Query Cache Architecture](architecture/disk-backed-jq-cache.md) - Deep subsystem for context compaction, page-sliced pagination, and SQL query execution against ephemeral materialized tables.
+- [SQL Query Language for Cached Data — Spec](../working-specs/sql-query-language-for-cached-data.md) - Implementation spec for replacing jq with SQL. Covers ephemeral materialized tables, 4-layer safety, tool changes, prompt updates, and migration.
 - [Task-to-Workflow Promotion Engine](architecture/task-workflow-promotion.md) - Deep subsystem that dynamically elevates Single Task DAGs to persistent Multi-Task Workflows.
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
 - [Agentic Harness Integration](architecture/agentic-harness-integration.md) - Analysis of MCP Server, Native Plugin, and Sidecar paradigms for orchestrating client-side execution steps.

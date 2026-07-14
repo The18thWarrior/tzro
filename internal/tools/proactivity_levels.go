@@ -26,8 +26,7 @@ var (
 		"list_dir":         PLevelObserve,
 		"search_files":     PLevelObserve,
 		"introspect_cache": PLevelObserve,
-		"read_cached_data": PLevelObserve,
-		"jq_cached_data":   PLevelObserve,
+		"sql_cached_data":   PLevelObserve,
 		"list_tools":       PLevelObserve,
 
 		// L1 — local deterministic preparation

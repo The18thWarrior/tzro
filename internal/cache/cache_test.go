@@ -236,42 +236,27 @@ func TestProcess_LargePayload(t *testing.T) {
 	}
 }
 
-type mockQueryEngine struct {
-	called bool
-}
+func TestSQLQueryEngine_ViaStore(t *testing.T) {
+	// Setup an in-memory ephemeral query DB
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
 
-func (m *mockQueryEngine) Query(ctx context.Context, rawPayload, jqExpr string) string {
-	m.called = true
-	return "mocked_query_success"
-}
-
-func TestQueryEngine_Seam(t *testing.T) {
-	ctx := context.Background()
-	mock := &mockQueryEngine{}
-
-	// Swap DefaultQueryEngine with our mock seam
-	oldEngine := DefaultQueryEngine
-	DefaultQueryEngine = mock
-	defer func() {
-		DefaultQueryEngine = oldEngine
-	}()
-
-	store := &sqlCacheStore{}
-	// Note: We don't need a real db because our mock handles it or we bypass query
-	res := store.Query(ctx, "any_cache_id", ".records | select(.Age > 30)")
-
-	// Because raw payload lookup will check database or file, let's isolate by preparing a file backup or DB
-	// Setup isolated test database to allow getRawPayload to return safely
+	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
-	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+	memory.DB.SetDBPathForTesting("tzro_cache_test_sql.db")
 	defer func() {
 		memory.DB.Close()
-		os.Remove("tzro_cache_test.db")
+		os.Remove("tzro_cache_test_sql.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
 	}()
 	_ = memory.DB.Init()
 
-	_, cacheID, err := DefaultStore.Store(ctx, `[{"Age": 35}]`)
+	ctx := context.Background()
+	_, cacheID, err := DefaultStore.Store(ctx, `[
+		{"Name": "Alice", "Age": 30},
+		{"Name": "Bob", "Age": 25},
+		{"Name": "Charlie", "Age": 35}
+	]`)
 	if err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
@@ -280,38 +265,27 @@ func TestQueryEngine_Seam(t *testing.T) {
 		os.RemoveAll(".tzro/cache")
 	}()
 
-	res = store.Query(ctx, cacheID, ".records | select(.Age > 30)")
-	if res != "mocked_query_success" {
-		t.Errorf("expected mock query engine to be called and return success, got: %s", res)
+	store := &sqlCacheStore{}
+
+	// Test SELECT * via CacheStore.Query
+	res := store.Query(ctx, cacheID, fmt.Sprintf("SELECT * FROM %s", cacheID))
+	if strings.HasPrefix(res, "Error:") {
+		t.Fatalf("Query failed: %s", res)
 	}
-	if !mock.called {
-		t.Errorf("expected mockQueryEngine.Query to have been invoked")
-	}
-}
-
-func TestQueryEngine_Fallback(t *testing.T) {
-	// Directly test default query engine fallback with standard records
-	rawPayload := `{"records": [
-		{"Name": "Alice", "Email": "alice@test.com", "Age": 30.0},
-		{"Name": "Bob", "Email": "bob@test.com", "Age": 25.0},
-		{"Name": "Alice Dup", "Email": "alice@test.com", "Age": 32.0},
-		{"Name": "Diana", "Email": "diana@test.com", "Age": 45.0}
-	]}`
-
-	// Even if jq is absent, the fallback is safely executed:
-	engine := &jqQueryEngine{}
-	ctx := context.Background()
-
-	// 1. Equality filter fallback test
-	resEq := engine.Query(ctx, rawPayload, `[.records[] | select(.Name == "Bob")]`)
-	if !strings.Contains(resEq, `"Name": "Bob"`) || strings.Contains(resEq, `"Name": "Alice"`) {
-		t.Errorf("expected select name == Bob result, got: %s", resEq)
+	if !strings.Contains(res, "Alice") || !strings.Contains(res, "Bob") {
+		t.Errorf("expected result to contain Alice and Bob, got: %s", res)
 	}
 
-	// 2. Numeric filter fallback test
-	resNum := engine.Query(ctx, rawPayload, `[.records[] | select(.Age > 31)]`)
-	if !strings.Contains(resNum, `"Name": "Alice Dup"`) || !strings.Contains(resNum, `"Name": "Diana"`) || strings.Contains(resNum, `"Name": "Bob"`) {
-		t.Errorf("expected select Age > 31 records (Alice Dup & Diana), got: %s", resNum)
+	// Test WHERE filter via SQL
+	res = store.Query(ctx, cacheID, fmt.Sprintf("SELECT Name FROM %s WHERE Age > 28", cacheID))
+	if strings.HasPrefix(res, "Error:") {
+		t.Fatalf("WHERE query failed: %s", res)
+	}
+	if !strings.Contains(res, "Alice") || !strings.Contains(res, "Charlie") {
+		t.Errorf("expected Alice and Charlie (age > 28), got: %s", res)
+	}
+	if strings.Contains(res, "Bob") {
+		t.Errorf("Bob (age 25) should be filtered out, got: %s", res)
 	}
 }
 

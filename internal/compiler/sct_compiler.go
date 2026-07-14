@@ -262,8 +262,8 @@ func isSynthesisGoal(instructions string) bool {
 	return false
 }
 
-// cacheTools are the tools available to cache bridge nodes.
-var cacheTools = []string{"introspect_cache", "read_cached_data", "jq_cached_data"}
+// cacheTools are the tools available to cache bridge and analyze nodes.
+var cacheTools = []string{"introspect_cache", "sql_cached_data"}
 
 // referencesTabularFile returns true if the instructions contain a tabular file extension.
 func referencesTabularFile(instructions string) bool {
@@ -315,8 +315,9 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 		if !referencesTabularFile(origNode.Instructions) {
 			continue
 		}
-		if origNode.Type == "probe" || origNode.Type == "synthesis" {
-			continue // Probes handle cache tools via expansion; synthesis doesn't produce profiles
+		if origNode.Type == "probe" || origNode.Type == "synthesis" || origNode.Type == "analyze" {
+			continue // Probes handle cache tools via expansion; synthesis doesn't produce profiles;
+			         // analyze nodes query SQL directly
 		}
 
 		// Resolve the exec node ID for this original node
@@ -325,14 +326,16 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 			continue
 		}
 
-		// Check if any downstream node already has cache tools
+		// Check if any downstream node already has cache tools or is an analyze node
 		hasDownstreamCacheTools := false
 		for _, edge := range sctEdges {
 			if edge.SourceID == execID {
 				for _, node := range sctNodes {
-					if node.ID == edge.TargetID && hasCacheToolsInAllowed(node.AllowedTools) {
-						hasDownstreamCacheTools = true
-						break
+					if node.ID == edge.TargetID {
+						if hasCacheToolsInAllowed(node.AllowedTools) || node.Type == "analyze" {
+							hasDownstreamCacheTools = true
+							break
+						}
 					}
 				}
 			}
@@ -346,10 +349,10 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 		bridgeNode := GraphNode{
 			ID:     bridgeID,
 			Type:   "action",
-			Action: "jq_cached_data",
+			Action: "sql_cached_data",
 			Instructions: "Query the cached tabular data from the upstream node's Data Profile. " +
-				"Use the cacheId from the upstream output to access the data via jq_cached_data. " +
-				"Return the most relevant subset of data for the downstream task.",
+				"Use the cacheId from the upstream output. " +
+				"Execute: SELECT * FROM cache_<id> LIMIT 100 to return a representative sample.",
 			AllowedTools:        cacheTools,
 			Status:              "pending",
 			ActivationThreshold: 0.0, // Deterministic — no Edge Thought overhead

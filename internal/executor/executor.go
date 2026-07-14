@@ -113,12 +113,10 @@ You have access to the following special tools to explore and query this cached 
 
 1. 'introspect_cache': Retrieve schema, field lists, types, and sample record of the cached payload.
    Format: {"tool_arguments": {"cacheId": "cache_..."}}
-2. 'read_cached_data': Page through the records of an array data type using standard offset-based pagination.
-   Format: {"tool_arguments": {"cacheId": "cache_...", "limit": 10, "offset": 0}}
-3. 'jq_cached_data': Query the cached payload using standard JQ filters (e.g. to filter, map, select, group, or calculate).
-   Format: {"tool_arguments": {"cacheId": "cache_...", "filter": ".records[] | select(.Age > 30)"}}
+2. 'sql_cached_data': Query the cached data using standard SQL. The table name is the cacheId.
+   Format: {"tool_arguments": {"cacheId": "cache_...", "sql": "SELECT Sector, COUNT(*) as cnt FROM cache_... GROUP BY Sector ORDER BY cnt DESC"}}
 
-If you need to analyze, filter, paginate, or count records from the cache, you MUST use one of these tools instead of attempting to read the raw cache envelope directly.`
+If you need to analyze, filter, paginate, or count records from the cache, you MUST use one of these tools.`
 
 // ExecuteGraph runs the compiled topological execution levels.
 // It executes nodes at the same Kahn level in parallel via goroutines,
@@ -351,6 +349,9 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	fmt.Fprintf(os.Stderr, "[Executor] Task %s completed successfully. Synthesizing SOP...\n", graph.TaskID)
 	e.getPublisher().PublishEvent("task_completed", graph.TaskID, "", "Task execution completed successfully")
 	_, _ = notification.Send(ctx, "executor", "info", "Task Completed Successfully", fmt.Sprintf("Task '%s' completed all topological levels successfully.", graph.TaskID), notification.WithTaskID(graph.TaskID))
+
+	// Clean up ephemeral cache tables for this task
+	cache.DropTaskTables(graph.TaskID)
 
 	// Retrieve user goal prompt from first node or custom string
 	goalDescription := "Dynamic Workflow automation goal"
@@ -954,7 +955,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			if upstreamCtx != "" {
 				// Enrich analyze nodes with introspect_cache schema so the probe
 				// sees the actual data shape (flat JSON array) and column names,
-				// enabling correct jq filter generation.
+				// enabling correct SQL query generation.
 				if isAnalyzeConfig(node.AllowedTools) {
 					upstreamCtx = enrichCacheBridgeContext(ctx, upstreamCtx, node.Instructions)
 				}
@@ -1384,14 +1385,14 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// Schema enrichment for cache bridge nodes: inject introspect_cache output
 	// so the model sees the actual data shape (flat JSON array) rather than
 	// assuming the dataProfile envelope structure from upstream output.
-	if isCacheExploration && node.Action == "jq_cached_data" {
+	if isCacheExploration && node.Action == "sql_cached_data" {
 		accumulatedCtx = enrichCacheBridgeContext(ctx, accumulatedCtx, interpolatedPrompt)
 	}
 
 	var systemPrompt string
 	if isCacheExploration {
 		systemPrompt = fmt.Sprintf(
-			"You are the Local Tactician Node Executor. Your job is to convert the dynamic user step instruction into structured tool parameters.\n\nALLOWED TOOLS:\n- %s\n- introspect_cache\n- read_cached_data\n- jq_cached_data%s",
+			"You are the Local Tactician Node Executor. Your job is to convert the dynamic user step instruction into structured tool parameters.\n\nALLOWED TOOLS:\n- %s\n- introspect_cache\n- sql_cached_data%s",
 			node.Action,
 			CacheExplorationGuide,
 		)

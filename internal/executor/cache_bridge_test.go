@@ -46,8 +46,8 @@ func TestMaybeInjectCacheBridge_InjectsWhenOutputHasProfile(t *testing.T) {
 	}
 
 	bridge := nodeIndex["cache_bridge_step_1"]
-	if bridge.Action != "jq_cached_data" {
-		t.Errorf("bridge action = %q, want jq_cached_data", bridge.Action)
+	if bridge.Action != "sql_cached_data" {
+		t.Errorf("bridge action = %q, want sql_cached_data", bridge.Action)
 	}
 	if bridge.Status != "pending" {
 		t.Errorf("bridge status = %q, want pending", bridge.Status)
@@ -101,9 +101,9 @@ func TestMaybeInjectCacheBridge_SkipsWhenCompileTimeBridgeExists(t *testing.T) {
 			{
 				ID:           "cache_bridge_step_1",
 				Type:         "action",
-				Action:       "jq_cached_data",
+				Action:       "sql_cached_data",
 				Status:       "pending",
-				AllowedTools: []string{"jq_cached_data"},
+				AllowedTools: []string{"sql_cached_data"},
 			},
 			{
 				ID:     "step_2",
@@ -145,7 +145,7 @@ func TestMaybeInjectCacheBridge_SkipsWhenDownstreamHasCacheTools(t *testing.T) {
 				ID:           "step_2",
 				Type:         "action",
 				Status:       "pending",
-				AllowedTools: []string{"jq_cached_data", "read_cached_data"},
+				AllowedTools: []string{"sql_cached_data"},
 			},
 		},
 		Edges: []compiler.GraphEdge{
