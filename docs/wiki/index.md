@@ -57,7 +57,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [Llama Server Sidecar](../llama-server-sidecar.md) - Spec of llama.cpp local server runtime interface.
 - [Cooperative Local Cloud DAG Execution](../cooperative-local-cloud-dag-execution.md) - Hybrid model of local and remote coordination.
 - [Hybrid Cloud Local Worker Execution](../hybrid-cloud-local-worker-execution.md) - Remote task dispatching mechanisms.
-- [Disk-Backed JQ Cache Architecture](architecture/disk-backed-jq-cache.md) - Deep subsystem for context compaction, page-sliced pagination, and JQ process queries.
+- [Disk-Backed Query Cache Architecture](architecture/disk-backed-jq-cache.md) - Deep subsystem for context compaction, page-sliced pagination, and SQL query execution against ephemeral materialized tables.
 - [Task-to-Workflow Promotion Engine](architecture/task-workflow-promotion.md) - Deep subsystem that dynamically elevates Single Task DAGs to persistent Multi-Task Workflows.
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
 - [Agentic Harness Integration](architecture/agentic-harness-integration.md) - Analysis of MCP Server, Native Plugin, and Sidecar paradigms for orchestrating client-side execution steps.
@@ -107,6 +107,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0043: Two-Tier Context Budget](../adr/0043-two-tier-context-budget.md) - Probe step generation cap (max_tokens via context key) and per-node accumulated context truncation to prevent local model speed collapse from oversized prompts.
 - [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md) - Splits context assembly into synthesis-path (untruncated validators, no ceiling) and mid-DAG-path (tiered allocation, dynamic ceiling). Supersedes ADR-0043 Mechanism B.
 - [ADR-0046: Data Profiler and Cache Bridge Node](../adr/0046-data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file, path-referenced caching, and two-layer deterministic Cache Bridge Node injection. Narrows ADR-0019 bypass to non-tabular files.
+- [ADR-0048: SQL Query Language for Cached Data](../adr/0048-sql-query-language-for-cached-data.md) - Replaces jq with SQL as the query language for cached tabular data. Ephemeral materialized tables in a separate query database with 4-layer safety sandboxing.
 
 ## Ingested Sources
 

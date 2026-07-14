@@ -4,6 +4,17 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-13T22:53:00-07:00] grill-with-docs | SQL Query Language for Cached Data (ADR-0048) — DESIGN COMPLETE
+
+- **Activity**: Grill-with-docs session resolving 13 design branches for replacing jq with SQL as the query language for cached tabular data analysis. Pivoted from the handoff's proposed structured query spec (GBNF-constrained JSON) to SQL, leveraging existing SQLite infrastructure and SQL's massive representation in LLM training data.
+- **Decisions Captured**: ADR-0048 (SQL Query Language for Cached Data). Ephemeral materialized tables in separate query DB (`query.db`). CacheId as table name. Profiler-inferred column types with NULL-on-failure coercion. Tool-based interface `sql_cached_data` with `{cacheId, sql}`. 4-layer SQL safety (separate DB, statement parsing, table allowlist, query timeout/row cap). Task completion cleanup + 1-day TTL sweep. Clean tool rename from `jq_cached_data` to `sql_cached_data`. Drop `read_cached_data` (subsumed by SQL). Keep `introspect_cache`. Cache Bridge skips Analyze Node paths, uses SQL for non-analyze hydration. Singleton `cache.QueryDB` with `_cache_tables` metadata. Lazy re-materialization from prod DB JSON blob on cache miss. JSON array result format with 500-row cap. Simple SQL patterns in prompts (no window functions), multi-step Thought Chain composition.
+- **Glossary Updates**: Renamed "Disk-Backed JQ Cache" → "Disk-Backed Query Cache". Updated Analyze Node, Cache Bridge Node, Data Profiler definitions. Updated example dialogue.
+- **New Files**: `docs/adr/0048-sql-query-language-for-cached-data.md`
+- **Modified Files**: `CONTEXT.md` (5 glossary updates), `docs/wiki/index.md` (ADR-0048 linked, cache architecture description updated)
+- **Implementation Files (planned)**: `internal/cache/query.go` (rewrite — SQL executor replacing jq), `internal/cache/cache.go` (table materialization at Store/StoreFileRef), `internal/tools/tools.go` (new `sql_cached_data` tool, remove `read_cached_data` and `jq_cached_data`), `internal/executor/probe.go` (analyze system prompt — SQL patterns), `internal/executor/cache_bridge.go` (SQL hydration, skip analyze paths), `internal/executor/executor.go` (CacheExplorationGuide update), `internal/compiler/sct_compiler.go` (tool list and instruction updates)
+
+---
+
 ## [2026-07-13T11:56:00-07:00] grill-with-docs | Data Profiler & Cache Bridge Node (ADR-0046) — SPEC COMPLETE
 
 - **Activity**: Grill-with-docs session resolving 11 design branches for content-aware tabular file profiling in `read_file` and deterministic Cache Bridge Node injection. No code changes — design only.

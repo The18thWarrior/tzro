@@ -130,7 +130,7 @@ An autonomous execution node type that runs a bounded, multi-step **Thought Chai
 _Avoid_: Action Node (single-step), research agent, sub-task
 
 **Analyze Node**:
-An abstract execution node type that runs a bounded **Thought Chain** data analysis loop using the **Local Model**. Automatically equipped with cache exploration tools (`introspect_cache`, `read_cached_data`, `jq_cached_data`) by the **Kahn Compiler**. When upstream data is tabular (routed through the **Data Profiler**), the Thought Chain uses cache tools for aggregation, filtering, and grouping. When upstream data is non-tabular, gracefully degrades to synthesis over accumulated context. Gives the **Strategic Planner** a clean "analyze this data" abstraction without exposing cache implementation details.
+An abstract execution node type that runs a bounded **Thought Chain** data analysis loop using the **Local Model**. Automatically equipped with cache exploration tools (`introspect_cache`, `sql_cached_data`) by the **Kahn Compiler**. When upstream data is tabular (routed through the **Data Profiler**), the Thought Chain queries materialized SQL tables in the ephemeral query database for aggregation, filtering, and grouping. When upstream data is non-tabular, gracefully degrades to synthesis over accumulated context. Gives the **Strategic Planner** a clean "analyze this data" abstraction without exposing cache implementation details.
 _Avoid_: Probe Node (codebase exploration), Action Node (single tool call), Cache Bridge Node (deterministic hydration)
 
 **Thought Chain**:
@@ -158,9 +158,9 @@ _Avoid_: Context compaction, prompt clipping, prompt truncation
 A simulated POSIX directory structure and active path context maintained in-memory by the offline benchmark runner to preserve stateful environmental continuity for the executing agent across conversation turns.
 _Avoid_: Mock folder, hardcoded directory, local sandbox path
 
-**Disk-Backed JQ Cache**:
-An on-disk caching layer storing large compacted payloads and exposing a targeted JQ exploration guide interface to the executor.
-_Avoid_: Local temp file, tool database
+**Disk-Backed Query Cache**:
+An on-disk caching layer storing large compacted payloads as JSON blobs (long-term, in the production database) and as materialized SQL tables (ephemeral, in a separate query database). The ephemeral tables are created from the **Data Profiler**'s column metadata at cache time and expose a standard SQL query interface to the executor. Tables are dropped on **Task** completion and swept by a 1-day TTL as a safety net. Re-materialized lazily on demand if the ephemeral table is missing but the JSON blob persists.
+_Avoid_: JQ Cache, local temp file, tool database
 
 **Relational Knowledge Graph**:
 A local relational node-edge memory database representing enterprise system entity links, traversed via Neighborhood Multi-Hop search.
@@ -235,11 +235,11 @@ A **Proactivity Ladder** tier annotation declared per tool at registration time,
 _Avoid_: Tool permission, tool safety rating, capability flag
 
 **Data Profiler**:
-A content-aware detection and statistical analysis layer within `read_file` that identifies tabular file formats (CSV, TSV, Excel, large JSON arrays) and replaces raw line dumping with a structured profile — column schema, type inference, null rates, cardinality, adaptive sample rows, and a **Disk-Backed JQ Cache** reference. Non-tabular files bypass the profiler and return raw content.
+A content-aware detection and statistical analysis layer within `read_file` that identifies tabular file formats (CSV, TSV, Excel, large JSON arrays) and replaces raw line dumping with a structured profile — column schema, type inference, null rates, cardinality, adaptive sample rows, and a **Disk-Backed Query Cache** reference. Non-tabular files bypass the profiler and return raw content.
 _Avoid_: File analyzer, data importer, schema extractor
 
 **Cache Bridge Node**:
-A lightweight deterministic node auto-injected by the **Kahn Compiler** (at compile time) or **Executor** (at runtime) between a node that produced a **Disk-Backed JQ Cache** envelope and its downstream consumers. Unconditionally hydrates the cache data using `jq_cached_data` so downstream nodes receive queryable results rather than opaque envelope metadata. Injected only when no downstream node already has cache exploration tools in its `allowedTools`.
+A lightweight deterministic node auto-injected by the **Kahn Compiler** (at compile time) or **Executor** (at runtime) between a node that produced a **Disk-Backed Query Cache** envelope and its non-analyze downstream consumers. Hydrates a representative data sample using `sql_cached_data` (`SELECT * FROM cache_<id> LIMIT 100`) so downstream synthesis or action nodes receive data rather than opaque envelope metadata. Skipped when the downstream node is an **Analyze Node** (which queries the cache directly). Injected only when no downstream node already has cache exploration tools in its `allowedTools`.
 _Avoid_: Cache adapter, data loader node, bridge step
 
 ---
@@ -252,7 +252,7 @@ _Avoid_: Cache adapter, data loader node, bridge step
 >
 > **Dev**: "Got it. When the **Local Model** makes the API calls, how do we make sure it doesn't output invalid SOQL/JQL parameters?"
 >
-> **Domain Expert**: "We inject a targeted **Procedural Micro-Skill** matching that trigger, and force the output through a **GBNF Constraint** matching HubSpot's schemas. If the API returns a massive contact payload, the **Compaction Pipeline** will compress it or envelope it in the **Disk-Backed JQ Cache**."
+> **Domain Expert**: "We inject a targeted **Procedural Micro-Skill** matching that trigger, and force the output through a **GBNF Constraint** matching HubSpot's schemas. If the API returns a massive contact payload, the **Compaction Pipeline** will compress it or envelope it in the **Disk-Backed Query Cache**."
 >
 > **Dev**: "When a user asks a general knowledge question — like 'what time zone does Salesforce use?' — does the **Local Model** answer that too?"
 >
