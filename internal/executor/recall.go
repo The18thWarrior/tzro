@@ -7,6 +7,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"tzro/internal/cache"
+	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
 )
@@ -29,6 +31,16 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 		// probe/analyze node — much more useful than raw step previews.
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok && state.RawOutput != "" {
 			manifest += fmt.Sprintf("#### Synthesis Output:\n%s\n\n", state.RawOutput)
+		}
+
+		// Fix 2 (Cache ID Pinning): Surface the correct cacheId explicitly
+		// so the model doesn't need to "discover" it from abbreviated context.
+		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
+			cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+			combined := state.Output + "\n" + state.RawOutput
+			if cacheId := cacheIdRe.FindString(combined); cacheId != "" {
+				manifest += fmt.Sprintf("#### Active Cache Table: %s\nQuery this table using SQL. Examples:\n- SELECT COUNT(*) FROM %s\n- SELECT ColumnName, COUNT(*) as cnt FROM %s GROUP BY ColumnName ORDER BY cnt DESC\n- SELECT * FROM %s LIMIT 10\n\n", cacheId, cacheId, cacheId, cacheId)
+			}
 		}
 
 		// Then include step-level detail as supporting evidence
@@ -134,14 +146,14 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 	// Final Synthesis Pass (Reduce)
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s executing final synthesis (Reduce Phase).\n", recallNodeID)
 
-	// If the model short-circuited the recall loop (signaled SYNTHESIZE_READY
-	// without calling update_refined_context), refinedContext will be empty.
-	// Fall back to the manifest which already contains the upstream probe's
-	// synthesis output and step-level details — sufficient for final synthesis.
+	// Fix 1 (Recall Context Injection): When refinedContext is empty (the local
+	// model short-circuited to SYNTHESIZE_READY without calling update_refined_context),
+	// build an enriched fallback from actual tool outputs instead of the bare manifest
+	// which only has 100-char previews of each step.
 	synthesisInput := refinedContext
 	if strings.TrimSpace(synthesisInput) == "" {
-		synthesisInput = manifest
-		fmt.Fprintf(os.Stderr, "[Recall] Node %s: refinedContext empty, falling back to manifest (%d chars)\n", recallNodeID, len(manifest))
+		synthesisInput = buildEnrichedRecallFallback(taskID, upstreamNodeIDs, manifest)
+		fmt.Fprintf(os.Stderr, "[Recall] Node %s: enriched fallback context (%d chars)\n", recallNodeID, len(synthesisInput))
 	}
 
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
@@ -150,9 +162,34 @@ Goal: %s
 ## Refined Discovery Context (Verified Facts):
 %s
 
-Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, synthesisInput)
+Review the gathered facts and produce a comprehensive, structured final answer.
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.`, goal, synthesisInput)
 
-	return engine.Infer(ctx, synthPrompt, lastResult, "")
+	result, err := engine.Infer(ctx, synthPrompt, lastResult, "")
+	if err != nil {
+		return "", err
+	}
+
+	// Fix 3 (Synthesis Generation Guard): Validate the synthesis output.
+	// Detect control token leaks, degenerate output, and repetitive content.
+	reason := validateSynthesisOutput(result)
+	if reason != "" {
+		fmt.Fprintf(os.Stderr, "[Recall] Synthesis output invalid (%s), escalating to cloud\n", reason)
+		if !isCloudEscalationBlocked() {
+			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+				{Role: "system", Content: synthPrompt},
+				{Role: "user", Content: lastResult},
+			}, "", taskID)
+			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+				fmt.Fprintf(os.Stderr, "[Recall] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
+				return cloudResult, nil
+			}
+		}
+	}
+
+	// Strip any leaked control tokens from the output
+	result = stripControlTokens(result)
+	return result, nil
 }
 
 func extractAction(response string) (string, map[string]interface{}) {
@@ -183,4 +220,129 @@ Compress the following list of facts by:
 Output ONLY the compressed list of facts starting with '- '.`, goal, context)
 
 	return engine.Infer(ctx, prompt, "System: Context limit reached. Compacting...", "")
+}
+
+// buildEnrichedRecallFallback constructs a rich fallback context when the Recall
+// loop's refinedContext is empty (the local model short-circuited to SYNTHESIZE_READY
+// without calling update_refined_context). Instead of falling back to the bare
+// manifest (which only has 100-char step previews), this function includes:
+//   - The upstream probe's synthesis output (from manifest)
+//   - Full tool outputs from successful probe steps (capped at 2000 chars each)
+//   - Cache introspection data if a cacheId is present
+//
+// This directly addresses the root cause of 4/5 benchmark failures where the
+// Recall node produced empty/degenerate synthesis from insufficient context.
+func buildEnrichedRecallFallback(taskID string, upstreamNodeIDs []string, manifest string) string {
+	var enriched strings.Builder
+
+	// Start with the manifest (contains synthesis output + step metadata)
+	enriched.WriteString(manifest)
+	enriched.WriteString("\n\n## Enriched Tool Outputs (Full Data)\n")
+
+	cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+	maxOutputLen := 2000
+
+	for _, nodeID := range upstreamNodeIDs {
+		steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID)
+		if err != nil {
+			continue
+		}
+
+		for _, s := range steps {
+			if s.ToolName == "" || s.ToolOutput == "" {
+				continue
+			}
+			// Only include steps with substantive output (not error messages)
+			if strings.HasPrefix(s.ToolOutput, "Error") || strings.HasPrefix(s.ToolOutput, "No valid") {
+				continue
+			}
+			output := s.ToolOutput
+			if len(output) > maxOutputLen {
+				output = output[:maxOutputLen] + "\n... (truncated)"
+			}
+			enriched.WriteString(fmt.Sprintf("\n### Step %d: %s\nArguments: %s\nOutput:\n%s\n", s.StepIndex, s.ToolName, s.ToolArgs, output))
+		}
+
+		// Include cache introspection if available
+		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
+			combined := state.Output + "\n" + state.RawOutput
+			if cacheId := cacheIdRe.FindString(combined); cacheId != "" {
+				schema := cache.DefaultStore.Introspect(context.Background(), cacheId)
+				if schema != "" && !strings.HasPrefix(schema, "Error:") {
+					enriched.WriteString(fmt.Sprintf("\n### Cache Data Schema for %s\n%s\n", cacheId, truncate(schema, 3000)))
+				}
+			}
+		}
+	}
+
+	return enriched.String()
+}
+
+// controlTokens are internal control signals that should never appear in user-facing output.
+var controlTokens = []string{
+	"<SYNTHESIZE_READY>",
+	"SYNTHESIZE_READY",
+	"<ACTION>",
+	"</ACTION>",
+	"<TOOL_CALL>",
+	"</TOOL_CALL>",
+}
+
+// validateSynthesisOutput checks the synthesis output for common failure modes:
+//   - Control token leaks (SYNTHESIZE_READY, ACTION, TOOL_CALL)
+//   - Degenerate output (< 50 chars after stripping control tokens)
+//   - Repetitive content (3+ repeated 4-word sequences)
+//
+// Returns empty string if valid, or a reason string describing the failure.
+func validateSynthesisOutput(output string) string {
+	// Strip control tokens for length check
+	cleaned := output
+	for _, token := range controlTokens {
+		cleaned = strings.ReplaceAll(cleaned, token, "")
+	}
+	cleaned = strings.TrimSpace(cleaned)
+
+	// Check for degenerate output
+	if len(cleaned) < 50 {
+		return fmt.Sprintf("degenerate output (%d chars after cleaning)", len(cleaned))
+	}
+
+	// Check if output IS a control token (the entire output)
+	trimmed := strings.TrimSpace(output)
+	for _, token := range controlTokens {
+		if trimmed == token {
+			return fmt.Sprintf("output is bare control token: %s", token)
+		}
+	}
+
+	// Check for repetitive content: detect 3+ occurrences of any 4-word sequence
+	words := strings.Fields(cleaned)
+	if len(words) >= 12 { // Need at least 12 words to detect 3x repetition of 4-word sequences
+		ngramCounts := make(map[string]int)
+		for i := 0; i <= len(words)-4; i++ {
+			ngram := strings.Join(words[i:i+4], " ")
+			ngramCounts[ngram]++
+			if ngramCounts[ngram] >= 3 {
+				return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 40), ngramCounts[ngram])
+			}
+		}
+	}
+
+	// Check for placeholder patterns (e.g., *[X]*, *[Top Sector]*)
+	placeholderRe := regexp.MustCompile(`\*\[.+?\]\*`)
+	placeholders := placeholderRe.FindAllString(output, -1)
+	if len(placeholders) >= 3 {
+		return fmt.Sprintf("output contains %d template placeholders", len(placeholders))
+	}
+
+	return ""
+}
+
+// stripControlTokens removes internal control signals from user-facing output.
+func stripControlTokens(output string) string {
+	result := output
+	for _, token := range controlTokens {
+		result = strings.ReplaceAll(result, token, "")
+	}
+	return strings.TrimSpace(result)
 }

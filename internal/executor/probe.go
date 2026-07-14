@@ -542,6 +542,27 @@ You have completed your exploration. Review the findings and produce a comprehen
 		return "Synthesis inference failed: " + err.Error(), nil
 	}
 
+	// Fix 3 (Synthesis Generation Guard): Validate probe synthesis output.
+	// Detect control token leaks, degenerate output, and repetitive content.
+	// Re-attempt with cloud model on failure (same pattern as ConfidenceTier escalation).
+	reason := validateSynthesisOutput(result)
+	if reason != "" {
+		fmt.Fprintf(os.Stderr, "[Probe] Synthesis output invalid (%s), escalating to cloud\n", reason)
+		if !isCloudEscalationBlocked() {
+			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: contextStr},
+			}, synthSchema, taskID)
+			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+				fmt.Fprintf(os.Stderr, "[Probe] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
+				result = cloudResult
+			}
+		}
+	}
+
+	// Strip control tokens from the result before downstream processing
+	result = stripControlTokens(result)
+
 	// Return the full JSON result so the Response Resolver can parse binding keys
 	// directly from the JSON structure via recursive_key search (Tier 1).
 	// Previously we extracted only the "synthesis" string field, which discarded

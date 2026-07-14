@@ -50,6 +50,10 @@ type ExecutionHook interface {
 
 var ErrTaskPaused = fmt.Errorf("task execution paused by hook")
 
+// tabularFileRe detects tabular file extension references in node instructions.
+// Mirrors compiler.tabularExtRe — duplicated here to avoid circular dependency.
+var tabularFileRe = regexp.MustCompile(`\.(csv|tsv|xlsx|xls|parquet)\b`)
+
 type ExecutionEngine struct {
 	Publisher      telemetry.EventPublisher
 	EdgeThoughtGen EdgeThoughtInference // optional: enables neural edge traversal (ADR-0024)
@@ -936,6 +940,26 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 		if node.ProbeConfig != nil {
 			probeConfig = *node.ProbeConfig
+		}
+
+		// Fix 4 (Probe allowedTools Enrichment): Runtime expansion of cache tools
+		// for standalone probes. The compiler's injectCacheBridgeNodes handles SCT
+		// pipeline probes, but standalone probes (planned directly as a single node)
+		// bypass the compiler and arrive here without cache tools. If the probe has
+		// read_file and references tabular files, expand allowedTools at runtime.
+		if (node.Type == "probe" || node.Type == "analyze") && !isAnalyzeConfig(probeConfig.AllowedTools) {
+			hasReadFile := false
+			for _, t := range probeConfig.AllowedTools {
+				if t == "read_file" {
+					hasReadFile = true
+					break
+				}
+			}
+			if hasReadFile && tabularFileRe.MatchString(node.Instructions) {
+				probeConfig.AllowedTools = append(probeConfig.AllowedTools, "introspect_cache", "sql_cached_data")
+				node.AllowedTools = probeConfig.AllowedTools
+				fmt.Fprintf(os.Stderr, "[Executor] Expanded probe allowedTools with cache tools for %s\n", node.ID)
+			}
 		}
 
 		// Inject the original task spec/goal so the Probe knows the actual
