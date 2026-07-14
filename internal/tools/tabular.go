@@ -7,10 +7,27 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// sqlColumnNameRe matches characters that are not valid in SQLite unquoted identifiers.
+// This MUST match the sanitizeColumnName logic in cache/query_db.go so that
+// column names reported by the DataProfile match the materialized SQL table.
+var sqlColumnNameRe = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
+// sanitizeSQLColumnName normalizes a raw header name to match the column name
+// used in the materialized SQL table. Without this, the model sees "Target_Account?"
+// in the profile but the table column is "Target_Account_", causing query failures.
+func sanitizeSQLColumnName(name string) string {
+	cleaned := sqlColumnNameRe.ReplaceAllString(name, "_")
+	if cleaned == "" || cleaned[0] >= '0' && cleaned[0] <= '9' {
+		cleaned = "t_" + cleaned
+	}
+	return cleaned
+}
 
 // DataProfile is the structured profile returned by the Data Profiler
 // when read_file encounters a tabular file (CSV, TSV, Excel, large JSON array).
@@ -288,7 +305,7 @@ func ProfileTabularFile(filePath string) (*DataProfile, error) {
 		}
 
 		col := ColumnProfile{
-			Name:        acc.name,
+			Name:        sanitizeSQLColumnName(acc.name),
 			Type:        colType,
 			NullRate:    nullRate,
 			Cardinality: cardinality,
@@ -317,7 +334,12 @@ func ProfileTabularFile(filePath string) (*DataProfile, error) {
 	}
 
 	// Build sample rows with adaptive sizing
-	sampleRows := buildSampleRows(headers, firstRows, reservoir, columns, rowCount)
+	// Sanitize headers for sample rows to match ColumnProfile names
+	sanitizedHeaders := make([]string, len(headers))
+	for i, h := range headers {
+		sanitizedHeaders[i] = sanitizeSQLColumnName(h)
+	}
+	sampleRows := buildSampleRows(sanitizedHeaders, firstRows, reservoir, columns, rowCount)
 
 	cacheID := fmt.Sprintf("cache_%d", time.Now().UnixNano())
 
@@ -709,7 +731,7 @@ func ProfileJSONFile(filePath string) (*DataProfile, error) {
 			nullRate = math.Round(float64(acc.nullCount)/float64(len(arr))*10000) / 10000
 		}
 		columns[i] = ColumnProfile{
-			Name:        acc.name,
+			Name:        sanitizeSQLColumnName(acc.name),
 			Type:        colType,
 			NullRate:    nullRate,
 			Cardinality: cardinality,
@@ -732,7 +754,12 @@ func ProfileJSONFile(filePath string) (*DataProfile, error) {
 		}
 		firstRows = append(firstRows, row)
 	}
-	sampleRows := buildSampleRows(headers, firstRows, nil, columns, len(arr))
+	// Sanitize headers for sample rows to match ColumnProfile names
+	sanitizedHeaders := make([]string, len(headers))
+	for i, h := range headers {
+		sanitizedHeaders[i] = sanitizeSQLColumnName(h)
+	}
+	sampleRows := buildSampleRows(sanitizedHeaders, firstRows, nil, columns, len(arr))
 
 	return &DataProfile{
 		Format:        "json",
