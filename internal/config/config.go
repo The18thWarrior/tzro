@@ -110,6 +110,13 @@ type EngineConfig struct {
 	MCTSMaxSimulations int `json:"mctsMaxSimulations,omitempty"`
 	// MCTSSpeculationCeil is the max proactivity level for real execution in rollouts. Default 2 (L2-Suggest).
 	MCTSSpeculationCeil int `json:"mctsSpeculationCeil,omitempty"`
+
+	// ProbeUseWorkerModel switches probe step inference from the 1B router model
+	// to the larger worker model. The router is fast but may make poor exploration
+	// decisions and misjudge synthesis readiness. The worker is slower but produces
+	// higher-quality routing and more accurate convergence signals.
+	// Default false (use router). Set to true to use the worker model.
+	ProbeUseWorkerModel bool `json:"probeUseWorkerModel,omitempty"`
 }
 
 type BackendConfig struct {
@@ -260,6 +267,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
@@ -303,6 +311,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
@@ -694,6 +703,17 @@ func GetMCTSSpeculationCeil() int {
 	if v <= 0 {
 		return 2
 	}
+	return v
+}
+
+// GetProbeUseWorkerModel returns whether probe step inference should use the
+// worker model instead of the router model. When true, probe exploration and
+// synthesis readiness decisions benefit from the worker's larger context window
+// and higher-quality reasoning at the cost of speed.
+func GetProbeUseWorkerModel() bool {
+	configMutex.RLock()
+	v := GlobalConfig.ProbeUseWorkerModel
+	configMutex.RUnlock()
 	return v
 }
 

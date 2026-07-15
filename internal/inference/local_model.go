@@ -366,15 +366,19 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 				args[i+1] = "16384"
 			}
 			if a == "--n-predict" && i+1 < len(args) {
-				args[i+1] = "1024" // Router outputs are short
+				args[i+1] = "4096" // Router outputs: compaction can produce longer reasoning summaries
+			}
+			// Override --cache-reuse to 256 (compaction system prompt prefix caching)
+			if a == "--cache-reuse" && i+1 < len(args) {
+				args[i+1] = "256"
 			}
 		}
-		// Remove speculative decoding args (overkill for router)
+		// Remove speculative decoding args (overkill for router) and vision projector
 		var cleanArgs []string
 		skip := false
 		for _, a := range args {
 			if a == "--spec-type" || a == "--spec-draft-model" || a == "--spec-draft-n-max" ||
-				a == "--slot-save-path" || a == "--cache-reuse" || a == "--mmproj" {
+				a == "--slot-save-path" || a == "--mmproj" {
 				skip = true
 				continue
 			}
@@ -385,7 +389,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			cleanArgs = append(cleanArgs, a)
 		}
 		args = cleanArgs
-		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384 (routing mode, no speculative decoding)\n")
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=256 (routing mode, no speculative decoding)\n")
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)

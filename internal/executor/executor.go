@@ -968,7 +968,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: downstream binding keys: %v\n", node.ID, downstreamBindingKeys)
 		}
 
-		probeEngine := &DefaultProbeInference{}
+		probeEngine := ProbeInferenceEngine(&DefaultProbeInference{})
+		if config.GetProbeUseWorkerModel() {
+			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: using worker model for step inference (probeUseWorkerModel=true)\n", node.ID)
+			probeEngine = &WorkerInference{}
+		}
 		synthesisEngine := &WorkerInference{}
 		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
 		if err != nil {

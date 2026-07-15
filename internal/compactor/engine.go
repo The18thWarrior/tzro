@@ -25,6 +25,8 @@ type CompactEngine interface {
 type RouterEngine struct{}
 
 // CompactReasoning compresses a reasoning text chunk via the router model.
+// Generation is capped at 256 tokens to prevent inflation: a ~500-char input
+// chunk (~125 tokens) should compress to fewer tokens, not expand to 4096.
 func (r *RouterEngine) CompactReasoning(ctx context.Context, chunk string) (string, error) {
 	messages := []inference.InferenceMessage{
 		{
@@ -37,7 +39,10 @@ func (r *RouterEngine) CompactReasoning(ctx context.Context, chunk string) (stri
 		},
 	}
 
-	result, err := inference.CallRouter(ctx, messages, "")
+	// Cap generation to prevent inflation: compaction output must be shorter
+	// than input. 256 tokens ≈ ~1000 chars, generous for a 500-char input chunk.
+	cappedCtx := context.WithValue(ctx, inference.MaxTokensKey, 256)
+	result, err := inference.CallRouter(cappedCtx, messages, "")
 	if err != nil {
 		return chunk, err // Fall back to original on error
 	}

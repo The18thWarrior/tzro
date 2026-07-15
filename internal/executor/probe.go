@@ -166,10 +166,11 @@ func RunProbe(
 	if stepBudget <= 0 {
 		stepBudget = 30
 	}
-	compactEvery := config.CompactEvery
-	if compactEvery <= 0 {
-		compactEvery = 5
-	}
+	// compactEvery is an architectural constant, not a planner decision.
+	// The router model's 16K context window requires frequent compaction to
+	// prevent accumulated tool output from exceeding the window. The planner
+	// should not control this — it's a systems constraint.
+	const compactEvery = 3
 
 	// Build allowed tools set for validation
 	allowedToolSet := make(map[string]bool)
@@ -506,7 +507,9 @@ func RunProbe(
 		}
 
 		if step%compactEvery == 0 {
-			_ = compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, synthesisEngine)
+			if err := compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, synthesisEngine); err != nil {
+				fmt.Fprintf(os.Stderr, "[Probe Compactor] Warning: compaction failed: %v\n", err)
+			}
 		}
 	}
 
@@ -796,9 +799,18 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inf
 	}
 
 	if accumulatedCtx.Len() > 0 {
+		// Defense-in-depth: cap accumulated context to fit within the router's 16K
+		// context window. Reserve ~3K tokens for system prompt + user prompt.
+		// 13K tokens ≈ ~52K chars at ~4 chars/token.
+		const maxAccumulatedCtxChars = 52000
+		ctxStr := accumulatedCtx.String()
+		if len(ctxStr) > maxAccumulatedCtxChars {
+			fmt.Fprintf(os.Stderr, "[Probe] Warning: accumulated context (%d chars) exceeds %d limit, truncating\n", len(ctxStr), maxAccumulatedCtxChars)
+			ctxStr = ctxStr[:maxAccumulatedCtxChars] + "\n[... context truncated to fit model window ...]\n"
+		}
 		msgs = append(msgs, inference.InferenceMessage{
 			Role:    "user",
-			Content: accumulatedCtx.String(),
+			Content: ctxStr,
 		})
 		msgs = append(msgs, inference.InferenceMessage{
 			Role:    "assistant",
@@ -858,7 +870,18 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 	// Use RouterEngine for reasoning compression (fast, cheap via 1B router).
 	// Tool outputs are handled deterministically — never LLM-compressed.
 	compactEngine := &compactor.RouterEngine{}
-	result, err := compactor.CompactSteps(ctx, compactorSteps, "", 0, compactEngine)
+	// Budget: reserve ~3K tokens for system prompt + recent steps + user prompt.
+	// Compaction summary gets ~13K tokens of the router's 16K window ≈ ~52K chars.
+	const compactionBudgetChars = 52000
+	result, err := compactor.CompactSteps(ctx, compactorSteps, "", compactionBudgetChars, compactEngine)
+
+	// Fix 4: Post-compaction size validation — detect inflation and warn.
+	// If compaction output exceeds input, the LLM reasoning compression is
+	// inflating instead of compressing. Log a warning for diagnostics.
+	if err == nil && result.OutputChars > result.InputChars {
+		fmt.Fprintf(os.Stderr, "[Probe Compactor] WARNING: compaction inflated output (%d→%d chars, %.1fx). Router may be generating verbose responses.\n",
+			result.InputChars, result.OutputChars, float64(result.OutputChars)/float64(result.InputChars))
+	}
 	if err != nil {
 		return fmt.Errorf("structured compaction failed: %w", err)
 	}
