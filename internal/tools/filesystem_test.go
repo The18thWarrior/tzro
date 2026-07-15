@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"tzro/internal/inference"
 	"tzro/internal/memory"
 )
 
@@ -924,5 +925,215 @@ func TestWriteFile_CountsLines(t *testing.T) {
 	linesWritten := data["linesWritten"].(float64)
 	if linesWritten != 5 {
 		t.Errorf("expected 5 lines, got %v", linesWritten)
+	}
+}
+
+// ==========================================
+// Goal-directed file compaction tests
+// ==========================================
+
+// TestReadFile_GoalCompaction_SmallFile_ReturnsRaw verifies that files
+// at or below the compaction threshold are returned raw even when a
+// probe goal is present in context.
+func TestReadFile_GoalCompaction_SmallFile_ReturnsRaw(t *testing.T) {
+	root, v := setupFilesystemTestFixtures(t)
+	tool := NewReadFileTool(v)
+
+	// Create a file with exactly 50 lines (under threshold of 100)
+	smallPath := filepath.Join(root, "small_code.go")
+	var content strings.Builder
+	for i := 1; i <= 50; i++ {
+		content.WriteString(fmt.Sprintf("func handler%d() { return }\n", i))
+	}
+	if err := os.WriteFile(smallPath, []byte(content.String()), 0644); err != nil {
+		t.Fatalf("failed to create small_code.go: %v", err)
+	}
+
+	// Call with goal in context
+	ctx := context.WithValue(context.Background(), FileReadGoalKey, "Explore the architecture")
+	result, err := tool.Call(ctx, map[string]interface{}{
+		"path": smallPath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	fileContent := data["content"].(string)
+
+	// Should contain raw function definitions, not compressed output
+	if !strings.Contains(fileContent, "func handler1()") {
+		t.Error("small file should return raw content including 'func handler1()'")
+	}
+	if !strings.Contains(fileContent, "func handler50()") {
+		t.Error("small file should return raw content including 'func handler50()'")
+	}
+	// Should NOT have the goal-compressed header
+	if strings.Contains(fileContent, "goal-compressed") {
+		t.Error("small file should NOT be goal-compressed")
+	}
+	// Hint should NOT mention goal-compression
+	if strings.Contains(res.Hint, "Goal-compressed") {
+		t.Error("hint should NOT mention goal-compression for small files")
+	}
+}
+
+// TestReadFile_GoalCompaction_LargeFile_ReturnsCompressed verifies that files
+// exceeding the compaction threshold are goal-compressed when a probe goal is
+// present. This is an integration test that requires the router sidecar.
+func TestReadFile_GoalCompaction_LargeFile_ReturnsCompressed(t *testing.T) {
+	// Skip if router sidecar is not available
+	_, err := inference.CallRouter(context.Background(), []inference.InferenceMessage{
+		{Role: "user", Content: "hello"},
+	}, "")
+	if err != nil {
+		t.Skip("Skipping: router sidecar not available")
+	}
+
+	root, v := setupFilesystemTestFixtures(t)
+	tool := NewReadFileTool(v)
+
+	// Create a file with 200 lines (above threshold of 100)
+	largePath := filepath.Join(root, "large_code.go")
+	var content strings.Builder
+	content.WriteString("package main\n\n")
+	for i := 1; i <= 198; i++ {
+		content.WriteString(fmt.Sprintf("func Process%d(input string) string { return input + \"%d\" }\n", i, i))
+	}
+	if err := os.WriteFile(largePath, []byte(content.String()), 0644); err != nil {
+		t.Fatalf("failed to create large_code.go: %v", err)
+	}
+
+	// Call with goal in context
+	ctx := context.WithValue(context.Background(), FileReadGoalKey, "Find exported function signatures and their return types")
+	result, err := tool.Call(ctx, map[string]interface{}{
+		"path": largePath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	fileContent := data["content"].(string)
+
+	// Should be compressed — content should be significantly shorter than raw
+	rawLen := len(content.String())
+	if len(fileContent) >= rawLen {
+		t.Errorf("compressed content (%d chars) should be shorter than raw (%d chars)", len(fileContent), rawLen)
+	}
+
+	// Hint should mention goal-compression
+	if !strings.Contains(res.Hint, "Goal-compressed") {
+		t.Errorf("hint should mention goal-compression, got: %s", res.Hint)
+	}
+
+	t.Logf("Compression: %d raw → %d compressed (%.1f%% reduction)",
+		rawLen, len(fileContent), 100*(1-float64(len(fileContent))/float64(rawLen)))
+}
+
+// TestReadFile_NoGoal_LargeFile_ReturnsRaw verifies backward compatibility:
+// large files without a probe goal in context are returned raw.
+func TestReadFile_NoGoal_LargeFile_ReturnsRaw(t *testing.T) {
+	root, v := setupFilesystemTestFixtures(t)
+	tool := NewReadFileTool(v)
+
+	// Create a file with 200 lines (above threshold)
+	largePath := filepath.Join(root, "large_raw.go")
+	var content strings.Builder
+	content.WriteString("package main\n\n")
+	for i := 1; i <= 198; i++ {
+		content.WriteString(fmt.Sprintf("func Handler%d() { }\n", i))
+	}
+	if err := os.WriteFile(largePath, []byte(content.String()), 0644); err != nil {
+		t.Fatalf("failed to create large_raw.go: %v", err)
+	}
+
+	// Call WITHOUT goal in context (plain background context)
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path": largePath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	fileContent := data["content"].(string)
+
+	// Should contain raw function definitions
+	if !strings.Contains(fileContent, "func Handler1()") {
+		t.Error("large file without goal should return raw content with 'func Handler1()'")
+	}
+	if !strings.Contains(fileContent, "func Handler198()") {
+		t.Error("large file without goal should return raw content with 'func Handler198()'")
+	}
+	// Should NOT have any compaction hint
+	if strings.Contains(res.Hint, "Goal-compressed") {
+		t.Error("hint should NOT mention goal-compression when no goal is present")
+	}
+}
+
+// TestDeterministicTruncate_FallbackFormat verifies the deterministic
+// truncation fallback produces the correct format with first/last 20 lines.
+func TestDeterministicTruncate_FallbackFormat(t *testing.T) {
+	// Build 100 lines of input
+	var lines []string
+	for i := 1; i <= 100; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+
+	result := deterministicTruncate(lines)
+
+	// Should contain first 20 lines
+	if !strings.Contains(result, "line 1\n") {
+		t.Error("should contain 'line 1'")
+	}
+	if !strings.Contains(result, "line 20\n") {
+		t.Error("should contain 'line 20'")
+	}
+
+	// Should contain omission marker
+	if !strings.Contains(result, "[... 60 lines omitted ...]") {
+		t.Error("should contain omission marker for 60 lines (100 - 20 - 20)")
+	}
+
+	// Should contain last 20 lines
+	if !strings.Contains(result, "line 81") {
+		t.Error("should contain 'line 81' (first of last 20)")
+	}
+	if !strings.Contains(result, "line 100") {
+		t.Error("should contain 'line 100'")
+	}
+
+	// Should NOT contain middle lines
+	if strings.Contains(result, "line 21\n") {
+		t.Error("should NOT contain 'line 21' (omitted)")
+	}
+	if strings.Contains(result, "line 80\n") {
+		t.Error("should NOT contain 'line 80' (omitted)")
+	}
+
+	// Edge case: short input (under 40 lines) should return all lines unchanged
+	shortLines := []string{"a", "b", "c"}
+	shortResult := deterministicTruncate(shortLines)
+	if shortResult != "a\nb\nc" {
+		t.Errorf("short input should return all lines unchanged, got: %q", shortResult)
 	}
 }

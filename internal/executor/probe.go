@@ -361,7 +361,10 @@ func RunProbe(
 				args = normalizeToolArguments(toolName, args)
 				args = rescueEmptyPathFromThought(toolName, args, chainStep.NextThought)
 
-				result, err := tools.Call(ctx, toolName, args)
+				// Inject probe goal into context so read_file can
+				// goal-compress large outputs (ADR-0019 extension).
+				toolCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
+				result, err := tools.Call(toolCtx, toolName, args)
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
 					consecutiveErrors++
