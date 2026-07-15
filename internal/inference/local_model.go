@@ -845,7 +845,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	}
 
 	reqBody := CompletionRequest{
-		Model:              "Qwopus3.5-4B-Coder",
+		Model:              "Agents-A1-4B",
 		Messages:           MessagesToMaps(messages),
 		Temperature:        1.0, // Q7: required for min_p to function; GBNF constrains output safety
 		MinP:               0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
@@ -1046,7 +1046,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	}
 
 	reqBody := CompletionRequest{
-		Model:       "Qwopus3.5-4B-Coder",
+		Model:       "Agents-A1-4B",
 		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0,
 		MinP:        0.1,

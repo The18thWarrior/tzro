@@ -18,6 +18,8 @@ import (
 	"tzro/internal/task"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
+
+	ignore "github.com/sabhiram/go-gitignore"
 )
 
 // modelModeForCondition returns the config modelMode string for a DAG condition.
@@ -133,6 +135,16 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		// For docgen tasks, copy the target files to testOutputDir to ensure
 		// a consistent environment where reading and writing happen in the same structure.
 		projectRoot := tools.GetAllowedPaths()[0]
+		// Load .gitignore from project root to avoid copying heavy ignored
+		// directories (.git, .scratch, node_modules, model files, etc.).
+		// Without this, targetPaths: ["."] copies the entire repo (801MB+)
+		// including nested old benchmark results.
+		var gi *ignore.GitIgnore
+		giPath := filepath.Join(projectRoot, ".gitignore")
+		if _, giErr := os.Stat(giPath); giErr == nil {
+			gi, _ = ignore.CompileIgnoreFile(giPath)
+		}
+
 		for _, p := range t.TargetPaths {
 			src := filepath.Join(projectRoot, p)
 			dst := filepath.Join(testOutputDir, p)
@@ -144,11 +156,6 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 				continue
 			}
 
-			// Skip previous benchmark results to avoid recursive nesting
-			if info.IsDir() && strings.HasPrefix(info.Name(), "benchmark_results_") {
-				continue
-			}
-
 			// Create parent directory in destination
 			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 				return ComparisonResult{}, fmt.Errorf("failed to create docgen target parent: %w", err)
@@ -156,7 +163,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 
 			// Copy file or directory
 			if info.IsDir() {
-				if err := copyDir(src, dst); err != nil {
+				if err := copyDir(src, dst, projectRoot, gi); err != nil {
 					fmt.Fprintf(os.Stderr, "[Comparison] Warning: failed to copy dir %s to %s: %v\n", src, dst, err)
 				}
 			} else {
@@ -847,8 +854,11 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, 0644)
 }
 
-// copyDir recursively copies a directory from src to dst.
-func copyDir(src, dst string) error {
+// copyDir recursively copies a directory from src to dst, skipping entries
+// that match the project's .gitignore rules. The projectRoot parameter is
+// used to compute relative paths for gitignore matching. If gi is nil,
+// all entries are copied (backward-compatible).
+func copyDir(src, dst, projectRoot string, gi *ignore.GitIgnore) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
@@ -862,15 +872,33 @@ func copyDir(src, dst string) error {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
+		// Always skip .git directory — even if not in .gitignore
+		if entry.Name() == ".git" {
+			continue
+		}
+
+		// Check gitignore rules using path relative to project root
+		if gi != nil {
+			relPath, relErr := filepath.Rel(projectRoot, srcPath)
+			if relErr == nil {
+				// Append trailing slash for directories so gitignore
+				// directory patterns (e.g. "node_modules/") match correctly
+				matchPath := relPath
+				if entry.IsDir() {
+					matchPath = relPath + "/"
+				}
+				if gi.MatchesPath(matchPath) {
+					continue
+				}
+			}
+		}
+
 		if entry.IsDir() || (entry.Type()&os.ModeSymlink != 0) {
 			// Resolve symlink to check if it's a directory
 			realPath, err := filepath.EvalSymlinks(srcPath)
 			if err == nil {
 				if info, err := os.Stat(realPath); err == nil && info.IsDir() {
-					if strings.HasPrefix(entry.Name(), "benchmark_results_") {
-						continue
-					}
-					if err := copyDir(srcPath, dstPath); err != nil {
+					if err := copyDir(srcPath, dstPath, projectRoot, gi); err != nil {
 						return err
 					}
 					continue
@@ -879,7 +907,7 @@ func copyDir(src, dst string) error {
 		}
 
 		if entry.IsDir() {
-			if err := copyDir(srcPath, dstPath); err != nil {
+			if err := copyDir(srcPath, dstPath, projectRoot, gi); err != nil {
 				return err
 			}
 		} else {

@@ -193,7 +193,7 @@ var (
 		CloudModel:           "gemini-flash-latest",
 		SpeedFloor:           5.0,
 		SidecarEnabled:       true,
-		GGUFModelPath:        "models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
+		GGUFModelPath:        "models/Agents-A1-4B-Q4_K_M.gguf",
 		ModelsDir:            defaultModelsDir(),
 		ContextSize:          65536,
 		ConfidenceThreshold:  3,
