@@ -134,8 +134,21 @@ The internal step loop within a **Probe Node** where each iteration generates a 
 _Avoid_: Edge Thought (between-node), conversation history, chat loop
 
 **Compaction Pipeline**:
-A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
+A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload. Complemented by the **Structured Compactor** for content-aware compaction of code and reasoning text.
 _Avoid_: Text parser, JSON clean filter
+
+**Structured Compactor**:
+A unified content-aware compaction module (`internal/compactor/`) that classifies content into segments (Code, Text, Tabular) and applies type-appropriate strategies. Core principle: code is never LLM-compressed (deterministic **Code Skeleton** extraction only); the LLM only compacts the model's own reasoning text via **Reasoning Compression**. Replaces the legacy monolithic "compress these steps" LLM prompt with structured, reproducible compaction. Serves all compaction call sites: probe thought chain, recall refined context, accumulated context, and synthesis truncation.
+_Avoid_: Compaction Pipeline (JSON/HTML/Base64 only), text summarizer, generic LLM compressor
+
+**Code Skeleton**:
+A deterministic reduction of source code to its structural elements: function signatures, type declarations, doc comments, const/var blocks, and package/import statements. Function bodies are replaced with fingerprints containing line count and extracted function calls (e.g., `// [body: 42 lines, calls: foo(), bar()]`). Never LLM-compressed — purely structural transformation. Used by the **Structured Compactor** to preserve code identity through compaction.
+_Avoid_: Code summary, AST extraction (heuristic, not true AST), code truncation
+
+**Reasoning Compression**:
+The LLM-based compression of a model's own reasoning text (the `Thought` field in probe steps). Text is split into ~500-character chunks by sentence boundary, and each chunk is compressed by the 1B router with the prompt "Extract key conclusion." Preserves the model's *decisions* while stripping its *deliberation*. Never applied to tool outputs or code — only to the model's reasoning.
+_Avoid_: Code compression, tool output compression, full-context summarization
+
 
 **Accumulated Context**:
 The structured collection of completed upstream node outputs injected into each DAG node's prompt to provide execution history for parameter extraction and decision-making. Bounded by a node count window (`maxAccumulatedContextNodes`) and a total character budget (`accumulatedContextMaxChars`, ADR-0043) with content-aware per-node truncation. Distinct from **Edge Thought** (reasoning state) — Accumulated Context is raw data, not reasoning.

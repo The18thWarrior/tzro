@@ -969,7 +969,8 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 
 		probeEngine := &DefaultProbeInference{}
-		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, downstreamBindingKeys)
+		synthesisEngine := &WorkerInference{}
+		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
 			return fmt.Errorf("probe node %s execution failed: %w", node.ID, err)
@@ -1042,7 +1043,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 		findProbes(node.ID)
 
-		recallEngine := &DefaultProbeInference{}
+		recallEngine := &WorkerInference{}
 		synthesis, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())

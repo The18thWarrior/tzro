@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"tzro/internal/compactor"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
 )
@@ -147,17 +148,18 @@ func extractAction(response string) (string, map[string]interface{}) {
 	return "", nil
 }
 
-func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, context, goal string, engine ProbeInferenceEngine) (string, error) {
-	prompt := fmt.Sprintf(`You are a Recall Compactor. The discovery context for the goal "%s" has exceeded the token budget.
-Compress the following list of facts by:
-1. Merging related facts.
-2. Removing redundant or low-signal information.
-3. Preserving all critical technical details (signatures, file paths, logic branches).
+func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, refinedCtx, goal string, engine ProbeInferenceEngine) (string, error) {
+	// Use the structured compactor for content-aware fact compaction.
+	// Code/data facts are preserved deterministically.
+	// Large text-only facts are compressed via LLM.
+	compactEngine := &compactor.RouterEngine{}
+	result, err := compactor.CompactFacts(ctx, refinedCtx, goal, 2000, compactEngine)
+	if err != nil {
+		return refinedCtx, err
+	}
 
-## Current Facts:
-%s
+	fmt.Fprintf(os.Stderr, "[Recall Compactor] %d→%d chars (%d LLM calls)\n",
+		result.InputChars, result.OutputChars, result.LLMCalls)
 
-Output ONLY the compressed list of facts starting with '- '.`, goal, context)
-
-	return engine.Infer(ctx, prompt, "System: Context limit reached. Compacting...", "")
+	return result.Output, nil
 }

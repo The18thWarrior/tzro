@@ -291,7 +291,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--parallel", "1",
 		"--jinja",
 		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
-		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 32K)
+		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 64K)
 		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)

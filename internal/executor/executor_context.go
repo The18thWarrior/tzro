@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 
+	"tzro/internal/compactor"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/inference"
@@ -242,8 +243,8 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 
 		output := be.output
 		if be.budget >= 0 && len(output) > be.budget {
-			output = TruncateToolOutput(output, be.budget)
-			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Truncated node %s output from %d to %d chars (budget: %d per node)\n",
+			output = compactor.CompactContent(output, be.budget)
+			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Compacted node %s output from %d to %d chars (budget: %d per node)\n",
 				be.nodeID, len(be.output), len(output), be.budget)
 		}
 

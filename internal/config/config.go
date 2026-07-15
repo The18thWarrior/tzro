@@ -23,7 +23,7 @@ type EngineConfig struct {
 	ThermalCloudCooldownMinutes int     `json:"thermalCloudCooldownMinutes,omitempty"` // default 5
 	GGUFModelPath               string  `json:"ggufModelPath"`                         // path to local gguf model file
 	ModelsDir                   string  `json:"modelsDir"`                             // directory for downloaded models
-	ContextSize                 int     `json:"contextSize,omitempty"`                 // llama-server context window size in tokens (default: 32768)
+	ContextSize                 int     `json:"contextSize,omitempty"`                 // llama-server context window size in tokens (default: 65536)
 	GPULayers                   *int    `json:"gpuLayers,omitempty"`                   // Override GPU layer offload count (-1 = all, 0 = CPU-only, nil = platform auto)
 	ThreadCount                 *int    `json:"threadCount,omitempty"`                 // Override inference thread count (nil = platform auto-detect)
 	MaxRAGContextChars          int     `json:"maxRagContextChars,omitempty"`          // max chars for Graph-RAG context injection (0 = use default 2000)
@@ -188,7 +188,7 @@ var (
 		SidecarEnabled:       true,
 		GGUFModelPath:        "models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
 		ModelsDir:            defaultModelsDir(),
-		ContextSize:          32768,
+		ContextSize:          65536,
 		ConfidenceThreshold:  3,
 		ExecutorNodeDelayMs:  800,
 		ExecutorLevelDelayMs: 500,
@@ -391,7 +391,7 @@ func GetContextSize() int {
 	configMutex.RUnlock()
 
 	if size <= 0 {
-		return 32768
+		return 65536
 	}
 	return size
 }

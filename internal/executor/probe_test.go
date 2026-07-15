@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"tzro/internal/compiler"
 	"tzro/internal/inference"
@@ -107,7 +108,7 @@ func TestRunProbe_ExecutesToolCallsAndReturns(t *testing.T) {
 		CompactEvery: 3,
 	}
 
-	result, err := RunProbe(context.Background(), "task_test", "probe_test_1", config, mock, nil)
+	result, err := RunProbe(context.Background(), "task_test", "probe_test_1", config, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestRunProbe_PersistsThoughtSteps(t *testing.T) {
 	}
 
 	probeID := "probe_persist_test"
-	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock, nil)
+	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -185,14 +186,15 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 	tzroDir, _ := filepath.EvalSymlinks(os.Getenv("TZRO_DIR"))
 	testFile := filepath.Join(tzroDir, "test.go")
 
-	// Set up 4 steps — compaction should trigger at step 3 (compactEvery=3)
+	// Set up 4 steps — compaction should trigger at step 3 (compactEvery=3).
+	// Note: The structured compactor uses RouterEngine (inference.CallRouter) internally
+	// rather than the mock engine, so no compaction response is needed in the mock.
+	// In test env without a running sidecar, RouterEngine falls back to passthrough.
 	mock := &MockProbeInference{
 		Responses: []string{
 			fmt.Sprintf("Step 1\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
 			fmt.Sprintf("Step 2\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
-			// Step 3 triggers compaction. The mock needs an extra response for the compaction inference call.
 			fmt.Sprintf("Step 3\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
-			"Compacted summary of steps 1-3", // This is the compaction inference response
 			`Done
 <SYNTHESIZE_READY>`,
 			`{"synthesis":"Final synthesis after compaction"}`,
@@ -207,7 +209,7 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 	}
 
 	probeID := "probe_compact_test"
-	result, err := RunProbe(context.Background(), "task_test", probeID, config, mock, nil)
+	result, err := RunProbe(context.Background(), "task_test", probeID, config, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -221,8 +223,10 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLatestSummary failed: %v", err)
 	}
-	if summary.Summary != "Compacted summary of steps 1-3" {
-		t.Errorf("unexpected summary: %s", summary.Summary)
+	// The structured compactor produces step-by-step output with tool outputs
+	// rather than a single LLM-generated summary.
+	if !strings.Contains(summary.Summary, "Step 1:") {
+		t.Errorf("expected structured summary with 'Step 1:', got: %s", summary.Summary)
 	}
 	if summary.StepRange != "1-3" {
 		t.Errorf("unexpected step range: %s", summary.StepRange)
@@ -250,7 +254,7 @@ func TestRunProbe_ConvergesOnHighConfidence(t *testing.T) {
 		CompactEvery: 3,
 	}
 
-	result, err := RunProbe(context.Background(), "task_test", "probe_converge", config, mock, nil)
+	result, err := RunProbe(context.Background(), "task_test", "probe_converge", config, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -289,7 +293,7 @@ func TestRunProbe_BudgetExhaustionForcesSynthesis(t *testing.T) {
 		CompactEvery: 10, // Don't compact during this test
 	}
 
-	result, err := RunProbe(context.Background(), "task_test", "probe_budget", config, mock, nil)
+	result, err := RunProbe(context.Background(), "task_test", "probe_budget", config, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -323,7 +327,7 @@ func TestRunProbe_RejectsDisallowedTools(t *testing.T) {
 	}
 
 	probeID := "probe_disallowed"
-	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock, nil)
+	_, err := RunProbe(context.Background(), "task_test", probeID, config, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -580,7 +584,7 @@ func TestRunProbe_ConsecutiveErrorsForceSynthesis(t *testing.T) {
 		CompactEvery: 5,
 	}
 
-	result, err := RunProbe(context.Background(), "task_error_test", "probe_error_1", config, mock, nil)
+	result, err := RunProbe(context.Background(), "task_error_test", "probe_error_1", config, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -637,7 +641,7 @@ func TestRunProbe_AdaptiveMinStepAllowsEarlySynthesis(t *testing.T) {
 		CompactEvery: 5,
 	}
 
-	result, err := RunProbe(context.Background(), "task_adaptive_test", "probe_adaptive_1", cfg, mock, nil)
+	result, err := RunProbe(context.Background(), "task_adaptive_test", "probe_adaptive_1", cfg, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -714,7 +718,7 @@ func TestRunProbe_StepCallsSetsMaxTokensKey_SynthesisDoesNot(t *testing.T) {
 		CompactEvery: 3,
 	}
 
-	_, err := RunProbe(context.Background(), "task_maxtok", "probe_maxtok", cfg, mock, nil)
+	_, err := RunProbe(context.Background(), "task_maxtok", "probe_maxtok", cfg, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
@@ -784,7 +788,7 @@ func TestProbeOutputFingerprintConvergence(t *testing.T) {
 		CompactEvery: 3, // convergence requires successfulToolCalls >= compactEvery*2 = 6
 	}
 
-	result, err := RunProbe(context.Background(), "task_fingerprint_test", "probe_fingerprint_1", cfg, mock, nil)
+	result, err := RunProbe(context.Background(), "task_fingerprint_test", "probe_fingerprint_1", cfg, mock, mock, nil)
 	if err != nil {
 		t.Fatalf("RunProbe failed: %v", err)
 	}

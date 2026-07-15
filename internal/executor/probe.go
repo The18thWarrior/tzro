@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"tzro/internal/compactor"
 	"tzro/internal/compiler"
 	cfgpkg "tzro/internal/config"
 	"tzro/internal/inference"
@@ -46,6 +47,28 @@ func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPro
 // InferMessages sends a pre-segmented message array to maximize KV cache prefix reuse.
 func (d *DefaultProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
 	result, err := inference.CallRouter(ctx, messages, jsonSchema)
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+// WorkerInference wraps the worker sidecar for quality-sensitive operations.
+// Used for Probe synthesis, Recall map/reduce, and compaction — tasks that
+// require the worker model's larger context window (64K vs 16K) and superior
+// content generation quality over the 1B router.
+type WorkerInference struct{}
+
+func (w *WorkerInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+	result, err := inference.CallWorker(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+func (w *WorkerInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+	result, err := inference.CallWorker(ctx, messages, jsonSchema)
 	if err != nil {
 		return "", err
 	}
@@ -135,6 +158,7 @@ func RunProbe(
 	probeID string,
 	config compiler.ProbeConfig,
 	engine ProbeInferenceEngine,
+	synthesisEngine ProbeInferenceEngine,
 	downstreamBindingKeys []string,
 ) (string, error) {
 	// Defaults
@@ -482,13 +506,13 @@ func RunProbe(
 		}
 
 		if step%compactEvery == 0 {
-			_ = compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, engine)
+			_ = compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, synthesisEngine)
 		}
 	}
 
 	// Pass 2: Structured Synthesis
 	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, engine, downstreamBindingKeys)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys)
 }
 
 func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string) (string, error) {
@@ -792,10 +816,10 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inf
 }
 
 // compactThoughtChain creates a rolling summary of recent thought chain steps.
-// The compactionLevel parameter controls how aggressively tool outputs are
-// truncated in the compaction prompt. With CompactAggressive, outputs are
-// truncated to 200 chars (legacy behavior). With CompactModerate/CompactPreserve,
-// full tool outputs are included.
+// The compactionLevel parameter is retained for API compatibility but
+// the structured compactor handles content-type-aware compaction internally.
+// Code tool outputs are deterministically skeletonized (signatures preserved).
+// Model reasoning text is compressed via the router LLM.
 func compactThoughtChain(ctx context.Context, probeID, taskID string, currentStep, window int, compactionLevel compiler.CompactionLevel, engine ProbeInferenceEngine) error {
 	startStep := currentStep - window + 1
 	if startStep < 1 {
@@ -819,36 +843,35 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 		return nil
 	}
 
-	// Build compaction prompt
-	var stepsText string
-	for _, s := range windowSteps {
-		stepsText += fmt.Sprintf("Step %d: %s", s.StepIndex, s.Thought)
-		if s.ToolName != "" {
-			if compactionLevel == compiler.CompactAggressive {
-				// Legacy behavior: truncate tool output to 200 chars for aggressive compaction
-				stepsText += fmt.Sprintf(" → %s(%s) → %s", s.ToolName, s.ToolArgs, truncate(s.ToolOutput, 200))
-			} else {
-				// Moderate/Preserve: include full tool output so synthesis has actual data
-				stepsText += fmt.Sprintf(" → %s(%s) → %s", s.ToolName, s.ToolArgs, s.ToolOutput)
-			}
+	// Convert to compactor steps
+	compactorSteps := make([]compactor.Step, len(windowSteps))
+	for i, s := range windowSteps {
+		compactorSteps[i] = compactor.Step{
+			Index:      s.StepIndex,
+			Thought:    s.Thought,
+			ToolName:   s.ToolName,
+			ToolArgs:   s.ToolArgs,
+			ToolOutput: s.ToolOutput,
 		}
-		stepsText += "\n"
 	}
 
-	systemPrompt := "Compress the following exploration steps into a concise summary preserving all key findings and discoveries. Output only the summary text."
-	userPrompt := stepsText
-
-	summaryText, err := engine.Infer(ctx, systemPrompt, userPrompt, "")
+	// Use RouterEngine for reasoning compression (fast, cheap via 1B router).
+	// Tool outputs are handled deterministically — never LLM-compressed.
+	compactEngine := &compactor.RouterEngine{}
+	result, err := compactor.CompactSteps(ctx, compactorSteps, "", 0, compactEngine)
 	if err != nil {
-		return fmt.Errorf("compaction inference failed: %w", err)
+		return fmt.Errorf("structured compaction failed: %w", err)
 	}
+
+	fmt.Fprintf(os.Stderr, "[Probe Compactor] Steps %d-%d: %d→%d chars (%d LLM calls)\n",
+		startStep, currentStep, result.InputChars, result.OutputChars, result.LLMCalls)
 
 	summary := memory.ThoughtSummary{
 		ID:        fmt.Sprintf("%s_summary_%d_%d", probeID, startStep, currentStep),
 		ProbeID:   probeID,
 		TaskID:    taskID,
 		StepRange: fmt.Sprintf("%d-%d", startStep, currentStep),
-		Summary:   summaryText,
+		Summary:   result.Output,
 		CreatedAt: time.Now().Unix(),
 	}
 
