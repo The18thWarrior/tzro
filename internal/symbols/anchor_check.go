@@ -21,7 +21,7 @@ type AnchorCheckResult struct {
 	Anchored         int      // count matching the Symbol Index
 	Unanchored       []string // names not found in the index
 	ExternalSkipped  int      // dot-qualified names skipped (e.g., context.Context)
-	HallucinationPct float64  // unanchored / (totalReferenced - externalSkipped)
+	HallucinationPct float64  // unanchored / totalReferenced (externals already excluded from count)
 	NeedsCorrection  bool     // hallucinationPct > threshold
 }
 
@@ -33,7 +33,7 @@ const DefaultAnchorThreshold = 0.20
 // checks each against the provided Symbol Index.
 //
 // Detection strategy:
-//   - Extract PascalCase and camelCase identifiers from code blocks and bold text
+//   - Extract PascalCase identifiers (exported Go symbols) from code blocks and bold text
 //   - Skip dot-qualified references (e.g., context.Context, sync.Mutex)
 //   - Skip common Go/language built-in type names
 //   - Compare remaining identifiers against the Symbol Index
@@ -119,8 +119,8 @@ func BuildCorrectionPrompt(output string, unanchored []string, index []Symbol) s
 
 // --- Internal helpers ---
 
-// identifierRe matches PascalCase, camelCase, and snake_case identifiers
-// that look like type/function names (at least 2 characters, starts with letter).
+// identifierRe matches PascalCase identifiers (exported Go symbols)
+// that look like type/function names (at least 2 characters, starts with uppercase letter).
 var identifierRe = regexp.MustCompile(`\b([A-Z][a-zA-Z0-9_]{1,})\b`)
 
 // codeBlockIdentifierRe matches identifiers inside backtick code spans,

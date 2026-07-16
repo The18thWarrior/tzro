@@ -31,7 +31,7 @@ var FileReadGoalKey = fileReadGoalContextKey{}
 
 // fileCompactionThreshold is the minimum line count that triggers
 // goal-directed compaction. Files at or below this are returned raw.
-// The 200-line read_file cap means at most 2 chunks for any single call.
+// The 500-line read_file cap means at most 5 chunks for any single call.
 const fileCompactionThreshold = 100
 
 // fileCompactionChunkSize is the number of lines per chunk when splitting
@@ -40,12 +40,12 @@ const fileCompactionChunkSize = 100
 
 // NewReadFileTool creates the read_file tool.
 // Reads file content with optional startLine/endLine parameters.
-// Caps at 200 lines per call. Bypasses the Compaction Pipeline — source code
-// is injected raw per ADR-0019.
+// Caps at 500 lines per call (200 for PDFs). Bypasses the Compaction Pipeline —
+// source code is injected raw per ADR-0019.
 func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 	return &BaseAgentTool{
 		name:        "read_file",
-		description: "Read file content with optional line range. Returns raw content (max 200 lines per call).",
+		description: "Read file content with optional line range. Returns raw content (max 500 lines per call).",
 		schema: GetToolGBNFSchema(map[string]interface{}{
 			"path":      map[string]interface{}{"type": "string"},
 			"startLine": map[string]interface{}{"type": "integer"},
@@ -238,9 +238,9 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 // transparently replaced with goal-relevant summaries to prevent probe
 // context window overflow.
 //
-// Cost model: for a 200-line file (the read_file maximum), this produces
-// 2 chunks × 1 router call each ≈ ~1,312 tokens total, ~1-2 seconds.
-// Output: ~500-1000 chars vs ~8,000 chars raw — 8-16× reduction.
+// Cost model: for a 500-line file (the read_file maximum), this produces
+// up to 5 chunks × 1 router call each ≈ ~3,280 tokens total, ~3-5 seconds.
+// Output: ~1,000-2,500 chars vs ~20,000 chars raw — 8-20× reduction.
 func compressFileForGoal(ctx context.Context, content, goal, path string, totalLines int) (string, error) {
 	lines := strings.Split(content, "\n")
 

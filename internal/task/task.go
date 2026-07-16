@@ -224,9 +224,6 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 
 	// 3. Get routing decision
 	decision := routing.Route(routingCtx)
-	
-
-
 	fmt.Fprintf(os.Stderr, "[Plan Router] %s → %s\n", decision.Backend, decision.Reason)
 	telemetry.Default.PublishEvent("plan_routing", opts.TaskID, "",
 		fmt.Sprintf("Route: %s (%s)", decision.Backend, decision.Reason))
