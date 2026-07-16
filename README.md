@@ -1,5 +1,9 @@
 # TZRO: The Local AI Task Offloader
 
+<p align="center">
+  <img src="static/hero.jpeg" alt="TZRO Hero Banner" width="100%" />
+</p>
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go Report Card](https://goreportcard.com/badge/github.com/The18thWarrior/tzro)](https://goreportcard.com/report/github.com/The18thWarrior/tzro)
 
