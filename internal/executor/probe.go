@@ -162,16 +162,39 @@ func RunProbe(
 	synthesisEngine ProbeInferenceEngine,
 	downstreamBindingKeys []string,
 ) (string, error) {
+	// Direct Synthesis mode (Grilling Decision #3): bypass Thought Chain exploration
+	// and run single-shot inference against a pre-compiled context file.
+	if config.DirectSynthesis {
+		if config.ContextFile == "" {
+			return "", fmt.Errorf("DirectSynthesis requires ContextFile to be set in ProbeConfig")
+		}
+		fmt.Fprintf(os.Stderr, "[Probe] Direct Synthesis mode: reading %s\n", config.ContextFile)
+		content, err := os.ReadFile(config.ContextFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read context file for Direct Synthesis: %w", err)
+		}
+		systemPrompt := fmt.Sprintf("You are a precise technical writer and systems architect. Your goal: %s\n\nRead the pre-compiled context below and produce a comprehensive, accurate response.", config.Goal)
+		userPrompt := fmt.Sprintf("Pre-compiled context:\n%s", string(content))
+		ctxWithLimit := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+		result, err := synthesisEngine.Infer(ctxWithLimit, systemPrompt, userPrompt, "")
+		if err != nil {
+			return "", fmt.Errorf("Direct Synthesis failed: %w", err)
+		}
+		return result, nil
+	}
+
 	// Defaults
 	stepBudget := config.StepBudget
 	if stepBudget <= 0 {
 		stepBudget = 30
 	}
-	// compactEvery is an architectural constant, not a planner decision.
-	// The router model's 16K context window requires frequent compaction to
-	// prevent accumulated tool output from exceeding the window. The planner
-	// should not control this — it's a systems constraint.
-	const compactEvery = 3
+	// compactEvery controls rolling compaction frequency AND the synthesis detail
+	// window (Grilling Decision #6). Sourced from ProbeConfig when set;
+	// defaults to 3 (a systems constraint for 16K context windows).
+	compactEvery := config.CompactEvery
+	if compactEvery <= 0 {
+		compactEvery = 3
+	}
 
 	// Build allowed tools set for validation
 	allowedToolSet := make(map[string]bool)
@@ -386,7 +409,16 @@ func RunProbe(
 						// to the Symbol Index side-channel table.
 						if toolName == "read_file" {
 							if filePath, ok := args["path"].(string); ok {
-								extractAndPersistSymbols(probeID, taskID, filePath, result)
+								var parsedRes struct {
+									Content string `json:"content"`
+									Path    string `json:"path"`
+								}
+								if json.Unmarshal([]byte(result), &parsedRes) == nil && parsedRes.Path != "" {
+									extractAndPersistSymbols(probeID, taskID, parsedRes.Path)
+								} else {
+									// Fallback: if json parsing fails, try to use filePath directly
+									extractAndPersistSymbols(probeID, taskID, filePath)
+								}
 							}
 						}
 
@@ -528,13 +560,13 @@ func RunProbe(
 
 	// Pass 2: Structured Synthesis
 	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, compactEvery)
 }
 
-func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string) (string, error) {
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, detailWindow int) (string, error) {
 	summary, _ := memory.DB.GetLatestSummary(probeID)
 	steps, _ := memory.DB.GetThoughtSteps(probeID)
-	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaryLen=%d\n", probeID, len(steps), len(summary.Summary))
+	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaryLen=%d, detailWindow=%d\n", probeID, len(steps), len(summary.Summary), detailWindow)
 
 	var contextStr string
 	if summary.Summary != "" {
@@ -542,11 +574,16 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine 
 	}
 
 	// Build synthesis steps for intelligent truncation.
-	// TruncateSynthesisContext applies content-aware truncation (code bracket-depth
-	// elision, tabular sampling, text middle-out) starting from the oldest tool
-	// results, preserving the most recent results intact.
+	// If a compacted summary is available, we only append the last N steps of detail
+	// (where N = detailWindow, tied to CompactEvery) to avoid context bloat
+	// and local model performance collapse.
 	var synthSteps []SynthesisStep
-	for _, s := range steps {
+	startIdx := 0
+	if summary.Summary != "" && len(steps) > detailWindow {
+		startIdx = len(steps) - detailWindow
+	}
+	for i := startIdx; i < len(steps); i++ {
+		s := steps[i]
 		synthSteps = append(synthSteps, SynthesisStep{
 			StepIndex:  s.StepIndex,
 			Thought:    s.Thought,
@@ -677,8 +714,9 @@ If you have gathered enough information and are ready to synthesize a final answ
 IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
 
 Be systematic. Build understanding incrementally.
-Exploration strategy: list_dir for structure, search_files for patterns (like grep), read_file for content.
-Prefer search_files over browsing directories when looking for types, interfaces, or functions.
+Exploration strategy: list_dir for structure, read_file for content of files relevant to your goal, search_files for patterns (like grep) to locate specific definitions across multiple files when you do not know the exact filenames.
+If you list a directory and see files that are directly related to your goal, read them using read_file directly rather than trying to search or guess. Do not assume search_files is required if you already know which files to read.
+Do not read the same file multiple times with overlapping ranges. Once you have read a file, assume you know its structure and move on to the other files in the directory to ensure complete coverage. Do not exhaust your step budget on a single file.
 If a path fails with "does not exist", DO NOT call list_dir or read_file on that path again. You MUST use search_files to locate the correct file instead of guessing directory names.
 Do not assume documentation files describe implementation — verify by reading source code.`, taskContextSection, goal, toolList, toolSchemas)
 }
@@ -1119,10 +1157,15 @@ func extractPathFromText(text string) string {
 //
 // Errors are logged but not propagated — symbol extraction is best-effort
 // and must not disrupt the probe's primary exploration loop.
-func extractAndPersistSymbols(probeID, taskID, filePath, content string) {
-	syms, err := symbols.ExtractSymbols(filepath.Base(filePath), []byte(content))
+func extractAndPersistSymbols(probeID, taskID, resolvedPath string) {
+	contentBytes, err := os.ReadFile(resolvedPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[Probe] Symbol extraction error for %s: %v\n", filePath, err)
+		fmt.Fprintf(os.Stderr, "[Probe] Symbol extraction: failed to read resolved path %s: %v\n", resolvedPath, err)
+		return
+	}
+	syms, err := symbols.ExtractSymbols(filepath.Base(resolvedPath), contentBytes)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Probe] Symbol extraction error for %s: %v\n", resolvedPath, err)
 		return
 	}
 	if len(syms) == 0 {
@@ -1131,12 +1174,12 @@ func extractAndPersistSymbols(probeID, taskID, filePath, content string) {
 
 	// Set full file paths (extractor only sees the basename for language detection)
 	for i := range syms {
-		syms[i].File = filePath
+		syms[i].File = resolvedPath
 	}
 
 	if err := memory.DB.InsertSymbols(probeID, taskID, syms); err != nil {
 		fmt.Fprintf(os.Stderr, "[Probe] Symbol index persist error: %v\n", err)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "[Probe] Extracted %d symbols from %s\n", len(syms), filePath)
+	fmt.Fprintf(os.Stderr, "[Probe] Extracted %d symbols from %s\n", len(syms), resolvedPath)
 }

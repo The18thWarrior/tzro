@@ -56,7 +56,7 @@ func (h *ClientToolHook) BeforeNode(ctx context.Context, taskID string, node *co
 
 	coerceNumericArguments(toolArguments, interpolatedPrompt)
 	coerceStringArguments(toolArguments, interpolatedPrompt, node.Action)
-	resolveInterpolatedArguments(toolArguments, interpolatedPrompt, node.Instructions, taskID)
+	resolveInterpolatedArguments(toolArguments, interpolatedPrompt, node.Instructions, taskID, nil)
 
 	serializedArgs, err := json.Marshal(toolArguments)
 	if err != nil {

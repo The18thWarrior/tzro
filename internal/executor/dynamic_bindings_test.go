@@ -42,7 +42,7 @@ func TestResolveDynamicBindings(t *testing.T) {
 			"contract_id":    "node_4.output.contract_id",
 		}
 
-		resolved := resolveDynamicBindings(context.Background(), bindings, taskID)
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
 
 		if resolved["employee_email"].Value != "maozedong@enterprise.corp" {
 			t.Errorf("Expected employee_email='maozedong@enterprise.corp', got %q", resolved["employee_email"].Value)
@@ -58,7 +58,7 @@ func TestResolveDynamicBindings(t *testing.T) {
 			"nonexistent":    "node_2.output.field_that_doesnt_exist",
 		}
 
-		resolved := resolveDynamicBindings(context.Background(), bindings, taskID)
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
 
 		if resolved["employee_email"].Value != "maozedong@enterprise.corp" {
 			t.Errorf("Expected employee_email to resolve, got %q", resolved["employee_email"].Value)
@@ -73,7 +73,7 @@ func TestResolveDynamicBindings(t *testing.T) {
 			"some_field": "node_999.output.some_field",
 		}
 
-		resolved := resolveDynamicBindings(context.Background(), bindings, taskID)
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
 
 		if len(resolved) != 0 {
 			t.Errorf("Expected empty resolved map for missing node, got %v", resolved)
@@ -85,7 +85,7 @@ func TestResolveDynamicBindings(t *testing.T) {
 			"bad": "just_a_string",
 		}
 
-		resolved := resolveDynamicBindings(context.Background(), bindings, taskID)
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
 
 		if len(resolved) != 0 {
 			t.Errorf("Expected empty resolved map for invalid format, got %v", resolved)
@@ -93,12 +93,12 @@ func TestResolveDynamicBindings(t *testing.T) {
 	})
 
 	t.Run("EmptyBindings_IsNoop", func(t *testing.T) {
-		resolved := resolveDynamicBindings(context.Background(), nil, taskID)
+		resolved := resolveDynamicBindings(context.Background(), nil, taskID, nil)
 		if resolved != nil {
 			t.Errorf("Expected nil for empty bindings, got %v", resolved)
 		}
 
-		resolved = resolveDynamicBindings(context.Background(), map[string]interface{}{}, taskID)
+		resolved = resolveDynamicBindings(context.Background(), map[string]interface{}{}, taskID, nil)
 		if resolved != nil {
 			t.Errorf("Expected nil for empty map, got %v", resolved)
 		}
@@ -110,7 +110,7 @@ func TestResolveDynamicBindings(t *testing.T) {
 			"employee_email": "node_2.output.employee_email",
 		}
 
-		resolved := resolveDynamicBindings(context.Background(), bindings, taskID)
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
 
 		if _, exists := resolved["quantity"]; exists {
 			t.Errorf("Expected numeric 'quantity' to be skipped, but it resolved: %q", resolved["quantity"].Value)
@@ -154,7 +154,7 @@ func TestDynamicBindingsPostExtractionOverride(t *testing.T) {
 		_ = json.Unmarshal([]byte(llmExtracted), &parsedResult)
 
 		// Apply override logic (mirrors executor.go post-extraction code)
-		resolved := resolveDynamicBindings(context.Background(), bindings, taskID)
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
 		for paramName, rb := range resolved {
 			existingStr := ""
 			if v, exists := parsedResult[paramName]; exists {
@@ -184,7 +184,7 @@ func TestDynamicBindingsPostExtractionOverride(t *testing.T) {
 		var parsedResult map[string]interface{}
 		_ = json.Unmarshal([]byte(llmExtracted), &parsedResult)
 
-		resolved := resolveDynamicBindings(context.Background(), bindings, taskID)
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
 		for paramName, rb := range resolved {
 			existingStr := ""
 			if v, exists := parsedResult[paramName]; exists {

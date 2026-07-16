@@ -58,6 +58,12 @@ type ProbeConfig struct {
 	CompactEvery    int             `json:"compactEvery"`              // Rolling compaction frequency (every N steps)
 	CompactionLevel CompactionLevel `json:"compactionLevel,omitempty"` // Controls tool output truncation during compaction. Default: "preserve"
 	TaskContext     string          `json:"taskContext,omitempty"`     // Original task spec/goal — pinned above exploration results so task requirements override workspace conventions
+
+	// Direct Synthesis mode (Grilling Decision #3): bypass Thought Chain exploration
+	// and run a single-shot inference against a pre-compiled context file.
+	// Skips Symbol Extraction and Compaction — the pre-compiled input is already structured.
+	DirectSynthesis bool   `json:"directSynthesis,omitempty"` // When true, skip Thought Chain and synthesize directly
+	ContextFile     string `json:"contextFile,omitempty"`     // Absolute path to pre-compiled context file (required when DirectSynthesis=true)
 }
 
 type GraphEdge struct {

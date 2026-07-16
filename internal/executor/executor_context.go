@@ -20,6 +20,7 @@ import (
 	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
+	"tzro/internal/symbols"
 )
 
 // maxAccumulatedContextNodes limits how many completed upstream nodes are included
@@ -251,6 +252,24 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		sb.WriteString(fmt.Sprintf("--- %s (%s) [completed] ---\n", be.nodeID, toolName))
 		sb.WriteString(output)
 		sb.WriteString("\n\n")
+	}
+
+	// Load and inject Symbol Index from upstream completed nodes (ADR-0047)
+	var symbolIndex []symbols.Symbol
+	for _, state := range states {
+		probeID := taskID + "_" + state.NodeID
+		syms, err := memory.DB.GetSymbolIndex(probeID)
+		if err == nil && len(syms) > 0 {
+			symbolIndex = append(symbolIndex, syms...)
+		}
+	}
+	if len(symbolIndex) > 0 {
+		sb.WriteString("## Authoritative Symbol Reference (AST-extracted, verified):\n")
+		sb.WriteString("Use ONLY these exact names and signatures when referring to types, functions, and interfaces:\n")
+		for _, sym := range symbolIndex {
+			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n", sym.Name, sym.Kind, sym.Signature))
+		}
+		sb.WriteString("\n")
 	}
 
 	result := sb.String()

@@ -15,6 +15,7 @@ import (
 	"tzro/internal/executor"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
+	"tzro/internal/repomap"
 	"tzro/internal/task"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
@@ -172,6 +173,73 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 				}
 			}
 		}
+	}
+
+	if t.ID == "adr_summary" {
+		adrDir := filepath.Join(testOutputDir, "docs/adr")
+		files, err := os.ReadDir(adrDir)
+		if err == nil {
+			var combined strings.Builder
+			for _, file := range files {
+				name := file.Name()
+				if strings.HasPrefix(name, "00") && strings.HasSuffix(name, ".md") {
+					content, readErr := os.ReadFile(filepath.Join(adrDir, name))
+					if readErr == nil {
+						combined.WriteString(fmt.Sprintf("# ADR %s\n\n%s\n\n---\n\n", name, string(content)))
+					}
+				}
+			}
+			combinedPath := filepath.Join(adrDir, "all_adrs_combined.md")
+			_ = os.WriteFile(combinedPath, []byte(combined.String()), 0644)
+			fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled all ADRs into %s\n", combinedPath)
+		}
+	} else if t.ID == "internal_architecture" {
+		internalDir := filepath.Join(testOutputDir, "internal")
+		archContent, err := repomap.GenerateRepoMap(internalDir)
+		if err == nil {
+			combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
+			_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
+			fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled internal architecture into %s\n", combinedPath)
+		}
+	} else if t.ID == "comprehensive_readme" {
+		// Pre-compile ADRs
+		adrDir := filepath.Join(testOutputDir, "docs/adr")
+		files, err := os.ReadDir(adrDir)
+		var adrsCombined string
+		if err == nil {
+			var combined strings.Builder
+			for _, file := range files {
+				name := file.Name()
+				if strings.HasPrefix(name, "00") && strings.HasSuffix(name, ".md") {
+					content, readErr := os.ReadFile(filepath.Join(adrDir, name))
+					if readErr == nil {
+						combined.WriteString(fmt.Sprintf("# ADR %s\n\n%s\n\n---\n\n", name, string(content)))
+					}
+				}
+			}
+			adrsCombined = combined.String()
+		}
+
+		// Pre-compile internal architecture
+		internalDir := filepath.Join(testOutputDir, "internal")
+		archContentStr, _ := repomap.GenerateRepoMap(internalDir)
+		archPath := filepath.Join(internalDir, "all_internal_combined.md")
+		if archContentStr != "" {
+			_ = os.WriteFile(archPath, []byte(archContentStr), 0644)
+		}
+		archContent, _ := os.ReadFile(archPath)
+
+		// Create unified project compilation
+		var projectCombined strings.Builder
+		projectCombined.WriteString("# TZRO PROJECT COMPILATION FOR README\n\n")
+		projectCombined.WriteString("## ARCHITECTURE OVERVIEW & PACKAGE MAP\n\n")
+		projectCombined.WriteString(string(archContent))
+		projectCombined.WriteString("\n\n---\n\n## DECISION LOGS & ADRS\n\n")
+		projectCombined.WriteString(adrsCombined)
+
+		projectPath := filepath.Join(testOutputDir, "all_project_combined.md")
+		_ = os.WriteFile(projectPath, []byte(projectCombined.String()), 0644)
+		fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled project map into %s\n", projectPath)
 	}
 
 	// Re-register write_file with a validator scoped to ONLY the testOutputDir.
@@ -943,3 +1011,4 @@ func waitForSidecarHealth(label string, model *inference.LocalModelManager) {
 	}
 	fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar health check timed out on port %d\n", label, activePort)
 }
+

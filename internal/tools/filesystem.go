@@ -175,7 +175,7 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 
 			selectedLines := allLines[startIdx:endIdx]
 
-			// Cap at 100 lines
+			// Cap at 500 lines for tool output to prevent context window overflow
 			const maxLines = 500
 			truncated := false
 			if len(selectedLines) > maxLines {
