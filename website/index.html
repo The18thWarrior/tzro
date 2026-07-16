@@ -76,8 +76,7 @@
       <a href="docs.html" class="mobile-nav-link">Docs</a>
       <a href="#architecture" class="mobile-nav-link">Architecture</a>
       <a href="#benchmarks" class="mobile-nav-link">Benchmarks</a>
-      <a href="https://github.com/The18thWarrior/tzro" class="mobile-nav-link" target="_blank"
-        rel="noopener">GitHub</a>
+      <a href="https://github.com/The18thWarrior/tzro" class="mobile-nav-link" target="_blank" rel="noopener">GitHub</a>
     </nav>
   </div>
 
@@ -278,28 +277,29 @@
               <tr>
                 <th>What We Track</th>
                 <th>Standard Agent Loop</th>
-                <th>TZRO Cooperative Loop <span class="benchmark-run-tag">(Run 10)</span></th>
+                <th>TZRO Cooperative Loop</th>
                 <th>The Developer Win</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td class="benchmark-metric-name">Cloud Token Usage</td>
-                <td class="benchmark-baseline">35,000 tokens</td>
-                <td class="benchmark-tzro">9,800 tokens</td>
-                <td class="benchmark-win">72% cheaper API bills <span class="benchmark-dot green">🟢</span></td>
+                <td class="benchmark-baseline">116,250 tokens</td>
+                <td class="benchmark-tzro">4,780 tokens</td>
+                <td class="benchmark-win">96% cheaper API bills <span class="benchmark-dot green">🟢</span></td>
               </tr>
               <tr>
                 <td class="benchmark-metric-name">Average Task Speed</td>
-                <td class="benchmark-baseline">267 seconds</td>
-                <td class="benchmark-tzro">142 seconds</td>
-                <td class="benchmark-win">45% faster execution <span class="benchmark-dot green">🟢</span></td>
+                <td class="benchmark-baseline">92 seconds</td>
+                <td class="benchmark-tzro">617 seconds</td>
+                <td class="benchmark-win">Cloud is ~7× faster — you trade speed for 96% cost savings <span
+                    class="benchmark-dot green">🟡</span></td>
               </tr>
               <tr>
                 <td class="benchmark-metric-name">Inference Quality</td>
-                <td class="benchmark-baseline">3.38 / 5.00</td>
-                <td class="benchmark-tzro">3.55 / 5.00</td>
-                <td class="benchmark-win">Uncompromised coding accuracy <span class="benchmark-dot green">🟢</span>
+                <td class="benchmark-baseline">5.00 / 5.00</td>
+                <td class="benchmark-tzro">4.90 / 5.00</td>
+                <td class="benchmark-win">LLM-judged documentation accuracy <span class="benchmark-dot green">🟢</span>
                 </td>
               </tr>
             </tbody>
@@ -322,13 +322,13 @@
           </div>
           <div class="case-study-comparison">
             <div class="case-study-before">
-              <div class="case-study-label case-study-label-red">Without Loop Dampening (Run 10)</div>
+              <div class="case-study-label case-study-label-red">Without Loop Dampening</div>
               <p>The agent generated <strong>41 local tool calls</strong> and consumed
                 <strong>183,534 local tokens</strong> trying to map the directory.
               </p>
             </div>
             <div class="case-study-after">
-              <div class="case-study-label case-study-label-green">With Loop Dampening (Run 11)</div>
+              <div class="case-study-label case-study-label-green">With Loop Dampening</div>
               <p>Our dynamic termination engine collapsed this to only <strong>2 tool calls</strong>
                 and <strong>16,573 local tokens</strong> — while actually improving the
                 documentation quality score from 3.75 to <strong>4.75</strong>.</p>
@@ -433,8 +433,7 @@
             <div class="os-block-os-name">GUI / Window Manager</div>
             <div class="os-block-tzro-name">Generative Dashboard</div>
           </div>
-          <div class="os-block os-block-boot" data-target="#install"
-            data-label="One-line curl installer (install.sh)">
+          <div class="os-block os-block-boot" data-target="#install" data-label="One-line curl installer (install.sh)">
             <div class="os-block-os-name">Boot Loader</div>
             <div class="os-block-tzro-name">install.sh</div>
           </div>
