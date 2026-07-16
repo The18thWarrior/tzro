@@ -1,8 +1,4 @@
-# TZRO.ai: The Go-Native, Local MCP Offloader
-
-<p align="center">
-  <img src="static/hero.jpeg" alt="TZRO Hero Banner" width="100%" />
-</p>
+# TZRO: The Local AI Task Offloader
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go Report Card](https://goreportcard.com/badge/github.com/The18thWarrior/tzro)](https://goreportcard.com/report/github.com/The18thWarrior/tzro)
@@ -90,8 +86,8 @@ TZRO.ai avoids the heavy runtime layers and dynamic type errors typical of tradi
 
 TZRO supports two operational integration workflows:
 
-- **Motion B — The MCP Sidecar (Bottom-up Hook):** The out-of-the-box local daemon utility used by individual contributors to instantly restrict cloud API billing thresholds within active IDE spaces. Register the MCP server with your coding client and start offloading immediately.
-- **Motion A — The SDK Framework (Top-down Scale):** A robust systems framework for engineering architects. When your team scales from personal code execution to creating highly concurrent background enterprise automation pipelines (e.g., continuous CRM synchronizations or database migrations), import the Go-native SDK to deploy lightweight, crash-proof microservices.
+- **Motion B — The MCP Sidecar:** The out-of-the-box local daemon utility used by individual contributors to instantly restrict cloud API billing thresholds within active IDE spaces. Register the MCP server with your coding client and start offloading immediately.
+- **Motion A — The SDK Framework:** A robust systems framework for engineering architects. When your team scales from personal code execution to creating highly concurrent background enterprise automation pipelines (e.g., continuous CRM synchronizations or database migrations), import the Go-native SDK to deploy lightweight, crash-proof microservices.
 
 ---
 
