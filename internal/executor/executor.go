@@ -946,6 +946,15 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			probeConfig.TaskContext = graph.GoalPrompt
 		}
 
+		// Auto-detect PreloadPaths from probe instructions if not explicitly set.
+		// Scans the goal text for directory-like paths (e.g., "internal/cache/",
+		// "docs/adr/") and resolves them against the project root. Only existing
+		// directories are added. This universal mechanism gives every probe
+		// pre-loaded context without requiring the planner to know about PreloadPaths.
+		if len(probeConfig.PreloadPaths) == 0 {
+			probeConfig.PreloadPaths = detectPreloadPaths(probeConfig.Goal, probeConfig.TaskContext)
+		}
+
 		// Collect binding keys that downstream nodes need from this probe's output.
 		// Scan all nodes' DynamicBindings for references to this probe node (format:
 		// "probeNodeId.output.propertyName") and extract the property names. These
@@ -1203,7 +1212,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 		req.TaskID = taskID
 
-		inferenceResult, err := inference.ExecuteWorkerStructured(ctx, req)
+		// Synthesis nodes are the end of the line — give them the full context
+		// window for generation. The llama.cpp server naturally caps at n_ctx
+		// minus prompt tokens, so this effectively means "generate until done".
+		synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 65536)
+		inferenceResult, err := inference.ExecuteWorkerStructured(synthCtx, req)
 		if err != nil {
 			return fmt.Errorf("synthesis node execution failed: %w", err)
 		}

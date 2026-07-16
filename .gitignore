@@ -81,5 +81,7 @@ models/*
 
 benchmark-results*
 benchmark-test-*
-benchmark_results*module_docs.md
+benchmark_results*
+module_docs.md
 benchmarks_run
+.preload_context.md

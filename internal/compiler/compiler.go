@@ -64,6 +64,15 @@ type ProbeConfig struct {
 	// Skips Symbol Extraction and Compaction — the pre-compiled input is already structured.
 	DirectSynthesis bool   `json:"directSynthesis,omitempty"` // When true, skip Thought Chain and synthesize directly
 	ContextFile     string `json:"contextFile,omitempty"`     // Absolute path to pre-compiled context file (required when DirectSynthesis=true)
+
+	// PreloadPaths specifies directories to pre-load into the probe's initial context
+	// before the Thought Chain loop starts. Files are concatenated with headers:
+	// - Go files: AST-extracted exported symbols (structs, funcs, interfaces)
+	// - Markdown/text files: raw content
+	// - Test files (*_test.go) are excluded
+	// This eliminates the routing problem where probes miss files during exploration.
+	PreloadPaths    []string `json:"preloadPaths,omitempty"`    // Directories to pre-load
+	PreloadMaxChars int      `json:"preloadMaxChars,omitempty"` // Character budget for preloaded content (default: 32000)
 }
 
 type GraphEdge struct {

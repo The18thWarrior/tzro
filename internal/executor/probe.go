@@ -262,6 +262,42 @@ func RunProbe(
 		minStepBudget = 1
 	}
 
+	// Pre-load target directory files if PreloadPaths is set.
+	// Strategy: Write pre-loaded content to a temp file in the first PreloadPath
+	// directory, then add a directive in the goal telling the probe to read it.
+	// 
+	// Why NOT lastToolOutput: Rolling compaction at step 3 destroys the pre-loaded
+	// content (observed: 32K chars → 375 char summary for T3 ADRs).
+	// Why NOT TaskContext: Bloats system prompt on every step, overwhelming the router.
+	// Why temp file: Content enters via read_file (one tool call), survives in the
+	// thought chain naturally, and the synthesis detail window preserves recent reads.
+	var preloadedContent string
+	var preloadCleanup func()
+	if len(config.PreloadPaths) > 0 {
+		maxChars := config.PreloadMaxChars
+		if maxChars <= 0 {
+			maxChars = defaultPreloadMaxChars
+		}
+		preloadedContent = preloadDirectoryContext(config.PreloadPaths, maxChars)
+		if preloadedContent != "" {
+			// Write to temp file in the first preload directory
+			preloadFile := filepath.Join(config.PreloadPaths[0], ".preload_context.md")
+			if err := os.WriteFile(preloadFile, []byte(preloadedContent), 0644); err == nil {
+				// Add directive to goal telling probe to read the preload file first
+				config.Goal = fmt.Sprintf("%s\n\nIMPORTANT: Start by reading the pre-compiled source context file at '%s' — it contains all source files from the target directories concatenated together. Read it FIRST before any other exploration.", config.Goal, preloadFile)
+				preloadCleanup = func() {
+					os.Remove(preloadFile)
+				}
+				fmt.Fprintf(os.Stderr, "[Probe] Pre-loaded %d chars from %d directories into %s\n", len(preloadedContent), len(config.PreloadPaths), preloadFile)
+			}
+		}
+	}
+	if preloadCleanup != nil {
+		defer preloadCleanup()
+	}
+
+
+
 	// Pass 1: High-Entropy Tool Loop
 	//
 	// KV Cache Prefix Sharing (ADR-0021 extension for probes):
@@ -560,15 +596,30 @@ func RunProbe(
 
 	// Pass 2: Structured Synthesis
 	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, compactEvery)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, compactEvery, preloadedContent)
 }
 
-func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, detailWindow int) (string, error) {
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, detailWindow int, preloadedContent string) (string, error) {
 	summary, _ := memory.DB.GetLatestSummary(probeID)
 	steps, _ := memory.DB.GetThoughtSteps(probeID)
 	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaryLen=%d, detailWindow=%d\n", probeID, len(steps), len(summary.Summary), detailWindow)
 
 	var contextStr string
+
+	// Inject pre-loaded source material directly into synthesis context.
+	// This bypasses the compaction pipeline that would otherwise destroy the content.
+	// The pre-loaded content is the GROUND TRUTH source data; the compacted summary
+	// and thought steps provide the probe's exploration findings on top of it.
+	if preloadedContent != "" {
+		// Budget: use at most 16K chars of preloaded content for synthesis
+		// to avoid overwhelming the local model's context window.
+		const maxPreloadInSynthesis = 16384
+		if len(preloadedContent) > maxPreloadInSynthesis {
+			preloadedContent = preloadedContent[:maxPreloadInSynthesis] + "\n[... truncated ...]"
+		}
+		contextStr += "## Source Material (pre-loaded)\n" + preloadedContent + "\n\n"
+	}
+
 	if summary.Summary != "" {
 		contextStr += "Summary: " + summary.Summary + "\n"
 	}
@@ -605,7 +656,10 @@ Your goal was: %s
 
 You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.%s`, goal, extractionHint)
 
-	result, err := engine.Infer(ctx, systemPrompt, contextStr, synthSchema)
+	// Synthesis needs more output tokens than regular probe steps.
+	// The default 2048 truncates content-heavy outputs (e.g., ADR logs).
+	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+	result, err := engine.Infer(synthCtx, systemPrompt, contextStr, synthSchema)
 	if err != nil {
 		return "Synthesis inference failed: " + err.Error(), nil
 	}
