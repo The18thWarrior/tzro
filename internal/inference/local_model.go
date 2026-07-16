@@ -852,10 +852,12 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		ChatTemplateKwargs: templateKwargs,
 	}
 
-	// ADR-0043 Mechanism A: Generation cap via context key
-	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
-		reqBody.MaxTokens = &maxTok
+	// ADR-0043 Mechanism A: Generation cap via context key (default to 2048 to prevent runaway loops)
+	maxTok := 2048
+	if overrideTok, ok := ctx.Value(MaxTokensKey).(int); ok && overrideTok > 0 {
+		maxTok = overrideTok
 	}
+	reqBody.MaxTokens = &maxTok
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}
@@ -1057,10 +1059,12 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		ChatTemplateKwargs: templateKwargs,
 	}
 
-	// ADR-0043 Mechanism A: Generation cap via context key
-	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
-		reqBody.MaxTokens = &maxTok
+	// ADR-0043 Mechanism A: Generation cap via context key (default to 2048 to prevent runaway loops)
+	maxTok := 2048
+	if overrideTok, ok := ctx.Value(MaxTokensKey).(int); ok && overrideTok > 0 {
+		maxTok = overrideTok
 	}
+	reqBody.MaxTokens = &maxTok
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}

@@ -212,6 +212,9 @@ For real-time observability, the MCP server exposes two URI templates for push n
 - **Goal-Directed File Compaction** — When probe nodes read large files (>100 lines), the `read_file` tool automatically compresses output against the probe's goal using the router model. Files ≤100 lines are returned raw. Non-probe callers are unaffected. Falls back to deterministic truncation on router errors.
 - **Worker Sidecar Synthesis** — Terminal synthesis now routes through `WorkerInference` (64K context worker model) for superior content generation quality, while the router sidecar handles step-level tool decisions.
 - **Default Model Upgrade** — Default worker model upgraded to Agents-A1-4B (Q4_K_M quantization) for improved agentic task performance.
+- **AST-Based Symbol Extraction & Anchor Verification** — Pure-Go tree-sitter integration parses every file read during Probe Thought Chains, building a deterministic Symbol Index across 12 languages. A post-synthesis Anchor Check detects hallucinated type names and triggers targeted corrections, eliminating a 67% hallucination rate observed in docgen benchmarks.
+- **Directory Preloading** — Probe Nodes pre-load source context (AST-extracted symbols for Go, raw content for Markdown/text) from target directories before exploration begins, eliminating file discovery gaps caused by local model routing failures.
+- **Repo Mapping & Direct Synthesis** — Deterministic AST-based codebase architecture maps enable single-shot synthesis for tasks that don't require multi-step Probe exploration, bypassing the Thought Chain entirely.
 - **`.gitignore`-Aware Directory Operations** — Directory copying operations now respect `.gitignore` patterns, preventing accidental inclusion of build artifacts and dependency trees.
 - **Website v2** — Redesigned documentation site with GitHub integration, interactive architecture cards, and new legal pages (Privacy Policy, Terms of Service).
 

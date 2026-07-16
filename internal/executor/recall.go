@@ -10,6 +10,7 @@ import (
 	"tzro/internal/compactor"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
+	"tzro/internal/symbols"
 )
 
 // RunRecall executes a Recall Node loop (ADR-0038).
@@ -122,15 +123,65 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 
 	// Final Synthesis Pass (Reduce)
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s executing final synthesis (Reduce Phase).\n", recallNodeID)
+
+	// Load Symbol Index from upstream probes (ADR-0047)
+	var symbolIndex []symbols.Symbol
+	for _, nodeID := range upstreamNodeIDs {
+		probeID := taskID + "_" + nodeID
+		syms, err := memory.DB.GetSymbolIndex(probeID)
+		if err == nil {
+			symbolIndex = append(symbolIndex, syms...)
+		}
+	}
+
+	// Build Symbol Index reference block for the synthesis prompt
+	symbolRefBlock := ""
+	if len(symbolIndex) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
+		sb.WriteString("Use ONLY these exact names when referring to types, functions, and interfaces:\n")
+		for _, sym := range symbolIndex {
+			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n", sym.Name, sym.Kind, sym.Signature))
+		}
+		symbolRefBlock = sb.String()
+	}
+
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
 
 ## Refined Discovery Context (Verified Facts):
-%s
+%s%s
 
-Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext)
+Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext, symbolRefBlock)
 
-	return engine.Infer(ctx, synthPrompt, lastResult, "")
+	synthesis, err := engine.Infer(ctx, synthPrompt, lastResult, "")
+	if err != nil {
+		return "", err
+	}
+
+	// Symbol Anchor Check (ADR-0047): verify synthesis references against Index
+	if len(symbolIndex) > 0 {
+		anchorResult := symbols.CheckAnchoring(synthesis, symbolIndex, symbols.DefaultAnchorThreshold)
+		fmt.Fprintf(os.Stderr, "[Recall] Symbol Anchor Check: %d referenced, %d anchored, %d unanchored (%.0f%% hallucination)\n",
+			anchorResult.TotalReferenced, anchorResult.Anchored, len(anchorResult.Unanchored), anchorResult.HallucinationPct*100)
+
+		if anchorResult.NeedsCorrection {
+			fmt.Fprintf(os.Stderr, "[Recall] Hallucination threshold exceeded — running targeted correction pass.\n")
+			correctionPrompt := symbols.BuildCorrectionPrompt(synthesis, anchorResult.Unanchored, symbolIndex)
+			corrected, corrErr := engine.Infer(ctx, "You are a code documentation editor. Fix hallucinated symbol names.", correctionPrompt, "")
+			if corrErr == nil && corrected != "" {
+				synthesis = corrected
+				fmt.Fprintf(os.Stderr, "[Recall] Correction pass complete. Re-checking...\n")
+
+				// Re-check after correction
+				recheck := symbols.CheckAnchoring(synthesis, symbolIndex, symbols.DefaultAnchorThreshold)
+				fmt.Fprintf(os.Stderr, "[Recall] Post-correction: %d referenced, %d anchored, %d unanchored (%.0f%% hallucination)\n",
+					recheck.TotalReferenced, recheck.Anchored, len(recheck.Unanchored), recheck.HallucinationPct*100)
+			}
+		}
+	}
+
+	return synthesis, nil
 }
 
 func extractAction(response string) (string, map[string]interface{}) {

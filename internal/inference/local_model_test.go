@@ -417,7 +417,7 @@ func TestMaxTokensKey_PropagatesThroughCallLocalModel(t *testing.T) {
 		t.Errorf("expected max_tokens=2048, got %d", int(maxTokensVal))
 	}
 
-	// Test 2: WITHOUT MaxTokensKey — max_tokens should NOT be present
+	// Test 2: WITHOUT MaxTokensKey — max_tokens should default to 2048
 	capturedBody = nil
 	ctx2 := context.Background()
 	_, err = mgr.CallLocalModel(ctx2, msgs, "")
@@ -425,7 +425,15 @@ func TestMaxTokensKey_PropagatesThroughCallLocalModel(t *testing.T) {
 		t.Fatalf("CallLocalModel without MaxTokensKey failed: %v", err)
 	}
 
-	if _, exists := capturedBody["max_tokens"]; exists {
-		t.Error("max_tokens should NOT be in request body when MaxTokensKey is not set")
+	maxTokensRaw, exists = capturedBody["max_tokens"]
+	if !exists {
+		t.Fatal("expected default max_tokens in request body when MaxTokensKey is not set")
+	}
+	maxTokensVal, ok = maxTokensRaw.(float64)
+	if !ok {
+		t.Fatalf("default max_tokens is not a number: %T", maxTokensRaw)
+	}
+	if int(maxTokensVal) != 2048 {
+		t.Errorf("expected default max_tokens=2048, got %d", int(maxTokensVal))
 	}
 }

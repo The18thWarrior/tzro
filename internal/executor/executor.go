@@ -523,7 +523,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		validatorSchemaStr := schemaStr // schema the model will see (may be stripped)
 
 		if len(node.DynamicBindings) > 0 {
-			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
 			if len(resolved) > 0 {
 				var lowConfBindings map[string]string
 				highConfBindings, lowConfBindings = partitionBindings(resolved)
@@ -558,7 +558,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 			// Inject low-confidence bindings as prompt hints (high-confidence are already stripped)
 			if len(node.DynamicBindings) > 0 {
-				resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+				resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
 				if len(resolved) > 0 {
 					_, lowConf := partitionBindings(resolved)
 					if len(lowConf) > 0 {
@@ -600,6 +600,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 				// context before producing the tool call — high ROI vs probe
 				// where thinking multiplies across 15-20 steps.
 				thinkCtx := context.WithValue(ctx, inference.ThinkingEnabledKey, true)
+				thinkCtx = context.WithValue(thinkCtx, inference.MaxTokensKey, 4096)
 				xmlResult, err = inference.ExecuteWorkerStructured(thinkCtx, req)
 			}
 
@@ -651,7 +652,8 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			refineReq.StreamMeta = &refineMeta
 			refineReq.TaskID = taskID
 
-			refineResult, refineErr := inference.ExecuteRouterStructured(ctx, refineReq)
+			refineCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+			refineResult, refineErr := inference.ExecuteRouterStructured(refineCtx, refineReq)
 			if refineErr == nil {
 				var check map[string]interface{}
 				if json.Unmarshal([]byte(refineResult), &check) == nil {
@@ -808,13 +810,13 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		// Safety net: apply coercion pipeline
 		coerceNumericArguments(toolArguments, interpolatedPrompt)
 		coerceStringArguments(toolArguments, interpolatedPrompt, node.Action)
-		resolveInterpolatedArguments(toolArguments, interpolatedPrompt, node.Instructions, taskID)
+		resolveInterpolatedArguments(toolArguments, interpolatedPrompt, node.Instructions, taskID, graph)
 
 		// Hard-override any dynamically bound params with resolved upstream values.
 		// ADR-0030: High-confidence tiers override unconditionally; low-confidence
 		// (semantic_fallback) only overrides null/empty (existing behavior).
 		if len(node.DynamicBindings) > 0 {
-			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
 			for paramName, rb := range resolved {
 				if rb.Value != "" && rb.Value != "null" {
 					existingVal, exists := toolArguments[paramName]
@@ -942,6 +944,15 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		// suggests different patterns. Only set if not already provided by planner.
 		if probeConfig.TaskContext == "" && graph.GoalPrompt != "" {
 			probeConfig.TaskContext = graph.GoalPrompt
+		}
+
+		// Auto-detect PreloadPaths from probe instructions if not explicitly set.
+		// Scans the goal text for directory-like paths (e.g., "internal/cache/",
+		// "docs/adr/") and resolves them against the project root. Only existing
+		// directories are added. This universal mechanism gives every probe
+		// pre-loaded context without requiring the planner to know about PreloadPaths.
+		if len(probeConfig.PreloadPaths) == 0 {
+			probeConfig.PreloadPaths = detectPreloadPaths(probeConfig.Goal, probeConfig.TaskContext)
 		}
 
 		// Collect binding keys that downstream nodes need from this probe's output.
@@ -1117,7 +1128,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			finalInputs[k] = v
 		}
 		if len(node.DynamicBindings) > 0 {
-			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID)
+			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
 			for paramName, rb := range resolved {
 				if rb.Value != "" && rb.Value != "null" {
 					finalInputs[paramName] = rb.Value
@@ -1201,7 +1212,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 		req.TaskID = taskID
 
-		inferenceResult, err := inference.ExecuteWorkerStructured(ctx, req)
+		// Synthesis nodes are the end of the line — give them the full context
+		// window for generation. The llama.cpp server naturally caps at n_ctx
+		// minus prompt tokens, so this effectively means "generate until done".
+		synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 65536)
+		inferenceResult, err := inference.ExecuteWorkerStructured(synthCtx, req)
 		if err != nil {
 			return fmt.Errorf("synthesis node execution failed: %w", err)
 		}
@@ -1418,7 +1433,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	coerceNumericArguments(toolCall.ToolArguments, interpolatedPrompt)
 	// P0 Fix (11:32): Deterministic string coercion + interpolation-aware argument resolution.
 	coerceStringArguments(toolCall.ToolArguments, interpolatedPrompt, node.Action)
-	resolveInterpolatedArguments(toolCall.ToolArguments, interpolatedPrompt, node.Instructions, taskID)
+	resolveInterpolatedArguments(toolCall.ToolArguments, interpolatedPrompt, node.Instructions, taskID, graph)
 
 	fmt.Fprintf(os.Stderr, "[Executor] Tool arguments extracted: %v\n", toolCall.ToolArguments)
 
@@ -1646,13 +1661,15 @@ func stripSchemaProperties(schemaStr string, keysToStrip []string) string {
 //
 // Uses a three-tier resolution cascade (ADR-0029 Response Resolver):
 //  1. Recursive key search — parse JSON and walk the tree for an exact key match at any depth
+//  1.5. Fuzzy key search — suffix/substring containment on JSON keys
+//  1.6. Node-type-aware plain-text fallback — for probe/synthesis/recall nodes whose output is raw text
 //  2. KV-line key search — fall back to "key: value" per-line parsing for non-JSON outputs
 //  3. Semantic fallback — invoke the Local Model to semantically match the binding key
 //
 // The returned Tier metadata enables the Proactive Binding Splice (ADR-0030) to
 // determine whether each resolved value can bypass inference (high-confidence)
 // or should be injected as a prompt hint (low-confidence).
-func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}, taskID string) map[string]ResolvedBinding {
+func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}, taskID string, graph *compiler.ExecutionGraph) map[string]ResolvedBinding {
 	if len(bindings) == 0 || taskID == "" {
 		return nil
 	}
@@ -1730,6 +1747,16 @@ func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}
 				}
 			}
 			// 0 matches from JSON (exact and fuzzy) — fall through to Tier 2 (KV-line) then Tier 3
+		}
+
+		// === Tier 1.6: Node-type-aware plain-text fallback (Grilling Decision #1) ===
+		// Probe, synthesis, and recall nodes produce free-form text (markdown, prose),
+		// not JSON. When the source node is one of these types, the entire output IS
+		// the resolved value regardless of property key.
+		if !jsonParsed && isPlainTextNodeType(graph, nodeID) {
+			fmt.Fprintf(os.Stderr, "[Response Resolver] Resolved '%s' via plain_text_fallback (source node type)\n", paramName)
+			resolved[paramName] = ResolvedBinding{Value: sourceOutput, Tier: "plain_text_fallback"}
+			continue
 		}
 
 		// === Tier 2: KV-line key search ===
@@ -2293,7 +2320,7 @@ func GetNodeStateTolerant(taskID, nodeID string) (memory.NodeState, bool) {
 }
 
 // getUpstreamValue fetches the exact property value from an upstream completed node state in SQLite.
-func getUpstreamValue(taskID, nodeID, propertyKey string) string {
+func getUpstreamValue(taskID, nodeID, propertyKey string, graph *compiler.ExecutionGraph) string {
 	state, ok := GetNodeStateTolerant(taskID, nodeID)
 	if !ok {
 		return ""
@@ -2311,6 +2338,10 @@ func getUpstreamValue(taskID, nodeID, propertyKey string) string {
 
 	var outputMap map[string]interface{}
 	if err := json.Unmarshal([]byte(sourceOutput), &outputMap); err != nil {
+		// Node-type-aware fallback: probe/synthesis/recall output IS the value (Grilling Decision #10)
+		if isPlainTextNodeType(graph, nodeID) {
+			return sourceOutput
+		}
 		// Try parsing as KV lines (compacted object notation)
 		outputMap = make(map[string]interface{})
 		lines := strings.Split(sourceOutput, "\n")
@@ -2334,6 +2365,10 @@ func getUpstreamValue(taskID, nodeID, propertyKey string) string {
 
 	val, found := outputMap[propertyKey]
 	if !found {
+		// Node-type-aware fallback for JSON-parseable but key-missing case
+		if isPlainTextNodeType(graph, nodeID) {
+			return sourceOutput
+		}
 		return ""
 	}
 	if mVal, ok := val.(map[string]interface{}); ok {
@@ -2347,6 +2382,30 @@ func getUpstreamValue(taskID, nodeID, propertyKey string) string {
 	return fmt.Sprintf("%v", val)
 }
 
+// isPlainTextNodeType checks whether the given node in the execution graph is a type
+// that produces free-form text output (probe, synthesis, recall) rather than structured
+// JSON. These node types should use the plain-text fallback tier during binding resolution.
+// Returns false if graph is nil or the node is not found (safe for backward compat).
+func isPlainTextNodeType(graph *compiler.ExecutionGraph, nodeID string) bool {
+	if graph == nil {
+		return false
+	}
+	// Strip SCT suffixes to find the original high-level node
+	baseID := nodeID
+	for _, suffix := range []string{"_exec", "_bridge", "_recall", "_validator"} {
+		baseID = strings.TrimSuffix(baseID, suffix)
+	}
+	for _, node := range graph.Nodes {
+		if node.ID == nodeID || node.ID == baseID {
+			switch node.Type {
+			case "probe", "synthesis", "recall":
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // resolveInterpolatedArguments resolves tool arguments that were derived from upstream node outputs.
 // When the original instruction template contained {{nodes.X.output.Y}} references (now resolved
 // to actual values in interpolatedInstruction), this function extracts those resolved values and
@@ -2354,7 +2413,7 @@ func getUpstreamValue(taskID, nodeID, propertyKey string) string {
 //
 // This is the primary fix for the 0% pass rate on devops_incident and hr_onboarding categories,
 // where nearly all arguments are dynamic upstream dependencies that the GBNF bridge hallucinates.
-func resolveInterpolatedArguments(args map[string]interface{}, interpolatedInstruction string, originalInstruction string, taskID string) {
+func resolveInterpolatedArguments(args map[string]interface{}, interpolatedInstruction string, originalInstruction string, taskID string, graph *compiler.ExecutionGraph) {
 	if len(args) == 0 || originalInstruction == "" || taskID == "" {
 		return
 	}
@@ -2386,7 +2445,7 @@ func resolveInterpolatedArguments(args map[string]interface{}, interpolatedInstr
 		nodeID := match[1]
 		propKey := match[2]
 
-		resolvedValue := getUpstreamValue(taskID, nodeID, propKey)
+		resolvedValue := getUpstreamValue(taskID, nodeID, propKey, graph)
 		if resolvedValue == "" || resolvedValue == "null" {
 			continue
 		}
