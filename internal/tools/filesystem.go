@@ -192,7 +192,7 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 			// and a probe goal is present in context, compress via router model.
 			// The probe is unaware this happens — it gets back content that is
 			// pre-compressed for its goal instead of raw source.
-			if goal, ok := ctx.Value(FileReadGoalKey).(string); ok && len(selectedLines) > fileCompactionThreshold {
+			if goal, ok := ctx.Value(FileReadGoalKey).(string); ok && goal != "" && len(selectedLines) > fileCompactionThreshold {
 				compressed, compErr := compressFileForGoal(ctx, content, goal, resolvedPath, totalLines)
 				if compErr != nil {
 					// Fallback: deterministic truncation (first/last 20 lines)

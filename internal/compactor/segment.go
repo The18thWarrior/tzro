@@ -263,7 +263,11 @@ func TruncateTextMiddleOut(content string, targetChars int) string {
 		if len(runes) <= targetChars {
 			return content
 		}
-		return string(runes[:targetChars-50]) + "\n[... truncated ...]"
+		cutoff := targetChars - 50
+		if cutoff < 1 {
+			cutoff = targetChars
+		}
+		return string(runes[:cutoff]) + "\n[... truncated ...]"
 	}
 
 	head := strings.Join(lines[:keepLines], "\n")
@@ -274,7 +278,11 @@ func TruncateTextMiddleOut(content string, targetChars int) string {
 
 	if utf8.RuneCountInString(result) > targetChars {
 		runes := []rune(result)
-		return string(runes[:targetChars-50]) + "\n[... truncated ...]"
+		cutoff := targetChars - 50
+		if cutoff < 1 {
+			cutoff = targetChars
+		}
+		return string(runes[:cutoff]) + "\n[... truncated ...]"
 	}
 	return result
 }

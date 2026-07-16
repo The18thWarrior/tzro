@@ -200,8 +200,6 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 		return graph, nil
 	}
 
-
-
 	cfg := config.Get()
 
 	// 1. Classify complexity for routing decision

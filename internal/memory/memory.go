@@ -335,6 +335,7 @@ func (sdb *SqliteDatabase) createTables() error {
 			created_at INTEGER NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_symbol_index_probe ON symbol_index(probe_id);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_index_dedup ON symbol_index(probe_id, name, file, line);`,
 	}
 
 	for _, query := range queries {
