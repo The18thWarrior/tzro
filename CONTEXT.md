@@ -143,11 +143,23 @@ _Avoid_: Compaction Pipeline (JSON/HTML/Base64 only), text summarizer, generic L
 
 **Code Skeleton**:
 A deterministic reduction of source code to its structural elements: function signatures, type declarations, doc comments, const/var blocks, and package/import statements. Function bodies are replaced with fingerprints containing line count and extracted function calls (e.g., `// [body: 42 lines, calls: foo(), bar()]`). Never LLM-compressed — purely structural transformation. Used by the **Structured Compactor** to preserve code identity through compaction.
-_Avoid_: Code summary, AST extraction (heuristic, not true AST), code truncation
+_Avoid_: Code summary, AST-based compaction (heuristic is sufficient for body-stripping), code truncation. Note: AST-based *symbol extraction* is a separate concern handled by the **Symbol Extractor**, not the Code Skeleton.
 
 **Reasoning Compression**:
 The LLM-based compression of a model's own reasoning text (the `Thought` field in probe steps). Text is split into ~500-character chunks by sentence boundary, and each chunk is compressed by the 1B router with the prompt "Extract key conclusion." Preserves the model's *decisions* while stripping its *deliberation*. Never applied to tool outputs or code — only to the model's reasoning.
 _Avoid_: Code compression, tool output compression, full-context summarization
+
+**Symbol Extractor**:
+A deterministic AST-based component that parses source code files read during a **Probe Node**'s **Thought Chain** and emits structured `{name, kind, signature, file, line}` tuples for all public declarations. Runs as a post-`read_file` hook inside the Thought Chain executor — after the tool returns raw file content and before the **Structured Compactor** processes it. Uses a pure-Go tree-sitter runtime (`gotreesitter`) with embedded grammars for a core language set (Go, TypeScript, JavaScript, Python, Java, Rust, Dart, C++, C#, Kotlin, Swift, Ruby) and lazy-loaded grammars for the long tail. Complements the **Code Skeleton** (heuristic compaction) with precise, AST-verified symbol identification.
+_Avoid_: Code Skeleton (heuristic compaction, not extraction), LLM-based extraction (hallucination-prone), regex-only scanner (misses multi-line signatures and language-specific visibility rules)
+
+**Symbol Index**:
+The accumulated side-channel table of `{name, kind, signature, file, line}` tuples emitted by the **Symbol Extractor** across all **Thought Chain** steps within a **Probe Node**. Stored in SQLite (not inline in the Thought Chain context window) to avoid bloating the **Local Model**'s limited context. Injected into the **Recall Node**'s synthesis prompt as the authoritative inventory of real symbols, preventing hallucination of type and function names. Only counts toward the Probe Node that produced it — not shared across tasks.
+_Avoid_: Type Inventory (too narrow — also captures functions, constants, variables), Declaration Registry (conflicts with tool/skill registry terminology)
+
+**Symbol Anchor Check**:
+A lightweight conditional verification step that runs after the **Recall Node**'s synthesis output. Parses the output for referenced symbol names and diffs them against the **Symbol Index**. Uses a two-tier filter: dot-qualified external references (e.g., `context.Context`, `sync.Mutex`) are skipped; only unqualified identifiers absent from the Index are flagged as potential hallucinations. If the unanchored rate exceeds a threshold (>20% of referenced symbols), triggers a targeted correction pass — a short cloud inference prompt that supplies the flagged names and the real **Symbol Index**, asking for surgical replacement rather than full re-synthesis.
+_Avoid_: Verification Node (too generic), Hallucination Gate (loaded term), full re-synthesis on failure (expensive and error-prone)
 
 
 **Accumulated Context**:

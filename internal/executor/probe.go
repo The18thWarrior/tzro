@@ -14,6 +14,7 @@ import (
 	cfgpkg "tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
+	"tzro/internal/symbols"
 	"tzro/internal/tools"
 )
 
@@ -379,6 +380,15 @@ func RunProbe(
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
+
+						// Symbol Extractor hook (ADR-0047): on successful read_file,
+						// parse the source via AST and persist extracted declarations
+						// to the Symbol Index side-channel table.
+						if toolName == "read_file" {
+							if filePath, ok := args["path"].(string); ok {
+								extractAndPersistSymbols(probeID, taskID, filePath, result)
+							}
+						}
 
 						// Output fingerprint convergence check (Fix B):
 						// Track first 200 chars of each successful output. When
@@ -1101,4 +1111,32 @@ func extractPathFromText(text string) string {
 	}
 
 	return ""
+}
+
+// extractAndPersistSymbols runs the Symbol Extractor on a file's content
+// and persists any extracted symbols to the Symbol Index. Called as a
+// post-read_file hook in the Thought Chain loop (ADR-0047).
+//
+// Errors are logged but not propagated — symbol extraction is best-effort
+// and must not disrupt the probe's primary exploration loop.
+func extractAndPersistSymbols(probeID, taskID, filePath, content string) {
+	syms, err := symbols.ExtractSymbols(filepath.Base(filePath), []byte(content))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Probe] Symbol extraction error for %s: %v\n", filePath, err)
+		return
+	}
+	if len(syms) == 0 {
+		return
+	}
+
+	// Set full file paths (extractor only sees the basename for language detection)
+	for i := range syms {
+		syms[i].File = filePath
+	}
+
+	if err := memory.DB.InsertSymbols(probeID, taskID, syms); err != nil {
+		fmt.Fprintf(os.Stderr, "[Probe] Symbol index persist error: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[Probe] Extracted %d symbols from %s\n", len(syms), filePath)
 }

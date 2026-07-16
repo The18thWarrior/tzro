@@ -4,6 +4,51 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-15T20:48:00-07:00] tdd | AST Symbol Extraction Pipeline (ADR-0047) — IMPLEMENTATION COMPLETE
+
+- **Activity**: TDD implementation of the full Symbol Extraction pipeline: Symbol Extractor, Symbol Index, and Symbol Anchor Check.
+- **Slice 1 — Symbol Extractor** (`internal/symbols/extractor.go`):
+  - Pure-Go tree-sitter integration via `odvcencio/gotreesitter` v0.37.0
+  - Language-specific AST walkers for Go, Python, TypeScript, JavaScript, Rust, Java
+  - 8 behavior tests: func/type/interface/const/var extraction, multi-line signatures, _private filtering, pub/export filtering, unknown language graceful degradation, empty file
+  - All 8 GREEN on first pass (1 Java fix needed for nested class body traversal)
+- **Slice 2 — Symbol Index** (`internal/memory/symbol_index.go`):
+  - `symbol_index` SQLite table with probe_id partitioning
+  - Batch InsertSymbols, GetSymbolIndex, GetSymbolIndexCount CRUD methods
+  - Probe Node `read_file` hook in `internal/executor/probe.go` (post-success, best-effort)
+  - 4 behavior tests: persistence, accumulation across steps, probe isolation, empty probe
+  - All 4 GREEN on first pass
+- **Slice 3 — Symbol Anchor Check** (`internal/symbols/anchor_check.go`):
+  - Reference extraction from inline code, bold text, and fenced code blocks
+  - Two-tier filtering: dot-qualified externals skipped, builtin types skipped
+  - Threshold-gated correction (>20% hallucination triggers targeted correction pass)
+  - `BuildCorrectionPrompt` for surgical cloud correction
+  - Recall Node integration: Symbol Index injected as authoritative reference, post-synthesis anchor check, optional correction pass
+  - 9 behavior tests: all anchored, hallucinated names, external refs, threshold gating, correction prompt, empty index/output, bold refs, code block refs
+  - All 9 GREEN (1 regex fix for dot-qualified backtick references)
+- **Total**: 22 tests, 0 failures, `go build ./...` clean
+- **Files Created**: `internal/symbols/extractor.go`, `internal/symbols/extractor_test.go`, `internal/symbols/anchor_check.go`, `internal/symbols/anchor_check_test.go`, `internal/memory/symbol_index.go`, `internal/memory/symbol_index_test.go`
+- **Files Modified**: `internal/memory/memory.go` (schema), `internal/executor/probe.go` (read_file hook), `internal/executor/recall.go` (anchor check + correction)
+
+---
+
+## [2026-07-15T20:34:00-07:00] grill-with-docs | AST Symbol Extraction Pipeline (ADR-0047) — DESIGN COMPLETE
+
+- **Activity**: Grill-with-docs session stress-testing fixes from the docgen benchmark rescoring audit. Cooperative mode showed 67% hallucination rate on type names (LLM judge scored 4.25, manual audit scored 2.65). Resolved 11 design decisions across two fixes.
+- **Decisions Captured**: ADR-0047 (AST-based symbol extraction). Three new CONTEXT.md terms: **Symbol Extractor**, **Symbol Index**, **Symbol Anchor Check**. Code Skeleton `_Avoid_` narrowed to allow AST extraction alongside heuristic compaction.
+- **Key Design Choices**:
+  - Pure-Go tree-sitter (`odvcencio/gotreesitter`) — no CGO, 206 grammars, wasip1 compatible
+  - Extraction runs as post-`read_file` hook in Probe Node Thought Chain (not inside Structured Compactor)
+  - Symbol Index stored in side-channel SQLite table (not inline in context window)
+  - Embed 12 core language grammars, lazy-load rest from `~/.tzro/grammars/`
+  - Symbol Anchor Check uses two-tier filter (skip dot-qualified externals) with >20% threshold
+  - Targeted correction pass (~500 tokens) on failure, not full re-synthesis
+- **Benchmark Evidence**: 5-task docgen suite — `inference_module_docs` (T2) hallucinated 8/12 types, `comprehensive_readme` (T5) produced 696 chars with wrong project name, `internal_architecture` (T4) scored 5.0/5.0 from judge despite 6 missing packages
+- **Files Modified**: `CONTEXT.md`, `docs/adr/0047-ast-symbol-extraction-for-probe-nodes.md` [NEW]
+
+---
+
+
 ## [2026-07-09T10:33:00-07:00] tdd | MCTS Multi-Branch Edge Thought Evaluation (ADR-0045) — COMPLETE
 
 - **Activity**: Full TDD implementation of multi-branch Edge Thought evaluation, constrained to single-slot sidecar operation. Grilling session resolved 9 design decisions. Red-green TDD loop with 58 new tests across 3 packages. All ready queue wiring complete.
