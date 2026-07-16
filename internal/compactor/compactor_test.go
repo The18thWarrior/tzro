@@ -105,8 +105,8 @@ func TestCompactSteps_DeterministicOnly(t *testing.T) {
 func TestCompactSteps_WithEngine(t *testing.T) {
 	steps := []Step{
 		{
-			Index:   1,
-			Thought: "I need to explore the directory structure. Let me start by listing the top-level files and directories to understand the project layout. This will help me determine which packages to investigate further.",
+			Index:      1,
+			Thought:    "I need to explore the directory structure. Let me start by listing the top-level files and directories to understand the project layout. This will help me determine which packages to investigate further.",
 			ToolName:   "list_dir",
 			ToolArgs:   "/project",
 			ToolOutput: "cmd/\ninternal/\ngo.mod\nREADME.md",

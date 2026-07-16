@@ -71,14 +71,14 @@ type codeElement struct {
 type elementKind int
 
 const (
-	elemPackage    elementKind = iota // package declaration
-	elemImport                       // import block
-	elemConst                        // const block
-	elemVar                          // var block
-	elemType                         // type declaration (struct, interface, etc.)
-	elemFunc                         // function/method declaration
-	elemComment                      // standalone doc comment
-	elemOther                        // other top-level code
+	elemPackage elementKind = iota // package declaration
+	elemImport                     // import block
+	elemConst                      // const block
+	elemVar                        // var block
+	elemType                       // type declaration (struct, interface, etc.)
+	elemFunc                       // function/method declaration
+	elemComment                    // standalone doc comment
+	elemOther                      // other top-level code
 )
 
 // parseCodeStructure analyzes source lines and groups them into structural elements.

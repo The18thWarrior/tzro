@@ -128,4 +128,3 @@ func checkAndUpdateConfidence(taskID string, sufficient bool) {
 			taskID, count, threshold)
 	}
 }
-

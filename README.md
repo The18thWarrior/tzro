@@ -206,16 +206,14 @@ For real-time observability, the MCP server exposes two URI templates for push n
 
 ---
 
-## 🆕 v0.9.0 Highlights
+## 🆕 v1.0.0 Highlights
 
-- **Dual-Sidecar Inference Architecture** — Two independent llama-server processes run concurrently: a fast router model (e.g., MiniCPM5-1B) for classification, tool selection, and Probe navigation, and a larger worker model for code generation and complex reasoning. Automatic fallback from router to worker when the router is unavailable.
-- **Multi-Branch MCTS Evaluation (ADR-0045)** — Edge Thought evaluation now generates K candidate actions in a single inference call, evaluates each through speculative rollouts with a Speculation Fence (real/imagined/blocked tool execution), and selects the highest-scoring candidate via a heuristic value function.
-- **Two-Tier Context Budget (ADR-0043/0044)** — Accumulated context assembly uses tiered per-node output budgets (recall > validator > action > probe > deterministic) with a dynamic ceiling. Synthesis nodes bypass the ceiling for full-fidelity output.
-- **Adaptive Probe Futility Detection** — Probes abort early when all initial steps fail, with a dynamic threshold that scales with step budget. Output fingerprint convergence detects diminishing information gain from repeated tool calls.
-- **KV Cache Prefix Sharing** — Probe system prompts are hoisted outside the step loop, enabling llama-server's cache-reuse window to skip ~500-1000 tokens of redundant KV computation per step.
-- **Hot-Swappable Model Management** — The engine temporarily swaps to a code-specialized GGUF model for codegen tasks, then lazily restores the default model after completion.
-- **PreFlect Hook** — Corrective micro-skills (SOPs) from the skill store are proactively injected into node instructions before execution, implementing pre-flight correction for known failure modes.
-- **Spawn Depth Tracking** — Nested spawn ancestry is tracked and enforced via `MutationBudget.MaxDepth` to prevent infinite recursive spawning.
+- **Structured Content-Aware Compaction Engine** — New `internal/compactor/` package replaces the older configurable `CompactionLevel` system. Tool outputs are now compacted using deterministic, content-type-aware strategies: code skeleton extraction (AST/regex-based, never LLM-compressed), JSON pruning, and log/text line truncation. Only the model's own reasoning text is LLM-compressed via the 1B router model. Compaction triggers every 3 steps as an architectural constant.
+- **Goal-Directed File Compaction** — When probe nodes read large files (>100 lines), the `read_file` tool automatically compresses output against the probe's goal using the router model. Files ≤100 lines are returned raw. Non-probe callers are unaffected. Falls back to deterministic truncation on router errors.
+- **Worker Sidecar Synthesis** — Terminal synthesis now routes through `WorkerInference` (64K context worker model) for superior content generation quality, while the router sidecar handles step-level tool decisions.
+- **Default Model Upgrade** — Default worker model upgraded to Agents-A1-4B (Q4_K_M quantization) for improved agentic task performance.
+- **`.gitignore`-Aware Directory Operations** — Directory copying operations now respect `.gitignore` patterns, preventing accidental inclusion of build artifacts and dependency trees.
+- **Website v2** — Redesigned documentation site with GitHub integration, interactive architecture cards, and new legal pages (Privacy Policy, Terms of Service).
 
 ---
 

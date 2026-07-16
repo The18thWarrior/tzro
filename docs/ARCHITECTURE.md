@@ -148,17 +148,19 @@ CREATE TABLE graph_node_states (
 );
 ```
 
-### 3.4. Probe Nodes & Content-Aware Truncation
+### 3.4. Probe Nodes & Content-Aware Compaction
 
 **Probe Nodes** are autonomous exploration agents that run a bounded Thought Chain loop on the Local Model. They navigate codebases, directories, or data sources using whitelisted filesystem tools (`read_file`, `list_dir`, `search_files`), persisting each step to SQLite.
 
 - **Minimum Step Budget (v0.7.3):** Probes enforce a floor before accepting `<SYNTHESIZE_READY>` signals. Adaptive: `min(8, stepBudget/2)`. Premature synthesis signals are ignored and exploration continues.
-- **Compaction Levels (v0.7.3):** Configurable per-probe via `CompactionLevel`: `"preserve"` (raw passthrough), `"moderate"` (summarize prose, preserve code/tables), `"aggressive"` (heavy summarization). Default is `"preserve"`.
-- **Content-Aware Truncation (v0.7.3):** The synthesis pass applies type-aware truncation to tool outputs before feeding them to the Local Model:
-  - **Code:** Truncated at the lowest bracket nesting level, preserving function signatures and doc comments. 500-char floor per file.
-  - **Tabular data:** Retains 3 sample rows plus summary statistics.
-  - **Text/prose:** Middle-out elision (keep first and last 30 lines).
-  - Truncation budget: 160K characters (~40K tokens). Applied oldest-first, preserving the most recent tool results intact.
+- **Structured Content-Aware Compaction (v1.0.0):** Replaces the earlier configurable `CompactionLevel` system. The new `internal/compactor/` package applies deterministic, content-type-aware strategies to tool outputs — code is **never** LLM-compressed:
+  - **Code (skeleton extraction):** Parses Go, Python, JS/TS, and other languages to extract function signatures, type definitions, and constants while omitting function bodies. Uses AST/regex-based extraction.
+  - **JSON (pruning):** Truncates large arrays and prunes deeply nested objects beyond a configurable depth threshold.
+  - **Logs/text (line truncation):** Retains head/tail lines with an omission marker. Preserves error stack traces.
+  - **Reasoning text (LLM compression):** Only the model's own `Thought` field is routed through the 1B router model for compression into key conclusions. Chunks are ≤500 chars.
+  - Compaction triggers every **3 steps** (architectural constant `compactEvery = 3`, not planner-controlled).
+- **Worker Sidecar Synthesis (v1.0.0):** Terminal synthesis now routes through `WorkerInference` (the worker sidecar with 64K context) for superior content generation quality. The router sidecar handles step-level tool decisions; the worker handles final synthesis.
+- **Goal-Directed File Compaction (v1.0.0):** When a probe reads a file >100 lines via `read_file`, the tool automatically compresses the output against the probe's goal using the router model (`FileReadGoalKey` context propagation). Files ≤100 lines are returned raw. Non-probe callers always get raw output.
 - **Adaptive Futility Thresholds (v0.9.0):** Probes abort early when ALL initial steps return errors with zero successful calls. The threshold scales dynamically: `max(5, stepBudget/4)`. Failed step diagnostics (step number, tool name, error message) are logged for debugging.
 - **Output Fingerprint Convergence (v0.9.0):** Tracks the first 200 characters of each successful tool output. After 3 consecutive duplicate outputs (indicating diminishing information gain), the minimum step budget is lowered to allow synthesis instead of redundant exploration.
 - **KV Cache Prefix Sharing (v0.9.0):** The system prompt (goal + tool schemas) is hoisted outside the step loop. This ensures the llama-server's `--cache-reuse` window matches system message tokens on every step, avoiding ~500-1000 tokens of redundant KV computation per step.
@@ -306,6 +308,8 @@ To optimize context usage and prevent the local model from becoming anchored by 
 - **Directory Profiling (`computeDirProfile`):** Summarizes directory contents mathematically by file extensions (e.g., "45 .go, 3 .mod, 2 .sum, 8 directories"), providing context grounding without exposing individual filenames.
 - **Regex Pattern Search (v0.8.0):** `search_files` now uses Go `regexp.Compile` instead of substring matching, supporting full regex patterns for more precise codebase exploration. Invalid patterns return a structured error.
 - **Increased Tool Limits (v0.8.0):** `read_file` cap raised from 100 to 500 lines and `list_dir` cap raised from 20 to 100 entries, giving probe nodes access to larger code contexts in a single call.
+- **Goal-Directed File Compaction (v1.0.0):** When `FileReadGoalKey` is present in the execution context (set by the probe executor), `read_file` automatically goal-compresses outputs for files >100 lines via the router model. Each 100-line chunk is compressed against the probe's goal, retaining relevant function signatures and structure. Falls back to deterministic truncation (first/last 20 lines) on router errors. Non-probe callers and files ≤100 lines are unaffected.
+- **`.gitignore` Support (v1.0.0):** Directory copying operations now respect `.gitignore` patterns, preventing accidental inclusion of build artifacts and dependency trees.
 
 ### 4.6. Context Compaction API (`tzro_compact`)
 
