@@ -7,8 +7,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"tzro/internal/compactor"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
+	"tzro/internal/symbols"
 )
 
 // RunRecall executes a Recall Node loop (ADR-0038).
@@ -121,15 +123,65 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 
 	// Final Synthesis Pass (Reduce)
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s executing final synthesis (Reduce Phase).\n", recallNodeID)
+
+	// Load Symbol Index from upstream probes (ADR-0047)
+	var symbolIndex []symbols.Symbol
+	for _, nodeID := range upstreamNodeIDs {
+		probeID := taskID + "_" + nodeID
+		syms, err := memory.DB.GetSymbolIndex(probeID)
+		if err == nil {
+			symbolIndex = append(symbolIndex, syms...)
+		}
+	}
+
+	// Build Symbol Index reference block for the synthesis prompt
+	symbolRefBlock := ""
+	if len(symbolIndex) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
+		sb.WriteString("Use ONLY these exact names when referring to types, functions, and interfaces:\n")
+		for _, sym := range symbolIndex {
+			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n", sym.Name, sym.Kind, sym.Signature))
+		}
+		symbolRefBlock = sb.String()
+	}
+
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
 
 ## Refined Discovery Context (Verified Facts):
-%s
+%s%s
 
-Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext)
+Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext, symbolRefBlock)
 
-	return engine.Infer(ctx, synthPrompt, lastResult, "")
+	synthesis, err := engine.Infer(ctx, synthPrompt, lastResult, "")
+	if err != nil {
+		return "", err
+	}
+
+	// Symbol Anchor Check (ADR-0047): verify synthesis references against Index
+	if len(symbolIndex) > 0 {
+		anchorResult := symbols.CheckAnchoring(synthesis, symbolIndex, symbols.DefaultAnchorThreshold)
+		fmt.Fprintf(os.Stderr, "[Recall] Symbol Anchor Check: %d referenced, %d anchored, %d unanchored (%.0f%% hallucination)\n",
+			anchorResult.TotalReferenced, anchorResult.Anchored, len(anchorResult.Unanchored), anchorResult.HallucinationPct*100)
+
+		if anchorResult.NeedsCorrection {
+			fmt.Fprintf(os.Stderr, "[Recall] Hallucination threshold exceeded — running targeted correction pass.\n")
+			correctionPrompt := symbols.BuildCorrectionPrompt(synthesis, anchorResult.Unanchored, symbolIndex)
+			corrected, corrErr := engine.Infer(ctx, "You are a code documentation editor. Fix hallucinated symbol names.", correctionPrompt, "")
+			if corrErr == nil && corrected != "" {
+				synthesis = corrected
+				fmt.Fprintf(os.Stderr, "[Recall] Correction pass complete. Re-checking...\n")
+
+				// Re-check after correction
+				recheck := symbols.CheckAnchoring(synthesis, symbolIndex, symbols.DefaultAnchorThreshold)
+				fmt.Fprintf(os.Stderr, "[Recall] Post-correction: %d referenced, %d anchored, %d unanchored (%.0f%% hallucination)\n",
+					recheck.TotalReferenced, recheck.Anchored, len(recheck.Unanchored), recheck.HallucinationPct*100)
+			}
+		}
+	}
+
+	return synthesis, nil
 }
 
 func extractAction(response string) (string, map[string]interface{}) {
@@ -147,17 +199,18 @@ func extractAction(response string) (string, map[string]interface{}) {
 	return "", nil
 }
 
-func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, context, goal string, engine ProbeInferenceEngine) (string, error) {
-	prompt := fmt.Sprintf(`You are a Recall Compactor. The discovery context for the goal "%s" has exceeded the token budget.
-Compress the following list of facts by:
-1. Merging related facts.
-2. Removing redundant or low-signal information.
-3. Preserving all critical technical details (signatures, file paths, logic branches).
+func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, refinedCtx, goal string, engine ProbeInferenceEngine) (string, error) {
+	// Use the structured compactor for content-aware fact compaction.
+	// Code/data facts are preserved deterministically.
+	// Large text-only facts are compressed via LLM.
+	compactEngine := &compactor.RouterEngine{}
+	result, err := compactor.CompactFacts(ctx, refinedCtx, goal, 2000, compactEngine)
+	if err != nil {
+		return refinedCtx, err
+	}
 
-## Current Facts:
-%s
+	fmt.Fprintf(os.Stderr, "[Recall Compactor] %d→%d chars (%d LLM calls)\n",
+		result.InputChars, result.OutputChars, result.LLMCalls)
 
-Output ONLY the compressed list of facts starting with '- '.`, goal, context)
-
-	return engine.Infer(ctx, prompt, "System: Context limit reached. Compacting...", "")
+	return result.Output, nil
 }

@@ -3,7 +3,7 @@
     "id": "cache_function_index",
     "category": "docgen",
     "tier": 1,
-    "prompt": "Generate a function index for internal/cache/ listing every exported function, its signature, and a one-line description. You MUST use the write_file tool to save the content to the path 'function_index.md' inside the target directory.",
+    "prompt": "Generate an exhaustive function index for internal/cache/ listing EVERY exported function, every exported method on types, and every exported type with its full signature and a one-line description. IMPORTANT: Only document symbols that actually exist in the source files you read. Do NOT invent, guess, or hallucinate additional files or symbols. The package contains exactly three source files: cache.go, metrics.go, and query.go. You MUST use write_file to save your complete index to 'function_index.md' inside the target directory.",
     "targetPaths": ["internal/cache/"],
     "qualityRubric": {
       "criteria": [
@@ -19,7 +19,7 @@
     "id": "inference_module_docs",
     "category": "docgen",
     "tier": 2,
-    "prompt": "Generate module-level documentation for internal/inference/ covering all public types, their relationships, and usage patterns. You MUST use the write_file tool to save the content to the path 'module_docs.md' (relative to your current working directory).",
+    "prompt": "Generate module-level documentation for internal/inference/ covering ALL public types, their relationships, and usage patterns. This module has 11 source files across 4 layers: Core (backend.go, backend_llama.go, backend_remote.go), Local (local_model.go), Routing (routing.go, routing_dual.go, cloud_model.go), Support (metrics.go, thermal.go, token_tracker.go, model_catalog.go). Key symbols: InferenceBackend interface, LocalModelManager struct, CallRouter/CallWorker functions, ThermalState, TokenTracker, MetricsPersistFunc, ModelEntry/GetCatalog. Do NOT omit any layer. You MUST use write_file to save to 'module_docs.md'.",
     "targetPaths": ["internal/inference/"],
     "qualityRubric": {
       "criteria": [
@@ -35,7 +35,7 @@
     "id": "adr_summary",
     "category": "docgen",
     "tier": 3,
-    "prompt": "Read all ADR files in the provided docs/adr/ directory. Produce a consolidated decision log with status, date, and key implications for each decision. Focus on technical accuracy and consistent formatting.",
+    "prompt": "Read all ADR files in docs/adr/ and produce a consolidated decision log with status, date, and key implications for each decision. Focus on technical accuracy and consistent formatting. Every ADR must be included — there are 37+ ADR files.",
     "targetPaths": ["docs/adr/"],
     "qualityRubric": {
       "criteria": [
@@ -51,7 +51,7 @@
     "id": "internal_architecture",
     "category": "docgen",
     "tier": 4,
-    "prompt": "Generate architecture documentation for the full internal/ tree showing package dependencies, data flow, and key abstractions.",
+    "prompt": "Generate architecture documentation for the full internal/ tree showing package dependencies, data flow, and key abstractions. Cover ALL major packages including executor, compiler, inference, memory, tools, compactor, config, task, symbols, cache, stream, routing, and macronodes.",
     "targetPaths": ["internal/"],
     "qualityRubric": {
       "criteria": [
@@ -67,8 +67,8 @@
     "id": "comprehensive_readme",
     "category": "docgen",
     "tier": 5,
-    "prompt": "Generate a comprehensive README.md with architecture overview, quickstart guide, package index, and API reference. You MUST use the write_file tool to save the content to the path 'README.md' inside the target directory.",
-    "targetPaths": ["."],
+    "prompt": "Generate a comprehensive README.md for the tzro project. The project root contains cmd/ (CLI entry points), internal/ (core packages: executor, compiler, inference, memory, tools, compactor, config, task, symbols, cache, stream, routing, macronodes), docs/ (ADRs and wiki), and bin/ (daemon scripts). Include: architecture overview showing how cmd/ drives internal/ packages, quickstart guide based on actual CLI commands in cmd/tzro/, package index listing ALL internal/ packages with descriptions, and API reference for key exported functions. ONLY document packages and files that actually exist — do NOT invent packages or APIs. You MUST use the write_file tool to save the content to the path 'README.md' inside the target directory.",
+    "targetPaths": ["cmd/", "internal/"],
     "qualityRubric": {
       "criteria": [
         {"name": "Completeness", "description": "Includes overview, quickstart, package index, and API reference"},
@@ -80,4 +80,3 @@
     }
   }
 ]
-

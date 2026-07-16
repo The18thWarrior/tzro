@@ -53,8 +53,12 @@ A pluggable provider abstraction that decouples structured LLM inference calls f
 _Avoid_: Model provider, LLM client, API wrapper
 
 **Strategic Planner (The Strategist)**:
-The component (often the **Cloud Model**) responsible for compiling a user's intent into an **Abstract Graph**. To minimize latency, the Strategist is "code-blind"—it receives only the **Tool Inventory**, **Micro-Skills**, and a **Shallow Directory Tree** (names only, no signatures, max depth 2) as scaffolding. If the Strategist requires deeper codebase knowledge to plan surgical paths, it **must** delegate that discovery to a **Probe Node**.
+The component (often the **Cloud Model**) responsible for compiling a user's intent into an **Abstract Graph**. Operates in an edit-not-create model: the router classifies the task category and selects a structural starter from the **Plan Template Registry**, then the Strategist makes targeted mutations (adjusting instructions, allowedTools, ProbeConfig) rather than generating a complete graph from scratch. To minimize latency, the Strategist is "code-blind"—it receives only the **Tool Inventory**, **Micro-Skills**, and a **Shallow Directory Tree** (names only, no signatures, max depth 2) as scaffolding. If the Strategist requires deeper codebase knowledge to plan surgical paths, it **must** delegate that discovery to a **Probe Node**.
 _Avoid_: Planner, DAG Generator
+
+**Plan Template Registry**:
+A set of named, structural graph shapes (e.g., `explore-only`, `explore-and-write`, `multi-probe-synthesis`) selected deterministically by the router based on task category. Each template is a valid **Abstract Graph** with placeholder instructions and default configuration. The **Strategic Planner** receives the selected template and mutates it for the specific task rather than generating a graph from scratch. Follows the "editing is cheaper than creating" principle established by the **Semantic Validator**.
+_Avoid_: Hardcoded plans, plan presets, graph blueprints
 
 **GBNF Constraint**:
 Logit-level grammar constraints forced onto local worker models. Previously used for deep JSON schemas, now restricted to shallow structural enforcement (e.g., ensuring valid XML wrapper tags) to maximize generation speed while delegating schema coercion to the **Semantic Validator**.
@@ -65,7 +69,7 @@ A deterministic boundary seam that parses loose, high-speed XML outputs from the
 _Avoid_: JSON parser, output fixer
 
 **Response Resolver**:
-A transparent post-execution step within action nodes that normalizes raw tool outputs into a flattened property map, making them resolvable by downstream **DynamicBindings** references. Uses a three-tier cascade: recursive JSON key search (exact match at any depth), fuzzy key search (suffix/substring containment), and semantic matching via the **Local Model** as fallback. Each resolution carries a confidence tier (`recursive_key`, `fuzzy_key`, `semantic_fallback`) used by the **Proactive Binding Splice** to determine whether to bypass inference. The output-side counterpart to the **Semantic Validator** (input-side).
+A transparent post-execution step within action nodes that normalizes raw tool outputs into a flattened property map, making them resolvable by downstream **DynamicBindings** references. Uses a five-tier cascade: (1) recursive JSON key search (exact match at any depth), (1.5) fuzzy key search (suffix/substring containment), (1.6) node-type-aware plain-text fallback (for **Probe Node** and synthesis outputs that are raw markdown, not JSON — the entire output IS the resolved value), (2) KV-line key search, and (3) semantic matching via the **Local Model** as fallback. Each resolution carries a confidence tier (`recursive_key`, `fuzzy_key`, `plain_text_fallback`, `kv_line`, `semantic_fallback`) used by the **Proactive Binding Splice** to determine whether to bypass inference. The output-side counterpart to the **Semantic Validator** (input-side).
 _Avoid_: Output Schema Registry, Tool Output Schema, output parser
 
 **Proactive Binding Splice**:
@@ -126,16 +130,49 @@ A scoring mechanism that evaluates candidate action quality during multi-branch 
 _Avoid_: Confidence score (Edge Thought's goalConfidence is the single-shot equivalent, not the multi-branch scoring), reward model, evaluator agent
 
 **Probe Node**:
-An autonomous execution node type that runs a bounded, multi-step **Thought Chain** exploration loop (research, directory traversal, file reading) using the **Local Model**. Persists its intermediate reasoning and tool outputs to the `thought_chain` table for durability and later recall. Coexists with **Edge Thought** — Probe Nodes handle dedicated multi-step exploration where reasoning continuity within a single DAG node is critical (each step sees the full accumulated thought chain), while **Edge Thoughts** handle reactive exploration via dynamic node spawning on action nodes.
+An autonomous execution node type that runs a bounded, multi-step **Thought Chain** exploration loop (research, directory traversal, file reading) using the **Local Model**. Persists its intermediate reasoning and tool outputs to the `thought_chain` table for durability and later recall. Supports a **Direct Synthesis** mode where the Thought Chain is bypassed in favor of a single-shot inference against pre-compiled context. Coexists with **Edge Thought** — Probe Nodes handle dedicated multi-step exploration where reasoning continuity within a single DAG node is critical (each step sees the full accumulated thought chain), while **Edge Thoughts** handle reactive exploration via dynamic node spawning on action nodes.
 _Avoid_: Action Node (single-step), research agent, sub-task
+
+**Direct Synthesis**:
+A **Probe Node** execution mode (set via `ProbeConfig.DirectSynthesis`) that bypasses the multi-step **Thought Chain** loop and runs a single-shot inference against a pre-compiled context file (e.g., a **Repo Map**). Used when the full exploration context is already available and multi-step discovery would be wasteful. Skips **Symbol Extraction** and **Compaction** — the pre-compiled input is already structured. The **Strategic Planner** may set this mode during **Plan Template** mutation when it determines the task can be satisfied without exploration.
+_Avoid_: Thought Chain (multi-step exploration), one-shot synthesis (ambiguous)
+
+**Repo Map Generator**:
+A deterministic AST-based utility that walks a source tree, parses each file's public declarations (packages, exported structs, interfaces, functions with signatures), and emits a structured markdown document mapping the codebase architecture. Used as the pre-compiled context source for **Direct Synthesis** mode and as a general-purpose codebase overview tool. Distinct from the **Symbol Extractor** (which runs per-file during a Thought Chain) — the Repo Map Generator operates on entire directory trees at once.
+_Avoid_: Symbol Extractor (per-file, per-step), Code Skeleton (body-stripping for compaction, not whole-tree mapping)
 
 **Thought Chain**:
 The internal step loop within a **Probe Node** where each iteration generates a reasoning thought, dispatches a tool call, and feeds the result back into the next iteration. Provides reasoning continuity — every step sees the full accumulated context from prior steps within the same node. Complements **Edge Thought** (which operates between separate DAG nodes) by providing within-node exploration where context fidelity matters more than checkpointing granularity.
 _Avoid_: Edge Thought (between-node), conversation history, chat loop
 
 **Compaction Pipeline**:
-A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload.
+A 5-layer compression process that flattens and translates verbose API outputs before injection to prevent model memory overload. Complemented by the **Structured Compactor** for content-aware compaction of code and reasoning text.
 _Avoid_: Text parser, JSON clean filter
+
+**Structured Compactor**:
+A unified content-aware compaction module (`internal/compactor/`) that classifies content into segments (Code, Text, Tabular) and applies type-appropriate strategies. Core principle: code is never LLM-compressed (deterministic **Code Skeleton** extraction only); the LLM only compacts the model's own reasoning text via **Reasoning Compression**. Replaces the legacy monolithic "compress these steps" LLM prompt with structured, reproducible compaction. Serves all compaction call sites: probe thought chain, recall refined context, accumulated context, and synthesis truncation.
+_Avoid_: Compaction Pipeline (JSON/HTML/Base64 only), text summarizer, generic LLM compressor
+
+**Code Skeleton**:
+A deterministic reduction of source code to its structural elements: function signatures, type declarations, doc comments, const/var blocks, and package/import statements. Function bodies are replaced with fingerprints containing line count and extracted function calls (e.g., `// [body: 42 lines, calls: foo(), bar()]`). Never LLM-compressed — purely structural transformation. Used by the **Structured Compactor** to preserve code identity through compaction.
+_Avoid_: Code summary, AST-based compaction (heuristic is sufficient for body-stripping), code truncation. Note: AST-based *symbol extraction* is a separate concern handled by the **Symbol Extractor**, not the Code Skeleton.
+
+**Reasoning Compression**:
+The LLM-based compression of a model's own reasoning text (the `Thought` field in probe steps). Text is split into ~500-character chunks by sentence boundary, and each chunk is compressed by the 1B router with the prompt "Extract key conclusion." Preserves the model's *decisions* while stripping its *deliberation*. Never applied to tool outputs or code — only to the model's reasoning.
+_Avoid_: Code compression, tool output compression, full-context summarization
+
+**Symbol Extractor**:
+A deterministic AST-based component that parses source code files read during a **Probe Node**'s **Thought Chain** and emits structured `{name, kind, signature, file, line}` tuples for all public declarations. Runs as a post-`read_file` hook inside the Thought Chain executor — after the tool returns raw file content and before the **Structured Compactor** processes it. Uses a pure-Go tree-sitter runtime (`gotreesitter`) with embedded grammars for a core language set (Go, TypeScript, JavaScript, Python, Java, Rust, Dart, C++, C#, Kotlin, Swift, Ruby) and lazy-loaded grammars for the long tail. Complements the **Code Skeleton** (heuristic compaction) with precise, AST-verified symbol identification.
+_Avoid_: Code Skeleton (heuristic compaction, not extraction), LLM-based extraction (hallucination-prone), regex-only scanner (misses multi-line signatures and language-specific visibility rules)
+
+**Symbol Index**:
+The accumulated side-channel table of `{name, kind, signature, file, line}` tuples emitted by the **Symbol Extractor** across all **Thought Chain** steps within a **Probe Node**. Stored in SQLite (not inline in the Thought Chain context window) to avoid bloating the **Local Model**'s limited context. Injected into the **Recall Node**'s synthesis prompt as the authoritative inventory of real symbols, preventing hallucination of type and function names. Only counts toward the Probe Node that produced it — not shared across tasks.
+_Avoid_: Type Inventory (too narrow — also captures functions, constants, variables), Declaration Registry (conflicts with tool/skill registry terminology)
+
+**Symbol Anchor Check**:
+A lightweight conditional verification step that runs after the **Recall Node**'s synthesis output. Parses the output for referenced symbol names and diffs them against the **Symbol Index**. Uses a two-tier filter: dot-qualified external references (e.g., `context.Context`, `sync.Mutex`) are skipped; only unqualified identifiers absent from the Index are flagged as potential hallucinations. If the unanchored rate exceeds a threshold (>20% of referenced symbols), triggers a targeted correction pass — a short cloud inference prompt that supplies the flagged names and the real **Symbol Index**, asking for surgical replacement rather than full re-synthesis.
+_Avoid_: Verification Node (too generic), Hallucination Gate (loaded term), full re-synthesis on failure (expensive and error-prone)
+
 
 **Accumulated Context**:
 The structured collection of completed upstream node outputs injected into each DAG node's prompt to provide execution history for parameter extraction and decision-making. Bounded by a node count window (`maxAccumulatedContextNodes`) and a total character budget (`accumulatedContextMaxChars`, ADR-0043) with content-aware per-node truncation. Distinct from **Edge Thought** (reasoning state) — Accumulated Context is raw data, not reasoning.

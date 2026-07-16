@@ -291,7 +291,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--parallel", "1",
 		"--jinja",
 		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
-		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 32K)
+		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 64K)
 		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)
@@ -366,15 +366,19 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 				args[i+1] = "16384"
 			}
 			if a == "--n-predict" && i+1 < len(args) {
-				args[i+1] = "1024" // Router outputs are short
+				args[i+1] = "4096" // Router outputs: compaction can produce longer reasoning summaries
+			}
+			// Override --cache-reuse to 256 (compaction system prompt prefix caching)
+			if a == "--cache-reuse" && i+1 < len(args) {
+				args[i+1] = "256"
 			}
 		}
-		// Remove speculative decoding args (overkill for router)
+		// Remove speculative decoding args (overkill for router) and vision projector
 		var cleanArgs []string
 		skip := false
 		for _, a := range args {
 			if a == "--spec-type" || a == "--spec-draft-model" || a == "--spec-draft-n-max" ||
-				a == "--slot-save-path" || a == "--cache-reuse" || a == "--mmproj" {
+				a == "--slot-save-path" || a == "--mmproj" {
 				skip = true
 				continue
 			}
@@ -385,7 +389,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			cleanArgs = append(cleanArgs, a)
 		}
 		args = cleanArgs
-		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384 (routing mode, no speculative decoding)\n")
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=256 (routing mode, no speculative decoding)\n")
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
@@ -841,17 +845,19 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	}
 
 	reqBody := CompletionRequest{
-		Model:              "Qwopus3.5-4B-Coder",
+		Model:              "Agents-A1-4B",
 		Messages:           MessagesToMaps(messages),
 		Temperature:        1.0, // Q7: required for min_p to function; GBNF constrains output safety
 		MinP:               0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
 		ChatTemplateKwargs: templateKwargs,
 	}
 
-	// ADR-0043 Mechanism A: Generation cap via context key
-	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
-		reqBody.MaxTokens = &maxTok
+	// ADR-0043 Mechanism A: Generation cap via context key (default to 2048 to prevent runaway loops)
+	maxTok := 2048
+	if overrideTok, ok := ctx.Value(MaxTokensKey).(int); ok && overrideTok > 0 {
+		maxTok = overrideTok
 	}
+	reqBody.MaxTokens = &maxTok
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}
@@ -1042,7 +1048,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	}
 
 	reqBody := CompletionRequest{
-		Model:       "Qwopus3.5-4B-Coder",
+		Model:       "Agents-A1-4B",
 		Messages:    MessagesToMaps(messages),
 		Temperature: 1.0,
 		MinP:        0.1,
@@ -1053,10 +1059,12 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		ChatTemplateKwargs: templateKwargs,
 	}
 
-	// ADR-0043 Mechanism A: Generation cap via context key
-	if maxTok, ok := ctx.Value(MaxTokensKey).(int); ok && maxTok > 0 {
-		reqBody.MaxTokens = &maxTok
+	// ADR-0043 Mechanism A: Generation cap via context key (default to 2048 to prevent runaway loops)
+	maxTok := 2048
+	if overrideTok, ok := ctx.Value(MaxTokensKey).(int); ok && overrideTok > 0 {
+		maxTok = overrideTok
 	}
+	reqBody.MaxTokens = &maxTok
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}

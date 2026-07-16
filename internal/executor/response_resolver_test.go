@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"tzro/internal/compiler"
 	"tzro/internal/memory"
 )
 
@@ -218,7 +219,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"employee_email": "node_top.output.employee_email",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if resolved["employee_email"].Value != "test@corp.com" {
 			t.Errorf("Expected 'test@corp.com', got %q", resolved["employee_email"].Value)
@@ -234,7 +235,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"email": "node_nested.output.email",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if resolved["email"].Value != "nested@corp.com" {
 			t.Errorf("Expected 'nested@corp.com', got %q", resolved["email"].Value)
@@ -250,7 +251,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"email": "node_kv.output.email",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if resolved["email"].Value != "kv@corp.com" {
 			t.Errorf("Expected 'kv@corp.com', got %q", resolved["email"].Value)
@@ -268,7 +269,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		}
 		// This will attempt semantic fallback which will fail without a running model.
 		// The test validates graceful degradation — no panic, warning logged, binding skipped.
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if _, exists := resolved["phone"]; exists {
 			t.Errorf("Expected 'phone' to NOT be resolved when key doesn't exist, got %q", resolved["phone"].Value)
@@ -279,7 +280,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"field": "node_nonexistent.output.field",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if len(resolved) != 0 {
 			t.Errorf("Expected empty map for missing upstream node, got %v", resolved)
@@ -293,7 +294,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"field": "node_empty.output.field",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if len(resolved) != 0 {
 			t.Errorf("Expected empty map for empty output, got %v", resolved)
@@ -309,7 +310,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"address": "node_obj.output.address",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if resolved["address"].Value == "" {
 			t.Error("Expected address to be resolved as JSON string")
@@ -327,7 +328,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"receipt_path": "node_receipt.output.receipt_code_path",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		expected := "/receipts/rcpt_finance_billing_run_78.pdf"
 		if resolved["receipt_path"].Value != expected {
@@ -345,7 +346,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"employee_email": "node_fuzzy_email.output.default_email_address",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if resolved["employee_email"].Value != "test@corp.com" {
 			t.Errorf("Expected 'test@corp.com', got %q — fuzzy key with prefix stripping failed", resolved["employee_email"].Value)
@@ -362,7 +363,7 @@ func TestResolveDynamicBindingsWithCascade(t *testing.T) {
 		bindings := map[string]interface{}{
 			"invoice_id": "node_fuzzy_inv.output.calculated_invoice_id",
 		}
-		resolved := resolveDynamicBindings(ctx, bindings, taskID)
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
 
 		if resolved["invoice_id"].Value != "INV-61" {
 			t.Errorf("Expected 'INV-61', got %q — fuzzy key with calculated_ prefix failed", resolved["invoice_id"].Value)
@@ -603,3 +604,166 @@ func containsSubstring(s, sub string) bool {
 	}
 	return false
 }
+
+// TestNodeTypeAwarePlainTextFallback validates that the Response Resolver uses node-type
+// awareness to resolve non-JSON output from probe/synthesis/recall nodes as full text,
+// rather than relying on a hardcoded key whitelist. (Grilling Decision #1)
+func TestNodeTypeAwarePlainTextFallback(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_test_node_type_resolver.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_test_node_type_resolver.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+	_ = memory.DB.Init()
+
+	taskID := "task-node-type-resolver"
+	ctx := context.Background()
+
+	t.Run("ProbeNode_NonJSON_ResolvesFullText", func(t *testing.T) {
+		// A probe node produces raw markdown synthesis — not JSON.
+		// The resolver should return the entire output as the resolved value
+		// when the source node type is "probe", regardless of property key.
+		markdownOutput := "# Architecture Overview\n\nThe system uses a DAG-based execution model..."
+		_ = memory.DB.SetNodeState(taskID, "explore_project", "completed", markdownOutput)
+		_ = memory.DB.SetNodeRawOutput(taskID, "explore_project", markdownOutput)
+
+		graph := &compiler.ExecutionGraph{
+			TaskID: taskID,
+			Nodes: []compiler.GraphNode{
+				{ID: "explore_project", Type: "probe"},
+				{ID: "write_docs", Type: "action", Action: "write_file"},
+			},
+		}
+
+		bindings := map[string]interface{}{
+			"content": "explore_project.output.synthesis",
+		}
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, graph)
+
+		if resolved["content"].Value != markdownOutput {
+			t.Errorf("Expected full markdown output, got %q", resolved["content"].Value)
+		}
+		if resolved["content"].Tier != "plain_text_fallback" {
+			t.Errorf("Expected tier 'plain_text_fallback', got %q", resolved["content"].Tier)
+		}
+	})
+
+	t.Run("ProbeNode_AnyPropertyKey_ResolvesFullText", func(t *testing.T) {
+		// The resolver should work for ANY property key when source is a probe,
+		// not just "synthesis", "content", or "output".
+		markdownOutput := "## Function Index\n\n- func NewCache() *Cache"
+		_ = memory.DB.SetNodeState(taskID, "explore_funcs", "completed", markdownOutput)
+		_ = memory.DB.SetNodeRawOutput(taskID, "explore_funcs", markdownOutput)
+
+		graph := &compiler.ExecutionGraph{
+			TaskID: taskID,
+			Nodes: []compiler.GraphNode{
+				{ID: "explore_funcs", Type: "probe"},
+			},
+		}
+
+		bindings := map[string]interface{}{
+			"docs": "explore_funcs.output.custom_key_name",
+		}
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, graph)
+
+		if resolved["docs"].Value != markdownOutput {
+			t.Errorf("Expected full markdown output for arbitrary key, got %q", resolved["docs"].Value)
+		}
+	})
+
+	t.Run("SynthesisNode_NonJSON_ResolvesFullText", func(t *testing.T) {
+		// Synthesis nodes also produce free-form text.
+		textOutput := "The combined analysis shows three key findings..."
+		_ = memory.DB.SetNodeState(taskID, "terminal_synthesis", "completed", textOutput)
+		_ = memory.DB.SetNodeRawOutput(taskID, "terminal_synthesis", textOutput)
+
+		graph := &compiler.ExecutionGraph{
+			TaskID: taskID,
+			Nodes: []compiler.GraphNode{
+				{ID: "terminal_synthesis", Type: "synthesis"},
+			},
+		}
+
+		bindings := map[string]interface{}{
+			"summary": "terminal_synthesis.output.result",
+		}
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, graph)
+
+		if resolved["summary"].Value != textOutput {
+			t.Errorf("Expected full text output from synthesis node, got %q", resolved["summary"].Value)
+		}
+	})
+
+	t.Run("RecallNode_NonJSON_ResolvesFullText", func(t *testing.T) {
+		// Recall nodes also produce free-form aligned synthesis.
+		recallOutput := "Aligned findings from probe exploration:\n1. Cache uses LRU eviction\n2. Metrics exposed via prometheus"
+		_ = memory.DB.SetNodeState(taskID, "probe_recall", "completed", recallOutput)
+		_ = memory.DB.SetNodeRawOutput(taskID, "probe_recall", recallOutput)
+
+		graph := &compiler.ExecutionGraph{
+			TaskID: taskID,
+			Nodes: []compiler.GraphNode{
+				{ID: "probe_recall", Type: "recall"},
+			},
+		}
+
+		bindings := map[string]interface{}{
+			"findings": "probe_recall.output.aligned_output",
+		}
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, graph)
+
+		if resolved["findings"].Value != recallOutput {
+			t.Errorf("Expected full recall output, got %q", resolved["findings"].Value)
+		}
+	})
+
+	t.Run("ActionNode_NonJSON_DoesNOTGetPlainTextFallback", func(t *testing.T) {
+		// Action nodes produce structured tool output (usually JSON).
+		// Non-JSON action output should NOT get the plain-text fallback —
+		// it should fall through to KV-line or semantic tiers.
+		actionOutput := "status: success\npath: /tmp/output.txt"
+		_ = memory.DB.SetNodeState(taskID, "write_file_exec", "completed", actionOutput)
+		_ = memory.DB.SetNodeRawOutput(taskID, "write_file_exec", actionOutput)
+
+		graph := &compiler.ExecutionGraph{
+			TaskID: taskID,
+			Nodes: []compiler.GraphNode{
+				{ID: "write_file_exec", Type: "action", Action: "write_file"},
+			},
+		}
+
+		bindings := map[string]interface{}{
+			"file_path": "write_file.output.path",
+		}
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, graph)
+
+		// Should resolve via KV-line tier, not plain_text_fallback
+		if val, exists := resolved["file_path"]; exists {
+			if val.Tier == "plain_text_fallback" {
+				t.Errorf("Action node output should NOT use plain_text_fallback tier, got tier=%q", val.Tier)
+			}
+		}
+	})
+
+	t.Run("NilGraph_FallsBackToExistingBehavior", func(t *testing.T) {
+		// When no graph is provided (nil), the resolver should not panic
+		// and should NOT apply plain-text fallback (no node type info available).
+		markdownOutput := "Some markdown that won't be resolved"
+		_ = memory.DB.SetNodeState(taskID, "orphan_node_exec", "completed", markdownOutput)
+		_ = memory.DB.SetNodeRawOutput(taskID, "orphan_node_exec", markdownOutput)
+
+		bindings := map[string]interface{}{
+			"data": "orphan_node.output.anything",
+		}
+		// nil graph — should not panic, should not apply fallback
+		resolved := resolveDynamicBindings(ctx, bindings, taskID, nil)
+		if val, exists := resolved["data"]; exists && val.Tier == "plain_text_fallback" {
+			t.Error("Expected plain_text_fallback NOT to apply when graph is nil")
+		}
+	})
+}
+

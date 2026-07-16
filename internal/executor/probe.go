@@ -9,10 +9,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"tzro/internal/compactor"
 	"tzro/internal/compiler"
 	cfgpkg "tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
+	"tzro/internal/symbols"
 	"tzro/internal/tools"
 )
 
@@ -46,6 +48,28 @@ func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPro
 // InferMessages sends a pre-segmented message array to maximize KV cache prefix reuse.
 func (d *DefaultProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
 	result, err := inference.CallRouter(ctx, messages, jsonSchema)
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+// WorkerInference wraps the worker sidecar for quality-sensitive operations.
+// Used for Probe synthesis, Recall map/reduce, and compaction — tasks that
+// require the worker model's larger context window (64K vs 16K) and superior
+// content generation quality over the 1B router.
+type WorkerInference struct{}
+
+func (w *WorkerInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+	result, err := inference.CallWorker(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
+func (w *WorkerInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+	result, err := inference.CallWorker(ctx, messages, jsonSchema)
 	if err != nil {
 		return "", err
 	}
@@ -135,16 +159,41 @@ func RunProbe(
 	probeID string,
 	config compiler.ProbeConfig,
 	engine ProbeInferenceEngine,
+	synthesisEngine ProbeInferenceEngine,
 	downstreamBindingKeys []string,
 ) (string, error) {
+	// Direct Synthesis mode (Grilling Decision #3): bypass Thought Chain exploration
+	// and run single-shot inference against a pre-compiled context file.
+	if config.DirectSynthesis {
+		if config.ContextFile == "" {
+			return "", fmt.Errorf("DirectSynthesis requires ContextFile to be set in ProbeConfig")
+		}
+		fmt.Fprintf(os.Stderr, "[Probe] Direct Synthesis mode: reading %s\n", config.ContextFile)
+		content, err := os.ReadFile(config.ContextFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read context file for Direct Synthesis: %w", err)
+		}
+		systemPrompt := fmt.Sprintf("You are a precise technical writer and systems architect. Your goal: %s\n\nRead the pre-compiled context below and produce a comprehensive, accurate response.", config.Goal)
+		userPrompt := fmt.Sprintf("Pre-compiled context:\n%s", string(content))
+		ctxWithLimit := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+		result, err := synthesisEngine.Infer(ctxWithLimit, systemPrompt, userPrompt, "")
+		if err != nil {
+			return "", fmt.Errorf("Direct Synthesis failed: %w", err)
+		}
+		return result, nil
+	}
+
 	// Defaults
 	stepBudget := config.StepBudget
 	if stepBudget <= 0 {
 		stepBudget = 30
 	}
+	// compactEvery controls rolling compaction frequency AND the synthesis detail
+	// window (Grilling Decision #6). Sourced from ProbeConfig when set;
+	// defaults to 3 (a systems constraint for 16K context windows).
 	compactEvery := config.CompactEvery
 	if compactEvery <= 0 {
-		compactEvery = 5
+		compactEvery = 3
 	}
 
 	// Build allowed tools set for validation
@@ -212,6 +261,42 @@ func RunProbe(
 	if minStepBudget < 1 {
 		minStepBudget = 1
 	}
+
+	// Pre-load target directory files if PreloadPaths is set.
+	// Strategy: Write pre-loaded content to a temp file in the first PreloadPath
+	// directory, then add a directive in the goal telling the probe to read it.
+	// 
+	// Why NOT lastToolOutput: Rolling compaction at step 3 destroys the pre-loaded
+	// content (observed: 32K chars → 375 char summary for T3 ADRs).
+	// Why NOT TaskContext: Bloats system prompt on every step, overwhelming the router.
+	// Why temp file: Content enters via read_file (one tool call), survives in the
+	// thought chain naturally, and the synthesis detail window preserves recent reads.
+	var preloadedContent string
+	var preloadCleanup func()
+	if len(config.PreloadPaths) > 0 {
+		maxChars := config.PreloadMaxChars
+		if maxChars <= 0 {
+			maxChars = defaultPreloadMaxChars
+		}
+		preloadedContent = preloadDirectoryContext(config.PreloadPaths, maxChars)
+		if preloadedContent != "" {
+			// Write to temp file in the first preload directory
+			preloadFile := filepath.Join(config.PreloadPaths[0], ".preload_context.md")
+			if err := os.WriteFile(preloadFile, []byte(preloadedContent), 0644); err == nil {
+				// Add directive to goal telling probe to read the preload file first
+				config.Goal = fmt.Sprintf("%s\n\nIMPORTANT: Start by reading the pre-compiled source context file at '%s' — it contains all source files from the target directories concatenated together. Read it FIRST before any other exploration.", config.Goal, preloadFile)
+				preloadCleanup = func() {
+					os.Remove(preloadFile)
+				}
+				fmt.Fprintf(os.Stderr, "[Probe] Pre-loaded %d chars from %d directories into %s\n", len(preloadedContent), len(config.PreloadPaths), preloadFile)
+			}
+		}
+	}
+	if preloadCleanup != nil {
+		defer preloadCleanup()
+	}
+
+
 
 	// Pass 1: High-Entropy Tool Loop
 	//
@@ -336,7 +421,10 @@ func RunProbe(
 				args = normalizeToolArguments(toolName, args)
 				args = rescueEmptyPathFromThought(toolName, args, chainStep.NextThought)
 
-				result, err := tools.Call(ctx, toolName, args)
+				// Inject probe goal into context so read_file can
+				// goal-compress large outputs (ADR-0019 extension).
+				toolCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
+				result, err := tools.Call(toolCtx, toolName, args)
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
 					consecutiveErrors++
@@ -351,6 +439,24 @@ func RunProbe(
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
+
+						// Symbol Extractor hook (ADR-0047): on successful read_file,
+						// parse the source via AST and persist extracted declarations
+						// to the Symbol Index side-channel table.
+						if toolName == "read_file" {
+							if filePath, ok := args["path"].(string); ok {
+								var parsedRes struct {
+									Content string `json:"content"`
+									Path    string `json:"path"`
+								}
+								if json.Unmarshal([]byte(result), &parsedRes) == nil && parsedRes.Path != "" {
+									extractAndPersistSymbols(probeID, taskID, parsedRes.Path)
+								} else {
+									// Fallback: if json parsing fails, try to use filePath directly
+									extractAndPersistSymbols(probeID, taskID, filePath)
+								}
+							}
+						}
 
 						// Output fingerprint convergence check (Fix B):
 						// Track first 200 chars of each successful output. When
@@ -482,31 +588,53 @@ func RunProbe(
 		}
 
 		if step%compactEvery == 0 {
-			_ = compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, engine)
+			if err := compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, synthesisEngine); err != nil {
+				fmt.Fprintf(os.Stderr, "[Probe Compactor] Warning: compaction failed: %v\n", err)
+			}
 		}
 	}
 
 	// Pass 2: Structured Synthesis
 	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, engine, downstreamBindingKeys)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, compactEvery, preloadedContent)
 }
 
-func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string) (string, error) {
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, detailWindow int, preloadedContent string) (string, error) {
 	summary, _ := memory.DB.GetLatestSummary(probeID)
 	steps, _ := memory.DB.GetThoughtSteps(probeID)
-	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaryLen=%d\n", probeID, len(steps), len(summary.Summary))
+	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaryLen=%d, detailWindow=%d\n", probeID, len(steps), len(summary.Summary), detailWindow)
 
 	var contextStr string
+
+	// Inject pre-loaded source material directly into synthesis context.
+	// This bypasses the compaction pipeline that would otherwise destroy the content.
+	// The pre-loaded content is the GROUND TRUTH source data; the compacted summary
+	// and thought steps provide the probe's exploration findings on top of it.
+	if preloadedContent != "" {
+		// Budget: use at most 16K chars of preloaded content for synthesis
+		// to avoid overwhelming the local model's context window.
+		const maxPreloadInSynthesis = 16384
+		if len(preloadedContent) > maxPreloadInSynthesis {
+			preloadedContent = preloadedContent[:maxPreloadInSynthesis] + "\n[... truncated ...]"
+		}
+		contextStr += "## Source Material (pre-loaded)\n" + preloadedContent + "\n\n"
+	}
+
 	if summary.Summary != "" {
 		contextStr += "Summary: " + summary.Summary + "\n"
 	}
 
 	// Build synthesis steps for intelligent truncation.
-	// TruncateSynthesisContext applies content-aware truncation (code bracket-depth
-	// elision, tabular sampling, text middle-out) starting from the oldest tool
-	// results, preserving the most recent results intact.
+	// If a compacted summary is available, we only append the last N steps of detail
+	// (where N = detailWindow, tied to CompactEvery) to avoid context bloat
+	// and local model performance collapse.
 	var synthSteps []SynthesisStep
-	for _, s := range steps {
+	startIdx := 0
+	if summary.Summary != "" && len(steps) > detailWindow {
+		startIdx = len(steps) - detailWindow
+	}
+	for i := startIdx; i < len(steps); i++ {
+		s := steps[i]
 		synthSteps = append(synthSteps, SynthesisStep{
 			StepIndex:  s.StepIndex,
 			Thought:    s.Thought,
@@ -528,7 +656,10 @@ Your goal was: %s
 
 You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.%s`, goal, extractionHint)
 
-	result, err := engine.Infer(ctx, systemPrompt, contextStr, synthSchema)
+	// Synthesis needs more output tokens than regular probe steps.
+	// The default 2048 truncates content-heavy outputs (e.g., ADR logs).
+	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+	result, err := engine.Infer(synthCtx, systemPrompt, contextStr, synthSchema)
 	if err != nil {
 		return "Synthesis inference failed: " + err.Error(), nil
 	}
@@ -637,8 +768,9 @@ If you have gathered enough information and are ready to synthesize a final answ
 IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
 
 Be systematic. Build understanding incrementally.
-Exploration strategy: list_dir for structure, search_files for patterns (like grep), read_file for content.
-Prefer search_files over browsing directories when looking for types, interfaces, or functions.
+Exploration strategy: list_dir for structure, read_file for content of files relevant to your goal, search_files for patterns (like grep) to locate specific definitions across multiple files when you do not know the exact filenames.
+If you list a directory and see files that are directly related to your goal, read them using read_file directly rather than trying to search or guess. Do not assume search_files is required if you already know which files to read.
+Do not read the same file multiple times with overlapping ranges. Once you have read a file, assume you know its structure and move on to the other files in the directory to ensure complete coverage. Do not exhaust your step budget on a single file.
 If a path fails with "does not exist", DO NOT call list_dir or read_file on that path again. You MUST use search_files to locate the correct file instead of guessing directory names.
 Do not assume documentation files describe implementation — verify by reading source code.`, taskContextSection, goal, toolList, toolSchemas)
 }
@@ -772,9 +904,18 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inf
 	}
 
 	if accumulatedCtx.Len() > 0 {
+		// Defense-in-depth: cap accumulated context to fit within the router's 16K
+		// context window. Reserve ~3K tokens for system prompt + user prompt.
+		// 13K tokens ≈ ~52K chars at ~4 chars/token.
+		const maxAccumulatedCtxChars = 52000
+		ctxStr := accumulatedCtx.String()
+		if len(ctxStr) > maxAccumulatedCtxChars {
+			fmt.Fprintf(os.Stderr, "[Probe] Warning: accumulated context (%d chars) exceeds %d limit, truncating\n", len(ctxStr), maxAccumulatedCtxChars)
+			ctxStr = ctxStr[:maxAccumulatedCtxChars] + "\n[... context truncated to fit model window ...]\n"
+		}
 		msgs = append(msgs, inference.InferenceMessage{
 			Role:    "user",
-			Content: accumulatedCtx.String(),
+			Content: ctxStr,
 		})
 		msgs = append(msgs, inference.InferenceMessage{
 			Role:    "assistant",
@@ -792,10 +933,10 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID string) []inf
 }
 
 // compactThoughtChain creates a rolling summary of recent thought chain steps.
-// The compactionLevel parameter controls how aggressively tool outputs are
-// truncated in the compaction prompt. With CompactAggressive, outputs are
-// truncated to 200 chars (legacy behavior). With CompactModerate/CompactPreserve,
-// full tool outputs are included.
+// The compactionLevel parameter is retained for API compatibility but
+// the structured compactor handles content-type-aware compaction internally.
+// Code tool outputs are deterministically skeletonized (signatures preserved).
+// Model reasoning text is compressed via the router LLM.
 func compactThoughtChain(ctx context.Context, probeID, taskID string, currentStep, window int, compactionLevel compiler.CompactionLevel, engine ProbeInferenceEngine) error {
 	startStep := currentStep - window + 1
 	if startStep < 1 {
@@ -819,36 +960,46 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 		return nil
 	}
 
-	// Build compaction prompt
-	var stepsText string
-	for _, s := range windowSteps {
-		stepsText += fmt.Sprintf("Step %d: %s", s.StepIndex, s.Thought)
-		if s.ToolName != "" {
-			if compactionLevel == compiler.CompactAggressive {
-				// Legacy behavior: truncate tool output to 200 chars for aggressive compaction
-				stepsText += fmt.Sprintf(" → %s(%s) → %s", s.ToolName, s.ToolArgs, truncate(s.ToolOutput, 200))
-			} else {
-				// Moderate/Preserve: include full tool output so synthesis has actual data
-				stepsText += fmt.Sprintf(" → %s(%s) → %s", s.ToolName, s.ToolArgs, s.ToolOutput)
-			}
+	// Convert to compactor steps
+	compactorSteps := make([]compactor.Step, len(windowSteps))
+	for i, s := range windowSteps {
+		compactorSteps[i] = compactor.Step{
+			Index:      s.StepIndex,
+			Thought:    s.Thought,
+			ToolName:   s.ToolName,
+			ToolArgs:   s.ToolArgs,
+			ToolOutput: s.ToolOutput,
 		}
-		stepsText += "\n"
 	}
 
-	systemPrompt := "Compress the following exploration steps into a concise summary preserving all key findings and discoveries. Output only the summary text."
-	userPrompt := stepsText
+	// Use RouterEngine for reasoning compression (fast, cheap via 1B router).
+	// Tool outputs are handled deterministically — never LLM-compressed.
+	compactEngine := &compactor.RouterEngine{}
+	// Budget: reserve ~3K tokens for system prompt + recent steps + user prompt.
+	// Compaction summary gets ~13K tokens of the router's 16K window ≈ ~52K chars.
+	const compactionBudgetChars = 52000
+	result, err := compactor.CompactSteps(ctx, compactorSteps, "", compactionBudgetChars, compactEngine)
 
-	summaryText, err := engine.Infer(ctx, systemPrompt, userPrompt, "")
+	// Fix 4: Post-compaction size validation — detect inflation and warn.
+	// If compaction output exceeds input, the LLM reasoning compression is
+	// inflating instead of compressing. Log a warning for diagnostics.
+	if err == nil && result.OutputChars > result.InputChars {
+		fmt.Fprintf(os.Stderr, "[Probe Compactor] WARNING: compaction inflated output (%d→%d chars, %.1fx). Router may be generating verbose responses.\n",
+			result.InputChars, result.OutputChars, float64(result.OutputChars)/float64(result.InputChars))
+	}
 	if err != nil {
-		return fmt.Errorf("compaction inference failed: %w", err)
+		return fmt.Errorf("structured compaction failed: %w", err)
 	}
+
+	fmt.Fprintf(os.Stderr, "[Probe Compactor] Steps %d-%d: %d→%d chars (%d LLM calls)\n",
+		startStep, currentStep, result.InputChars, result.OutputChars, result.LLMCalls)
 
 	summary := memory.ThoughtSummary{
 		ID:        fmt.Sprintf("%s_summary_%d_%d", probeID, startStep, currentStep),
 		ProbeID:   probeID,
 		TaskID:    taskID,
 		StepRange: fmt.Sprintf("%d-%d", startStep, currentStep),
-		Summary:   summaryText,
+		Summary:   result.Output,
 		CreatedAt: time.Now().Unix(),
 	}
 
@@ -1052,4 +1203,37 @@ func extractPathFromText(text string) string {
 	}
 
 	return ""
+}
+
+// extractAndPersistSymbols runs the Symbol Extractor on a file's content
+// and persists any extracted symbols to the Symbol Index. Called as a
+// post-read_file hook in the Thought Chain loop (ADR-0047).
+//
+// Errors are logged but not propagated — symbol extraction is best-effort
+// and must not disrupt the probe's primary exploration loop.
+func extractAndPersistSymbols(probeID, taskID, resolvedPath string) {
+	contentBytes, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Probe] Symbol extraction: failed to read resolved path %s: %v\n", resolvedPath, err)
+		return
+	}
+	syms, err := symbols.ExtractSymbols(filepath.Base(resolvedPath), contentBytes)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Probe] Symbol extraction error for %s: %v\n", resolvedPath, err)
+		return
+	}
+	if len(syms) == 0 {
+		return
+	}
+
+	// Set full file paths (extractor only sees the basename for language detection)
+	for i := range syms {
+		syms[i].File = resolvedPath
+	}
+
+	if err := memory.DB.InsertSymbols(probeID, taskID, syms); err != nil {
+		fmt.Fprintf(os.Stderr, "[Probe] Symbol index persist error: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[Probe] Extracted %d symbols from %s\n", len(syms), resolvedPath)
 }

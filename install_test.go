@@ -58,8 +58,7 @@ func TestInstallScript(t *testing.T) {
 		filepath.Join(tempDir, "bin", "llama-server"),
 		filepath.Join(tempDir, "bin", "tzro"),
 		filepath.Join(tempDir, "bin", "tzro-mcp"),
-		filepath.Join(tempDir, "models", "Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"),
-		filepath.Join(tempDir, "models", "mmproj-F32.gguf"),
+		filepath.Join(tempDir, "models", "Agents-A1-4B-Q4_K_M.gguf"),
 		filepath.Join(tempDir, "tzro.db"),
 	}
 	for _, f := range expectedFiles {

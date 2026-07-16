@@ -449,9 +449,8 @@
 
         <p>
           Zero habit change. <code>tzro</code> plugs directly into your existing client tools — Claude Code,
-          Cursor, or other MCP hosts — as an MCP server. You keep using your tools exactly as before; the sidecar
-          silently
-          intercepts execution-level work and routes it locally.
+          Cursor, Windsurf, GitHub Copilot, OpenCode, or Antigravity IDE — as an MCP server. You keep using
+          your tools exactly as before; the sidecar silently intercepts execution-level work and routes it locally.
         </p>
 
         <div class="docs-steps">
@@ -480,10 +479,13 @@
 
               <p>Behind the scenes, the bootstrap script performs:</p>
               <ul>
-                <li>Provisions the <code>~/.tzro/</code> configuration directory</li>
-                <li>Downloads the <code>tzrod</code> statically-linked Go binary for your platform</li>
-                <li>Fetches the default <strong>4-bit quantized Qwen-3B GGUF</strong> model (~1.8 GB)</li>
+                <li>Provisions the <code>~/.tzro/</code> directory (<code>bin/</code>, <code>cache/</code>, <code>models/</code>)</li>
+                <li>Downloads three binaries: <code>tzro</code> (CLI), <code>tzro-mcp</code> (MCP server), and <code>tzrod</code> (daemon)</li>
+                <li>Fetches the <strong>worker model</strong> — Agents-A1 4B GGUF (~3 GB)</li>
+                <li>Fetches the <strong>router model</strong> — MiniCPM5 1B GGUF (~1.2 GB) for fast classification</li>
+                <li>Fetches the <strong>vision projector</strong> — mmproj F32 GGUF for multimodal input</li>
                 <li>Initializes the local SQLite state database (<code>~/.tzro/tzro.db</code>)</li>
+                <li>Bypasses macOS Gatekeeper quarantine on downloaded binaries</li>
                 <li>Adds <code>~/.tzro/bin</code> to your <code>$PATH</code> via shell profile detection</li>
               </ul>
 
@@ -492,7 +494,7 @@
                 <div class="docs-callout-body">
                   <div class="docs-callout-title">What Gets Installed</div>
                   <p>
-                    Total footprint: ~2.1 GB (model + binary + DB). Everything lives in <code>~/.tzro/</code>.
+                    Total footprint: ~5 GB (3 models + binaries + DB). Everything lives in <code>~/.tzro/</code>.
                     No root access required. Uninstall is <code>rm -rf ~/.tzro</code>.
                   </p>
                 </div>
@@ -504,16 +506,16 @@
           <div class="docs-step" id="step-registration">
             <div class="docs-step-number">2</div>
             <div class="docs-step-body">
-              <div class="docs-step-title">Client Workspace Registration</div>
+              <div class="docs-step-title">Automated MCP Registration</div>
               <p>
-                Register <code>tzrod</code> as an MCP server in your AI coding client. Copy-paste the
-                appropriate configuration block:
+                The installer auto-detects your AI editors and offers to configure them automatically.
+                It wires up the <code>tzro-mcp</code> binary as an MCP server and injects agent skill
+                instructions into each editor's config.
               </p>
 
-              <h4>Claude Code — <code>~/.claude.json</code></h4>
               <div class="docs-code-block">
                 <div class="docs-code-header">
-                  <span class="docs-code-lang">JSON</span>
+                  <span class="docs-code-lang">Terminal Output</span>
                   <button class="docs-code-copy" aria-label="Copy code">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                       <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -522,23 +524,58 @@
                     <span class="copy-label">Copy</span>
                   </button>
                 </div>
-                <pre><code>{
-  <span class="tok-property">"mcpServers"</span><span class="tok-punctuation">:</span> {
-    <span class="tok-property">"tzro"</span><span class="tok-punctuation">:</span> {
-      <span class="tok-property">"command"</span><span class="tok-punctuation">:</span> <span class="tok-string">"tzrod"</span><span class="tok-punctuation">,</span>
-      <span class="tok-property">"args"</span><span class="tok-punctuation">:</span> [<span class="tok-string">"mcp"</span>]<span class="tok-punctuation">,</span>
-      <span class="tok-property">"env"</span><span class="tok-punctuation">:</span> {
-        <span class="tok-property">"TZRO_DIR"</span><span class="tok-punctuation">:</span> <span class="tok-string">"."</span>
-      }
-    }
-  }
-}</code></pre>
+                <pre><code><span class="tok-comment">  ⚙  AI Editor Configuration</span>
+
+  <span class="tok-string">✔ Claude Code</span>
+  <span class="tok-string">✔ Cursor</span>
+  <span class="tok-comment">○ Windsurf (not detected)</span>
+  <span class="tok-comment">○ GitHub Copilot (not detected)</span>
+  <span class="tok-comment">○ OpenCode (not detected)</span>
+  <span class="tok-string">✔ Gemini / Antigravity IDE</span>
+
+  Select interfaces to configure:
+  <span class="tok-comment">Press Enter to accept detected defaults</span></code></pre>
               </div>
 
-              <h4>Cursor IDE — MCP Server Settings</h4>
+              <p>
+                You'll also be asked to select an <strong>integration tier</strong> that controls how
+                aggressively agents delegate work to the local engine:
+              </p>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tier</th>
+                    <th>Delegation Trigger</th>
+                    <th>Best For</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Conservative</strong></td>
+                    <td>8+ sequential tool calls</td>
+                    <td>Testing the waters, sensitive workflows</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Balanced</strong> (recommended)</td>
+                    <td>3+ sequential tool calls</td>
+                    <td>Most developers — good cost/quality tradeoff</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Aggressive</strong></td>
+                    <td>2+ sequential tool calls</td>
+                    <td>Maximum local execution, lowest cloud spend</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <p>
+                If you prefer manual configuration, the MCP server entry looks like this for any editor:
+              </p>
+
               <div class="docs-code-block">
                 <div class="docs-code-header">
-                  <span class="docs-code-lang">JSON</span>
+                  <span class="docs-code-lang">JSON — MCP Server Config</span>
                   <button class="docs-code-copy" aria-label="Copy code">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                       <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -550,10 +587,10 @@
                 <pre><code>{
   <span class="tok-property">"mcpServers"</span><span class="tok-punctuation">:</span> {
     <span class="tok-property">"tzro"</span><span class="tok-punctuation">:</span> {
-      <span class="tok-property">"command"</span><span class="tok-punctuation">:</span> <span class="tok-string">"tzrod"</span><span class="tok-punctuation">,</span>
-      <span class="tok-property">"args"</span><span class="tok-punctuation">:</span> [<span class="tok-string">"mcp"</span>]<span class="tok-punctuation">,</span>
+      <span class="tok-property">"command"</span><span class="tok-punctuation">:</span> <span class="tok-string">"~/.tzro/bin/tzro-mcp"</span><span class="tok-punctuation">,</span>
+      <span class="tok-property">"args"</span><span class="tok-punctuation">:</span> []<span class="tok-punctuation">,</span>
       <span class="tok-property">"env"</span><span class="tok-punctuation">:</span> {
-        <span class="tok-property">"TZRO_DIR"</span><span class="tok-punctuation">:</span> <span class="tok-string">"."</span>
+        <span class="tok-property">"TZRO_DIR"</span><span class="tok-punctuation">:</span> <span class="tok-string">"/path/to/your/project"</span>
       }
     }
   }
@@ -563,9 +600,9 @@
               <div class="docs-callout callout-tip">
                 <div class="docs-callout-icon">⚡</div>
                 <div class="docs-callout-body">
-                  <div class="docs-callout-title">Automatic Detection</div>
+                  <div class="docs-callout-title">TZRO_DIR</div>
                   <p>
-                    <code>TZRO_DIR="."</code> tells the sidecar to use the current workspace as its project root.
+                    <code>TZRO_DIR</code> tells the engine which directory to use as its project root.
                     The daemon auto-discovers project structure, existing <code>.agents/</code> configs, and
                     any <code>tzro.db</code> state from prior runs.
                   </p>
@@ -701,16 +738,19 @@
         <h3 id="grammar-gating">Grammar Gating (GBNF)</h3>
 
         <p>
-          The local LLM doesn't have free-form output. Every generation call is constrained by
-          <strong>logit-level GBNF grammar rules</strong> that mathematically prevent arbitrary command injection.
+          For structured output calls — tool dispatch, classification, parameter extraction, and
+          validator passes — the local LLM is constrained by
+          <strong>logit-level GBNF grammar rules</strong> that mathematically prevent arbitrary command
+          injection. These are the security-critical call sites where output format matters.
         </p>
 
         <p>
-          The model's output is restricted strictly to predefined JSON schemas. It <em>cannot</em>
-          produce output outside the grammar — this is enforced at the logit sampling level, not by
-          post-hoc filtering. If the grammar says the output must be a JSON object with keys
+          On constrained calls, the model's output is restricted strictly to predefined JSON schemas. It
+          <em>cannot</em> produce output outside the grammar — this is enforced at the logit sampling level,
+          not by post-hoc filtering. If the grammar says the output must be a JSON object with keys
           <code>tool</code>, <code>args</code>, and <code>reasoning</code>, then that is the only structure
-          the model can physically produce.
+          the model can physically produce. Free-form generation calls (synthesis, reasoning text) are
+          not grammar-constrained.
         </p>
 
         <div class="docs-code-block">
@@ -958,16 +998,17 @@
           <li><strong>Resource metrics</strong> — CPU, memory, and token generation throughput</li>
         </ul>
 
-        <h3 id="cost-attestation">Real-Time Financial Savings Attestation</h3>
+        <h3 id="cost-attestation">Token Tracking &amp; Benchmark Comparison</h3>
 
         <p>
-          Every task completion includes a cost attestation block showing exactly how much you saved
-          by running locally vs. cloud:
+          Every task execution carries a <code>TokenTracker</code> embedded in its Go context, separately
+          accumulating local and cloud token usage (prompt, completion, duration, tokens/sec) across all
+          inference calls within that task. This infrastructure powers the offline benchmark comparison suite.
         </p>
 
         <div class="docs-code-block">
           <div class="docs-code-header">
-            <span class="docs-code-lang">Terminal Output</span>
+            <span class="docs-code-lang">Shell — Benchmark Comparison</span>
             <button class="docs-code-copy" aria-label="Copy code">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -976,20 +1017,60 @@
               <span class="copy-label">Copy</span>
             </button>
           </div>
-          <pre><code><span class="tok-comment">╭───────────────────────────────────────────────────────────╮</span>
-<span class="tok-comment">│</span>  <span class="tok-type">Task Complete</span> · explore-architecture         <span class="tok-number">14.2s</span>      <span class="tok-comment">│</span>
-<span class="tok-comment">├───────────────────────────────────────────────────────────┤</span>
-<span class="tok-comment">│</span>                                                           <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>  Nodes executed       <span class="tok-number">7</span>  (4 parallel, 3 sequential)       <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>  Local tokens          <span class="tok-number">12,847</span>                              <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>  Cloud tokens saved    <span class="tok-number">12,847</span>                              <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>                                                           <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>  <span class="tok-keyword">Estimated cloud cost</span>  <span class="tok-property">$0.19</span>                              <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>  <span class="tok-keyword">Actual local cost</span>     <span class="tok-string">$0.00</span>                              <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>  <span class="tok-keyword">You saved</span>             <span class="tok-function">$0.19</span> <span class="tok-comment">(100%)</span>                       <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>                                                           <span class="tok-comment">│</span>
-<span class="tok-comment">│</span>  Session total saved   <span class="tok-function">$4.72</span> across <span class="tok-number">31</span> tasks              <span class="tok-comment">│</span>
-<span class="tok-comment">╰───────────────────────────────────────────────────────────╯</span></code></pre>
+          <pre><code><span class="tok-comment"># Run the comparison suite against a specific task category</span>
+<span class="tok-function">tzro</span> compare <span class="tok-flag">--category</span> docgen <span class="tok-flag">--output</span> <span class="tok-path">./results/</span>
+
+<span class="tok-comment"># Example per-task output:</span>
+  ✓ <span class="tok-number">3500</span> cloud tokens, <span class="tok-number">8200</span> local tokens, <span class="tok-number">$0.0525</span>, <span class="tok-number">14200</span>ms, <span class="tok-number">12</span> tool calls
+
+<span class="tok-comment"># Summary output:</span>
+Cloud token savings (ReAct → Cooperative): <span class="tok-number">72%</span>
+Cost savings: <span class="tok-number">$0.5250</span> → <span class="tok-number">$0.1470</span> (saved <span class="tok-number">$0.3780</span>)</code></pre>
+        </div>
+
+        <p>
+          The comparison harness runs each benchmark task under multiple conditions and attributes
+          savings into three independently measured buckets:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Savings Bucket</th>
+              <th>What It Measures</th>
+              <th>Formula</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>DAG structural</strong></td>
+              <td>Savings from parallelization and topological compilation</td>
+              <td><code>cloud_react − cloud_dag_raw</code></td>
+            </tr>
+            <tr>
+              <td><strong>Pipeline compaction</strong></td>
+              <td>Savings from the 5-layer compaction pipeline</td>
+              <td><code>cloud_dag_raw − cloud_dag</code></td>
+            </tr>
+            <tr>
+              <td><strong>Local offloading</strong></td>
+              <td>Savings from routing execution to the local model</td>
+              <td><code>cloud_dag − cooperative</code></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="docs-callout callout-note">
+          <div class="docs-callout-icon">📊</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Benchmark-Only Instrumentation</div>
+            <p>
+              Cost attribution is computed post-hoc by the comparison report generator using
+              cross-condition deltas — it is not embedded in per-task production output. Token
+              tracking is always active, but dollar-cost estimation is only surfaced through
+              the <code>tzro compare</code> CLI and the generated markdown reports.
+            </p>
+          </div>
         </div>
 
         <h3 id="log-audit">Logs &amp; Compliance Audit</h3>
@@ -1045,6 +1126,662 @@
         </div>
       </div>
 
+      <!-- ============================================================ -->
+      <!-- 6. v1.0.0 — RECENT ENGINE ADVANCES                          -->
+      <!-- ============================================================ -->
+      <div class="docs-section" id="v100">
+        <h2>v1.0.0 — Recent Engine Advances</h2>
+
+        <p>
+          The v1.0.0 release introduces major architectural improvements that significantly increase
+          local execution quality, reduce token waste, eliminate hallucinations, and enable concurrent inference workloads.
+        </p>
+
+        <!-- ── 6.1 Dual-Sidecar ────────────────────────────────── -->
+        <h3 id="dual-sidecar">Dual-Sidecar Inference Architecture</h3>
+
+        <p>
+          Previous versions ran a single <code>llama-server</code> process for all local inference. This forced a
+          tradeoff: use a fast small model (great for routing, bad at code) or a quality model (great at code,
+          too slow for 30-step Probe chains). The hot-swap mechanism blocked all inference during model switches
+          (~1-1.5s downtime per swap).
+        </p>
+
+        <p>
+          v0.9.0 replaces this with <strong>two independent llama-server processes</strong> running concurrently:
+        </p>
+
+        <div class="docs-feature-grid">
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">🏎️</div>
+            <h4>Router Model (Fast)</h4>
+            <p>
+              A small model (e.g., Gallium-350M or MiniCPM5-1B) with a 2048-token context window.
+              Handles tool selection, parameter extraction, Probe navigation, classification,
+              and GBNF-constrained validation. Outputs are short (~5-50 tokens), latency is critical.
+            </p>
+          </div>
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">🎯</div>
+            <h4>Worker Model (Quality)</h4>
+            <p>
+              A larger code-capable model (e.g., Agents-A1 4B) with a 16,384-token context window.
+              Handles code generation, DAG planning, complex reasoning, repair passes, Edge Thought
+              generation, and long-form synthesis.
+            </p>
+          </div>
+        </div>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Architecture</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment">┌──────────────────────────────────────────────────────────┐</span>
+<span class="tok-comment">│</span>                     <span class="tok-type">tzrod daemon</span>                         <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>                                                          <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  <span class="tok-function">GlobalRouterModel</span>              <span class="tok-function">GlobalWorkerModel</span>       <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  ┌──────────────────┐          ┌──────────────────┐     <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  │ Model: <span class="tok-string">Gallium-350M</span>│         │ Model: <span class="tok-string">Agents-A1</span>  │     <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  │ Port:  <span class="tok-number">(dynamic)</span>   │          │ Port:  <span class="tok-number">(dynamic)</span>  │     <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  │ Ctx:   <span class="tok-number">2,048 tok</span>   │          │ Ctx:   <span class="tok-number">16,384 tok</span> │     <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  │ Slots: <span class="tok-number">1</span>           │          │ Slots: <span class="tok-number">1</span>          │     <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  └──────────────────┘          └──────────────────┘     <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>       ↑ <span class="tok-variable">fast, routing</span>               ↑ <span class="tok-variable">quality, gen</span>    <span class="tok-comment">│</span>
+<span class="tok-comment">└──────────────────────────────────────────────────────────┘</span></code></pre>
+        </div>
+
+        <p>
+          <strong>Inference routing</strong> is explicit at the call site. The <code>inference</code> package
+          exposes <code>CallRouter()</code> and <code>CallWorker()</code> functions:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Call Site</th>
+              <th>Target</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Probe Thought Chain steps</td>
+              <td class="comparison-new">Router</td>
+              <td>Navigation decisions, short outputs</td>
+            </tr>
+            <tr>
+              <td>Validator Pass (tool extraction)</td>
+              <td class="comparison-new">Router</td>
+              <td>Structured JSON extraction</td>
+            </tr>
+            <tr>
+              <td>Complexity classification</td>
+              <td class="comparison-new">Router</td>
+              <td>Single-word classification</td>
+            </tr>
+            <tr>
+              <td>DAG planning</td>
+              <td class="comparison-new">Worker</td>
+              <td>Complex structured reasoning</td>
+            </tr>
+            <tr>
+              <td>Code generation &amp; repair</td>
+              <td class="comparison-new">Worker</td>
+              <td>Quality code output</td>
+            </tr>
+            <tr>
+              <td>Edge Thought generation</td>
+              <td class="comparison-new">Worker</td>
+              <td>Needs large context window (16k)</td>
+            </tr>
+            <tr>
+              <td>Terminal synthesis</td>
+              <td class="comparison-new">Worker</td>
+              <td>Quality long-form summarization</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">JSON — config.json</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code>{
+  <span class="tok-string">"ggufModelPath"</span>:    <span class="tok-string">"Agents-A1-4B-Q4_K_M.gguf"</span>,
+  <span class="tok-string">"routerModelPath"</span>:  <span class="tok-string">"Gallium-350M.Q8_0.gguf"</span>
+}</code></pre>
+        </div>
+
+        <div class="docs-callout callout-tip">
+          <div class="docs-callout-icon">💡</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Graceful Fallback</div>
+            <p>
+              If <code>routerModelPath</code> is empty or the router fails to start, all
+              <code>CallRouter()</code> calls transparently fall back to <code>CallWorker()</code>.
+              The system works exactly like the previous single-sidecar mode — just slightly slower
+              for routing tasks.
+            </p>
+          </div>
+        </div>
+
+        <!-- ── 6.2 Structured Compaction ──────────────────────── -->
+        <h3 id="structured-compaction">Structured Content-Aware Compaction</h3>
+
+        <p>
+          Previous compaction pipelines treated all content identically — dumping code, tool outputs,
+          and reasoning text into a single LLM "compress these steps" prompt. This caused the model to
+          hallucinate type names and lose function signatures during compression.
+        </p>
+
+        <div class="docs-callout callout-warning">
+          <div class="docs-callout-icon">⚠️</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Core Principle</div>
+            <p>
+              <strong>Code is NEVER LLM-compressed.</strong> The LLM only compacts the model's own
+              reasoning text. Tool outputs are ground truth and are never paraphrased.
+            </p>
+          </div>
+        </div>
+
+        <p>
+          The <strong>Structured Compactor</strong> (<code>internal/compactor/</code>) classifies content
+          into typed segments and applies the appropriate compaction strategy for each:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Content Type</th>
+              <th>Strategy</th>
+              <th>How It Works</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Code</strong></td>
+              <td class="comparison-new">Deterministic</td>
+              <td>Code Skeleton extraction — function signatures, type declarations, doc comments. Bodies replaced with fingerprints: <code>// [body: 42 lines, calls: foo(), bar()]</code></td>
+            </tr>
+            <tr>
+              <td><strong>Reasoning</strong></td>
+              <td class="comparison-new">LLM-compressed</td>
+              <td>Model's own <code>Thought</code> field split into ~500-char chunks by sentence boundary, each compressed by the router with "Extract key conclusion." Preserves <em>decisions</em>, strips <em>deliberation</em>.</td>
+            </tr>
+            <tr>
+              <td><strong>Tool Output</strong></td>
+              <td class="comparison-new">Deterministic</td>
+              <td>Middle-out truncation. Never LLM-compressed — tool outputs are ground truth.</td>
+            </tr>
+            <tr>
+              <td><strong>Tabular</strong></td>
+              <td class="comparison-new">Deterministic</td>
+              <td>Header + N sample rows + summary line. Structure preserved, volume reduced.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Example — Code Skeleton Output</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment">// Before compaction: 1207 lines of raw Go source</span>
+<span class="tok-comment">// After Code Skeleton extraction:</span>
+
+<span class="tok-keyword">package</span> inference
+
+<span class="tok-keyword">type</span> <span class="tok-type">LocalModelManager</span> <span class="tok-keyword">struct</span> { ... }
+
+<span class="tok-keyword">func</span> (<span class="tok-variable">m</span> *<span class="tok-type">LocalModelManager</span>) <span class="tok-function">Start</span>(<span class="tok-variable">ctx</span> context.Context) error {
+    <span class="tok-comment">// [body: 89 lines, calls: m.ensureBinary(), m.spawnProcess(), m.healthCheck()]</span>
+}
+
+<span class="tok-keyword">func</span> (<span class="tok-variable">m</span> *<span class="tok-type">LocalModelManager</span>) <span class="tok-function">CallRouter</span>(<span class="tok-variable">ctx</span> context.Context, ...) (*InferenceResult, error) {
+    <span class="tok-comment">// [body: 42 lines, calls: m.routerClient.Chat(), m.fallbackToWorker()]</span>
+}
+
+<span class="tok-keyword">func</span> (<span class="tok-variable">m</span> *<span class="tok-type">LocalModelManager</span>) <span class="tok-function">CallWorker</span>(<span class="tok-variable">ctx</span> context.Context, ...) (*InferenceResult, error) {
+    <span class="tok-comment">// [body: 38 lines, calls: m.workerClient.Chat()]</span>
+}</code></pre>
+        </div>
+
+        <p>
+          This replaces the legacy monolithic compaction prompt and serves all compaction call sites:
+          probe thought chains, recall refined context, accumulated context, and synthesis truncation.
+        </p>
+
+        <!-- ── 6.3 MCTS Evaluation ───────────────────────────── -->
+        <h3 id="mcts-evaluation">Multi-Branch MCTS Evaluation</h3>
+
+        <p>
+          <strong>Edge Thoughts</strong> are compact reasoning states generated when the executor traverses
+          a DAG edge whose target node has a non-zero Activation Threshold. In v0.9.0, Edge Thought evaluation
+          gains a second mode: <strong>multi-branch evaluation</strong>, inspired by Monte Carlo Tree Search.
+        </p>
+
+        <div class="docs-feature-grid">
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">1️⃣</div>
+            <h4>Single-Shot (Default)</h4>
+            <p>
+              Generates one confidence score, makes a binary Continue/Spawn/Halt decision.
+              Zero overhead for deterministic nodes (Activation Threshold = 0.0).
+            </p>
+          </div>
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">🌳</div>
+            <h4>Multi-Branch (MCTS)</h4>
+            <p>
+              Generates K candidate actions in a single inference call. Each candidate is evaluated
+              through speculative rollouts and scored by a Value Function. The highest-scoring
+              candidate is committed.
+            </p>
+          </div>
+        </div>
+
+        <p>
+          The <strong>Speculation Fence</strong> gates speculative candidate evaluation by Tool Proactivity Level:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Proactivity Level</th>
+              <th>During Speculation</th>
+              <th>After Commit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>L0-L2 (Observe/Prepare/Suggest)</td>
+              <td class="comparison-new">Execute for real</td>
+              <td>Already executed</td>
+            </tr>
+            <tr>
+              <td>L3 (Reversible Action)</td>
+              <td class="comparison-old">Imagined — LLM simulates output</td>
+              <td class="comparison-new">Executed for real</td>
+            </tr>
+            <tr>
+              <td>L4 (External Side Effect)</td>
+              <td class="comparison-old">Blocked — candidate pruned</td>
+              <td class="comparison-new">Executed for real</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="docs-callout callout-note">
+          <div class="docs-callout-icon">🔒</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Safety Guarantee</div>
+            <p>
+              Only the committed winning candidate executes L3+ tools for real.
+              Speculative evaluation never causes real-world side effects — it either runs
+              low-risk tools, imagines high-risk outputs, or prunes dangerous candidates entirely.
+            </p>
+          </div>
+        </div>
+
+        <!-- ── 6.4 Two-Tier Context Budget ────────────────────── -->
+        <h3 id="context-budget">Two-Tier Context Budget</h3>
+
+        <p>
+          Accumulated Context — the structured collection of completed upstream node outputs injected into
+          each DAG node's prompt — previously had no budget controls. Large Probe outputs or verbose tool
+          responses would consume the entire context window, drowning downstream nodes in noise.
+        </p>
+
+        <p>
+          v0.9.0 introduces <strong>tiered per-node output budgets</strong> with a dynamic ceiling:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Node Type</th>
+              <th>Priority</th>
+              <th>Budget Allocation</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Recall Node</td>
+              <td class="comparison-new">Highest</td>
+              <td>Full output preserved — recall is purpose-built for synthesis</td>
+            </tr>
+            <tr>
+              <td>Validator Node</td>
+              <td class="comparison-new">High</td>
+              <td>Extracted parameters and tool results preserved</td>
+            </tr>
+            <tr>
+              <td>Action Node</td>
+              <td>Medium</td>
+              <td>Tool outputs with content-aware truncation</td>
+            </tr>
+            <tr>
+              <td>Probe Node</td>
+              <td>Low</td>
+              <td>Compacted thought chain — never raw history</td>
+            </tr>
+            <tr>
+              <td>Deterministic Node</td>
+              <td class="comparison-old">Lowest</td>
+              <td>Minimal output — these produce structured data with little prose</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="docs-callout callout-tip">
+          <div class="docs-callout-icon">💡</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Synthesis Bypass</div>
+            <p>
+              Synthesis nodes (terminal output generators) bypass the context ceiling entirely.
+              They receive full-fidelity output from all upstream nodes to produce the most
+              accurate final response.
+            </p>
+          </div>
+        </div>
+
+        <!-- ── 6.5 Recall Nodes ───────────────────────────────── -->
+        <h3 id="recall-nodes">Recall Nodes &amp; Map-Reduce Synthesis</h3>
+
+        <p>
+          When a <strong>Probe Node</strong> completes a 15-30 step exploration, its accumulated thought
+          chain can contain 20K+ tokens of interleaved tool outputs, reasoning, and code. Feeding this
+          raw history directly into a synthesis node caused two failure modes:
+        </p>
+
+        <ul>
+          <li><strong>The Synthesis Cliff</strong> — one-shot synthesis on massive input produced hallucinated
+            types and lost function signatures</li>
+          <li><strong>Prefill Latency</strong> — processing 20K+ tokens of raw history in a single inference
+            call caused 15-30 second delays</li>
+        </ul>
+
+        <p>
+          <strong>Recall Nodes</strong> solve this. The Kahn Compiler automatically injects a Recall Node
+          after every Probe Node, separating discovery from synthesis:
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Pipeline</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment">┌─────────────────────────────────────────────────────────┐</span>
+<span class="tok-comment">│</span>  <span class="tok-type">Probe Node</span> (explores)                                   <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  └── 15-30 steps of read_file, list_dir, search_files   <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  └── Output: <span class="tok-number">20K+ tokens</span> of raw thought chain              <span class="tok-comment">│</span>
+<span class="tok-comment">├─────────────────────────────────────────────────────────┤</span>
+<span class="tok-comment">│</span>  <span class="tok-type">Recall Node</span> (synthesizes) — <span class="tok-string">auto-injected</span>               <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>                                                          <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  <span class="tok-function">Step 1: MAP</span>                                             <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>    Classify each chunk as <span class="tok-string">"Signal"</span> or <span class="tok-string">"Sludge"</span>            <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>                                                          <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  <span class="tok-function">Step 2: REDUCE</span>                                          <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>    Extract key facts from Signal chunks only              <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>                                                          <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>  <span class="tok-function">Step 3: SYNTHESIZE</span>                                      <span class="tok-comment">│</span>
+<span class="tok-comment">│</span>    Produce aligned, goal-directed output                  <span class="tok-comment">│</span>
+<span class="tok-comment">├─────────────────────────────────────────────────────────┤</span>
+<span class="tok-comment">│</span>  <span class="tok-type">Downstream Nodes</span> — receive clean, <span class="tok-number">~2K token</span> summary     <span class="tok-comment">│</span>
+<span class="tok-comment">└─────────────────────────────────────────────────────────┘</span></code></pre>
+        </div>
+
+        <div class="docs-feature-grid">
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">🗺️</div>
+            <h4>Map — Signal vs. Sludge</h4>
+            <p>
+              The execution history is chunked and each segment is classified.
+              Tool errors, repeated navigations, and model deliberation are tagged as "Sludge"
+              and excluded from synthesis. Only high-value discoveries pass through.
+            </p>
+          </div>
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">🎯</div>
+            <h4>Reduce — Targeted Extraction</h4>
+            <p>
+              Signal chunks are processed with goal-directed extraction — pulling function signatures,
+              architecture patterns, and concrete findings. The Structured Compactor handles code
+              segments deterministically.
+            </p>
+          </div>
+        </div>
+
+        <div class="docs-callout callout-note">
+          <div class="docs-callout-icon">📊</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Benchmark Impact</div>
+            <p>
+              In docgen benchmarks, Map-Reduce Recall improved documentation quality from
+              <span class="docs-math">3.75 → 4.75</span> (out of 5.0) while reducing local token consumption
+              from <span class="docs-math">183K → 16K tokens</span> — a 91% reduction.
+            </p>
+          </div>
+        </div>
+
+        <!-- ── 6.6 Symbol Extraction ──────────────────────────── -->
+        <h3 id="symbol-extraction">AST-Based Symbol Extraction &amp; Anchor Verification</h3>
+
+        <p>
+          Docgen benchmarks revealed that the local 4B model <strong>hallucinated 67% of type names</strong>
+          in documentation outputs — the LLM judge scored these 4.25/5.0 while manual audit scored 2.65/5.0,
+          a 38% quality inflation rate. The root cause: the model lacked sufficient context to identify real
+          public symbols in the source files it had read.
+        </p>
+
+        <p>
+          The <strong>Symbol Extractor</strong> (<code>internal/symbols/</code>) solves this with deterministic,
+          AST-verified symbol identification. Every file read during a Probe Node's Thought Chain is parsed
+          using pure-Go <a href="https://github.com/odvcencio/gotreesitter" target="_blank" rel="noopener">tree-sitter</a>
+          (no CGO required), emitting structured tuples:
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Go — Symbol Tuple</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-keyword">type</span> <span class="tok-type">Symbol</span> <span class="tok-keyword">struct</span> {
+    <span class="tok-variable">Name</span>      <span class="tok-type">string</span>     <span class="tok-comment">// e.g. "CompactContent"</span>
+    <span class="tok-variable">Kind</span>      <span class="tok-type">SymbolKind</span> <span class="tok-comment">// func | type | interface | method | class | ...</span>
+    <span class="tok-variable">Signature</span> <span class="tok-type">string</span>     <span class="tok-comment">// e.g. "func CompactContent(content string, ...) string"</span>
+    <span class="tok-variable">File</span>      <span class="tok-type">string</span>     <span class="tok-comment">// source file path</span>
+    <span class="tok-variable">Line</span>      <span class="tok-type">int</span>        <span class="tok-comment">// declaration line number</span>
+    <span class="tok-variable">Exported</span>  <span class="tok-type">bool</span>       <span class="tok-comment">// visibility flag</span>
+}</code></pre>
+        </div>
+
+        <p>
+          These tuples are persisted in a SQLite <strong>Symbol Index</strong> table per Probe execution.
+          The Probe's context window carries only a count ("N symbols extracted"), not the full index —
+          keeping token usage minimal during exploration.
+        </p>
+
+        <p>
+          After the Recall Node produces its synthesis, the <strong>Symbol Anchor Check</strong> diffs
+          referenced identifiers against the index:
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Dot-qualified external refs (e.g., <code>context.Context</code>)</td>
+              <td class="comparison-new">Skipped — known external</td>
+            </tr>
+            <tr>
+              <td>Identifier found in Symbol Index</td>
+              <td class="comparison-new">Anchored ✓</td>
+            </tr>
+            <tr>
+              <td>Identifier NOT in Symbol Index</td>
+              <td class="comparison-old">Unanchored — flagged</td>
+            </tr>
+            <tr>
+              <td>&gt;20% unanchored rate</td>
+              <td class="comparison-old">Correction pass triggered (~500 tokens)</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="docs-callout callout-tip">
+          <div class="docs-callout-icon">🌐</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">12 Languages Supported</div>
+            <p>
+              Ships with embedded grammars for Go, TypeScript, JavaScript, Python, Java, Rust, Dart,
+              C++, C#, Kotlin, Swift, and Ruby. Additional grammars are lazy-loaded from
+              <code>~/.tzro/grammars/</code> on first use.
+            </p>
+          </div>
+        </div>
+
+        <!-- ── 6.7 Directory Preloading ───────────────────────── -->
+        <h3 id="directory-preloading">Directory Preloading</h3>
+
+        <p>
+          Probe Nodes explore codebases through iterative Thought Chain steps — the local model decides
+          which file to read next based on previous observations. But a 4B model frequently makes poor
+          navigation decisions: it fixates on a single directory, misses key files, or wastes steps on
+          irrelevant paths. The result: incomplete exploration and missing context in synthesis.
+        </p>
+
+        <p>
+          <strong>Directory Preloading</strong> (<code>internal/executor/probe_preload.go</code>) eliminates
+          this "routing problem" by injecting source context <em>before</em> the Thought Chain begins.
+          The preloader walks target directories and concatenates their readable files into the prompt:
+        </p>
+
+        <div class="docs-feature-grid">
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">📦</div>
+            <h4>Go Files</h4>
+            <p>
+              AST-extracted exported symbols — types, functions, methods, and variables.
+              Function bodies are stripped. Test files (<code>*_test.go</code>) are excluded.
+            </p>
+          </div>
+          <div class="docs-feature-card">
+            <div class="docs-feature-card-icon">📝</div>
+            <h4>Markdown &amp; Text</h4>
+            <p>
+              Raw content with file headers. Documentation, READMEs, and design docs
+              are included verbatim to preserve semantic context.
+            </p>
+          </div>
+        </div>
+
+        <div class="docs-callout callout-note">
+          <div class="docs-callout-icon">📐</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Context Budget</div>
+            <p>
+              Pre-loaded content is capped at <strong>32K characters (~8K tokens)</strong> — fitting
+              comfortably in the router model's 16K context window alongside system prompts (~2K tokens)
+              and per-step prompts (~1K tokens). Files are processed in sorted order for deterministic output.
+            </p>
+          </div>
+        </div>
+
+        <!-- ── 6.8 Direct Synthesis ───────────────────────────── -->
+        <h3 id="direct-synthesis">Repo Mapping &amp; Direct Synthesis</h3>
+
+        <p>
+          Not every task needs a 15-30 step Probe exploration. When a task's target files are known upfront
+          (e.g., "document the <code>internal/executor/</code> package"), the full Thought Chain is overhead:
+          the model navigates to the directory, reads each file sequentially, then synthesizes — burning
+          steps on pure routing rather than reasoning.
+        </p>
+
+        <p>
+          <strong>Repo Mapping</strong> (<code>internal/repomap/</code>) generates a deterministic, AST-based
+          codebase architecture map: every Go source file's exported structs, interfaces, and functions
+          extracted into a structured markdown document. Combined with <strong>Direct Synthesis</strong>,
+          the Probe can satisfy the task with a single-shot inference against this pre-compiled context.
+        </p>
+
+        <div class="docs-code-block">
+          <div class="docs-code-header">
+            <span class="docs-code-lang">Pipeline — Direct Synthesis vs. Thought Chain</span>
+            <button class="docs-code-copy" aria-label="Copy code">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <pre><code><span class="tok-comment">Standard Probe (Thought Chain):</span>
+  <span class="tok-variable">Step 1</span>  → list_dir("/internal/executor/")         <span class="tok-comment">~2s</span>
+  <span class="tok-variable">Step 2</span>  → read_file("executor.go")                <span class="tok-comment">~3s</span>
+  <span class="tok-variable">Step 3</span>  → read_file("probe.go")                   <span class="tok-comment">~3s</span>
+  ...     → <span class="tok-number">15-30 steps</span> of exploration               <span class="tok-comment">~45-90s total</span>
+  <span class="tok-function">Recall</span>  → Map-Reduce synthesis                    <span class="tok-comment">~5s</span>
+
+<span class="tok-comment">Direct Synthesis:</span>
+  <span class="tok-function">RepoMap</span> → AST-extract all symbols deterministically  <span class="tok-comment">~200ms</span>
+  <span class="tok-function">Synth</span>   → Single-shot inference against repo map     <span class="tok-comment">~3s</span>
+  <span class="tok-comment">Total: ~3s (vs. 50-95s)</span></code></pre>
+        </div>
+
+        <div class="docs-callout callout-tip">
+          <div class="docs-callout-icon">⚡</div>
+          <div class="docs-callout-body">
+            <div class="docs-callout-title">Plan Template Selection</div>
+            <p>
+              The router classifies the task category and selects a structural starter template
+              from a registry (ADR-0048). The planner then makes <em>targeted mutations</em>
+              to this template rather than generating a complete graph from scratch — reducing
+              structural failures from ~30% to near zero for complex task types.
+            </p>
+          </div>
+        </div>
+
+      </div>
+
     </main>
 
     <!-- ============================================================== -->
@@ -1074,8 +1811,18 @@
 
         <li><a href="#debugging" class="docs-toc-link">Debugging &amp; Visibility</a></li>
         <li><a href="#tui-dashboard" class="docs-toc-link toc-h3">TUI Dashboard</a></li>
-        <li><a href="#cost-attestation" class="docs-toc-link toc-h3">Cost Attestation</a></li>
+        <li><a href="#cost-attestation" class="docs-toc-link toc-h3">Token Tracking &amp; Benchmarks</a></li>
         <li><a href="#log-audit" class="docs-toc-link toc-h3">Logs &amp; Audit</a></li>
+
+        <li><a href="#v100" class="docs-toc-link">v1.0.0 Engine Advances</a></li>
+        <li><a href="#dual-sidecar" class="docs-toc-link toc-h3">Dual-Sidecar Inference</a></li>
+        <li><a href="#structured-compaction" class="docs-toc-link toc-h3">Structured Compaction</a></li>
+        <li><a href="#mcts-evaluation" class="docs-toc-link toc-h3">MCTS Evaluation</a></li>
+        <li><a href="#context-budget" class="docs-toc-link toc-h3">Context Budget</a></li>
+        <li><a href="#recall-nodes" class="docs-toc-link toc-h3">Recall Nodes</a></li>
+        <li><a href="#symbol-extraction" class="docs-toc-link toc-h3">Symbol Extraction</a></li>
+        <li><a href="#directory-preloading" class="docs-toc-link toc-h3">Directory Preloading</a></li>
+        <li><a href="#direct-synthesis" class="docs-toc-link toc-h3">Direct Synthesis</a></li>
       </ul>
     </aside>
   </div>
@@ -1084,12 +1831,34 @@
   <!-- FOOTER                                                              -->
   <!-- ================================================================== -->
   <footer class="tzro-footer">
-    <div class="footer-container">
-      <p>&copy; 2026 TZRO Project. Released under Apache-2.0 License.</p>
-      <div class="footer-links">
-        <a href="index.html">Home</a>
-        <a href="docs.html">Docs</a>
-        <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener">GitHub</a>
+    <div class="footer-container footer-v2">
+      <div class="footer-brand">
+        <div class="footer-brand-name">TZRO</div>
+        <p class="footer-brand-desc">The local-first task routing engine for AI coding agents.</p>
+      </div>
+      <div class="footer-columns">
+        <div class="footer-col">
+          <div class="footer-col-title">Product</div>
+          <a href="docs.html">Docs</a>
+          <a href="index.html#architecture">Architecture</a>
+          <a href="index.html#benchmarks">Benchmarks</a>
+        </div>
+        <div class="footer-col">
+          <div class="footer-col-title">Community</div>
+          <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://x.com/TZROai" target="_blank" rel="noopener">X / Twitter</a>
+          <a href="https://discord.gg/q9Z7ZKzg5" target="_blank" rel="noopener">Discord</a>
+          <a href="https://www.linkedin.com/company/tzro-ai" target="_blank" rel="noopener">LinkedIn</a>
+        </div>
+        <div class="footer-col">
+          <div class="footer-col-title">Legal</div>
+          <a href="docs.html#security">Security</a>
+          <a href="terms.html">Terms of Service</a>
+          <a href="privacy.html">Privacy Policy</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p class="footer-copyright">&copy; 2026 TZRO Project. MIT Licensed.</p>
       </div>
     </div>
   </footer>

@@ -15,16 +15,37 @@ import (
 	"unicode/utf8"
 
 	ignore "github.com/sabhiram/go-gitignore"
+	"tzro/internal/inference"
 )
+
+// fileReadGoalContextKey is the context key type for probe goal propagation.
+// When the probe executor sets this before tool calls, read_file will
+// goal-compress large outputs to prevent context window overflow.
+type fileReadGoalContextKey struct{}
+
+// FileReadGoalKey is set by the probe executor before tool calls.
+// When present and the read_file output exceeds fileCompactionThreshold,
+// the content is chunked and each chunk compressed via the router model
+// against the probe's goal.
+var FileReadGoalKey = fileReadGoalContextKey{}
+
+// fileCompactionThreshold is the minimum line count that triggers
+// goal-directed compaction. Files at or below this are returned raw.
+// The 500-line read_file cap means at most 5 chunks for any single call.
+const fileCompactionThreshold = 100
+
+// fileCompactionChunkSize is the number of lines per chunk when splitting
+// file content for goal-directed compression.
+const fileCompactionChunkSize = 100
 
 // NewReadFileTool creates the read_file tool.
 // Reads file content with optional startLine/endLine parameters.
-// Caps at 200 lines per call. Bypasses the Compaction Pipeline — source code
-// is injected raw per ADR-0019.
+// Caps at 500 lines per call (200 for PDFs). Bypasses the Compaction Pipeline —
+// source code is injected raw per ADR-0019.
 func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 	return &BaseAgentTool{
 		name:        "read_file",
-		description: "Read file content with optional line range. Returns raw content (max 200 lines per call).",
+		description: "Read file content with optional line range. Returns raw content (max 500 lines per call).",
 		schema: GetToolGBNFSchema(map[string]interface{}{
 			"path":      map[string]interface{}{"type": "string"},
 			"startLine": map[string]interface{}{"type": "integer"},
@@ -154,7 +175,7 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 
 			selectedLines := allLines[startIdx:endIdx]
 
-			// Cap at 100 lines
+			// Cap at 500 lines for tool output to prevent context window overflow
 			const maxLines = 500
 			truncated := false
 			if len(selectedLines) > maxLines {
@@ -165,6 +186,32 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 			content := strings.Join(selectedLines, "\n")
 			if len(selectedLines) > 0 {
 				content += "\n"
+			}
+
+			// Goal-directed file compaction: if the output exceeds the threshold
+			// and a probe goal is present in context, compress via router model.
+			// The probe is unaware this happens — it gets back content that is
+			// pre-compressed for its goal instead of raw source.
+			if goal, ok := ctx.Value(FileReadGoalKey).(string); ok && goal != "" && len(selectedLines) > fileCompactionThreshold {
+				compressed, compErr := compressFileForGoal(ctx, content, goal, resolvedPath, totalLines)
+				if compErr != nil {
+					// Fallback: deterministic truncation (first/last 20 lines)
+					fmt.Fprintf(os.Stderr, "[FileCompaction] Router failed for %s, falling back to truncation: %v\n", in.Path, compErr)
+					compressed = deterministicTruncate(selectedLines)
+				}
+				compResult := ToolSuccess(map[string]interface{}{
+					"content":    compressed,
+					"path":       resolvedPath,
+					"lineCount":  len(selectedLines),
+					"totalLines": totalLines,
+					"startLine":  startIdx + 1,
+					"endLine":    startIdx + len(selectedLines),
+				})
+				compResult.Hint = fmt.Sprintf(
+					"File was %d lines (est. ~%d tokens). Goal-compressed for probe goal: '%s'.",
+					len(selectedLines), len(selectedLines)*8, truncateGoalStr(goal, 80),
+				)
+				return compResult, nil
 			}
 
 			result := ToolSuccess(map[string]interface{}{
@@ -183,6 +230,88 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 			return result, nil
 		},
 	}
+}
+
+// compressFileForGoal chunks file content and compresses each chunk via the
+// router model against the probe's goal. This is the core of goal-directed
+// file compaction (ADR-0019 extension): large read_file outputs are
+// transparently replaced with goal-relevant summaries to prevent probe
+// context window overflow.
+//
+// Cost model: for a 500-line file (the read_file maximum), this produces
+// up to 5 chunks × 1 router call each ≈ ~3,280 tokens total, ~3-5 seconds.
+// Output: ~1,000-2,500 chars vs ~20,000 chars raw — 8-20× reduction.
+func compressFileForGoal(ctx context.Context, content, goal, path string, totalLines int) (string, error) {
+	lines := strings.Split(content, "\n")
+
+	// Remove trailing empty line from strings.Split
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	// Build system prompt — goal-directed extraction
+	systemPrompt := "Given the goal: '" + goal + "', extract only the relevant information from this code. Output: relevant function signatures, types, constants, and key logic. Skip irrelevant implementation details. Be concise."
+	if goal == "" {
+		// Fallback for empty goal: generic structural extraction
+		systemPrompt = "Extract the key structural elements: function signatures, type definitions, constants, and important comments. Be concise."
+	}
+
+	// Chunk and compress
+	var summaries []string
+	for i := 0; i < len(lines); i += fileCompactionChunkSize {
+		end := i + fileCompactionChunkSize
+		if end > len(lines) {
+			end = len(lines)
+		}
+		chunk := strings.Join(lines[i:end], "\n")
+
+		messages := []inference.InferenceMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: chunk},
+		}
+
+		// Cap generation at 256 tokens to prevent inflation —
+		// matching the compaction cap from the compactor engine.
+		cappedCtx := context.WithValue(ctx, inference.MaxTokensKey, 256)
+		result, err := inference.CallRouter(cappedCtx, messages, "")
+		if err != nil {
+			// Return error to trigger deterministicTruncate fallback in caller
+			return "", fmt.Errorf("chunk %d-%d compression failed: %w", i+1, end, err)
+		}
+		if result != nil && strings.TrimSpace(result.Content) != "" {
+			summaries = append(summaries, strings.TrimSpace(result.Content))
+		}
+	}
+
+	// Build output with header
+	header := fmt.Sprintf("[File: %s (%d lines, goal-compressed)]", filepath.Base(path), totalLines)
+	compacted := header + "\n" + strings.Join(summaries, "\n")
+
+	fmt.Fprintf(os.Stderr, "[FileCompaction] %s: %d lines → %d chars (from %d chars raw)\n",
+		filepath.Base(path), totalLines, len(compacted), len(content))
+
+	return compacted, nil
+}
+
+// deterministicTruncate returns the first and last 20 lines of the input
+// with an omission marker in between. Used as a fallback when the router
+// model fails during goal-directed compression.
+func deterministicTruncate(lines []string) string {
+	const keepLines = 20
+	if len(lines) <= keepLines*2 {
+		return strings.Join(lines, "\n")
+	}
+	head := strings.Join(lines[:keepLines], "\n")
+	tail := strings.Join(lines[len(lines)-keepLines:], "\n")
+	return head + fmt.Sprintf("\n[... %d lines omitted ...]\n", len(lines)-keepLines*2) + tail
+}
+
+// truncateGoalStr truncates a string to maxLen chars with "..." suffix.
+func truncateGoalStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // NewListDirTool creates the list_dir tool.

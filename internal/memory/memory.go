@@ -322,6 +322,20 @@ func (sdb *SqliteDatabase) createTables() error {
 			is_hit INTEGER NOT NULL,
 			recorded_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS symbol_index (
+			id         TEXT PRIMARY KEY,
+			probe_id   TEXT NOT NULL,
+			task_id    TEXT NOT NULL,
+			name       TEXT NOT NULL,
+			kind       TEXT NOT NULL,
+			signature  TEXT NOT NULL,
+			file       TEXT NOT NULL,
+			line       INTEGER NOT NULL,
+			exported   INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_symbol_index_probe ON symbol_index(probe_id);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_index_dedup ON symbol_index(probe_id, name, file, line);`,
 	}
 
 	for _, query := range queries {
