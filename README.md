@@ -1,5 +1,9 @@
 # TZRO.ai: The Go-Native, Local MCP Offloader
 
+<p align="center">
+  <img src="static/hero.jpeg" alt="TZRO Hero Banner" width="100%" />
+</p>
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Go Report Card](https://goreportcard.com/badge/github.com/The18thWarrior/tzro)](https://goreportcard.com/report/github.com/The18thWarrior/tzro)
 
@@ -16,7 +20,7 @@ Traditional coding assistants and CLI agent loops (like *Claude Code*, *Cursor*,
 Run this in your terminal:
 
 ```bash
-curl -sSL https://s3.us-west-2.amazonaws.com/tzro-app/install.sh | bash
+curl -fsSL https://get.tzro.ai | sh
 ```
 
 The installer detects your platform, builds from source if Go is available (or fetches pre-compiled release binaries), downloads the default GGUF model, and provisions MCP configurations for supported AI editors (Claude Desktop, Cursor, Gemini CLI).

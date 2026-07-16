@@ -15,9 +15,9 @@
   <!-- Page Description -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TZRO — Local Task Router for AI Agents | Slash API Costs by 90%</title>
+  <title>TZRO — Local Task Offloader for Coding Agents | Stop Hitting Rate Limits</title>
   <meta name="description"
-    content="TZRO is an intelligent local task router that plugs into Claude Code, Cursor, and other MCP hosts. Run heavy file scanning, data formatting, and multi-step tasks locally with a grammar-locked 3B model — slashing API costs and token usage by 90%." />
+    content="TZRO intercepts heavy local file-reading commands and runs them locally so you don't burn your Claude Code, Cursor, or Codex API keys. Slash token usage by 72% and keep your momentum." />
 
   <!-- Modern Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -35,44 +35,6 @@
   <header class="tzro-header">
     <div class="header-container">
       <a href="#" class="logo-area">
-        <!-- <svg class="tzro-logo" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path fill="#863bff" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z" />
-          <mask id="a" width="48" height="46" x="0" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#000" d="M25.842 44.938c-.664.844-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.183c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.498 0-3.579-1.842-3.579H1.133c-.92 0-1.456-1.04-.92-1.787L9.91.473c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.578 1.842 3.578h11.377c.943 0 1.473 1.088.89 1.832L25.843 44.94z" style="fill:#000;fill-opacity:1"/></mask>
-          <g mask="url(#a)">
-            <g filter="url(#b)"><ellipse cx="5.508" cy="14.704" fill="#ede6ff" rx="5.508" ry="14.704" transform="matrix(.00324 1 1 -.00324 -4.47 31.516)"/></g>
-            <g filter="url(#c)"><ellipse cx="10.399" cy="29.851" fill="#ede6ff" rx="10.399" ry="29.851" transform="matrix(.00324 1 1 -.00324 -39.328 7.883)"/></g>
-            <g filter="url(#d)"><ellipse cx="5.508" cy="30.487" fill="#7e14ff" rx="5.508" ry="30.487" transform="rotate(89.814 -25.913 -14.639)scale(1 -1)"/></g>
-            <g filter="url(#e)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" transform="rotate(89.814 -32.644 -3.334)scale(1 -1)"/></g>
-            <g filter="url(#f)"><ellipse cx="5.508" cy="30.599" fill="#7e14ff" rx="5.508" ry="30.599" transform="matrix(.00324 1 1 -.00324 -34.34 30.47)"/></g>
-            <g filter="url(#g)"><ellipse cx="14.072" cy="22.078" fill="#ede6ff" rx="14.072" ry="22.078" transform="rotate(93.35 24.506 48.493)scale(-1 1)"/></g>
-            <g filter="url(#h)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g>
-            <g filter="url(#i)"><ellipse cx="3.47" cy="21.501" fill="#7e14ff" rx="3.47" ry="21.501" transform="rotate(89.009 28.708 47.59)scale(-1 1)"/></g>
-            <g filter="url(#j)"><ellipse cx=".387" cy="8.972" fill="#7e14ff" rx="4.407" ry="29.108" transform="rotate(39.51 .387 8.972)"/></g>
-            <g filter="url(#k)"><ellipse cx="47.523" cy="-6.092" fill="#7e14ff" rx="4.407" ry="29.108" transform="rotate(37.892 47.523 -6.092)"/></g>
-            <g filter="url(#l)"><ellipse cx="41.412" cy="6.333" fill="#47bfff" rx="5.971" ry="9.665" transform="rotate(37.892 41.412 6.333)"/></g>
-            <g filter="url(#m)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" transform="rotate(37.892 -1.88 38.332)"/></g>
-            <g filter="url(#n)"><ellipse cx="-1.879" cy="38.332" fill="#7e14ff" rx="4.407" ry="29.108" transform="rotate(37.892 -1.88 38.332)"/></g>
-            <g filter="url(#o)"><ellipse cx="35.651" cy="29.907" fill="#7e14ff" rx="4.407" ry="29.108" transform="rotate(37.892 35.651 29.907)"/></g>
-            <g filter="url(#p)"><ellipse cx="38.418" cy="32.4" fill="#47bfff" rx="5.971" ry="15.297" transform="rotate(37.892 38.418 32.4)"/></g>
-          </g>
-          <defs>
-            <filter id="b" width="60.045" height="41.654" x="-19.77" y="16.149" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter>
-            <filter id="c" width="90.34" height="51.437" x="-54.613" y="-7.533" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter>
-            <filter id="d" width="79.355" height="29.4" x="-49.64" y="2.03" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="e" width="79.579" height="29.4" x="-45.045" y="20.029" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="f" width="79.579" height="29.4" x="-43.513" y="21.178" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="g" width="74.749" height="58.852" x="15.756" y="-17.901" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="7.659"/></filter>
-            <filter id="h" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="i" width="61.377" height="25.362" x="23.548" y="2.284" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="j" width="56.045" height="63.649" x="-27.636" y="-22.853" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="k" width="54.814" height="64.646" x="20.116" y="-38.415" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="l" width="33.541" height="35.313" x="24.641" y="-11.323" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="m" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="n" width="54.814" height="64.646" x="-29.286" y="6.009" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="o" width="54.814" height="64.646" x="8.244" y="-2.416" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-            <filter id="p" width="39.409" height="43.623" x="18.713" y="10.588" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17158" stdDeviation="4.596"/></filter>
-          </defs>
-        </svg> -->
         <img src="./logo.png" alt="TZRO" class="tzro-logo" />
         <span class="logo-text">TZRO</span>
       </a>
@@ -82,17 +44,20 @@
         <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
       </div>
       <nav class="header-nav">
-        <!-- User mode nav -->
-        <a href="#how-it-works" class="nav-link" data-audience="user">How It Works</a>
-        <a href="#get-started" class="nav-link" data-audience="user">Install</a>
-        <a href="docs.html" class="nav-link" data-audience="user">Docs</a>
-        <!-- Developer mode nav (hidden) -->
-        <a href="#architecture" class="nav-link" data-audience="developer">Architecture</a>
-        <a href="#get-started" class="nav-link" data-audience="developer">Get Started</a>
-        <a href="#playgrounds" class="nav-link" data-audience="developer">Playgrounds</a>
-        <a href="#under-the-hood" class="nav-link" data-audience="developer">Under the Hood</a>
-        <a href="#quickstart" class="nav-link" data-audience="developer">Quickstart</a>
+        <a href="docs.html" class="nav-link">Docs</a>
+        <a href="#architecture" class="nav-link">Architecture</a>
+        <a href="#benchmarks" class="nav-link">Benchmarks</a>
         <a href="https://github.com/The18thWarrior/tzro" class="nav-link" target="_blank" rel="noopener">GitHub</a>
+        <!-- GitHub Star CTA -->
+        <a href="https://github.com/The18thWarrior/tzro" class="github-star-btn" target="_blank" rel="noopener"
+          id="github-star-btn">
+          <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+            <path
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+          </svg>
+          <span>Star</span>
+          <span class="github-star-count" id="github-star-count">—</span>
+        </a>
       </nav>
       <button class="hamburger-btn" id="mobile-menu-toggle" aria-label="Toggle Navigation" aria-expanded="false">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"
@@ -107,24 +72,12 @@
 
   <!-- Mobile Navigation Drawer -->
   <div class="mobile-nav-drawer" id="mobile-nav-drawer">
-    <div class="mobile-mode-toggle" style="display:none">
-      <div class="mode-toggle" id="mode-toggle-mobile">
-        <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
-        <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
-      </div>
-    </div>
     <nav class="mobile-nav-content">
-      <!-- User mode nav -->
-      <a href="#how-it-works" class="mobile-nav-link" data-audience="user">How It Works</a>
-      <a href="#get-started" class="mobile-nav-link" data-audience="user">Install</a>
-      <a href="docs.html" class="mobile-nav-link" data-audience="user">Docs</a>
-      <!-- Developer mode nav (hidden) -->
-      <a href="#architecture" class="mobile-nav-link" data-audience="developer">Architecture</a>
-      <a href="#get-started" class="mobile-nav-link" data-audience="developer">Get Started</a>
-      <a href="#playgrounds" class="mobile-nav-link" data-audience="developer">Playgrounds</a>
-      <a href="#under-the-hood" class="mobile-nav-link" data-audience="developer">Under the Hood</a>
-      <a href="#quickstart" class="mobile-nav-link" data-audience="developer">Quickstart</a>
-      <a href="https://github.com/The18thWarrior/tzro" class="mobile-nav-link" target="_blank" rel="noopener">GitHub</a>
+      <a href="docs.html" class="mobile-nav-link">Docs</a>
+      <a href="#architecture" class="mobile-nav-link">Architecture</a>
+      <a href="#benchmarks" class="mobile-nav-link">Benchmarks</a>
+      <a href="https://github.com/The18thWarrior/tzro" class="mobile-nav-link" target="_blank"
+        rel="noopener">GitHub</a>
     </nav>
   </div>
 
@@ -135,153 +88,257 @@
   <!-- MAIN LANDING FLOW -->
   <main class="landing-main">
     <!-- ============================================================ -->
-    <!-- HERO SECTION -->
+    <!-- HERO SECTION — 50/50 SPLIT -->
     <!-- ============================================================ -->
     <section class="hero-section">
       <div class="hero-container">
-        <!-- Developer mode hero -->
-        <div data-audience="developer">
-          <div class="hero-badge">AGENTIC OPERATING SYSTEM</div>
-          <h1 class="hero-title text-balance">
-            <span class="glow-text">tzro</span> — The Jumpdrive for AI Agents
-          </h1>
-          <p class="hero-desc text-pretty">
-            Your agent has a brain. What it's missing is a body — a portable
-            runtime with a kernel, scheduler, persistent memory, and
-            self-improving reflexes. Plug in tzro and your agent goes from
-            stateless to fully autonomous.
-          </p>
-          <div class="hero-ctas">
-            <a href="#get-started" class="hero-cta-primary">Get Started</a>
-            <a href="#architecture" class="hero-cta-secondary">Explore the OS</a>
+        <div class="hero-split">
+          <!-- Left Column: Headline & Copy -->
+          <div class="hero-left">
+            <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR & ANY MCP HOST</div>
+            <h1 class="hero-title text-balance">
+              Stop hitting the 4-hour Claude limit. <span class="glow-text">Keep your momentum.</span>
+            </h1>
+            <p class="hero-subtitle">A local task offloader for coding agents.</p>
+            <p class="hero-desc text-pretty">
+              TZRO intercepts heavy local file-reading commands and runs them
+              locally so you don't burn your Claude Code/Cursor/Codex API keys.
+            </p>
+            <div class="hero-ctas">
+              <a href="#install" class="hero-cta-primary">Download Free</a>
+              <a href="docs.html" class="hero-cta-secondary">Read Docs</a>
+            </div>
           </div>
-        </div>
-        <!-- User mode hero -->
-        <div data-audience="user">
-          <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR &amp; ANY MCP HOST</div>
-          <h1 class="hero-title text-balance">
-            Get more done without <span class="glow-text">hitting rate limits.</span>
-          </h1>
-          <p class="hero-desc text-pretty">
-            Stop token-maxing. Run heavy repository scanning, data formatting,
-            and multi-step tasks inside your favorite agents (Claude Code,
-            Cursor, Codex, etc.) with a free, local-first engine that slashes
-            token usage and API costs by 90%.
-          </p>
-          <div class="hero-ctas">
-            <a href="#get-started" class="hero-cta-primary">Download Free</a>
-            <a href="docs.html" class="hero-cta-secondary">Docs</a>
+
+          <!-- Right Column: Interactive Installer -->
+          <div class="hero-right">
+            <div class="installer-terminal">
+              <!-- Terminal Bar -->
+              <div class="installer-terminal-bar">
+                <div class="installer-dots">
+                  <span class="dot-circle"></span>
+                  <span class="dot-circle"></span>
+                  <span class="dot-circle"></span>
+                </div>
+                <span class="installer-terminal-title">posix-sh — install</span>
+                <div style="width: 48px"></div>
+              </div>
+
+              <!-- Code Container -->
+              <div class="installer-code" id="installer-copy-target" title="Click to copy script">
+                <div class="installer-command-line">
+                  <span class="installer-prompt">$</span>
+                  <span class="installer-command">curl -fsSL https://get.tzro.ai |
+                    bash</span>
+                </div>
+                <button class="installer-copy-btn" id="installer-copy-btn" type="button">
+                  Copy
+                </button>
+              </div>
+
+              <!-- Output Simulation -->
+              <div class="installer-output">
+                <p class="installer-output-comment"># Output pipeline expectation:</p>
+                <p>➔ Downloading runtime binaries from secure s3 allocation...</p>
+                <p>✔ System architecture validated (x86_64 / arm64)</p>
+                <p>✔ Symlinked <span class="installer-highlight">tzro</span> binary wrapper to local user bin space.</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Use Cases section removed — GTM 2026 rebrand -->
-    <!-- Comparison section removed — GTM 2026 rebrand -->
-
     <!-- ============================================================ -->
-    <!-- USER MODE: HOW IT WORKS (User only) -->
+    <!-- ARCHITECTURE SECTION (formerly "How It Works") -->
     <!-- ============================================================ -->
-    <section class="pipeline-section" id="how-it-works" data-audience="user">
+    <section class="architecture-flow-section" id="architecture">
       <div class="hero-container">
-        <span class="glass-badge">How It Works</span>
-        <h2 class="section-title text-balance">
-          Cloud plans. Your machine executes.
-        </h2>
+        <span class="section-eyebrow">Zero-Overhead Local Agent Execution</span>
+        <h2 class="section-title text-balance">Architecture</h2>
         <p class="section-desc text-pretty">
-          TZRO acts as an intelligent task gateway for your workspace. It plugs
-          directly into Claude Code, Cursor, or other MCP hosts, intercepting heavy,
-          non-cognitive tool executions and processing them locally on your own
-          hardware.
+          Claude Code delegates token-heavy, non-cognitive tasks to TZRO via
+          standard MCP tool calls (like <code>tzro_code</code> or <code>tzro_run</code>).
         </p>
 
-        <!-- Core Mechanics: Cloud vs Local Split -->
-        <div class="cooperative-split">
-          <div class="cooperative-col cooperative-cloud">
-            <div class="cooperative-col-icon">☁️</div>
-            <h3>Cloud <span class="cooperative-tag">High-Intelligence / Low-Token</span></h3>
-            <p>
-              We invoke your public frontier models to compile a high-level task
-              plan (compiled as an Abstract Graph JSON). One smart API call —
-              that's it.
-            </p>
+        <!-- 3-Column Phase Layout -->
+        <div class="phase-grid">
+          <!-- Phase 1: The Offload -->
+          <div class="phase-card group" data-phase="0" id="phase-card-0">
+            <div class="phase-card-header">
+              <span class="phase-label">PHASE 1: THE OFFLOAD</span>
+              <span class="phase-badge phase-badge-amber">Delegated</span>
+            </div>
+            <h3 class="phase-title">Claude Code</h3>
+            <p class="phase-subtitle">Active CLI Workspace</p>
+            <ul class="phase-points">
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>Claude needs to read large local files, index context, or traverse deeply nested
+                  directories.</span>
+              </li>
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>Instead of wasting cloud resources, the task is immediately handed over to TZRO as an MCP
+                  tool.</span>
+              </li>
+            </ul>
+            <div class="phase-footer">
+              <span class="phase-footer-action">[ Claude delegates task ]</span>
+              <span class="phase-footer-impact">(No cloud tokens spent yet)</span>
+            </div>
           </div>
-          <div class="cooperative-divider">
-            <div class="cooperative-divider-line"></div>
-            <div class="cooperative-divider-label">handoff</div>
-            <div class="cooperative-divider-line"></div>
+
+          <!-- Phase connector -->
+          <div class="phase-connector" aria-hidden="true">➔</div>
+
+          <!-- Phase 2: Local Work -->
+          <div class="phase-card group active" data-phase="1" id="phase-card-1">
+            <div class="phase-card-header">
+              <span class="phase-label">PHASE 2: LOCAL WORK</span>
+              <span class="phase-badge phase-badge-cyan">On-Device</span>
+            </div>
+            <h3 class="phase-title">TZRO Daemon</h3>
+            <p class="phase-subtitle">Local Go-Native Core</p>
+            <ul class="phase-points">
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>TZRO takes the execution instructions locally.</span>
+              </li>
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>Scans workspace folders, reads local file structures, and formats raw data directly on your
+                  computer for free.</span>
+              </li>
+            </ul>
+            <div class="phase-footer">
+              <span class="phase-footer-action">[ Processes 100% locally ]</span>
+              <span class="phase-footer-impact">(No delay, no cloud limits)</span>
+            </div>
           </div>
-          <div class="cooperative-col cooperative-local">
-            <div class="cooperative-col-icon">⚡</div>
-            <h3>Local <span class="cooperative-tag">Low-Intelligence / Zero-Cost</span></h3>
-            <p>
-              TZRO's Go-native local engine translates that plan into a strict
-              execution graph. It processes the heavy lifting — file traversing,
-              terminal tool calling, and document drafting — 100% locally on your
-              standard laptop using a compact, lightning-fast 3B model.
-            </p>
+
+          <!-- Phase connector -->
+          <div class="phase-connector" aria-hidden="true">➔</div>
+
+          <!-- Phase 3: Clean Injection -->
+          <div class="phase-card group" data-phase="2" id="phase-card-2">
+            <div class="phase-card-header">
+              <span class="phase-label">PHASE 3: CLEAN INJECTION</span>
+              <span class="phase-badge phase-badge-emerald">Injected</span>
+            </div>
+            <h3 class="phase-title">Claude Code</h3>
+            <p class="phase-subtitle">Resumes Instantly</p>
+            <ul class="phase-points">
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>Claude receives a highly condensed, pre-digested summary of the heavy local work.</span>
+              </li>
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>The LLM continues its generation with 0% token waste and absolute zero rate limit
+                  penalty.</span>
+              </li>
+            </ul>
+            <div class="phase-footer">
+              <span class="phase-footer-action">[ 90%+ Token Bill Savings ]</span>
+              <span class="phase-footer-impact">(Continuity is preserved)</span>
+            </div>
           </div>
         </div>
 
-        <!-- Cooperative Router Lifecycle -->
-        <div class="cooperative-lifecycle">
-          <h3 class="lifecycle-title">Cooperative Router Lifecycle</h3>
-          <div class="lifecycle-flow">
-            <div class="lifecycle-step">
-              <div class="lifecycle-step-num">1</div>
-              <div class="lifecycle-step-label">Intent Check</div>
-              <div class="lifecycle-step-desc">
-                The cloud planner creates the high-level roadmap.
-              </div>
-            </div>
-            <div class="lifecycle-arrow">→</div>
-            <div class="lifecycle-step">
-              <div class="lifecycle-step-num">2</div>
-              <div class="lifecycle-step-label">Local Intercept</div>
-              <div class="lifecycle-step-desc">
-                <code>tzro</code> catches the tool calls over standard loopback.
-              </div>
-            </div>
-            <div class="lifecycle-arrow">→</div>
-            <div class="lifecycle-step">
-              <div class="lifecycle-step-num">3</div>
-              <div class="lifecycle-step-label">Local Execution</div>
-              <div class="lifecycle-step-desc">
-                A local 3B–4B parameter model executes the task via logit-level
-                GBNF constraints, physically guaranteeing a
-                <strong>0% syntax failure rate</strong>.
-              </div>
-            </div>
-            <div class="lifecycle-arrow">→</div>
-            <div class="lifecycle-step">
-              <div class="lifecycle-step-num">4</div>
-              <div class="lifecycle-step-label">Context Compaction</div>
-              <div class="lifecycle-step-desc">
-                Large outputs are compressed into lean TSV formats or cached to a
-                local SQLite disk before returning to the loop, protecting your
-                context window.
-              </div>
-            </div>
-          </div>
+        <!-- Dynamic Context Terminal Drawer -->
+        <div class="phase-stdout" id="phase-stdout">
+          <span class="phase-stdout-label"># stdout pipeline debug inspect</span>
+          <span class="phase-stdout-output" id="phase-stdout-output">❯ Daemon compiling task graph locally. Local
+            workspace search complete.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- BENCHMARKS SECTION -->
+    <!-- ============================================================ -->
+    <section class="benchmarks-section" id="benchmarks">
+      <div class="hero-container">
+        <span class="section-eyebrow">Performance Validated</span>
+        <h2 class="section-title text-balance">
+          We Benchmark on real-world, multi-step workflows
+        </h2>
+        <p class="section-desc text-pretty">
+          We don't test on simple single-turn prompts. We benchmark TZRO against
+          a suite of 15 complex, multi-step agent tasks (like compiling full
+          codebase documentation, refactoring database queries, and generating
+          local API wrappers).
+        </p>
+
+        <!-- Metrics Table -->
+        <div class="benchmark-table-wrap">
+          <table class="benchmark-table">
+            <thead>
+              <tr>
+                <th>What We Track</th>
+                <th>Standard Agent Loop</th>
+                <th>TZRO Cooperative Loop <span class="benchmark-run-tag">(Run 10)</span></th>
+                <th>The Developer Win</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="benchmark-metric-name">Cloud Token Usage</td>
+                <td class="benchmark-baseline">35,000 tokens</td>
+                <td class="benchmark-tzro">9,800 tokens</td>
+                <td class="benchmark-win">72% cheaper API bills <span class="benchmark-dot green">🟢</span></td>
+              </tr>
+              <tr>
+                <td class="benchmark-metric-name">Average Task Speed</td>
+                <td class="benchmark-baseline">267 seconds</td>
+                <td class="benchmark-tzro">142 seconds</td>
+                <td class="benchmark-win">45% faster execution <span class="benchmark-dot green">🟢</span></td>
+              </tr>
+              <tr>
+                <td class="benchmark-metric-name">Inference Quality</td>
+                <td class="benchmark-baseline">3.38 / 5.00</td>
+                <td class="benchmark-tzro">3.55 / 5.00</td>
+                <td class="benchmark-win">Uncompromised coding accuracy <span class="benchmark-dot green">🟢</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
-        <!-- Terminal Execution Use Case -->
-        <div class="terminal-demo">
-          <div class="terminal-demo-header">
-            <span class="dot red"></span>
-            <span class="dot yellow"></span>
-            <span class="dot green"></span>
-            <span class="terminal-title">Terminal — Cooperative Execution</span>
+        <!-- Case Study Card -->
+        <div class="case-study-card">
+          <div class="case-study-header">
+            <span class="case-study-icon">🛑</span>
+            <h3>How We Stopped the 'Runaway Agent Loop'</h3>
           </div>
-          <pre class="terminal-demo-body monospace"><span class="term-prompt">claude &gt;</span> <span class="term-cmd">/goal Document this directory tree</span>
-
-<span class="term-route">Routing "High-Level Planning" to Cloud Strategist...</span>
-<span class="term-offload">Offloading 48 file-reads &amp; AST parses to Local Go Engine...</span>
-<span class="term-constraint">Applying logit-level GBNF constraints on local Qwen-3B model...</span>
-
-<span class="term-success">✓ Generated README.md, API_REFERENCE.md, and CLAUDE.md locally.</span>
-<span class="term-metric">Workload Arbitraged: 148,500 I/O tokens executed on-device.</span>
-<span class="term-cost">Cloud Token Cost: $0.00</span></pre>
+          <p class="case-study-intro">
+            In our early builds, open-ended tasks like "document this entire
+            repository" would occasionally cause our local Probe nodes to enter
+            a runaway exploration loop. We fixed it.
+          </p>
+          <div class="case-study-task">
+            <strong>Task:</strong> Generate a comprehensive README for a 100MB Go repository
+          </div>
+          <div class="case-study-comparison">
+            <div class="case-study-before">
+              <div class="case-study-label case-study-label-red">Without Loop Dampening (Run 10)</div>
+              <p>The agent generated <strong>41 local tool calls</strong> and consumed
+                <strong>183,534 local tokens</strong> trying to map the directory.
+              </p>
+            </div>
+            <div class="case-study-after">
+              <div class="case-study-label case-study-label-green">With Loop Dampening (Run 11)</div>
+              <p>Our dynamic termination engine collapsed this to only <strong>2 tool calls</strong>
+                and <strong>16,573 local tokens</strong> — while actually improving the
+                documentation quality score from 3.75 to <strong>4.75</strong>.</p>
+            </div>
+          </div>
+          <div class="case-study-result">
+            <strong>The Result:</strong> We completely eliminate local token waste and
+            execution lag on heavy directory sweeps, passing a tight, finalized context
+            summary straight to your active terminal.
+          </div>
         </div>
       </div>
     </section>
@@ -289,7 +346,7 @@
     <!-- ============================================================ -->
     <!-- INTERACTIVE OS ARCHITECTURE DIAGRAM (Developer only) -->
     <!-- ============================================================ -->
-    <section class="architecture-section" id="architecture" data-audience="developer">
+    <section class="architecture-section" id="os-architecture" data-audience="developer">
       <div class="hero-container">
         <span class="glass-badge">System Architecture</span>
         <h2 class="section-title text-balance">
@@ -350,7 +407,7 @@
             <div class="os-block-os-name">System Daemons</div>
             <div class="os-block-tzro-name">Background Agents</div>
           </div>
-          <div class="os-block os-block-permissions" data-target="#get-started"
+          <div class="os-block os-block-permissions" data-target="#install"
             data-label="Proactivity Ladder (L0–L4), Tool Proactivity Levels">
             <div class="os-block-os-name">Permissions</div>
             <div class="os-block-tzro-name">Proactivity Ladder</div>
@@ -367,7 +424,7 @@
           </div>
 
           <!-- Row 4: User-facing -->
-          <div class="os-block os-block-shell" data-target="#quickstart" data-label="CLI + MCP Server Mode tools">
+          <div class="os-block os-block-shell" data-target="#install" data-label="CLI + MCP Server Mode tools">
             <div class="os-block-os-name">Shell</div>
             <div class="os-block-tzro-name">CLI &amp; MCP</div>
           </div>
@@ -376,12 +433,12 @@
             <div class="os-block-os-name">GUI / Window Manager</div>
             <div class="os-block-tzro-name">Generative Dashboard</div>
           </div>
-          <div class="os-block os-block-boot" data-target="#quickstart"
+          <div class="os-block os-block-boot" data-target="#install"
             data-label="One-line curl installer (install.sh)">
             <div class="os-block-os-name">Boot Loader</div>
             <div class="os-block-tzro-name">install.sh</div>
           </div>
-          <div class="os-block os-block-portability" data-target="#quickstart"
+          <div class="os-block os-block-portability" data-target="#install"
             data-label="Copy binary + tzro.db = perfect clone of the agent's brain">
             <div class="os-block-os-name">Portable Disk</div>
             <div class="os-block-tzro-name">tzro.db</div>
@@ -396,750 +453,74 @@
     </section>
 
     <!-- ============================================================ -->
-    <!-- GET STARTED: TWO-ONRAMP SECTION -->
+    <!-- SIMPLIFIED INSTALLATION SECTION -->
     <!-- ============================================================ -->
-    <section class="playground-section" id="get-started">
+    <section class="install-section" id="install">
       <div class="hero-container">
-        <span class="glass-badge" data-audience="developer">Get Started</span>
-        <span class="glass-badge" data-audience="user">Install</span>
-        <h2 class="section-title text-balance" data-audience="developer">
-          Two ways to give your agent an operating system
+        <span class="section-eyebrow">Get Started</span>
+        <h2 class="section-title text-balance">
+          One command. Zero config.
         </h2>
-        <h2 class="section-title text-balance" data-audience="user">
-          Up and running in 60 seconds
-        </h2>
-        <p class="section-desc text-pretty" data-audience="developer">
-          Plug the jumpdrive into an existing agent via MCP, or embed the
-          framework directly into your Go application.
-        </p>
-        <p class="section-desc text-pretty" data-audience="user">
-          Install tzro, paste one config block, and your agent gets memory,
-          checkpoints, and local execution.
+        <p class="section-desc text-pretty">
+          Install TZRO with a single command. It detects your system, downloads
+          the right binary, and symlinks it to your PATH.
         </p>
 
-        <!-- Onramp Tab Bar -->
-        <div class="onramp-tab-bar" id="onramp-tab-bar">
-          <button class="onramp-tab-btn active" data-onramp="mcp" type="button">
-            ⚡ Plug In (MCP)
-          </button>
-          <button class="onramp-tab-btn" data-onramp="framework" type="button" data-audience="developer">
-            🔧 Build On (Framework)
-          </button>
-        </div>
-
-        <!-- ======================== -->
-        <!-- MCP ONRAMP TAB -->
-        <!-- ======================== -->
-        <div class="onramp-panel active" id="onramp-mcp">
-          <div class="mcp-setup-grid premium-border">
-            <div class="mcp-steps-panel">
-              <div class="mcp-step" data-audience="developer">
-                <div class="step-num">1</div>
-                <div class="step-text">
-                  <h3>Build the MCP Server Binary</h3>
-                  <p>
-                    Compile the server binary target from the root repository
-                    directory:
-                  </p>
-                  <pre class="monospace"><code>go build -o bin/tzro-mcp ./cmd/tzro-mcp</code></pre>
-                </div>
+        <div class="install-block">
+          <div class="install-terminal">
+            <div class="installer-terminal-bar">
+              <div class="installer-dots">
+                <span class="dot-circle"></span>
+                <span class="dot-circle"></span>
+                <span class="dot-circle"></span>
               </div>
-
-              <div class="mcp-step" data-audience="user">
-                <div class="step-num">1</div>
-                <div class="step-text">
-                  <h3>Install tzro</h3>
-                  <p>Run this in your terminal:</p>
-                  <pre
-                    class="monospace"><code>curl -sSL https://s3.us-west-2.amazonaws.com/tzro-app/install.sh | bash</code></pre>
-                </div>
-              </div>
-
-              <div class="mcp-step">
-                <div class="step-num">2</div>
-                <div class="step-text">
-                  <h3 data-audience="developer">Register in Client Configuration</h3>
-                  <h3 data-audience="user">Add to your agent</h3>
-                  <p data-audience="developer">
-                    Select your agent host to get the config block:
-                  </p>
-                  <p data-audience="user">
-                    Paste this into your agent's config file and restart.
-                  </p>
-
-                  <div class="mcp-tab-bar">
-                    <button class="mcp-tab-btn active" data-client="claude" type="button">
-                      Claude Desktop
-                    </button>
-                    <button class="mcp-tab-btn" data-client="cursor" type="button">
-                      Cursor Settings
-                    </button>
-                    <button class="mcp-tab-btn" data-client="agy" type="button">
-                      Antigravity Config
-                    </button>
-                  </div>
-
-                  <div class="mcp-config-box">
-                    <pre class="monospace"><code id="mcp-config-display">{
-  "mcpServers": {
-    "tzro": {
-      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
-      "args": [],
-      "env": {
-        "PORT": "8080"
-      }
-    }
-  }
-}</code></pre>
-                  </div>
-                </div>
-              </div>
-
-              <div class="mcp-step" data-audience="developer">
-                <div class="step-num">3</div>
-                <div class="step-text">
-                  <h3>Verify the Handshake</h3>
-                  <p>
-                    Test the server from the terminal to verify JSON-RPC
-                    framing:
-                  </p>
-                  <pre class="monospace"><code>./bin/tzro-mcp</code></pre>
-                  <p class="step-subtext">
-                    Paste this initialization payload and press
-                    <code>Enter</code>:
-                  </p>
-                  <pre class="monospace"><code>{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2024-11-05",
-    "capabilities": {},
-    "clientInfo": { "name": "test-client", "version": "1.0.0" }
-  }
-}</code></pre>
-                </div>
-              </div>
+              <span class="installer-terminal-title">Terminal</span>
+              <div style="width: 48px"></div>
             </div>
-
-            <!-- User mode: simplified step 3 -->
-            <div class="mcp-step" data-audience="user">
-              <div class="step-num">3</div>
-              <div class="step-text">
-                <h3>Start using it</h3>
-                <p>
-                  Your agent can now run long tasks, save memory, and recover
-                  from crashes. Try asking it to research a topic or process
-                  a batch of documents.
-                </p>
+            <div class="installer-code" id="install-copy-target" title="Click to copy">
+              <div class="installer-command-line">
+                <span class="installer-prompt">$</span>
+                <span class="installer-command">curl -fsSL https://get.tzro.ai |
+                  bash</span>
               </div>
-            </div>
-          </div>
-
-          <div class="mcp-tools-panel" data-audience="developer">
-            <h3>Exposed OS Tools</h3>
-            <p>
-              Once registered, your agent gains access to the full OS
-              capability surface:
-            </p>
-            <ul class="mcp-tools-list monospace">
-              <li>
-                <strong>tzro_run</strong>: Run durable DAG workflows from
-                natural language
-              </li>
-              <li>
-                <strong>tzro_code</strong>: Generate or modify source files
-                locally with automatic compilation validation
-              </li>
-              <li>
-                <strong>tzro_status</strong>: Inspect status and outcomes of a
-                specific task
-              </li>
-              <li>
-                <strong>tzro_list_tasks</strong>: List recent planning and
-                execution tasks
-              </li>
-              <li>
-                <strong>tzro_configure_tools</strong>: Dynamically register
-                third-party stdio MCP daemons
-              </li>
-              <li>
-                <strong>tzro_memory_query</strong>: Query memory graphs and
-                facts semantically
-              </li>
-              <li>
-                <strong>tzro_memory_ingest</strong>: Store memories in the
-                SQLite vector database
-              </li>
-              <li>
-                <strong>tzro_kg_neighborhood</strong>: Multi-hop graph
-                traversal starting from an entity
-              </li>
-              <li>
-                <strong>tzro_kg_add_entity</strong>: Create/update nodes and
-                edge relationships
-              </li>
-              <li>
-                <strong>tzro_rag_context</strong>: Retrieve graph-RAG context
-                for prompting
-              </li>
-              <li>
-                <strong>tzro_skills_add</strong>: Sync custom procedural
-                micro-skills (SOPs)
-              </li>
-              <li>
-                <strong>tzro_sentinel_alerts</strong>: Retrieve proactive
-                intelligence from the Sentinel Agent
-              </li>
-              <li>
-                <strong>tzro_dashboard</strong>: Serve the generative agentic
-                dashboard
-              </li>
-              <li>
-                <strong>tzro_workflow</strong>: Spawn dynamic multi-task
-                orchestrations
-              </li>
-              <li>
-                <strong>tzro_model_list</strong>: List downloaded &amp; active
-                local models
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <!-- AGENT DELEGATION & OFFLOAD POLICY (Developer only) -->
-        <div class="agent-policy-grid premium-border" data-audience="developer">
-          <div class="policy-header">
-            <span class="glass-badge">Agent Integration</span>
-            <h2>Autonomous Agent Delegation &amp; Wait Protocol</h2>
-            <p>
-              To avoid high-latency cloud context slot thrashing, agents
-              delegate non-reasoning tasks to the local durable OS.
-            </p>
-          </div>
-
-          <div class="policy-columns">
-            <div class="policy-card">
-              <h3>The Delegation Rule</h3>
-              <div class="decision-box">
-                <div class="question">
-                  "Do I need frontier-model-exclusive reasoning (code
-                  generation, complex architectural judgment, interactive
-                  human dialog) about intermediate outputs to decide the next
-                  step?"
-                </div>
-                <div class="branches">
-                  <div class="branch yes">
-                    <strong>YES</strong>
-                    <span>Keep execution in-context (Frontier cloud
-                      reasoning)</span>
-                  </div>
-                  <div class="branch no">
-                    <strong>NO</strong>
-                    <span>Delegate to <code>tzro_run</code> (Local durable OS
-                      executor)</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="policy-rules">
-                <h4>Mandatory Delegation Areas</h4>
-                <ul>
-                  <li>
-                    <strong>Codebase Exploration &amp; Analysis:</strong>
-                    Delegate with a goal and let the OS dynamically spawn
-                    exploration nodes via
-                    <strong>Activation Thresholds</strong>.
-                  </li>
-                  <li>
-                    <strong>Multi-Source Web Research:</strong> Batching web
-                    searches, scraping, and compiling findings.
-                  </li>
-                  <li>
-                    <strong>Memory Ingestion Pipelines:</strong> Bulk storing
-                    memories and vector representations.
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <div class="policy-card">
-              <h3>Wait Protocol &amp; Prompts</h3>
-              <div class="wait-protocol">
-                <h4>The Wait Protocol</h4>
-                <ol>
-                  <li>
-                    <strong>Stop In-Context Execution:</strong> Do not call
-                    tools or execute parallel steps in the client session.
-                  </li>
-                  <li>
-                    <strong>Set One-Shot Timer:</strong> Schedule a wakeup
-                    reminder using the client's timer tool.
-                  </li>
-                  <li>
-                    <strong>Verify Complete:</strong> Check task status via
-                    <code>tzro_status</code>; resume when status returns
-                    <code>completed</code>.
-                  </li>
-                  <li>
-                    <strong>Consume Synthesized State:</strong> Read only the
-                    <code>terminal_synthesis</code> outcome.
-                  </li>
-                </ol>
-              </div>
-
-              <div class="prompt-templates">
-                <h4>Suggested Prompt Templates</h4>
-
-                <div class="template-item">
-                  <h5>A. Research &amp; Ingestion</h5>
-                  <pre
-                    class="monospace"><code>"Use web_search to find the latest changes and trends in the AI orchestration space, compile the findings, and save the final structured summary to memory using the save_memory tool."</code></pre>
-                </div>
-
-                <div class="template-item">
-                  <h5>B. Multi-System Automation</h5>
-                  <pre
-                    class="monospace"><code>"Execute a workflow to query recent lead records using salesforce_query, run deduplication check with postgres_insert, and post the execution report to the slack_message tool."</code></pre>
-                </div>
-
-                <div class="template-item">
-                  <h5>C. Codebase Exploration</h5>
-                  <pre
-                    class="monospace"><code>"Explore the project at /path/to/repo. Read the top-level structure, then follow the most important files to understand the architecture. Produce a structured summary. Use read_file, list_dir, and search_files. Set activationThreshold to 0.8 and mutationBudget to 15."</code></pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ======================== -->
-      <!-- FRAMEWORK ONRAMP TAB -->
-      <!-- ======================== -->
-      <div class="onramp-panel" id="onramp-framework" data-audience="developer">
-        <div class="dx-showcase-grid">
-          <!-- Left: Code Snippet Browser -->
-          <div class="dx-nav-panel">
-            <div class="dx-nav-title">Framework Integration Guides</div>
-            <button class="dx-nav-btn active" data-tab="config">
-              1. Configuration &amp; Env Secrets
-            </button>
-            <button class="dx-nav-btn" data-tab="tools">
-              2. Stdio MCP &amp; WASM Tool Registry
-            </button>
-            <button class="dx-nav-btn" data-tab="compile">
-              3. Kahn Sorting &amp; Compilation
-            </button>
-            <button class="dx-nav-btn" data-tab="telemetry">
-              4. Telemetry StreamBus Sync
-            </button>
-            <button class="dx-nav-btn" data-tab="hooks">
-              5. Synchronous Middleware Hooks
-            </button>
-          </div>
-
-          <!-- Middle: Visual Code Editor -->
-          <div class="dx-editor-panel">
-            <div class="editor-header">
-              <span class="file-name" id="dx-filename">config.go</span>
-              <span class="lang-tag">Go</span>
-            </div>
-            <div class="editor-body">
-              <pre class="monospace"><code id="dx-code-display">
-// Loading snippet...
-                </code></pre>
-            </div>
-          </div>
-
-          <!-- Right: Interactive Hook Sandbox -->
-          <div class="dx-interactive-sandbox">
-            <h3>Synchronous Hook Playground</h3>
-            <p>
-              Inject custom Go middleware hooks into the active DAG loop to
-              intercept executions dynamically.
-            </p>
-
-            <div class="toggles-list">
-              <div class="toggle-row">
-                <div class="toggle-text">
-                  <label for="hook-pii">PII Sanitization Hook</label>
-                  <span>Redacts credentials and SSN values inside
-                    <code>AfterNode</code></span>
-                </div>
-                <label class="switch">
-                  <input type="checkbox" id="hook-pii" />
-                  <span class="slider"></span>
-                </label>
-              </div>
-
-              <div class="toggle-row">
-                <div class="toggle-text">
-                  <label for="hook-guard">Destructive Safety Guardrail</label>
-                  <span>Intercepts and skips
-                    <code>delete_all_records</code> tool nodes</span>
-                </div>
-                <label class="switch">
-                  <input type="checkbox" id="hook-guard" />
-                  <span class="slider"></span>
-                </label>
-              </div>
-
-              <div class="toggle-row">
-                <div class="toggle-text">
-                  <label for="hook-hitl">Human-in-the-Loop Gateway</label>
-                  <span>Pauses compiled tasks at Level 1 to prompt supervisor
-                    checks</span>
-                </div>
-                <label class="switch">
-                  <input type="checkbox" id="hook-hitl" />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-
-            <button id="vC-run-btn" class="dx-run-trigger">
-              Execute Hooked Runtime
-            </button>
-
-            <!-- Hook Console Log -->
-            <div class="dx-console monospace" id="dx-console">
-              <div class="console-line text-muted">
-                Initialize the pipeline configuration to run...
-              </div>
-            </div>
-
-            <!-- HITL Gateway Prompt -->
-            <div class="hitl-prompt" id="hitl-prompt" style="display: none">
-              <div class="prompt-text">
-                ⚠️ TASK PAUSED: ErrTaskPaused. Manual approval required
-                before Level 1 tool dispatch.
-              </div>
-              <div class="prompt-actions">
-                <button id="hitl-approve-btn" class="prompt-btn approve">
-                  Approve Level 1 Run
-                </button>
-                <button id="hitl-abort-btn" class="prompt-btn abort">
-                  Abort Task
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      </div>
-    </section>
-
-    <!-- ============================================================ -->
-    <!-- PLAYGROUNDS -->
-    <!-- ============================================================ -->
-    <section class="playground-section" id="playgrounds" data-audience="developer">
-      <div class="hero-container">
-        <span class="glass-badge">Interactive Playgrounds</span>
-        <h2 class="section-title">See the OS in action</h2>
-        <p class="section-desc">
-          Explore the core subsystems that power the agentic operating system.
-        </p>
-      </div>
-    </section>
-
-    <!-- PLAYGROUND 1: PROCESS SCHEDULER (Kahn Simulator) -->
-    <section class="playground-section" id="playground-scheduler" data-audience="developer">
-      <div class="hero-container">
-        <span class="glass-badge">Process Scheduler</span>
-        <h2 class="section-title">
-          1. Kahn Compiler &amp; Neural Edge Traversal
-        </h2>
-        <p class="section-desc">
-          Watch how the OS schedules processes. The Kahn Compiler sorts tasks
-          topologically and executes independent steps in parallel. When goal
-          confidence drops below threshold, the OS dynamically spawns new
-          nodes — like a neural network firing.
-        </p>
-
-        <div class="dashboard-grid">
-          <!-- Left: Subsystem Terminal -->
-          <div class="terminal-card">
-            <div class="terminal-header">
-              <span class="dot red"></span>
-              <span class="dot yellow"></span>
-              <span class="dot green"></span>
-              <span class="terminal-title">tzro_daemon_monitor.sh</span>
-            </div>
-            <div class="terminal-body monospace">
-              <div class="line"><span class="cyan">$</span> tzro status</div>
-              <div class="line success">
-                [OK] SQLite Persistence Layer Initialized:
-                ~/.tzro/data/tzro.db
-              </div>
-              <div class="line success">
-                [OK] Local Tactician Linked: port 36888 [Active Slots: 1]
-              </div>
-              <div class="line success">
-                [OK] Cloud Strategist Adapter Ready: mode = cooperative
-              </div>
-              <div class="line">
-                <span class="cyan">$</span> tzro list-subsystems
-              </div>
-              <div class="line active-subsystems">
-                <table>
-                  <tr>
-                    <th>ID</th>
-                    <th>Subsystem</th>
-                    <th>Engine</th>
-                  </tr>
-                  <tr>
-                    <td>01</td>
-                    <td>Durable Execution</td>
-                    <td>SQLite Checkpoints</td>
-                  </tr>
-                  <tr>
-                    <td>02</td>
-                    <td>Kahn Graph Compiler</td>
-                    <td>DAG Topological Sorter</td>
-                  </tr>
-                  <tr>
-                    <td>03</td>
-                    <td>Relational Memory</td>
-                    <td>FTS5 Vector ONNX</td>
-                  </tr>
-                  <tr>
-                    <td>04</td>
-                    <td>WASM Micro-Skills</td>
-                    <td>Isolated Sandbox Wasmtime</td>
-                  </tr>
-                  <tr>
-                    <td>05</td>
-                    <td>Stdio MCP Gateway</td>
-                    <td>Process Host Auto-Healing</td>
-                  </tr>
-                </table>
-              </div>
-              <div class="line">
-                <span class="cyan">$</span> <span class="blink">_</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Right: Kahn Compiler Simulator Card -->
-          <div class="simulator-card">
-            <div class="card-header-vA">
-              <h3>Process Scheduling Pipeline</h3>
-              <p>
-                Watch how tasks compile into dependency levels, execute in
-                parallel, and dynamically spawn new nodes when goal confidence
-                is insufficient.
-              </p>
-            </div>
-
-            <div class="sim-controls">
-              <button id="vA-start-btn" class="sim-btn glow-btn">
-                Compile &amp; Run Task
-              </button>
-              <button id="vA-reset-btn" class="sim-btn secondary-btn">
-                Reset Pipeline
+              <button class="installer-copy-btn" id="install-copy-btn" type="button">
+                Copy
               </button>
             </div>
-
-            <!-- Visual Graph Levels -->
-            <div class="graph-visualizer">
-              <div class="level-column" id="level-strat">
-                <span class="level-label">1. Cloud Plan</span>
-                <div class="sim-node planner" id="node-planner">
-                  <div class="node-id">Strategist</div>
-                  <div class="node-action">Goal Intent Routing</div>
-                </div>
-              </div>
-
-              <div class="level-arrow">⟶</div>
-
-              <div class="level-column" id="level-0">
-                <span class="level-label">2. Level 0 (Parallel)</span>
-                <div class="sim-node pending" id="node-01">
-                  <div class="node-id">node_01 [Go]</div>
-                  <div class="node-action">archive_files</div>
-                </div>
-                <div class="sim-node pending" id="node-02">
-                  <div class="node-id">node_02 [WASM]</div>
-                  <div class="node-action">fetch_user_details</div>
-                </div>
-              </div>
-
-              <div class="level-arrow">⟶</div>
-
-              <div class="level-column" id="level-edge">
-                <span class="level-label">3. Edge Thought
-                  <span class="edge-thought-indicator" id="edge-thought-badge">θ</span></span>
-                <div class="sim-node edge-thought-node hidden" id="node-edge-thought">
-                  <div class="node-id">Edge Thought</div>
-                  <div class="node-action">
-                    Confidence: <span id="edge-confidence">—</span>
-                  </div>
-                </div>
-                <!-- Dynamically spawned node -->
-                <div class="sim-node spawned-node hidden" id="node-spawned">
-                  <div class="node-id">node_03a [Spawned]</div>
-                  <div class="node-action">enrich_user_data</div>
-                </div>
-              </div>
-
-              <div class="level-arrow">⟶</div>
-
-              <div class="level-column" id="level-1">
-                <span class="level-label">4. Level 1 (Dependent)</span>
-                <div class="sim-node pending" id="node-03">
-                  <div class="node-id">node_03 [MCP]</div>
-                  <div class="node-action">send_team_alert</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Terminal Output Log -->
-            <div class="sim-log-console monospace" id="vA-console">
-              <div class="log-line text-muted">
-                Awaiting topological compilation triggers...
-              </div>
-            </div>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- PLAYGROUND 2: VIRTUAL MEMORY (Compaction) -->
-    <section class="playground-section" id="playground-vmem" data-audience="developer">
-      <div class="hero-container">
-        <span class="glass-badge">Virtual Memory</span>
-        <h2 class="section-title">
-          2. Context Compaction &amp; SQLite Cache
-        </h2>
-        <p class="section-desc">
-          Like virtual memory manages physical RAM, the OS compresses tool
-          outputs on-device — saving up to 85% of attention space — or pages
-          massive datasets to a local SQLite cache.
-        </p>
-
-        <div class="compactor-container premium-border">
-          <div class="compactor-header">
-            <h2>Virtual Memory Compaction Pipeline</h2>
-            <p>
-              Select raw tool data outputs and watch how the OS compresses
-              them into clean, structured context before returning them to
-              your agent.
-            </p>
-          </div>
-
-          <div class="compactor-grid">
-            <div class="compactor-controls">
-              <label>Select Sample Dataset Payload</label>
-              <div class="preset-buttons">
-                <button class="preset-btn active" data-preset="crm">
-                  homogeneous CRM Array [22.4KB]
-                </button>
-                <button class="preset-btn" data-preset="logs">
-                  System Exception Logs [48.1KB]
-                </button>
-                <button class="preset-btn" data-preset="scraped">
-                  Web Scraped HTML [80.6KB]
-                </button>
-              </div>
-
-              <div class="compaction-pipeline-visual">
-                <div class="pipeline-step-item" id="step-0">
-                  <span>Layer 0: Binary Pruning</span><span class="status">Idle</span>
-                </div>
-                <div class="pipeline-step-item" id="step-1">
-                  <span>Layer 1: HTML-to-Markdown</span><span class="status">Idle</span>
-                </div>
-                <div class="pipeline-step-item" id="step-2">
-                  <span>Layer 2: TSV Tabular Hoisting</span><span class="status">Idle</span>
-                </div>
-                <div class="pipeline-step-item" id="step-3">
-                  <span>Layer 3: KV Flattening</span><span class="status">Idle</span>
-                </div>
-                <div class="pipeline-step-item" id="step-4">
-                  <span>Layer 4: Dot-Notation Compressor</span><span class="status">Idle</span>
-                </div>
-              </div>
-
-              <button id="vB-compress-btn" class="compress-trigger">
-                Run Compaction Pipeline
-              </button>
-            </div>
-
-            <!-- Mobile Tab Switcher -->
-            <div class="compactor-mobile-tabs" id="compactor-mobile-tabs">
-              <button class="compactor-tab-btn active" data-target="raw" type="button">
-                Raw Input (<span id="raw-size-tab">22.4</span> KB)
-              </button>
-              <button class="compactor-tab-btn" data-target="compacted" type="button">
-                Compacted (<span id="compacted-size-tab">0.0</span> KB)
-              </button>
-            </div>
-
-            <!-- Side-by-side Payload Views -->
-            <div class="payload-visuals">
-              <div class="payload-box active" id="compactor-raw-panel">
-                <div class="box-tag">
-                  Raw Data Input (<span id="raw-size">22.4</span> KB)
-                </div>
-                <textarea id="raw-payload-display" readonly class="monospace"></textarea>
-              </div>
-
-              <div class="payload-box" id="compactor-compacted-panel">
-                <div class="box-tag">
-                  Compacted Context Output (<span id="compacted-size">0.0</span>
-                  KB)
-                </div>
-                <div class="compacted-output-wrapper">
-                  <pre id="compacted-payload-display" class="monospace text-success"></pre>
-
-                  <!-- Disk Cache Banner -->
-                  <div class="disk-cache-banner" id="disk-cache-banner" style="display: none">
-                    <div class="banner-title">
-                      ⚠️ Payload exceeds 12KB threshold! Triggering SQLite
-                      Cache.
-                    </div>
-                    <p>
-                      Raw values written securely to local disk. Returns
-                      lightweight Cache Envelope with local JQ Exploration
-                      guide.
-                    </p>
-                    <div class="cache-json-output monospace">
-                      { "cache_envelope_id": "env_8c3b7a", "records": 150,
-                      "jq_query_tool": "jq_cached_data" }
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="compactor-metrics" id="compactor-metrics" style="display: none">
-            <div class="metric-circle">
-              <span class="percent" id="metric-saving">0%</span>
-              <span class="label">Tokens Saved</span>
-            </div>
-            <div class="metric-stats">
-              <div>
-                <span>Initial Size:</span>
-                <strong id="metric-initial">22.4 KB</strong>
-              </div>
-              <div>
-                <span>Compressed Size:</span>
-                <strong id="metric-final">2.8 KB</strong>
-              </div>
-              <div>
-                <span>Context Slot Saving:</span>
-                <strong id="metric-ratio">8:1 Reduction</strong>
-              </div>
-            </div>
+          <!-- Security Trust Banner -->
+          <div class="trust-banner">
+            <span class="trust-item">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                <path
+                  d="M8 0L0 3v4.5c0 4.17 3.42 8.07 8 9.5 4.58-1.43 8-5.33 8-9.5V3L8 0zm6 7.5c0 3.42-2.78 6.58-6 7.93-3.22-1.35-6-4.51-6-7.93V4.06l6-2.25 6 2.25V7.5z" />
+              </svg>
+              MIT Licensed
+            </span>
+            <span class="trust-divider">|</span>
+            <span class="trust-item">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                <path
+                  d="M8 1a5 5 0 00-5 5v1.5C2 9.88 3.12 11 4.5 11h1v-1h-1C3.67 10 3 9.33 3 8.5V6a5 5 0 0110 0v2.5c0 .83-.67 1.5-1.5 1.5h-1v1h1c1.38 0 2.5-1.12 2.5-2.5V6a5 5 0 00-5-5zM6 8v5a1 1 0 001 1h2a1 1 0 001-1V8a1 1 0 00-1-1H7a1 1 0 00-1 1z" />
+              </svg>
+              100% Local Processing
+            </span>
+            <span class="trust-divider">|</span>
+            <span class="trust-item">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                <path
+                  d="M8 16A8 8 0 108 0a8 8 0 000 16zm.93-9.412l-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.399l-.502.001.089-.416 2.183-.054h.15z" />
+                <circle cx="8" cy="4.5" r="1" />
+              </svg>
+              No External Telemetry by Default
+            </span>
           </div>
         </div>
       </div>
     </section>
 
     <!-- ============================================================ -->
-    <!-- UNDER THE HOOD: NON-DEMOED MOATS -->
+    <!-- UNDER THE HOOD: NON-DEMOED MOATS (Developer only) -->
     <!-- ============================================================ -->
     <section class="playground-section" id="under-the-hood" data-audience="developer">
       <div class="hero-container">
@@ -1244,86 +625,86 @@
       </div>
     </section>
 
-    <!-- ============================================================ -->
-    <!-- TABBED QUICKSTART -->
-    <!-- ============================================================ -->
-    <section class="quickstart-section" id="quickstart">
-      <div class="hero-container">
-        <h2>Quickstart</h2>
-        <p class="section-desc">
-          Get the jumpdrive running in under a minute.
-        </p>
-
-        <div class="quickstart-tab-bar" id="quickstart-tab-bar">
-          <button class="quickstart-tab-btn active" data-qs="mcp" type="button">
-            ⚡ MCP Path
-          </button>
-          <button class="quickstart-tab-btn" data-qs="framework" type="button" data-audience="developer">
-            🔧 Framework Path
-          </button>
-        </div>
-
-        <div class="quickstart-panel active" id="qs-mcp">
-          <div class="commands-row">
-            <div class="code-box">
-              <div class="code-box-header">1. Install the OS</div>
-              <pre
-                class="monospace"><code>curl -sSL https://s3.us-west-2.amazonaws.com/tzro-app/install.sh | bash</code></pre>
-            </div>
-            <div class="code-box">
-              <div class="code-box-header">2. Add to your agent's MCP config</div>
-              <pre class="monospace"><code>{
-  "mcpServers": {
-    "tzro": {
-      "command": "tzro-mcp",
-      "env": { "TZRO_DIR": "." }
-    }
-  }
-}</code></pre>
-            </div>
-            <div class="code-box">
-              <div class="code-box-header">3. Start delegating</div>
-              <pre class="monospace"><code>// Your agent can now call tzro_run, tzro_memory_query, etc.
-// The jumpdrive is active.</code></pre>
-            </div>
-          </div>
-        </div>
-
-        <div class="quickstart-panel" id="qs-framework" data-audience="developer">
-          <div class="commands-row">
-            <div class="code-box">
-              <div class="code-box-header">1. Add the dependency</div>
-              <pre class="monospace"><code>go get github.com/The18thWarrior/tzro (currently private beta)</code></pre>
-            </div>
-            <div class="code-box">
-              <div class="code-box-header">2. Initialize the engine</div>
-              <pre class="monospace"><code>cfg := config.Get()
-engine := executor.New(cfg)
-engine.RegisterHook(&YourCustomHook{})
-tools.Register(&YourTool{})</code></pre>
-            </div>
-            <div class="code-box">
-              <div class="code-box-header">3. Run a task</div>
-              <pre class="monospace"><code>result, err := engine.RunTask(ctx, "Your goal here")
-fmt.Println(result.Synthesis)</code></pre>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
   </main>
 
-  <!-- Universal Footer -->
-  <footer class="tzro-footer">
-    <div class="footer-container">
-      <p>&copy; 2026 TZRO Project. Released under Apache-2.0 License.</p>
-      <div class="footer-links">
-        <a href="#how-it-works" data-audience="user">How It Works</a>
-        <a href="#get-started" data-audience="user">Install</a>
-        <a href="docs.html" data-audience="user">Docs</a>
-        <a href="#architecture" data-audience="developer">Architecture</a>
-        <a href="#get-started" data-audience="developer">Get Started</a>
-        <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener">GitHub</a>
+  <!-- ============================================================ -->
+  <!-- REDESIGNED FOOTER -->
+  <!-- ============================================================ -->
+  <footer class="tzro-footer-v2">
+    <div class="footer-v2-container">
+      <!-- Brand Block -->
+      <div class="footer-brand">
+        <div class="footer-brand-identity">
+          <img src="./logo.png" alt="TZRO" class="footer-logo" />
+          <span class="footer-brand-name">TZRO</span>
+        </div>
+        <p class="footer-brand-desc">
+          A local-first task routing engine for AI coding agents. Intercepts
+          heavy operations and runs them on your machine — zero cloud cost.
+        </p>
+      </div>
+
+      <!-- Links Columns -->
+      <div class="footer-columns">
+        <div class="footer-col">
+          <h4>Product</h4>
+          <a href="docs.html">Docs</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#benchmarks">Benchmarks</a>
+          <a href="#install">Install</a>
+        </div>
+        <div class="footer-col">
+          <h4>Community</h4>
+          <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://x.com/TZROai" target="_blank" rel="noopener">X / Twitter</a>
+          <a href="https://discord.gg/q9Z7ZKzg5" target="_blank" rel="noopener">Discord</a>
+          <a href="https://www.linkedin.com/company/tzro-ai" target="_blank" rel="noopener">LinkedIn</a>
+        </div>
+        <div class="footer-col">
+          <h4>Legal</h4>
+          <a href="docs.html#security">Security</a>
+          <a href="terms.html">Terms of Service</a>
+          <a href="privacy.html">Privacy Policy</a>
+        </div>
+      </div>
+
+      <!-- Social Icons Row -->
+      <div class="footer-bottom">
+        <p class="footer-copyright">© 2026 TZRO Project. MIT Licensed.</p>
+        <div class="footer-social-icons">
+          <!-- GitHub -->
+          <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener" aria-label="GitHub"
+            class="footer-social-link">
+            <svg viewBox="0 0 16 16" fill="currentColor" width="18" height="18">
+              <path
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+          </a>
+          <!-- X/Twitter -->
+          <a href="https://x.com/TZROai" target="_blank" rel="noopener" aria-label="X/Twitter"
+            class="footer-social-link">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+              <path
+                d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+            </svg>
+          </a>
+          <!-- Discord -->
+          <a href="https://discord.gg/q9Z7ZKzg5" target="_blank" rel="noopener" aria-label="Discord"
+            class="footer-social-link">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+              <path
+                d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+            </svg>
+          </a>
+          <!-- LinkedIn -->
+          <a href="https://www.linkedin.com/company/tzro-ai" target="_blank" rel="noopener" aria-label="LinkedIn"
+            class="footer-social-link">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+              <path
+                d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+            </svg>
+          </a>
+        </div>
       </div>
     </div>
   </footer>

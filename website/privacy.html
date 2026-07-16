@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — TZRO</title>
+  <meta name="description"
+    content="Privacy Policy for TZRO. Zero local data storage, no external telemetry by default. 100% local-first processing." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" type="image/svg+xml" href="logo.png" />
+
+  <style>
+    .legal-page {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 4rem 2rem 6rem;
+    }
+
+    .legal-page h1 {
+      font-size: 2.2rem;
+      font-family: var(--font-geom);
+      font-weight: 800;
+      margin-bottom: 0.5rem;
+    }
+
+    .legal-date {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 3rem;
+    }
+
+    .legal-page h2 {
+      font-size: 1.25rem;
+      font-family: var(--font-geom);
+      font-weight: 700;
+      margin-top: 2.5rem;
+      margin-bottom: 0.8rem;
+      color: var(--text-primary);
+    }
+
+    .legal-page p,
+    .legal-page li {
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+      margin-bottom: 1rem;
+    }
+
+    .legal-page ul {
+      padding-left: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .legal-page li {
+      margin-bottom: 0.5rem;
+    }
+
+    .legal-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      transition: color var(--transition-fast);
+    }
+
+    .legal-back:hover {
+      color: var(--accent-color);
+    }
+
+    .privacy-highlight {
+      background-color: rgba(182, 255, 0, 0.05);
+      border: 1px solid rgba(182, 255, 0, 0.15);
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 2rem 0;
+    }
+
+    .privacy-highlight h3 {
+      font-size: 1.1rem;
+      font-family: var(--font-geom);
+      color: var(--accent-color);
+      margin-bottom: 0.8rem;
+    }
+
+    .privacy-highlight ul {
+      margin-bottom: 0;
+    }
+
+    .privacy-highlight li {
+      color: var(--text-secondary);
+      margin-bottom: 0.4rem;
+    }
+  </style>
+</head>
+
+<body class="verdant-synth">
+  <div class="legal-page">
+    <a href="index.html" class="legal-back">← Back to TZRO</a>
+
+    <h1>Privacy Policy</h1>
+    <p class="legal-date">Last updated: July 15, 2026</p>
+
+    <div class="privacy-highlight">
+      <h3>Our Core Privacy Commitment</h3>
+      <ul>
+        <li><strong>Zero external data transmission</strong> — all processing happens locally on your machine.</li>
+        <li><strong>No telemetry by default</strong> — we do not collect usage data, analytics, or crash reports unless
+          you explicitly opt in.</li>
+        <li><strong>No account required</strong> — TZRO works entirely offline. No registration, no login, no cloud
+          dependency.</li>
+        <li><strong>Your data stays yours</strong> — all memory, knowledge graphs, and task data are stored in a local
+          SQLite database (<code style="color: var(--accent-color);">tzro.db</code>) on your machine.</li>
+      </ul>
+    </div>
+
+    <h2>1. What Data We Collect</h2>
+    <p>
+      <strong>By default, TZRO collects no data.</strong> The software operates
+      entirely on your local machine. Your code, files, memory entries,
+      knowledge graph nodes, and task outputs never leave your computer unless
+      you explicitly configure an external integration.
+    </p>
+
+    <h2>2. Local Data Storage</h2>
+    <p>
+      TZRO stores operational data in a local SQLite database file
+      (<code style="color: var(--accent-color);">tzro.db</code>) located in your project directory or configured data
+      path. This file contains:
+    </p>
+    <ul>
+      <li>Task execution history and checkpoints</li>
+      <li>Relational memory entries and embeddings</li>
+      <li>Knowledge graph nodes and relationships</li>
+      <li>Micro-skill definitions (SOPs)</li>
+      <li>Configuration preferences</li>
+    </ul>
+    <p>
+      This data is never transmitted externally. You can delete
+      <code style="color: var(--accent-color);">tzro.db</code> at any time to
+      completely erase all stored data.
+    </p>
+
+    <h2>3. Optional External Integrations</h2>
+    <p>
+      If you choose to configure external integrations, data may be sent to
+      third-party services:
+    </p>
+    <ul>
+      <li><strong>Cloud LLM Providers:</strong> If you configure cloud model
+        escalation (e.g., via API keys for OpenAI, Anthropic, etc.), task
+        planning prompts may be sent to those providers subject to their
+        privacy policies.</li>
+      <li><strong>MCP Tool Servers:</strong> If you configure external MCP
+        hosts (e.g., Salesforce, Slack), TZRO will send tool invocations to
+        those services as directed by your workflow.</li>
+    </ul>
+    <p>
+      These integrations are entirely opt-in and require explicit user
+      configuration. TZRO never initiates external connections on its own.
+    </p>
+
+    <h2>4. Website Analytics</h2>
+    <p>
+      Our marketing website (<code style="color: var(--accent-color);">tzro.ai</code>) uses Google Analytics to
+      understand visitor traffic patterns. This is limited to the website only
+      and does not affect the TZRO software itself. You can block analytics
+      using standard browser extensions.
+    </p>
+
+    <h2>5. Installation Script</h2>
+    <p>
+      The installation script (<code style="color: var(--accent-color);">install.sh</code>) downloads binary releases
+      from our AWS S3 bucket. Standard HTTP access logs may record your IP
+      address as part of the download request. We do not use this data for
+      tracking or profiling.
+    </p>
+
+    <h2>6. Children's Privacy</h2>
+    <p>
+      TZRO is a developer tool and is not directed at children under 13. We do
+      not knowingly collect information from children.
+    </p>
+
+    <h2>7. Changes to This Policy</h2>
+    <p>
+      We may update this Privacy Policy from time to time. Changes will be
+      reflected in the "Last updated" date at the top of this page. Continued
+      use of the Software after changes constitutes acceptance.
+    </p>
+
+    <h2>8. Contact</h2>
+    <p>
+      For questions about this Privacy Policy, please open an issue on our
+      <a href="https://github.com/The18thWarrior/tzro" style="color: var(--accent-color);">GitHub repository</a>
+      or reach out via our community channels.
+    </p>
+  </div>
+</body>
+
+</html>
