@@ -1,6 +1,6 @@
 # tzro Domain Language
 
-Canonical terminology extracted from [CONTEXT.md](file:///Users/jp/Desktop/Repos/tzro/CONTEXT.md). Always use these terms — avoid the listed anti-patterns.
+Canonical terminology extracted from [CONTEXT.md](CONTEXT.md). Always use these terms — avoid the listed anti-patterns.
 
 ## Core Concepts
 

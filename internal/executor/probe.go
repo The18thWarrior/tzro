@@ -1154,7 +1154,7 @@ func extractPathFromText(text string) string {
 		return ""
 	}
 
-	// Priority 1: Absolute paths (e.g., /Users/jp/Desktop/Repos/tzro/CONTEXT.md)
+	// Priority 1: Absolute paths (e.g., /home/user/project/tzro/CONTEXT.md)
 	absPathRe := regexp.MustCompile(`(/[a-zA-Z0-9._\-]+(?:/[a-zA-Z0-9._\-]+)+)`)
 	if matches := absPathRe.FindStringSubmatch(text); len(matches) > 1 {
 		return matches[1]

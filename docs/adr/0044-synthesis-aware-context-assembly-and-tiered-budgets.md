@@ -77,4 +77,4 @@ Config: `accumulatedContextMaxChars` becomes the hard ceiling (default 32000). `
 - ADR-0037: Recall Node for Discovery-Synthesis Alignment
 - ADR-0042: Map-Reduce Recall and Shallow Planning
 - ADR-0030: Proactive Binding Splice for Deterministic Resolutions
-- [Benchmark Evaluation: results-full-3](file:///Users/jp/.gemini/antigravity-ide/brain/4d24368a-4df2-42cb-a827-beffde1f9b50/benchmark_evaluation_run3.md)
+- Benchmark analysis: `benchmark_evaluation_run3.md` (internal evaluation)

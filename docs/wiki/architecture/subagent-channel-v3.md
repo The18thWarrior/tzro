@@ -50,14 +50,14 @@ v3 of the SubagentChannel subsystem (`internal/channel/`) adds concurrency safet
 - Uses `StopOnError: true` to cleanly exit on client disconnect
 
 ## Key Files
-- [`channel.go`](file:///Users/jp/Desktop/Repos/tzro/internal/channel/channel.go) — Interface + RecordingChannel
-- [`mcp_adapter.go`](file:///Users/jp/Desktop/Repos/tzro/internal/channel/mcp_adapter.go) — MCP adapter with mutex
-- [`bridge.go`](file:///Users/jp/Desktop/Repos/tzro/internal/channel/bridge.go) — Event bridging + BridgeWithOptions
-- [`payloads.go`](file:///Users/jp/Desktop/Repos/tzro/internal/channel/payloads.go) — 11 typed payload structs
-- [`sse_adapter.go`](file:///Users/jp/Desktop/Repos/tzro/internal/channel/sse_adapter.go) — SSE adapter
-- [`plugin_adapter.go`](file:///Users/jp/Desktop/Repos/tzro/internal/channel/plugin_adapter.go) — Plugin adapter
-- [`server.go`](file:///Users/jp/Desktop/Repos/tzro/internal/server/server.go) — SSE endpoint
+- [`channel.go`](internal/channel/channel.go) — Interface + RecordingChannel
+- [`mcp_adapter.go`](internal/channel/mcp_adapter.go) — MCP adapter with mutex
+- [`bridge.go`](internal/channel/bridge.go) — Event bridging + BridgeWithOptions
+- [`payloads.go`](internal/channel/payloads.go) — 11 typed payload structs
+- [`sse_adapter.go`](internal/channel/sse_adapter.go) — SSE adapter
+- [`plugin_adapter.go`](internal/channel/plugin_adapter.go) — Plugin adapter
+- [`server.go`](internal/server/server.go) — SSE endpoint
 
 ## Cross-references
-- [Agentic Harness Integration](file:///Users/jp/Desktop/Repos/tzro/docs/wiki/architecture/agentic-harness-integration.md)
-- [v2-v3 spec](file:///Users/jp/Desktop/Repos/tzro/docs/superpowers/specs/2026-06-12-subagent-channel-v2-v3.md)
+- [Agentic Harness Integration](docs/wiki/architecture/agentic-harness-integration.md)
+- [v2-v3 spec](docs/superpowers/specs/2026-06-12-subagent-channel-v2-v3.md)

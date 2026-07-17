@@ -1,0 +1,22 @@
+{
+  "modelMode": "cooperative",
+  "cloudProvider": "google",
+  "cloudApiKey": "",
+  "cloudModel": "gemini-flash-latest",
+  "speedFloor": 5,
+  "sidecarEnabled": true,
+  "ggufModelPath": "",
+  "routerModelPath": "",
+  "modelsDir": "",
+  "contextSize": 65536,
+  "inferenceBackend": {
+    "type": "",
+    "url": "",
+    "model": "",
+    "apiKey": ""
+  },
+  "confidenceThreshold": 3,
+  "executorNodeDelayMs": 800,
+  "executorLevelDelayMs": 500,
+  "codeModelPath": ""
+}

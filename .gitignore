@@ -61,8 +61,9 @@ gorilla-main
 longbench
 *.zip
 
-# Agent workspace — ignore local MCP config, keep skills
+# Agent workspace — local config, skills, and domain docs (IP-sensitive)
 .agents/mcp_config.json
+.agents/skills/
 tzro_plugin/
 
 # Superpowers (local runtime)
@@ -85,3 +86,18 @@ benchmark_results*
 module_docs.md
 benchmarks_run
 .preload_context.md
+
+# Local scratch / debug files
+scratch.go
+
+# Agent lock files (machine-generated)
+skills-lock.json
+
+# Test fixture configs (prevent accidental API key commit)
+internal/**/config.json
+
+# Domain docs & design specs (IP-sensitive)
+AGENTS.md
+CONTEXT.md
+DESIGN.md
+docs/superpowers/specs/

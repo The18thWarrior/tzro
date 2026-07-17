@@ -118,8 +118,8 @@ Chronological append-only record of wiki operations and major agent engineering 
   9. **Plan Templates**: Router classifies → selects template → planner mutates. ADR-0048 written.
   10. **`getUpstreamValue` fallback**: Same node-type-aware generalization as Response Resolver.
 - **Documents Updated**:
-  - [NEW] [ADR-0048](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0048-plan-template-selection-and-mutation.md) — Plan Template Selection and Mutation
-  - [MODIFY] [CONTEXT.md](file:///Users/jp/Desktop/Repos/tzro/CONTEXT.md) — Added: Plan Template Registry, Direct Synthesis, Repo Map Generator. Updated: Strategic Planner (template mutation model), Response Resolver (five-tier cascade), Probe Node (Direct Synthesis mode).
+  - [NEW] [ADR-0048](docs/adr/0048-plan-template-selection-and-mutation.md) — Plan Template Selection and Mutation
+  - [MODIFY] [CONTEXT.md](CONTEXT.md) — Added: Plan Template Registry, Direct Synthesis, Repo Map Generator. Updated: Strategic Planner (template mutation model), Response Resolver (five-tier cascade), Probe Node (Direct Synthesis mode).
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
 ---
@@ -220,7 +220,7 @@ Chronological append-only record of wiki operations and major agent engineering 
   - Synthesis accepts speed hit as terminal node — quality > latency since it doesn't cascade.
   - No new cloud escalation policy — existing ConfidenceTier gate handles expensive cases.
 - **ADR Created**: [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md)
-- **Root Benchmark**: [results-full-3 evaluation](file:///Users/jp/.gemini/antigravity-ide/brain/4d24368a-4df2-42cb-a827-beffde1f9b50/benchmark_evaluation_run3.md) — quality regressed 3.47 → 2.95, 6/15 tasks failed (<2.0), 7 planning mismatches from metadata leaking into synthesis.
+- **Root Benchmark**: `benchmark_evaluation_run3.md` (internal evaluation) — quality regressed 3.47 → 2.95, 6/15 tasks failed (<2.0), 7 planning mismatches from metadata leaking into synthesis.
 
 ---
 
@@ -1346,7 +1346,7 @@ Chronological append-only record of wiki operations and major agent engineering 
 - **Testing & Verification**:
   - Ran the entire Go backend unit-testing suite (`go test ./...`); all packages successfully compiled and passed, validating the health of the Kahn Graph Compiler, classification, stream routing, memory persistence, and local inference server processes.
 - **Key Files Created/Modified**:
-  - [NEW] [technical_architecture_overview.md](file:///Users/jp/.gemini/antigravity/brain/a675dc94-eea9-4f45-adf4-188214cae823/technical_architecture_overview.md) (Detailed structural blueprint evaluation)
+  - [NEW] `technical_architecture_overview.md` (internal evaluation) (Detailed structural blueprint evaluation)
 - **Design Outcomes**:
   - Confirmed 100% architectural alignment between our Go implementation and the eight primary pillars of the X execution specification.
   - Documented minor prospective optimizations (semantic deduplication, host memory high-water mark KV cache GC, and MCP child process auto-recovery) to guide future engineering work.
@@ -1474,7 +1474,7 @@ Chronological append-only record of wiki operations and major agent engineering 
   - Developed and executed an isolated python evaluation script to analyze sidecar speed, token stats, and failure distributions.
   - Verified that correcting ground-truth dataset issues lifts actual agent accuracy from 44.0% to 92.0%.
 - **Key Files Created/Modified**:
-  - [NEW] [analysis_results.md](file:///Users/jp/.gemini/antigravity/brain/0902ec9c-8c69-4970-83fd-92892a56ce36/analysis_results.md) (Detailed benchmark run evaluation report)
+  - [NEW] `analysis_results.md` (internal evaluation) (Detailed benchmark run evaluation report)
   - [NEW] [benchmark-dataset-corruption-and-label-shifting.md](bugs/benchmark-dataset-corruption-and-label-shifting.md) (Detailed dataset bug post-mortem)
   - [MODIFY] [index.md](index.md) (Local Wiki updates)
 
@@ -1655,15 +1655,15 @@ Chronological append-only record of wiki operations and major agent engineering 
   - Task 5 (`comprehensive_readme`): **4.00 / 5.0** (Target: >= 4.0)
   - **Average DocGen Quality**: **4.50 / 5.0**
 - **Files**:
-  - [MODIFY] [conditions.go](file:///Users/jp/Desktop/Repos/tzro/internal/comparison/conditions.go)
-  - [MODIFY] [sct_compiler.go](file:///Users/jp/Desktop/Repos/tzro/internal/compiler/sct_compiler.go)
-  - [MODIFY] [executor.go](file:///Users/jp/Desktop/Repos/tzro/internal/executor/executor.go)
-  - [MODIFY] [executor_context.go](file:///Users/jp/Desktop/Repos/tzro/internal/executor/executor_context.go)
-  - [MODIFY] [probe.go](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe.go)
-  - [MODIFY] [local_model.go](file:///Users/jp/Desktop/Repos/tzro/internal/inference/local_model.go)
-  - [MODIFY] [local_model_test.go](file:///Users/jp/Desktop/Repos/tzro/internal/inference/local_model_test.go)
-  - [MODIFY] [task.go](file:///Users/jp/Desktop/Repos/tzro/internal/task/task.go)
-  - [MODIFY] [filesystem.go](file:///Users/jp/Desktop/Repos/tzro/internal/tools/filesystem.go)
+  - [MODIFY] [conditions.go](internal/comparison/conditions.go)
+  - [MODIFY] [sct_compiler.go](internal/compiler/sct_compiler.go)
+  - [MODIFY] [executor.go](internal/executor/executor.go)
+  - [MODIFY] [executor_context.go](internal/executor/executor_context.go)
+  - [MODIFY] [probe.go](internal/executor/probe.go)
+  - [MODIFY] [local_model.go](internal/inference/local_model.go)
+  - [MODIFY] [local_model_test.go](internal/inference/local_model_test.go)
+  - [MODIFY] [task.go](internal/task/task.go)
+  - [MODIFY] [filesystem.go](internal/tools/filesystem.go)
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
 

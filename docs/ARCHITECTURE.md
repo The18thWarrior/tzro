@@ -402,7 +402,7 @@ func main() {
 				ID:           "node_01",
 				Type:         "action",
 				Action:       "archive_files",
-				Instructions: "Archive folder '/Users/jp/reports'.",
+				Instructions: "Archive folder '~/reports'.",
 				AllowedTools: []string{"archive_files"},
 				Status:       "pending",
 			},
@@ -518,7 +518,7 @@ Real-time state and token updates dispatched over Server-Sent Events (SSE) use t
   "taskId": "t_quickstart_demo",
   "nodeId": "node_01",
   "type": "token",
-  "content": "{\"tool_arguments\": {\"sourcePath\": \"/Users/jp/reports\"}}",
+  "content": "{\"tool_arguments\": {\"sourcePath\": \"~/reports\"}}",
   "usage": {
     "prompt_tokens": 128,
     "completion_tokens": 32

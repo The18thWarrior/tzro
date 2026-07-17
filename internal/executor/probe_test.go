@@ -445,8 +445,8 @@ func TestExtractPathFromText(t *testing.T) {
 	}{
 		{
 			name:     "absolute path",
-			text:     "Read the file at /Users/jp/Desktop/Repos/tzro/CONTEXT.md to understand the architecture",
-			expected: "/Users/jp/Desktop/Repos/tzro/CONTEXT.md",
+			text:     "Read the file at /home/user/project/tzro/CONTEXT.md to understand the architecture",
+			expected: "/home/user/project/tzro/CONTEXT.md",
 		},
 		{
 			name:     "quoted bare filename without extension",

@@ -24,32 +24,32 @@ The core problem: the `tzro` Local Model (Tactician) currently loads a single mo
 ## Current Architecture (What Exists)
 
 ### Local Model Manager
-- **File**: `/Users/jp/Desktop/Repos/tzro/internal/inference/local_model.go`
+- **File**: `internal/inference/local_model.go`
 - Manages a single `llama-server` child process loading one GGUF model
 - Exposes `CallLocalModel` and `CallLocalModelStream` via OpenAI-compatible HTTP
 - KV cache managed via `--cache-reuse 256`, slot save/restore for preemption
 - Mode-dependent KV cache quantization (`q4_0` cooperative, `q8_0` local)
 
 ### Inference Routing
-- **File**: `/Users/jp/Desktop/Repos/tzro/internal/inference/routing.go`
+- **File**: `internal/inference/routing.go`
 - `ExecuteStructured` routes between local/cloud based on `ModelMode` config
 - Speed Floor Monitor: if generation drops below 5 t/s for 3 consecutive nodes, flips to cloud fallback for the rest of the task
 - No per-node adapter selection — same model weights for every node type
 
 ### Executor System Prompt
-- **File**: `/Users/jp/Desktop/Repos/tzro/internal/executor/executor_context.go`
+- **File**: `internal/executor/executor_context.go`
 - `buildContextAwareSystemPrompt` constructs per-node system prompts
 - Every node gets the same base instruction prefix ("You are the Local Tactician Node Executor...")
 - Schema and accumulated context are injected per-node, but the model weights are static
 
 ### Pluggable Inference Backend
-- **ADR**: `/Users/jp/Desktop/Repos/tzro/docs/adr/0016-pluggable-inference-backend.md`
+- **ADR**: `docs/adr/0016-pluggable-inference-backend.md`
 - Already decouples inference from the hosting process via `InferenceBackend` interface
 - Supports `llama-server` sidecar, OpenAI-compatible remotes (Ollama, LMStudio, vLLM)
 - This is the natural extension point for multi-adapter support
 
 ### Domain Glossary
-- **File**: `/Users/jp/Desktop/Repos/tzro/CONTEXT.md`
+- **File**: `CONTEXT.md`
 - **Inference Backend**: Pluggable provider abstraction decoupling LLM inference from hosting process
 - **Local Model**: Default-path workhorse handling all structured work
 - No existing terms for adapter, LoRA, or execution persona concepts
@@ -77,12 +77,12 @@ The core problem: the `tzro` Local Model (Tactician) currently loads a single mo
 
 ## Existing Documentation to Reference
 
-- **Research Source**: `/Users/jp/Desktop/Repos/tzro/docs/wiki/sources/edge-cloud-task-offloading.md` — Section 5 covers LoRA-Switch, LoRAX, and Temporal LoRA mechanisms
-- **Gap Analysis**: `/Users/jp/Desktop/Repos/tzro/docs/wiki/architecture/edge-cloud-co-orchestration.md` — Maps adapter switching to tzro's current architecture
-- **Pluggable Backend ADR**: `/Users/jp/Desktop/Repos/tzro/docs/adr/0016-pluggable-inference-backend.md`
-- **Domain Glossary**: `/Users/jp/Desktop/Repos/tzro/CONTEXT.md`
-- **Cooperative Execution Spec**: `/Users/jp/Desktop/Repos/tzro/docs/cooperative-local-cloud-dag-execution.md`
-- **Wiki Index**: `/Users/jp/Desktop/Repos/tzro/docs/wiki/index.md`
+- **Research Source**: `docs/wiki/sources/edge-cloud-task-offloading.md` — Section 5 covers LoRA-Switch, LoRAX, and Temporal LoRA mechanisms
+- **Gap Analysis**: `docs/wiki/architecture/edge-cloud-co-orchestration.md` — Maps adapter switching to tzro's current architecture
+- **Pluggable Backend ADR**: `docs/adr/0016-pluggable-inference-backend.md`
+- **Domain Glossary**: `CONTEXT.md`
+- **Cooperative Execution Spec**: `docs/cooperative-local-cloud-dag-execution.md`
+- **Wiki Index**: `docs/wiki/index.md`
 
 ---
 
