@@ -148,6 +148,15 @@ func detectTzroDir() string {
 			dir = parent
 		}
 	}
+	// Fall back to the canonical install location rather than returning empty,
+	// which would cause ghost files (tzro.db, config.json, daemon.lock) to be
+	// created in whatever CWD the process happens to be running from.
+	home, err := os.UserHomeDir()
+	if err == nil {
+		fallback := filepath.Join(home, ".tzro")
+		os.Setenv("TZRO_DIR", fallback)
+		return fallback
+	}
 	return ""
 }
 
