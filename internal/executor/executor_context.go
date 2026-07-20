@@ -15,10 +15,12 @@ import (
 	"os"
 	"strings"
 
+	"tzro/internal/compactor"
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
+	"tzro/internal/symbols"
 )
 
 // maxAccumulatedContextNodes limits how many completed upstream nodes are included
@@ -242,14 +244,32 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 
 		output := be.output
 		if be.budget >= 0 && len(output) > be.budget {
-			output = TruncateToolOutput(output, be.budget)
-			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Truncated node %s output from %d to %d chars (budget: %d per node)\n",
+			output = compactor.CompactContent(output, be.budget)
+			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Compacted node %s output from %d to %d chars (budget: %d per node)\n",
 				be.nodeID, len(be.output), len(output), be.budget)
 		}
 
 		sb.WriteString(fmt.Sprintf("--- %s (%s) [completed] ---\n", be.nodeID, toolName))
 		sb.WriteString(output)
 		sb.WriteString("\n\n")
+	}
+
+	// Load and inject Symbol Index from upstream completed nodes (ADR-0047)
+	var symbolIndex []symbols.Symbol
+	for _, state := range states {
+		probeID := taskID + "_" + state.NodeID
+		syms, err := memory.DB.GetSymbolIndex(probeID)
+		if err == nil && len(syms) > 0 {
+			symbolIndex = append(symbolIndex, syms...)
+		}
+	}
+	if len(symbolIndex) > 0 {
+		sb.WriteString("## Authoritative Symbol Reference (AST-extracted, verified):\n")
+		sb.WriteString("Use ONLY these exact names and signatures when referring to types, functions, and interfaces:\n")
+		for _, sym := range symbolIndex {
+			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n", sym.Name, sym.Kind, sym.Signature))
+		}
+		sb.WriteString("\n")
 	}
 
 	result := sb.String()

@@ -23,6 +23,13 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 	isBenchmark := strings.HasPrefix(graph.TaskID, "comparison_")
 
+	discoveryNodesCount := 0
+	for _, n := range graph.Nodes {
+		if n.Type == "probe" || (n.Type == "action" && n.Action != "write_file") {
+			discoveryNodesCount++
+		}
+	}
+
 	for _, node := range graph.Nodes {
 		// Only expand "action" or "deterministic" steps that require execution
 		if node.Type == "action" || node.Type == "deterministic" {
@@ -125,7 +132,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
-				if !hasPlannedSynthesisChild {
+				if !hasPlannedSynthesisChild && discoveryNodesCount > 1 {
 					// Inject Recall Node to align discovery findings (ADR-0038)
 					recallID := node.ID + "_recall"
 					recallThreshold := 0.9
@@ -151,7 +158,11 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					execNodeMap[node.ID] = recallID
 					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
 				} else {
-					fmt.Printf("[Compiler] %s %s already has a planned synthesis child. Skipping automatic Recall injection.\n", strings.Title(node.Type), node.ID)
+					if discoveryNodesCount <= 1 {
+						fmt.Printf("[Compiler] Probe %s is the sole discovery node in the graph (discoveryNodesCount=%d). Skipping automatic Recall injection.\n", node.ID, discoveryNodesCount)
+					} else {
+						fmt.Printf("[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
+					}
 					execNodeMap[node.ID] = node.ID
 					bridgeNodeMap[node.ID] = node.ID
 				}
@@ -207,6 +218,19 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		if (node.Type == "synthesis" || isSynthesisGoal(node.Instructions)) && !isSourceMap[node.ID] {
 			hasSynthesisLeaf = true
 			break
+		}
+	}
+	if !hasSynthesisLeaf && discoveryNodesCount <= 1 {
+		hasProbeLeaf := false
+		for _, node := range sctNodes {
+			if node.Type == "probe" && !isSourceMap[node.ID] {
+				hasProbeLeaf = true
+				break
+			}
+		}
+		if hasProbeLeaf {
+			fmt.Printf("[Compiler] Graph has a sole probe leaf. Skipping automatic terminal_synthesis injection.\n")
+			hasSynthesisLeaf = true
 		}
 	}
 

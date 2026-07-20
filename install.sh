@@ -84,7 +84,7 @@ if [ "${TZRO_MOCK_DOWNLOAD:-false}" = "true" ]; then
     echo "echo 'mock llama-server'" >> "${INSTALL_DIR}/bin/llama-server"
     chmod +x "${INSTALL_DIR}/bin/llama-server"
 
-    echo "mock model content" > "${INSTALL_DIR}/models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf"
+    echo "mock model content" > "${INSTALL_DIR}/models/Agents-A1-4B-Q4_K_M.gguf"
     echo "mock mmproj" > "${INSTALL_DIR}/models/mmproj-F32.gguf"
     echo "mock router model" > "${INSTALL_DIR}/models/MiniCPM5-1B-Claude-Opus-Fable5-Thinking-Q8_0.gguf"
     

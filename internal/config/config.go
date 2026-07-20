@@ -23,7 +23,7 @@ type EngineConfig struct {
 	ThermalCloudCooldownMinutes int     `json:"thermalCloudCooldownMinutes,omitempty"` // default 5
 	GGUFModelPath               string  `json:"ggufModelPath"`                         // path to local gguf model file
 	ModelsDir                   string  `json:"modelsDir"`                             // directory for downloaded models
-	ContextSize                 int     `json:"contextSize,omitempty"`                 // llama-server context window size in tokens (default: 32768)
+	ContextSize                 int     `json:"contextSize,omitempty"`                 // llama-server context window size in tokens (default: 65536)
 	GPULayers                   *int    `json:"gpuLayers,omitempty"`                   // Override GPU layer offload count (-1 = all, 0 = CPU-only, nil = platform auto)
 	ThreadCount                 *int    `json:"threadCount,omitempty"`                 // Override inference thread count (nil = platform auto-detect)
 	MaxRAGContextChars          int     `json:"maxRagContextChars,omitempty"`          // max chars for Graph-RAG context injection (0 = use default 2000)
@@ -110,6 +110,13 @@ type EngineConfig struct {
 	MCTSMaxSimulations int `json:"mctsMaxSimulations,omitempty"`
 	// MCTSSpeculationCeil is the max proactivity level for real execution in rollouts. Default 2 (L2-Suggest).
 	MCTSSpeculationCeil int `json:"mctsSpeculationCeil,omitempty"`
+
+	// ProbeUseWorkerModel switches probe step inference from the 1B router model
+	// to the larger worker model. The router is fast but may make poor exploration
+	// decisions and misjudge synthesis readiness. The worker is slower but produces
+	// higher-quality routing and more accurate convergence signals.
+	// Default false (use router). Set to true to use the worker model.
+	ProbeUseWorkerModel bool `json:"probeUseWorkerModel,omitempty"`
 }
 
 type BackendConfig struct {
@@ -140,6 +147,15 @@ func detectTzroDir() string {
 			}
 			dir = parent
 		}
+	}
+	// Fall back to the canonical install location rather than returning empty,
+	// which would cause ghost files (tzro.db, config.json, daemon.lock) to be
+	// created in whatever CWD the process happens to be running from.
+	home, err := os.UserHomeDir()
+	if err == nil {
+		fallback := filepath.Join(home, ".tzro")
+		os.Setenv("TZRO_DIR", fallback)
+		return fallback
 	}
 	return ""
 }
@@ -186,9 +202,9 @@ var (
 		CloudModel:           "gemini-flash-latest",
 		SpeedFloor:           5.0,
 		SidecarEnabled:       true,
-		GGUFModelPath:        "models/Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
+		GGUFModelPath:        "models/Agents-A1-4B-Q4_K_M.gguf",
 		ModelsDir:            defaultModelsDir(),
-		ContextSize:          32768,
+		ContextSize:          65536,
 		ConfidenceThreshold:  3,
 		ExecutorNodeDelayMs:  800,
 		ExecutorLevelDelayMs: 500,
@@ -260,6 +276,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
@@ -303,6 +320,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
+	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
@@ -391,7 +409,7 @@ func GetContextSize() int {
 	configMutex.RUnlock()
 
 	if size <= 0 {
-		return 32768
+		return 65536
 	}
 	return size
 }
@@ -694,6 +712,17 @@ func GetMCTSSpeculationCeil() int {
 	if v <= 0 {
 		return 2
 	}
+	return v
+}
+
+// GetProbeUseWorkerModel returns whether probe step inference should use the
+// worker model instead of the router model. When true, probe exploration and
+// synthesis readiness decisions benefit from the worker's larger context window
+// and higher-quality reasoning at the cost of speed.
+func GetProbeUseWorkerModel() bool {
+	configMutex.RLock()
+	v := GlobalConfig.ProbeUseWorkerModel
+	configMutex.RUnlock()
 	return v
 }
 

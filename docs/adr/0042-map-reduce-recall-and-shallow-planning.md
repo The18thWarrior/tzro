@@ -44,4 +44,4 @@ Refactor `internal/executor/recall.go` to implement the multi-pass loop. The age
 ## References
 - ADR-0037: Recall Node for Discovery-Synthesis Alignment
 - ADR-0019: Probe Node and Thought Chain Execution
-- [benchmark_analysis_results_docgen_3.md](file:///Users/jp/.gemini/antigravity-ide/brain/0f0dde47-2072-456c-91fc-51e99d3e3825/benchmark_analysis_results_docgen_3.md)
+- Benchmark analysis: `benchmark_analysis_results_docgen_3.md` (internal evaluation)

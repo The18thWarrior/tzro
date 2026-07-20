@@ -90,6 +90,18 @@ var modelCatalog = []ModelEntry{
 		},
 	},
 	{
+		ID:           "agents-a1-4b",
+		DisplayName:  "Agents A1 4B",
+		Params:       "4B",
+		SizeBytes:    2708805312,
+		SizeLabel:    "~2.5 GB",
+		DownloadURL:  "https://huggingface.co/InternScience/Agents-A1-4B-Q4_K_M-GGUF/resolve/main/Agents-A1-4B-Q4_K_M.gguf",
+		Filename:     "Agents-A1-4B-Q4_K_M.gguf",
+		Description:  "Long-horizon agentic model from InternScience, optimized for multi-step search, synthesis, instruction following, and tool calling",
+		ToolCallTier: "excellent",
+		IsDefault:    true,
+	},
+	{
 		ID:           "qwopus-3.5-4b-mtp",
 		DisplayName:  "Qwopus 3.5 4B Coder MTP",
 		Params:       "4B",
@@ -99,7 +111,7 @@ var modelCatalog = []ModelEntry{
 		Filename:     "Qwopus3.5-4B-Coder-MTP-Q4_K_M.gguf",
 		Description:  "Qwen 3.5 4B optimized for agentic coding and multi-turn tool-calling with distilled Claude Opus traces and native MTP speculative decoding",
 		ToolCallTier: "excellent",
-		IsDefault:    true,
+		IsDefault:    false,
 		CompanionMMProj: &CompanionFile{
 			DownloadURL: "https://huggingface.co/Jackrong/Qwopus3.5-4B-Coder-MTP-GGUF/resolve/main/mmproj-F32.gguf",
 			Filename:    "mmproj-F32.gguf",

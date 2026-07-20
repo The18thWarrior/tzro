@@ -58,6 +58,21 @@ type ProbeConfig struct {
 	CompactEvery    int             `json:"compactEvery"`              // Rolling compaction frequency (every N steps)
 	CompactionLevel CompactionLevel `json:"compactionLevel,omitempty"` // Controls tool output truncation during compaction. Default: "preserve"
 	TaskContext     string          `json:"taskContext,omitempty"`     // Original task spec/goal — pinned above exploration results so task requirements override workspace conventions
+
+	// Direct Synthesis mode (Grilling Decision #3): bypass Thought Chain exploration
+	// and run a single-shot inference against a pre-compiled context file.
+	// Skips Symbol Extraction and Compaction — the pre-compiled input is already structured.
+	DirectSynthesis bool   `json:"directSynthesis,omitempty"` // When true, skip Thought Chain and synthesize directly
+	ContextFile     string `json:"contextFile,omitempty"`     // Absolute path to pre-compiled context file (required when DirectSynthesis=true)
+
+	// PreloadPaths specifies directories to pre-load into the probe's initial context
+	// before the Thought Chain loop starts. Files are concatenated with headers:
+	// - Go files: AST-extracted exported symbols (structs, funcs, interfaces)
+	// - Markdown/text files: raw content
+	// - Test files (*_test.go) are excluded
+	// This eliminates the routing problem where probes miss files during exploration.
+	PreloadPaths    []string `json:"preloadPaths,omitempty"`    // Directories to pre-load
+	PreloadMaxChars int      `json:"preloadMaxChars,omitempty"` // Character budget for preloaded content (default: 32000)
 	UpstreamContext string          `json:"upstreamContext,omitempty"` // Accumulated context from completed upstream nodes — injected by executor so the probe can see upstream outputs (e.g., cacheId from read_file)
 }
 

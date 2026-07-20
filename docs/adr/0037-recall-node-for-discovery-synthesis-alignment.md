@@ -43,4 +43,4 @@ Added `RunRecall` to the `ExecutionEngine` in `internal/executor/recall.go`. The
 ## References
 - ADR-0019: Probe Node and Thought Chain Execution
 - ADR-0024: Edge Thought and Activation Threshold
-- [benchmark_analysis_results_docgen_2.md](file:///Users/jp/.gemini/antigravity-ide/brain/964f079a-5770-40e4-805b-4fc9f56fbb08/benchmark_analysis_results_docgen_2.md)
+- Benchmark analysis: `benchmark_analysis_results_docgen_2.md` (internal evaluation)

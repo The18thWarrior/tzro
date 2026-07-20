@@ -437,12 +437,15 @@ When the task involves generating or modifying ACTUAL SOURCE CODE files (.go, .t
 
 ### Documentation & Exploration Rules (CategoryDocgen):
 When the task involves generating documentation, function indexes, architecture summaries, or analyzing the codebase without writing implementation code:
-1. You MUST use a SINGLE node of type "probe".
-2. Documentation tasks are NOT code generation tasks. Do NOT apply the Code Generation Rules (ADR-0035) to documentation tasks.
-3. A probe node's internal Thought Chain is the most efficient way to index a codebase for documentation.
-4. Do NOT set "outputFormat": "source_code" for documentation output.
-5. If you decompose a docgen/exploration task into multiple action nodes, the plan will be REJECTED because action nodes cannot see intermediate exploration results and will guess file paths incorrectly.
-`, toolsListStr, skillsListStr, repoMap, taskID)
+1. By default, you MUST use a SINGLE node of type "probe".
+2. If the task explicitly requires saving the generated documentation to a file (e.g., using write_file), you MUST use a 2-node graph:
+   - Node 1: type "probe" (allowedTools: ["read_file", "list_dir", "search_files"]) to explore the codebase and synthesize the documentation.
+   - Node 2: type "action", action "write_file" (allowedTools: ["write_file"]), with dynamicBindings binding "content" to "explore_node_id.output.synthesis".
+   - Do NOT use a type "action" node with read_file for exploration. Exploration MUST be done by a probe node.
+3. Documentation tasks are NOT code generation tasks. Do NOT apply the Code Generation Rules (ADR-0035) to documentation tasks.
+4. A probe node's internal Thought Chain is the most efficient way to index a codebase for documentation.
+5. Do NOT set "outputFormat": "source_code" for documentation output.
+6. If you decompose a docgen/exploration task into multiple action nodes (other than the final write_file node), the plan will be REJECTED because action nodes cannot see intermediate exploration results and will guess file paths incorrectly.`, toolsListStr, skillsListStr, repoMap, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")
 

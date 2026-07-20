@@ -640,7 +640,7 @@ To illustrate how these cooperative systems function in practice, we trace the e
 - **Action:** Compiles the merged trace records, writes a local CSV file, and returns:
   ```json
   {
-    "filePath": "/Users/jp/X/Reports/merged_contacts_2026-05-21.csv",
+    "filePath": "~/Reports/merged_contacts_2026-05-21.csv",
     "success": true
   }
   ```
@@ -666,7 +666,7 @@ To illustrate how these cooperative systems function in practice, we trace the e
   - **Duplicates Discovered:** 4 email groups (8 contact nodes)
   - **Primary Target:** `con_01` (Sarah Jenkins) merged with `con_02`.
   - **Primary Target:** `con_03` (John Doe) merged with `con_04`.
-  - **Report Generated:** [merged_contacts_2026-05-21.csv](file:///Users/jp/X/Reports/merged_contacts_2026-05-21.csv)
+  - **Report Generated:** `merged_contacts_2026-05-21.csv`
   ```
 
 ---
