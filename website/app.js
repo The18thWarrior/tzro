@@ -223,4 +223,70 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   });
+
+  // =========================================================================
+  // CORE EXECUTION SURFACES: SCROLL ANIMATIONS & TELEMETRY
+  // =========================================================================
+
+  // Scroll-triggered entrance animations via IntersectionObserver
+  const execAnimTargets = document.querySelectorAll(
+    ".exec-card, .exec-stat-bar, .exec-cta-banner"
+  );
+  if (execAnimTargets.length) {
+    const execObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("exec-visible");
+            execObserver.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.15, rootMargin: "0px 0px -40px 0px" }
+    );
+    execAnimTargets.forEach((el) => execObserver.observe(el));
+  }
+
+  // Telemetry line cycling animation
+  function initTelemetryCycle(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const lines = container.querySelectorAll(".exec-telemetry-line");
+    if (!lines.length) return;
+
+    let currentLine = 0;
+    let cycleTimeout = null;
+
+    function showNextLine() {
+      if (currentLine < lines.length) {
+        lines[currentLine].classList.add("exec-tl-visible");
+        currentLine++;
+        cycleTimeout = setTimeout(showNextLine, 800);
+      } else {
+        // Hold the completed state for 3 seconds, then reset
+        cycleTimeout = setTimeout(() => {
+          lines.forEach((l) => l.classList.remove("exec-tl-visible"));
+          currentLine = 0;
+          cycleTimeout = setTimeout(showNextLine, 600);
+        }, 3000);
+      }
+    }
+
+    // Start cycling when the section scrolls into view
+    const sectionObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            showNextLine();
+            sectionObserver.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.2 }
+    );
+    sectionObserver.observe(container);
+  }
+
+  initTelemetryCycle("exec-telemetry-local");
+  initTelemetryCycle("exec-telemetry-cloud");
 });

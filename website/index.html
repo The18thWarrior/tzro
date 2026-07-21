@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;1,400&family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700;800&family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;1,400&family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap"
     rel="stylesheet" />
 
   <link rel="stylesheet" href="styles.css" />
@@ -47,6 +47,7 @@
         <a href="docs.html" class="nav-link">Docs</a>
         <a href="#architecture" class="nav-link">Architecture</a>
         <a href="#benchmarks" class="nav-link">Benchmarks</a>
+        <a href="#execution-surfaces" class="nav-link">Surfaces</a>
         <a href="https://github.com/The18thWarrior/tzro" class="nav-link" target="_blank" rel="noopener">GitHub</a>
         <!-- GitHub Star CTA -->
         <a href="https://github.com/The18thWarrior/tzro" class="github-star-btn" target="_blank" rel="noopener"
@@ -76,6 +77,7 @@
       <a href="docs.html" class="mobile-nav-link">Docs</a>
       <a href="#architecture" class="mobile-nav-link">Architecture</a>
       <a href="#benchmarks" class="mobile-nav-link">Benchmarks</a>
+      <a href="#execution-surfaces" class="mobile-nav-link">Surfaces</a>
       <a href="https://github.com/The18thWarrior/tzro" class="mobile-nav-link" target="_blank" rel="noopener">GitHub</a>
     </nav>
   </div>
@@ -338,6 +340,204 @@
             <strong>The Result:</strong> We completely eliminate local token waste and
             execution lag on heavy directory sweeps, passing a tight, finalized context
             summary straight to your active terminal.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- CORE EXECUTION SURFACES SECTION -->
+    <!-- ============================================================ -->
+    <section class="execution-surfaces-section" id="execution-surfaces">
+      <div class="hero-container">
+        <span class="section-eyebrow">Inference Arbitrage Engine</span>
+        <h2 class="section-title exec-section-title text-balance">
+          Core Execution Surfaces
+        </h2>
+        <p class="section-desc text-pretty">
+          Heavy token processing runs locally on your hardware. Only compressed,
+          high-value payloads escalate to frontier cloud models. This is how tzro
+          cuts 96% of your cloud token bill without sacrificing output quality.
+        </p>
+
+        <!-- 2-Column Execution Grid -->
+        <div class="exec-grid">
+          <!-- LEFT COLUMN: Local Engine -->
+          <div class="exec-col exec-col-local">
+            <div class="exec-card exec-card-local">
+              <div class="exec-card-header">
+                <div class="exec-card-title-row">
+                  <h3 class="exec-card-title">Local Inference Surface</h3>
+                  <span class="exec-badge exec-badge-live">ON-DEVICE</span>
+                </div>
+                <p class="exec-card-subtitle">4B parameter model · Zero cloud tokens · Full tool access</p>
+              </div>
+
+              <!-- Animated Telemetry Terminal -->
+              <div class="exec-telemetry" id="exec-telemetry-local">
+                <div class="exec-telemetry-bar">
+                  <span class="exec-telemetry-dot exec-telemetry-dot-live"></span>
+                  <span class="exec-telemetry-label">local_inference — active</span>
+                </div>
+                <div class="exec-telemetry-body">
+                  <div class="exec-telemetry-line" data-idx="0">
+                    <span class="exec-tl-prompt">→</span>
+                    <span class="exec-tl-text">Kahn Compiler: topological sort complete (7 nodes, 3 levels)</span>
+                  </div>
+                  <div class="exec-telemetry-line" data-idx="1">
+                    <span class="exec-tl-prompt">→</span>
+                    <span class="exec-tl-text">GBNF grammar constraint: XML→JSON coercion OK</span>
+                  </div>
+                  <div class="exec-telemetry-line" data-idx="2">
+                    <span class="exec-tl-prompt">→</span>
+                    <span class="exec-tl-text">Probe node #3: read_file → list_dir → search_files (3 hops)</span>
+                  </div>
+                  <div class="exec-telemetry-line exec-tl-success" data-idx="3">
+                    <span class="exec-tl-prompt">✔</span>
+                    <span class="exec-tl-text">Context compacted: 183,534 → 4,780 tokens (97.4% reduction)</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Feature List -->
+              <div class="exec-feature-list">
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">⚡</span>
+                  <span class="exec-feature-label">Kahn DAG Compiler</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🛡️</span>
+                  <span class="exec-feature-label">GBNF + Semantic Validator</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🧠</span>
+                  <span class="exec-feature-label">Probe Node Thought Chains</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🔄</span>
+                  <span class="exec-feature-label">KV Cache Preemption</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">💾</span>
+                  <span class="exec-feature-label">Hybrid Vector + Knowledge Graph</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Flow Connector (visible between cards on desktop) -->
+          <div class="exec-flow-bridge" aria-hidden="true">
+            <div class="exec-flow-line">
+              <div class="exec-flow-packet" id="exec-flow-packet"></div>
+            </div>
+            <span class="exec-flow-label">compressed<br/>payload</span>
+          </div>
+
+          <!-- RIGHT COLUMN: Cloud Conduit -->
+          <div class="exec-col exec-col-cloud">
+            <div class="exec-card exec-card-cloud">
+              <div class="exec-card-header">
+                <div class="exec-card-title-row">
+                  <h3 class="exec-card-title">Cloud Escalation Surface</h3>
+                  <span class="exec-badge exec-badge-roadmap-alt">FRONTIER</span>
+                </div>
+                <p class="exec-card-subtitle">Compressed payloads only · Frontier reasoning · Confidence-gated</p>
+              </div>
+
+              <!-- Animated Telemetry Terminal -->
+              <div class="exec-telemetry exec-telemetry-cloud" id="exec-telemetry-cloud">
+                <div class="exec-telemetry-bar">
+                  <span class="exec-telemetry-dot exec-telemetry-dot-cloud"></span>
+                  <span class="exec-telemetry-label">cloud_escalation — standby</span>
+                </div>
+                <div class="exec-telemetry-body">
+                  <div class="exec-telemetry-line" data-idx="0">
+                    <span class="exec-tl-prompt">↑</span>
+                    <span class="exec-tl-text">Edge Thought confidence: 0.42 (threshold: 0.70)</span>
+                  </div>
+                  <div class="exec-telemetry-line" data-idx="1">
+                    <span class="exec-tl-prompt">↑</span>
+                    <span class="exec-tl-text">Escalating to frontier model: architectural judgment required</span>
+                  </div>
+                  <div class="exec-telemetry-line" data-idx="2">
+                    <span class="exec-tl-prompt">↑</span>
+                    <span class="exec-tl-text">Payload: 4,780 tokens (vs. 116,250 baseline)</span>
+                  </div>
+                  <div class="exec-telemetry-line exec-tl-cloud-success" data-idx="3">
+                    <span class="exec-tl-prompt">✔</span>
+                    <span class="exec-tl-text">Terminal synthesis complete — micro-skill extracted</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Feature List -->
+              <div class="exec-feature-list">
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🎯</span>
+                  <span class="exec-feature-label">Confidence-Gated Escalation</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🧬</span>
+                  <span class="exec-feature-label">Edge Thought Evaluation</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">📦</span>
+                  <span class="exec-feature-label">Terminal Synthesis</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🔁</span>
+                  <span class="exec-feature-label">Dual Micro-Skill Extraction</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">☁️</span>
+                  <span class="exec-feature-label">Multi-Provider Fallback</span>
+                  <span class="exec-badge exec-badge-roadmap">ROADMAP</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Token Reduction Stat Bar -->
+        <div class="exec-stat-bar">
+          <div class="exec-stat">
+            <span class="exec-stat-value" id="exec-stat-reduction">96%</span>
+            <span class="exec-stat-label">Token Reduction</span>
+          </div>
+          <div class="exec-stat-divider" aria-hidden="true"></div>
+          <div class="exec-stat">
+            <span class="exec-stat-value">4,780</span>
+            <span class="exec-stat-label">Tokens to Cloud (vs 116K baseline)</span>
+          </div>
+          <div class="exec-stat-divider" aria-hidden="true"></div>
+          <div class="exec-stat">
+            <span class="exec-stat-value">4.90</span>
+            <span class="exec-stat-label">Quality Score (out of 5.00)</span>
+          </div>
+        </div>
+
+        <!-- Full-Width CTA Banner -->
+        <div class="exec-cta-banner">
+          <div class="exec-cta-content">
+            <p class="exec-cta-headline">
+              Every token your agent sends to the cloud should be worth sending.
+            </p>
+            <p class="exec-cta-sub">
+              Let the local engine handle the heavy lifting. Reserve cloud tokens for frontier reasoning.
+            </p>
+          </div>
+          <div class="exec-cta-actions">
+            <a href="#install" class="exec-cta-primary">Get Started Free</a>
+            <a href="docs.html#architecture" class="exec-cta-secondary">Read Architecture Docs →</a>
           </div>
         </div>
       </div>
