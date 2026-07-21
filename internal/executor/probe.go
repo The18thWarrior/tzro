@@ -261,6 +261,14 @@ func RunProbe(
 	if minStepBudget < 1 {
 		minStepBudget = 1
 	}
+	// Analyze nodes converge faster than probes — 2-3 SQL queries typically
+	// produce the complete answer. Use a lower floor to prevent runaway.
+	if isAnalyzeConfig(config.AllowedTools) {
+		minStepBudget = stepBudget / 4
+		if minStepBudget < 2 {
+			minStepBudget = 2
+		}
+	}
 
 	// Pre-load target directory files if PreloadPaths is set.
 	// Strategy: Write pre-loaded content to a temp file in the first PreloadPath
@@ -1133,7 +1141,8 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 	// Budget: reserve ~3K tokens for system prompt + recent steps + user prompt.
 	// Compaction summary gets ~13K tokens of the router's 16K window ≈ ~52K chars.
 	const compactionBudgetChars = 52000
-	result, err := compactor.CompactSteps(ctx, compactorSteps, "", compactionBudgetChars, compactEngine)
+	preserveOutput := compactionLevel == compiler.CompactPreserve
+	result, err := compactor.CompactSteps(ctx, compactorSteps, "", compactionBudgetChars, compactEngine, preserveOutput)
 
 	// Fix 4: Post-compaction size validation — detect inflation and warn.
 	// If compaction output exceeds input, the LLM reasoning compression is

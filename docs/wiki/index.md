@@ -109,6 +109,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md) - Splits context assembly into synthesis-path (untruncated validators, no ceiling) and mid-DAG-path (tiered allocation, dynamic ceiling). Supersedes ADR-0043 Mechanism B.
 - [ADR-0049: Data Profiler and Cache Bridge Node](../adr/0049-data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file, path-referenced caching, and two-layer deterministic Cache Bridge Node injection. Narrows ADR-0019 bypass to non-tabular files.
 - [ADR-0051: SQL Query Language for Cached Data](../adr/0051-sql-query-language-for-cached-data.md) - Replaces jq with SQL as the query language for cached tabular data. Ephemeral materialized tables in a separate query database with 4-layer safety sandboxing.
+- [ADR-0052: CompactPreserve Semantics for Analyze Nodes](../adr/0052-compact-preserve-semantics-for-analyze-nodes.md) - Defines CompactPreserve to preserve tool output data verbatim while still LLM-compressing reasoning text. Fixes data loss in analyze node synthesis.
 
 ## Ingested Sources
 

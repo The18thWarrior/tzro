@@ -82,7 +82,7 @@ func TruncateSynthesisContext(steps []SynthesisStep) string {
 	}
 
 	// Use deterministic-only mode (nil engine, no LLM calls)
-	result, err := compactor.CompactSteps(context.TODO(), compactorSteps, "", maxSynthesisContextChars, nil)
+	result, err := compactor.CompactSteps(context.TODO(), compactorSteps, "", maxSynthesisContextChars, nil, false)
 	if err != nil {
 		// Fallback to legacy formatting
 		return formatSynthesisSteps(steps, -1)

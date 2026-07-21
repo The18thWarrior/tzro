@@ -2316,6 +2316,13 @@ func coerceStringArguments(args map[string]interface{}, instruction string, tool
 	instructionLower := strings.ToLower(instruction)
 
 	for key, val := range args {
+		// sql_cached_data.sql arguments are already validated by GBNF Pass 2.
+		// StringCoercion's fuzzy matching treats valid SQL as "hallucinated"
+		// and truncates it to a single keyword (e.g., "FROM"), destroying the query.
+		if toolName == "sql_cached_data" && key == "sql" {
+			continue
+		}
+
 		// Only coerce string arguments
 		strVal, isStr := val.(string)
 		if !isStr {

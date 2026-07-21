@@ -143,7 +143,7 @@ func compactSegment(seg Segment, budget int) string {
 // Budget management uses a two-stage cascade:
 //   - Stage 1: Structured compaction of all segments
 //   - Stage 2: If over budget, drop oldest tool outputs first
-func CompactSteps(ctx context.Context, steps []Step, goal string, budget int, engine CompactEngine) (CompactResult, error) {
+func CompactSteps(ctx context.Context, steps []Step, goal string, budget int, engine CompactEngine, preserveToolOutput bool) (CompactResult, error) {
 	if len(steps) == 0 {
 		return CompactResult{}, nil
 	}
@@ -160,7 +160,7 @@ func CompactSteps(ctx context.Context, steps []Step, goal string, budget int, en
 	for i, s := range steps {
 		// Compact tool output deterministically
 		toolOut := s.ToolOutput
-		if toolOut != "" {
+		if toolOut != "" && !preserveToolOutput {
 			toolOut = CompactContent(toolOut, 0) // No per-step budget in Stage 1
 		}
 

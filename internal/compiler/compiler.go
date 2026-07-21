@@ -45,7 +45,7 @@ type CompactionLevel string
 const (
 	CompactAggressive CompactionLevel = "aggressive" // Heavy summarization, 200-char tool output truncation
 	CompactModerate   CompactionLevel = "moderate"   // Summarize prose, preserve code/tables/signatures
-	CompactPreserve   CompactionLevel = "preserve"   // Pass through raw output, no compaction
+	CompactPreserve   CompactionLevel = "preserve"   // Preserve tool output data verbatim; reasoning text is still LLM-compressed
 )
 
 // ProbeConfig configures a Probe Node's Thought Chain execution loop.

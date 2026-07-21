@@ -79,7 +79,7 @@ func TestCompactSteps_DeterministicOnly(t *testing.T) {
 	}
 
 	// nil engine — deterministic only
-	result, err := CompactSteps(context.Background(), steps, "Explore the codebase", 0, nil)
+	result, err := CompactSteps(context.Background(), steps, "Explore the codebase", 0, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestCompactSteps_WithEngine(t *testing.T) {
 	}
 
 	engine := &PassthroughEngine{}
-	result, err := CompactSteps(context.Background(), steps, "Explore the codebase", 0, engine)
+	result, err := CompactSteps(context.Background(), steps, "Explore the codebase", 0, engine, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestCompactSteps_BudgetTriage(t *testing.T) {
 	// Budget that allows recent steps but requires dropping older ones.
 	// 10 steps × ~530 chars = ~5300 total. Budget 2500 should trigger triage
 	// and preserve the last 3 steps.
-	result, err := CompactSteps(context.Background(), steps, "goal", 2500, nil)
+	result, err := CompactSteps(context.Background(), steps, "goal", 2500, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,5 +216,44 @@ func TestChunkBySentence_ShortText(t *testing.T) {
 	}
 	if chunks[0] != text {
 		t.Errorf("expected unchanged, got %q", chunks[0])
+	}
+}
+
+func TestCompactSteps_PreserveToolOutput(t *testing.T) {
+	// When preserveToolOutput=true, tool outputs should pass through verbatim
+	// (no skeleton extraction, no tabular truncation, no middle-out truncation).
+	// Reasoning text should still be compacted if an engine is provided.
+	largeCode := "package main\n\nimport \"fmt\"\n\nfunc Greet(name string) {\n\tfmt.Println(name)\n\tfmt.Println(name)\n\tfmt.Println(name)\n}\n"
+	steps := []Step{
+		{
+			Index:      1,
+			Thought:    "Looking at the main package.",
+			ToolName:   "sql_cached_data",
+			ToolArgs:   `{"cacheId":"cache_123","sql":"SELECT * FROM cache_123"}`,
+			ToolOutput: largeCode,
+		},
+	}
+
+	// With preserveToolOutput=false, code output should be skeletonized
+	resultCompacted, err := CompactSteps(context.Background(), steps, "goal", 0, nil, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With preserveToolOutput=true, code output should be verbatim
+	resultPreserved, err := CompactSteps(context.Background(), steps, "goal", 0, nil, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Preserved output should contain the full function body
+	if !strings.Contains(resultPreserved.Output, "fmt.Println(name)") {
+		t.Error("expected full function body in preserved output")
+	}
+
+	// Preserved output should be >= compacted output (no data removed)
+	if resultPreserved.OutputChars < resultCompacted.OutputChars {
+		t.Errorf("expected preserved output (%d) >= compacted output (%d)",
+			resultPreserved.OutputChars, resultCompacted.OutputChars)
 	}
 }
