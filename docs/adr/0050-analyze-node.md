@@ -1,4 +1,4 @@
-# ADR-0047: Analyze Node
+# ADR-0050: Analyze Node
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-ADR-0046 introduced the **Data Profiler** and **Cache Bridge Node** to handle tabular data files efficiently. The `read_file` tool now detects tabular formats, profiles them, caches the parsed data on disk, and returns a structured envelope with a `cacheId`. Downstream nodes can use `introspect_cache`, `read_cached_data`, and `jq_cached_data` to query the cached data without re-reading the file.
+ADR-0049 introduced the **Data Profiler** and **Cache Bridge Node** to handle tabular data files efficiently. The `read_file` tool now detects tabular formats, profiles them, caches the parsed data on disk, and returns a structured envelope with a `cacheId`. Downstream nodes can use `introspect_cache`, `read_cached_data`, and `jq_cached_data` to query the cached data without re-reading the file.
 
 However, a critical gap remained between the **Strategic Planner** and the cache system:
 
@@ -44,7 +44,7 @@ The planner does NOT set `allowedTools` or `probeConfig` — these are auto-prov
 The **Kahn Compiler** handles `analyze` nodes alongside `probe` nodes in `ExpandToSCTGraph`:
 
 - Auto-creates a `ProbeConfig` with:
-  - `AllowedTools: ["introspect_cache", "read_cached_data", "jq_cached_data"]`
+  - `AllowedTools: ["introspect_cache", "sql_cached_data"]` [Updated by ADR-0051: `jq_cached_data` and `read_cached_data` replaced with `sql_cached_data`]
   - `StepBudget: 15` (slightly less than probe's 20 — data analysis needs fewer steps)
   - `CompactEvery: 3`
   - `CompactionLevel: "preserve"`
@@ -55,10 +55,10 @@ The **Kahn Compiler** handles `analyze` nodes alongside `probe` nodes in `Expand
 
 The executor routes `analyze` nodes through the same `RunProbe` Thought Chain loop as `probe` nodes, but with a different system prompt selected via `isAnalyzeConfig()`:
 
-- **Detection**: If the `ProbeConfig.AllowedTools` contain any cache tool (`introspect_cache`, `jq_cached_data`, `read_cached_data`), the config is classified as an analyze config.
+- **Detection**: If the `ProbeConfig.AllowedTools` contain any cache tool (`introspect_cache`, `sql_cached_data`), the config is classified as an analyze config. [Updated by ADR-0048]
 - **System Prompt**: `buildAnalyzeSystemPrompt` replaces `buildProbeSystemPrompt`. It teaches the model:
-  - Data analysis strategy (check context for cacheId → introspect → JQ query → synthesize)
-  - Common JQ patterns (group_by, sort_by, select, unique, length)
+  - Data analysis strategy (check context for cacheId → introspect → SQL query → synthesize) [Updated by ADR-0051: SQL replaces JQ]
+  - Standard SQL patterns (GROUP BY, ORDER BY, COALESCE, WHERE, COUNT, LIMIT)
   - Graceful degradation (if no cacheId, synthesize from raw text)
 - **No write_file access**: Analyze nodes are read-only data consumers. Output saving is handled by downstream action nodes.
 
@@ -84,7 +84,7 @@ If detected, it emits a `type: "analyze"` repair node instead of a `type: "probe
 
 - **Eliminates tool hallucination for datanal tasks**: The planner has a clean abstraction — "when you need to analyze data, emit `analyze`" — without knowing about cache internals.
 - **Follows established architectural patterns**: Same expansion model as `probe` → `recall` (ADR-0038), same SCT compilation flow, same Thought Chain execution.
-- **Completes the ADR-0046 pipeline**: Data Profiler (ADR-0046) handles ingestion; Analyze Node (this ADR) handles consumption.
+- **Completes the ADR-0049 pipeline**: Data Profiler (ADR-0049) handles ingestion; Analyze Node (this ADR) handles consumption.
 - **Graceful degradation**: Works for any data type — tabular data gets cache tools, non-tabular data gets synthesis.
 - **No prompt engineering**: The system prompt is structural (defined by node type), not injected conditionally.
 
@@ -92,10 +92,10 @@ If detected, it emits a `type: "analyze"` repair node instead of a `type: "probe
 
 - **New node type adds complexity**: The executor, compiler, and validation layers all need to handle one more type. Mitigated by reusing the probe infrastructure.
 - **Planner prompt surface area grows**: Adding `analyze` guidance increases the system prompt length. Mitigated by keeping the guidance concise (3 sentences).
-- **JQ pattern brittleness**: The analyze system prompt includes common JQ patterns. If the Local Model struggles with JQ syntax, these patterns may need expansion or replacement with a more structured query language.
+- **~~JQ pattern brittleness~~**: Resolved by ADR-0051 — SQL replaced JQ as the query language, eliminating jq syntax failures entirely.
 
 ## References
 
 - ADR-0019: Probe Node and Thought Chain
 - ADR-0038: Recall Node for Discovery-Synthesis Alignment
-- ADR-0046: Data Profiler and Cache Bridge Node
+- ADR-0049: Data Profiler and Cache Bridge Node

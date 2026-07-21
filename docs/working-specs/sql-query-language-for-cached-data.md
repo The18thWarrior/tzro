@@ -1,8 +1,8 @@
 # SQL Query Language for Cached Data Analysis — Implementation Spec
 
-> **ADR**: [0048-sql-query-language-for-cached-data.md](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0048-sql-query-language-for-cached-data.md)
+> **ADR**: [0051-sql-query-language-for-cached-data.md](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0051-sql-query-language-for-cached-data.md)
 > **Supersedes**: jq-based `jq_cached_data` tool and `basicJQFallback` in `query.go`
-> **References**: [ADR-0005](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0005-5-layer-context-compaction-and-jq-cache.md), [ADR-0046](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0046-data-profiler-and-cache-bridge-node.md), [ADR-0047](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0047-analyze-node.md)
+> **References**: [ADR-0005](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0005-5-layer-context-compaction-and-jq-cache.md), [ADR-0049](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0049-data-profiler-and-cache-bridge-node.md), [ADR-0050](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0050-analyze-node.md)
 
 ---
 

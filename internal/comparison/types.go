@@ -35,7 +35,7 @@ func CodegenConditions() []string {
 
 // DatanalConditions returns all conditions applicable to data analysis benchmarks.
 func DatanalConditions() []string {
-	return []string{ConditionCloudReAct, ConditionLocalOnly, ConditionCooperative}
+	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
 }
 
 // CodegenConditionsForTier returns the conditions to run for a given task tier.

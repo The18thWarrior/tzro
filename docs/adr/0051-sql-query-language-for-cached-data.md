@@ -1,4 +1,4 @@
-# ADR-0048: SQL Query Language for Cached Data Analysis
+# ADR-0051: SQL Query Language for Cached Data Analysis
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-ADR-0047 introduced the **Analyze Node** to give the **Strategic Planner** a clean abstraction for data analysis tasks. The Analyze Node runs a **Thought Chain** with cache exploration tools (`introspect_cache`, `read_cached_data`, `jq_cached_data`) to query tabular data stored in the **Disk-Backed JQ Cache**.
+ADR-0050 introduced the **Analyze Node** to give the **Strategic Planner** a clean abstraction for data analysis tasks. The Analyze Node runs a **Thought Chain** with cache exploration tools (`introspect_cache`, `read_cached_data`, `jq_cached_data`) to query tabular data stored in the **Disk-Backed JQ Cache**.
 
 However, the `jq_cached_data` tool asks the 4B **Local Model** to generate free-form jq filter strings. jq is a niche DSL with ~0.01% representation in training data. Its `//` alternative operator, `if/then/else/end` blocks, implicit pipe semantics, and expression-in-argument patterns are unlike any mainstream language. Evidence from 6 benchmark runs showed consistent syntax failures:
 
@@ -99,5 +99,5 @@ CREATE TABLE IF NOT EXISTS _cache_tables (
 ## References
 
 - ADR-0005: 5-Layer Context Compaction & Disk-Backed JQ Cache
-- ADR-0046: Data Profiler and Cache Bridge Node
-- ADR-0047: Analyze Node
+- ADR-0049: Data Profiler and Cache Bridge Node
+- ADR-0050: Analyze Node

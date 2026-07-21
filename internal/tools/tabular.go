@@ -10,7 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
+
+	"tzro/internal/cache"
 )
 
 // sqlColumnNameRe matches characters that are not valid in SQLite unquoted identifiers.
@@ -341,7 +342,7 @@ func ProfileTabularFile(filePath string) (*DataProfile, error) {
 	}
 	sampleRows := buildSampleRows(sanitizedHeaders, firstRows, reservoir, columns, rowCount)
 
-	cacheID := fmt.Sprintf("cache_%d", time.Now().UnixNano())
+	cacheID := cache.NewCacheID()
 
 	return &DataProfile{
 		Format:        format,
@@ -769,6 +770,6 @@ func ProfileJSONFile(filePath string) (*DataProfile, error) {
 		FileSizeBytes: info.Size(),
 		Columns:       columns,
 		SampleRows:    sampleRows,
-		CacheID:       fmt.Sprintf("cache_%d", time.Now().UnixNano()),
+		CacheID:       cache.NewCacheID(),
 	}, nil
 }

@@ -187,9 +187,8 @@ Goal: %s
 ## Refined Discovery Context (Verified Facts):
 %s%s
 
-Review the gathered facts and produce a comprehensive, structured final answer. If the facts are insufficient, explain what is missing.`, goal, refinedContext, symbolRefBlock)
 Review the gathered facts and produce a comprehensive, structured final answer.
-IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.`, goal, synthesisInput)
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.`, goal, synthesisInput, symbolRefBlock)
 
 	synthesis, err := engine.Infer(ctx, synthPrompt, lastResult, "")
 	if err != nil {
@@ -218,15 +217,10 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 		}
 	}
 
-	return synthesis, nil
-	result, err := engine.Infer(ctx, synthPrompt, lastResult, "")
-	if err != nil {
-		return "", err
-	}
-
 	// Fix 3 (Synthesis Generation Guard): Validate the synthesis output.
 	// Detect control token leaks, degenerate output, and repetitive content.
-	reason := validateSynthesisOutput(result)
+	// Re-attempt with cloud model on failure (same pattern as ConfidenceTier escalation).
+	reason := validateSynthesisOutput(synthesis)
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "[Recall] Synthesis output invalid (%s), escalating to cloud\n", reason)
 		if !isCloudEscalationBlocked() {
@@ -236,14 +230,14 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 			}, "", taskID)
 			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
 				fmt.Fprintf(os.Stderr, "[Recall] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
-				return cloudResult, nil
+				synthesis = cloudResult
 			}
 		}
 	}
 
 	// Strip any leaked control tokens from the output
-	result = stripControlTokens(result)
-	return result, nil
+	synthesis = stripControlTokens(synthesis)
+	return synthesis, nil
 }
 
 func extractAction(response string) (string, map[string]interface{}) {

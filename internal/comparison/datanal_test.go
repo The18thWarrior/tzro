@@ -65,7 +65,7 @@ func TestLoadTasksByCategory_DatanalTier3(t *testing.T) {
 
 func TestDatanalConditions(t *testing.T) {
 	conds := DatanalConditions()
-	expected := []string{ConditionCloudReAct, ConditionLocalOnly, ConditionCooperative}
+	expected := []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
 	if len(conds) != len(expected) {
 		t.Fatalf("expected %d conditions, got %d", len(expected), len(conds))
 	}

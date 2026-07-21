@@ -345,7 +345,29 @@ func sanitizeTableName(name string) string {
 }
 
 func sanitizeColumnName(name string) string {
-	return sanitizeTableName(name) // same rules
+	cleaned := sanitizeTableName(name)
+	// SQLite reserved words that can appear as CSV/JSON column names.
+	// When used unquoted in CREATE TABLE or queries, they cause syntax errors.
+	// Suffix with underscore to disambiguate (e.g., "Index" → "Index_").
+	reserved := map[string]bool{
+		"index": true, "order": true, "group": true, "select": true,
+		"table": true, "column": true, "where": true, "from": true,
+		"insert": true, "update": true, "delete": true, "create": true,
+		"drop": true, "alter": true, "values": true, "set": true,
+		"into": true, "join": true, "on": true, "as": true,
+		"limit": true, "offset": true, "having": true, "between": true,
+		"like": true, "in": true, "is": true, "not": true,
+		"null": true, "case": true, "when": true, "then": true,
+		"else": true, "end": true, "and": true, "or": true,
+		"default": true, "check": true, "primary": true, "key": true,
+		"unique": true, "foreign": true, "references": true, "constraint": true,
+		"transaction": true, "begin": true, "commit": true, "rollback": true,
+		"replace": true, "exists": true, "distinct": true, "all": true,
+	}
+	if reserved[strings.ToLower(cleaned)] {
+		cleaned = cleaned + "_"
+	}
+	return cleaned
 }
 
 func sanitizeColumnNames(names []string) []string {

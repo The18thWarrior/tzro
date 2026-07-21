@@ -433,11 +433,23 @@ func RunProbe(
 				// Inject probe goal into context so read_file can
 				// goal-compress large outputs (ADR-0019 extension).
 				toolCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
+
+				// Diagnostic logging for cache tools — helps diagnose SQL generation issues
+				if toolName == "sql_cached_data" || toolName == "introspect_cache" {
+					if argsJSON, err := json.Marshal(args); err == nil {
+						fmt.Fprintf(os.Stderr, "[Probe] Cache tool call: %s args=%s\n", toolName, string(argsJSON))
+					}
+				}
+
 				result, err := tools.Call(toolCtx, toolName, args)
 				if err != nil {
 					toolOutput = fmt.Sprintf("Error: %v", err)
 					consecutiveErrors++
 					failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: toolOutput})
+					// Enhanced cache tool error diagnostics
+					if toolName == "sql_cached_data" || toolName == "introspect_cache" {
+						fmt.Fprintf(os.Stderr, "[Probe] Cache tool ERROR: %s → %s\n", toolName, toolOutput)
+					}
 				} else {
 					toolOutput = result
 					// Detect tool-level errors: tools return JSON with "success":false
@@ -445,6 +457,10 @@ func RunProbe(
 					if isToolError(result) {
 						consecutiveErrors++
 						failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: truncate(result, 200)})
+						// Enhanced cache tool error diagnostics
+						if toolName == "sql_cached_data" || toolName == "introspect_cache" {
+							fmt.Fprintf(os.Stderr, "[Probe] Cache tool TOOL_ERROR: %s → %s\n", toolName, truncate(result, 300))
+						}
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
@@ -855,31 +871,38 @@ You analyze data from upstream nodes using a systematic approach:
 2. If a cacheId is available:
    - Use 'introspect_cache' to understand the data schema (column names, types, sample records)
    - IMPORTANT: Use the EXACT column names from introspect_cache in your SQL queries
-   - Use 'sql_cached_data' to query the data using standard SQL
-   - The table name is the cacheId itself (e.g., SELECT * FROM cache_178...)
+   - Use 'sql_cached_data' to query the data using **SQLite** SQL dialect
+   - The table name is the cacheId itself
 3. If no cacheId is available, synthesize your analysis from the raw text data in the accumulated context.
 
+## CRITICAL: cacheId Handling
+The cacheId is an OPAQUE STRING identifier like 'cache_1784607195509971000'.
+- You MUST copy the cacheId EXACTLY as it appears — do NOT round, truncate, or modify the digits
+- The cacheId is NOT a number — it is a string. Copy it character-by-character
+- WRONG: cache_178460719550000000000000000000000 (truncated/rounded)
+- WRONG: cache_178 (too short)
+- RIGHT: cache_1784607195509971000 (exact copy from context)
+
+## SQLite SQL Dialect
+The query engine is SQLite. Use SQLite-compatible syntax ONLY:
+- String concatenation: Use || not CONCAT()
+- GROUP_CONCAT: Use GROUP_CONCAT(col) or GROUP_CONCAT(DISTINCT col) — NO 'SEPARATOR' keyword
+- Boolean: Use 1/0, not TRUE/FALSE
+- Case-insensitive LIKE is default in SQLite
+- LIMIT/OFFSET for pagination (no FETCH/OFFSET)
+
 ## Data Quality Best Practices
-- ALWAYS start with SELECT COUNT(*) to verify the total record count
-- Check for empty/blank values: SELECT COUNT(*) FROM cache_X WHERE ColName IS NULL OR TRIM(ColName) = ''
+- ALWAYS start with introspect_cache to see column names, then SELECT COUNT(*) to verify record count
+- Check for empty/blank values: SELECT COUNT(*) FROM <table> WHERE ColName IS NULL OR TRIM(ColName) = ''
 - Use COALESCE to handle NULLs: SELECT COALESCE(ColName, 'Unspecified') as ColName
 - Use TRIM() to clean whitespace: SELECT TRIM(ColName) as ColName
-- When grouping text data, first run SELECT DISTINCT ColName to see the actual values — look for duplicates caused by case differences, typos, or mixed formats (e.g., state abbreviations mixed with country names)
+- When grouping text data, first run SELECT DISTINCT ColName to see actual values
 - Validate your results: if a GROUP BY total doesn't match the overall COUNT(*), investigate why
 
 ## Text Matching and Filtering
-- For exact value lookups, use LIKE with wildcards for resilience: WHERE ColName LIKE '%%value%%'
+- For exact value lookups, use LIKE with wildcards: WHERE ColName LIKE '%%value%%'
 - For case-insensitive matching: WHERE LOWER(ColName) = LOWER('value')
 - When filtering by a company or category name, always try case-insensitive LIKE first
-
-
-Common SQL patterns for data analysis:
-- Count all records: SELECT COUNT(*) FROM cache_<id>
-- Group and count: SELECT Sector, COUNT(*) as cnt FROM cache_<id> GROUP BY Sector ORDER BY cnt DESC
-- Handle blanks: SELECT COALESCE(Sector, 'Unspecified') as Sector, COUNT(*) as cnt FROM cache_<id> GROUP BY COALESCE(Sector, 'Unspecified')
-- Filter rows: SELECT * FROM cache_<id> WHERE Status = 'Active'
-- Unique values: SELECT DISTINCT Sector FROM cache_<id>
-- Top N: SELECT * FROM cache_<id> ORDER BY Revenue DESC LIMIT 5
 
 On each step, reason about what analysis to perform next.
 If you need to use a tool, output an XML tag: <ACTION>{"tool": "tool_name", "arguments": {"param": "value"}}</ACTION>.

@@ -16,10 +16,21 @@ func TestCacheStore_StoreAndIntrospect(t *testing.T) {
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+
+	// Set TZRO_DIR to temp dir so cache backup files are written to a known
+	// location (main branch c00e1e2 changed ResolvePath to fall back to ~/ instead of CWD).
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_cache_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 
 	err := memory.DB.Init()
@@ -49,15 +60,11 @@ func TestCacheStore_StoreAndIntrospect(t *testing.T) {
 		t.Errorf("expected Introspect to return matching stored envelope, got: %s", introspectOutput)
 	}
 
-	// Verify backup file path exists and clean it up
-	cacheFilePath := filepath.Join(".tzro", "cache", cacheID+".json")
+	// Verify backup file path exists — resolved via TZRO_DIR
+	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	if _, err := os.Stat(cacheFilePath); os.IsNotExist(err) {
 		t.Errorf("expected backup file at %s to exist", cacheFilePath)
 	}
-	defer func() {
-		os.Remove(cacheFilePath)
-		os.RemoveAll(".tzro/cache")
-	}()
 
 	// Test fallback path: delete from DB, introspect should rebuild from file
 	db := memory.DB.RawDB()
@@ -128,10 +135,20 @@ func TestProcess_SmallPayload(t *testing.T) {
 	// Setup isolated test database to verify no writes
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+
+	// Set TZRO_DIR to a fresh temp dir so we can verify no cache dir is created.
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_cache_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 	_ = memory.DB.Init()
 
@@ -165,8 +182,8 @@ func TestProcess_SmallPayload(t *testing.T) {
 		t.Errorf("expected 0 cache records stored in database, got: %d", count)
 	}
 
-	// Verify no backup files were created
-	cacheFileDir := filepath.Join(".tzro", "cache")
+	// Verify no backup files were created — use resolveTzroPath for correct location
+	cacheFileDir := resolveTzroPath(filepath.Join(".tzro", "cache"))
 	if _, err := os.Stat(cacheFileDir); !os.IsNotExist(err) {
 		t.Errorf("expected backup cache directory to not exist, but it does")
 	}
@@ -176,23 +193,35 @@ func TestProcess_LargePayload(t *testing.T) {
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+
+	// Set TZRO_DIR to temp dir so cache backup files are written to a known location.
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_cache_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 	_ = memory.DB.Init()
 
 	ctx := context.Background()
 
 	// Generate a payload that exceeds 12288 bytes
+	// Use "Idx" instead of "Index" — "Index" is a SQLite reserved word
+	// and sanitizeColumnName now correctly suffixes it to "Index_".
 	var sb strings.Builder
 	sb.WriteString("[")
 	for i := 0; i < 300; i++ {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		sb.WriteString(`{"Index": ` + string(rune('0'+(i%10))) + `, "Text": "Some extremely long repetition that will quickly blow up the byte size beyond twelve kilobytes limit standard threshold of tzro executor caching and compaction layers inside packages."}`)
+		sb.WriteString(`{"Idx": ` + string(rune('0'+(i%10))) + `, "Text": "Some extremely long repetition that will quickly blow up the byte size beyond twelve kilobytes limit standard threshold of tzro executor caching and compaction layers inside packages."}`)
 	}
 	sb.WriteString("]")
 	largePayload := sb.String()
@@ -214,15 +243,11 @@ func TestProcess_LargePayload(t *testing.T) {
 		t.Errorf("expected returned processed payload to be a JSON Cache Envelope, got: %s", processed)
 	}
 
-	// Verify backup file path exists and clean it up
-	cacheFilePath := filepath.Join(".tzro", "cache", cacheID+".json")
+	// Verify backup file path exists — resolved via TZRO_DIR
+	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	if _, err := os.Stat(cacheFilePath); os.IsNotExist(err) {
 		t.Errorf("expected backup file at %s to exist for large payload", cacheFilePath)
 	}
-	defer func() {
-		os.Remove(cacheFilePath)
-		os.RemoveAll(".tzro/cache")
-	}()
 
 	// Verify database record exists
 	db := memory.DB.RawDB()

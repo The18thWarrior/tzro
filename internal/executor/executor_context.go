@@ -13,6 +13,7 @@ package executor
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"tzro/internal/compactor"
@@ -163,6 +164,18 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 	// Two paths depending on the calling node type.
 	isSynthesis := callingNodeType == "synthesis"
 
+	// Pre-extract cacheIds from raw outputs BEFORE compaction so
+	// enrichCacheBridgeContext can always find them even if compaction
+	// strips the cacheId from the body text. These are injected as
+	// a trailing metadata block after the accumulated context.
+	cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+	var extractedCacheIds []string
+	for _, cn := range completed {
+		if ids := cacheIdRe.FindAllString(cn.output, -1); len(ids) > 0 {
+			extractedCacheIds = append(extractedCacheIds, ids...)
+		}
+	}
+
 	// Compute per-node budgets based on calling node type.
 	type budgetEntry struct {
 		nodeID string
@@ -228,6 +241,13 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		}
 
 		for i, cn := range completed {
+			// Exempt data-profile exec nodes from compaction — the cacheId
+			// and dataProfile envelope ARE the data. Compacting them severs
+			// the sql_cached_data pipeline for downstream analyze Probe nodes.
+			if strings.Contains(cn.output, "cacheId") && strings.Contains(cn.output, "dataProfile") {
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				continue
+			}
 			perNodeBudget := (nodeWeights[i] * dynamicCeiling) / totalWeight
 			if perNodeBudget < 256 {
 				perNodeBudget = 256 // absolute floor
@@ -268,6 +288,20 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		sb.WriteString("Use ONLY these exact names and signatures when referring to types, functions, and interfaces:\n")
 		for _, sym := range symbolIndex {
 			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n", sym.Name, sym.Kind, sym.Signature))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Inject pre-extracted cacheIds as a metadata block so enrichCacheBridgeContext
+	// can always find them even if compaction stripped them from individual node outputs.
+	if len(extractedCacheIds) > 0 {
+		seen := make(map[string]bool)
+		sb.WriteString("--- Pre-extracted Cache IDs ---\n")
+		for _, id := range extractedCacheIds {
+			if !seen[id] {
+				sb.WriteString(fmt.Sprintf("cacheId: %s\n", id))
+				seen[id] = true
+			}
 		}
 		sb.WriteString("\n")
 	}

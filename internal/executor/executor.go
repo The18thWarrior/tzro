@@ -50,10 +50,6 @@ type ExecutionHook interface {
 
 var ErrTaskPaused = fmt.Errorf("task execution paused by hook")
 
-// tabularFileRe detects tabular file extension references in node instructions.
-// Mirrors compiler.tabularExtRe — duplicated here to avoid circular dependency.
-var tabularFileRe = regexp.MustCompile(`\.(csv|tsv|xlsx|xls|parquet)\b`)
-
 type ExecutionEngine struct {
 	Publisher      telemetry.EventPublisher
 	EdgeThoughtGen EdgeThoughtInference // optional: enables neural edge traversal (ADR-0024)
@@ -945,19 +941,53 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 
 		// Fix 4 (Probe allowedTools Enrichment): Runtime expansion of cache tools
-		// for standalone probes. The compiler's injectCacheBridgeNodes handles SCT
-		// pipeline probes, but standalone probes (planned directly as a single node)
-		// bypass the compiler and arrive here without cache tools. If the probe has
-		// read_file and references tabular files, expand allowedTools at runtime.
+		// for probes/analyze nodes that need to query cached data. Three triggers:
+		//
+		// (a) Probe has read_file in allowedTools — it may encounter tabular data
+		//     at runtime, which the Data Profiler will cache automatically.
+		//     No need to regex-match file extensions in instructions; the profiler
+		//     at filesystem.go:IsTabularExtension detects this natively.
+		// (b) Upstream completed nodes contain cacheId + dataProfile markers,
+		//     meaning tabular data was already read and cached — the analyze node
+		//     needs SQL tools to query it.
+		// (c) The node's instructions contain a cacheId pattern directly.
 		if (node.Type == "probe" || node.Type == "analyze") && !isAnalyzeConfig(probeConfig.AllowedTools) {
-			hasReadFile := false
+			shouldExpand := false
+
+			// (a) Probe has read_file — may encounter tabular data at runtime
 			for _, t := range probeConfig.AllowedTools {
 				if t == "read_file" {
-					hasReadFile = true
+					shouldExpand = true
 					break
 				}
 			}
-			if hasReadFile && tabularFileRe.MatchString(node.Instructions) {
+
+			// (b) Upstream completed nodes already produced cached tabular data
+			if !shouldExpand {
+				states := memory.DB.GetAllNodeStates(taskID)
+				for _, state := range states {
+					if state.Status == "completed" {
+						raw := state.RawOutput
+						if raw == "" {
+							raw = state.Output
+						}
+						if strings.Contains(raw, "cacheId") && strings.Contains(raw, "dataProfile") {
+							shouldExpand = true
+							break
+						}
+					}
+				}
+			}
+
+			// (c) Instructions contain a cacheId pattern (cache_NNNN)
+			if !shouldExpand {
+				cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+				if cacheIdRe.MatchString(node.Instructions) {
+					shouldExpand = true
+				}
+			}
+
+			if shouldExpand {
 				probeConfig.AllowedTools = append(probeConfig.AllowedTools, "introspect_cache", "sql_cached_data")
 				node.AllowedTools = probeConfig.AllowedTools
 				fmt.Fprintf(os.Stderr, "[Executor] Expanded probe allowedTools with cache tools for %s\n", node.ID)
@@ -1054,6 +1084,64 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
 			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
 			return ErrTaskPaused
+		}
+
+		// Preserve cacheIds for downstream nodes. When a probe reads a CSV,
+		// the Data Profiler caches the data and returns a cacheId in the tool
+		// result, but the probe's synthesis is prose that strips this.
+		// Downstream analyze nodes need the cacheId to query via sql_cached_data.
+		//
+		// Sources checked:
+		// 1. Upstream context (passed to this probe)
+		// 2. Ephemeral query DB's _cache_tables (materialized during this task)
+		cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+		synthesisCacheIds := cacheIdRe.FindAllString(synthesis, -1)
+		synthesisCacheSet := make(map[string]bool)
+		for _, id := range synthesisCacheIds {
+			synthesisCacheSet[id] = true
+		}
+
+		var allDiscovered []string
+		seen := make(map[string]bool)
+
+		// Source 1: upstream context
+		if probeConfig.UpstreamContext != "" {
+			for _, id := range cacheIdRe.FindAllString(probeConfig.UpstreamContext, -1) {
+				if !synthesisCacheSet[id] && !seen[id] {
+					allDiscovered = append(allDiscovered, id)
+					seen[id] = true
+				}
+			}
+		}
+
+		// Source 2: ephemeral query DB — tables materialized recently
+		// (the probe may have created them internally via read_file →
+		// Data Profiler). Scoped to last 60 seconds to avoid picking up
+		// stale tables from prior task runs.
+		if qdb := cache.QueryDB(); qdb != nil {
+			cutoff := time.Now().Add(-60 * time.Second).Format(time.RFC3339)
+			rows, err := qdb.Query("SELECT table_name FROM _cache_tables WHERE created_at > ? ORDER BY created_at DESC LIMIT 3", cutoff)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var tableName string
+					if rows.Scan(&tableName) == nil {
+						if !synthesisCacheSet[tableName] && !seen[tableName] && cacheIdRe.MatchString(tableName) {
+							allDiscovered = append(allDiscovered, tableName)
+							seen[tableName] = true
+						}
+					}
+				}
+			}
+		}
+
+		if len(allDiscovered) > 0 {
+			synthesis += "\n\n## Data Cache Reference\n"
+			for _, id := range allDiscovered {
+				synthesis += fmt.Sprintf("cacheId: %s (use sql_cached_data to query)\n", id)
+				synthesis += "dataProfile: available via introspect_cache\n"
+			}
+			fmt.Fprintf(os.Stderr, "[Executor] Appended %d cacheIds to probe %s synthesis for downstream discovery\n", len(allDiscovered), node.ID)
 		}
 
 		nodeStatus := fmt.Sprintf("[Probe] %s", synthesis)

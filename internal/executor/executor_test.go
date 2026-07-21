@@ -178,10 +178,20 @@ func TestDiskBackedCachePersistence(t *testing.T) {
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_test.db")
+
+	// Set TZRO_DIR to temp dir so cache backup files are written to a known location.
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 
 	err := memory.DB.Init()
@@ -203,21 +213,14 @@ func TestDiskBackedCachePersistence(t *testing.T) {
 		t.Errorf("expected introspect output to contain cache ID, got: %s", env)
 	}
 
-	// Verify file backup fallback path
-	cacheFileDir := filepath.Join(".tzro", "cache")
+	// Verify file backup fallback path — use TZRO_DIR-resolved paths
+	cacheFileDir := config.ResolvePath(filepath.Join(".tzro", "cache"))
 	_ = os.MkdirAll(cacheFileDir, 0755)
-	cacheFilePath := filepath.Join(cacheFileDir, cacheID+".json")
-	_ = os.WriteFile(cacheFilePath, []byte(rawPayload), 0644)
-	defer func() {
-		os.Remove(cacheFilePath)
-		os.RemoveAll(".tzro/cache")
-	}()
 
 	// Query with DB lookup failure (simulate delete or non-existing DB entry)
 	missingCacheID := "cache_missing_456"
 	missingCacheFilePath := filepath.Join(cacheFileDir, missingCacheID+".json")
 	_ = os.WriteFile(missingCacheFilePath, []byte(rawPayload), 0644)
-	defer os.Remove(missingCacheFilePath)
 
 	// Since database won't have it, it should fall back to disk file and build envelope dynamically
 	fallbackEnv := cache.DefaultStore.Introspect(context.Background(), missingCacheID)

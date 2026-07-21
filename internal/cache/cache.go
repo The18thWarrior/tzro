@@ -45,6 +45,18 @@ type CacheStore interface {
 	Query(ctx context.Context, cacheID, sqlExpr string) string
 }
 
+// NewCacheID generates a unique cache identifier from the current nanosecond
+// timestamp with trailing zeros stripped. Trailing zeros in IDs like
+// "cache_1784607195509971000" cause local LLMs to treat the ID as a number
+// and round/truncate it (e.g., "cache_178460719550000000000000000000000"),
+// producing table-not-found errors. Stripping trailing zeros yields IDs like
+// "cache_1784607195509971" which the model reliably copies verbatim.
+func NewCacheID() string {
+	ts := fmt.Sprintf("%d", time.Now().UnixNano())
+	ts = strings.TrimRight(ts, "0")
+	return "cache_" + ts
+}
+
 // resolveTzroPath delegates to config.ResolvePath — canonical TZRO_DIR resolution.
 func resolveTzroPath(relPath string) string {
 	return config.ResolvePath(relPath)
@@ -241,7 +253,7 @@ func (s *sqlCacheStore) Store(ctx context.Context, rawPayload string) (string, s
 }
 
 func (s *sqlCacheStore) StoreFileRef(ctx context.Context, filePath string, envelopeJSON string) (string, error) {
-	cacheID := fmt.Sprintf("cache_%d", time.Now().UnixNano())
+	cacheID := NewCacheID()
 
 	db := memory.DB.RawDB()
 	if db == nil {
@@ -592,7 +604,7 @@ func flattenMap(input map[string]interface{}, output map[string]interface{}, pre
 }
 
 func createCacheEnvelope(payload string) (string, CacheEnvelope) {
-	cacheID := fmt.Sprintf("cache_%d", time.Now().UnixNano())
+	cacheID := NewCacheID()
 
 	var rawData interface{}
 	_ = json.Unmarshal([]byte(payload), &rawData)

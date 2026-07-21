@@ -107,8 +107,8 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0042: Map-Reduce Recall and Shallow Planning](../adr/0042-map-reduce-recall-and-shallow-planning.md) - Multi-pass Recall synthesis and code-blind Strategist to reduce wall clock time and token waste.
 - [ADR-0043: Two-Tier Context Budget](../adr/0043-two-tier-context-budget.md) - Probe step generation cap (max_tokens via context key) and per-node accumulated context truncation to prevent local model speed collapse from oversized prompts.
 - [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md) - Splits context assembly into synthesis-path (untruncated validators, no ceiling) and mid-DAG-path (tiered allocation, dynamic ceiling). Supersedes ADR-0043 Mechanism B.
-- [ADR-0046: Data Profiler and Cache Bridge Node](../adr/0046-data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file, path-referenced caching, and two-layer deterministic Cache Bridge Node injection. Narrows ADR-0019 bypass to non-tabular files.
-- [ADR-0048: SQL Query Language for Cached Data](../adr/0048-sql-query-language-for-cached-data.md) - Replaces jq with SQL as the query language for cached tabular data. Ephemeral materialized tables in a separate query database with 4-layer safety sandboxing.
+- [ADR-0049: Data Profiler and Cache Bridge Node](../adr/0049-data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file, path-referenced caching, and two-layer deterministic Cache Bridge Node injection. Narrows ADR-0019 bypass to non-tabular files.
+- [ADR-0051: SQL Query Language for Cached Data](../adr/0051-sql-query-language-for-cached-data.md) - Replaces jq with SQL as the query language for cached tabular data. Ephemeral materialized tables in a separate query database with 4-layer safety sandboxing.
 
 ## Ingested Sources
 
