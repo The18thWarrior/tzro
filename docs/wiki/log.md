@@ -4,6 +4,21 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-21T17:52:00-07:00] design | Analytical Evidence & Analyze Node Hardening (Benchmark Run 6)
+
+- **Activity**: Grill-with-docs session analyzing 4 failure modes from benchmark Run 6 (cooperative mode, datanal category, 5 tasks, avg quality 1.95/5).
+- **Decisions Made**:
+  1. **Phase gate for synthesis eligibility** (FM-1): Track `hasDiscovery` and `hasAnalytical` booleans in analyze probe loop. Only `sql_cached_data` calls count toward synthesis eligibility; `introspect_cache` is discovery-only. Prevents premature synthesis after schema inspection.
+  2. **Never skip Recall Node for analyze nodes** (FM-1/FM-2): The Kahn Compiler's sole-leaf skip rule is exempted for analyze nodes. They always get a downstream Recall Node.
+  3. **Analytical Evidence output contract** (FM-2): New `analytical_evidence` column on task result row containing `{sql, rows (≤5), totalRows, capped}` from successful `sql_cached_data` calls. Evidence is the primary output; synthesis is best-effort. Captured at tool dispatch time in the probe loop.
+  4. **CSV parser bug fix** (FM-3): `csvToJSON` in `cache.go:449` uses naive `strings.Split` instead of quote-aware `parseCSVLine`. Confirmed via investigation — rows with quoted commas (e.g., `"McDevitt, John"`) produce extra fields that shift all subsequent columns. Straight bug fix.
+  5. **Parked FM-4** (validator cloud dependency): Working as designed, $0.002/task cost, not worth engineering effort.
+- **Terms Resolved**: Added **Analytical Evidence** to CONTEXT.md. Updated **Analyze Node** to document mandatory Recall Node injection.
+- **ADR Created**: [ADR-0053: Analytical Evidence for Data Analysis Tasks](../adr/0053-analytical-evidence-for-data-analysis.md)
+- **Root Cause Verified**: CSV column misalignment is NOT dirty source data — Python's RFC 4180 parser produces correct Sector values (eCommerce: 126, Other: 33, etc.) with zero spurious entries. The bug is in the materialization path's CSV parser.
+
+---
+
 ## [2026-07-16T19:30:00-07:00] fix | Full Context Window for Terminal Synthesis (65536 tokens)
 
 - **Activity**: Eliminated terminal synthesis truncation by giving synthesis nodes the full 64K context window for generation.

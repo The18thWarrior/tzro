@@ -222,13 +222,22 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 	if !hasSynthesisLeaf && discoveryNodesCount <= 1 {
 		hasProbeLeaf := false
+		hasAnalyzeLeaf := false
 		for _, node := range sctNodes {
-			if (node.Type == "probe" || node.Type == "analyze") && !isSourceMap[node.ID] {
-				hasProbeLeaf = true
-				break
+			if !isSourceMap[node.ID] {
+				if node.Type == "probe" {
+					hasProbeLeaf = true
+				}
+				if node.Type == "analyze" {
+					hasAnalyzeLeaf = true
+				}
 			}
 		}
-		if hasProbeLeaf {
+		// ADR-0053: Analyze nodes always get a downstream synthesis step.
+		// Their internal probe synthesis is insufficient for data analysis
+		// results — the Recall Node's Map-Reduce strategy is required.
+		// Only regular probe nodes skip when they're sole leaves.
+		if hasProbeLeaf && !hasAnalyzeLeaf {
 			fmt.Printf("[Compiler] Graph has a sole probe leaf. Skipping automatic terminal_synthesis injection.\n")
 			hasSynthesisLeaf = true
 		}

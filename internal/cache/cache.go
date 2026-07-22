@@ -412,6 +412,8 @@ func (s *sqlCacheStore) readFileAsJSON(filePath string) string {
 }
 
 // csvToJSON converts a CSV/TSV file to a JSON array of objects.
+// Uses quote-aware parsing for CSV to handle RFC 4180 quoted fields
+// (e.g., fields containing commas like "McDevitt, John").
 func csvToJSON(filePath string, ext string) string {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -435,7 +437,7 @@ func csvToJSON(filePath string, ext string) string {
 	headerLine = strings.TrimPrefix(headerLine, "\xEF\xBB\xBF")
 	headerLine = strings.TrimPrefix(headerLine, "\uFEFF")
 
-	headers := strings.Split(headerLine, delimiter)
+	headers := splitCSVFields(headerLine, delimiter)
 	for i := range headers {
 		headers[i] = strings.TrimSpace(headers[i])
 	}
@@ -446,7 +448,7 @@ func csvToJSON(filePath string, ext string) string {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		fields := strings.Split(line, delimiter)
+		fields := splitCSVFields(line, delimiter)
 		record := make(map[string]interface{})
 		for i, h := range headers {
 			var val string
@@ -463,6 +465,52 @@ func csvToJSON(filePath string, ext string) string {
 		return fmt.Sprintf("Error: failed to marshal CSV to JSON: %v", err)
 	}
 	return string(resBytes)
+}
+
+// splitCSVFields splits a line by the given delimiter with quote awareness.
+// For comma-delimited files, handles RFC 4180 quoting (double-quoted fields
+// may contain commas and escaped quotes). For other delimiters (TSV), uses
+// simple split since tab-delimited files rarely use quoting.
+func splitCSVFields(line, delimiter string) []string {
+	if delimiter == "," {
+		return parseCSVFields(line)
+	}
+	return strings.Split(line, delimiter)
+}
+
+// parseCSVFields handles RFC 4180 CSV quoting rules: fields enclosed in
+// double quotes may contain commas and escaped quotes ("").
+func parseCSVFields(line string) []string {
+	var fields []string
+	var current strings.Builder
+	inQuotes := false
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if inQuotes {
+			if ch == '"' {
+				if i+1 < len(line) && line[i+1] == '"' {
+					current.WriteByte('"')
+					i++ // skip escaped quote
+				} else {
+					inQuotes = false
+				}
+			} else {
+				current.WriteByte(ch)
+			}
+		} else {
+			if ch == '"' {
+				inQuotes = true
+			} else if ch == ',' {
+				fields = append(fields, current.String())
+				current.Reset()
+			} else {
+				current.WriteByte(ch)
+			}
+		}
+	}
+	fields = append(fields, current.String())
+	return fields
 }
 
 // Private compaction helpers

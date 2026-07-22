@@ -241,6 +241,24 @@ func RunProbe(
 	// lower the minimum step budget when the probe has made substantial progress.
 	var successfulToolCalls int
 
+	// Phase gate for analyze nodes (ADR-0053): synthesis requires at least one
+	// successful sql_cached_data call. introspect_cache is discovery-only and
+	// does not count toward synthesis eligibility.
+	var hasAnalytical bool
+	isAnalyze := isAnalyzeConfig(config.AllowedTools)
+
+	// Analytical Evidence (ADR-0053): structured raw data from successful
+	// sql_cached_data calls, materialized into the task result alongside synthesis.
+	// Captured at tool dispatch time — each item contains the SQL query, capped
+	// result rows (≤5), and total row count.
+	type evidenceItem struct {
+		SQL       string                   `json:"sql"`
+		Rows      []map[string]interface{} `json:"rows"`
+		TotalRows int                      `json:"totalRows"`
+		Capped    bool                     `json:"capped"`
+	}
+	var analyticalEvidence []evidenceItem
+
 	// Output fingerprint tracking: detects diminishing information gain during
 	// exploration. When 3 consecutive successful tool outputs match existing
 	// fingerprints (first 200 chars), the probe lowers minStepBudget to allow
@@ -387,6 +405,11 @@ func RunProbe(
 			// the model has already gathered enough data.
 			adaptiveMinMet := successfulToolCalls >= minStepBudget-2 && successfulToolCalls > 0
 
+			// Phase gate (ADR-0053): analyze nodes must have at least one
+			// successful sql_cached_data call before synthesis is allowed.
+			// introspect_cache is discovery-only and doesn't qualify.
+			phaseGateBlocked := isAnalyze && !hasAnalytical
+
 			if step < minStepBudget && !adaptiveMinMet {
 				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but minimum is %d (successful calls: %d) — continuing exploration\n", probeID, step, minStepBudget, successfulToolCalls)
 				// Treat as a no-op thought step; continue the loop
@@ -394,6 +417,25 @@ func RunProbe(
 				chainStep.NextThought = rawResponse
 				lastToolOutput = fmt.Sprintf("Synthesis signal ignored: minimum step budget is %d, currently at step %d. Continue exploring.", minStepBudget, step)
 				// Persist the thought step before continuing
+				thoughtStep := memory.ThoughtStep{
+					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
+					ProbeID:    probeID,
+					TaskID:     taskID,
+					StepIndex:  step,
+					Thought:    chainStep.NextThought,
+					ToolOutput: lastToolOutput,
+					CreatedAt:  time.Now().Unix(),
+				}
+				if err := memory.DB.AddThoughtStep(thoughtStep); err != nil {
+					fmt.Fprintf(os.Stderr, "[Probe Error] Failed to add thought step: %v\n", err)
+				}
+				continue
+			}
+			if phaseGateBlocked {
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but phase gate blocked — no successful sql_cached_data call yet. Continuing exploration.\n", probeID, step)
+				chainStep.Action = "tool_call"
+				chainStep.NextThought = rawResponse
+				lastToolOutput = "Synthesis signal ignored: you have not queried any data yet. Use sql_cached_data to run analytical queries before synthesizing. Use introspect_cache first if you need to see the schema."
 				thoughtStep := memory.ThoughtStep{
 					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
 					ProbeID:    probeID,
@@ -489,6 +531,35 @@ func RunProbe(
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
+
+						// Phase gate + evidence capture (ADR-0053):
+						// Track analytical calls and capture evidence for analyze nodes.
+						if toolName == "sql_cached_data" {
+							hasAnalytical = true
+							// Capture evidence: extract SQL and result rows
+							if isAnalyze {
+								var sqlArg string
+								if s, ok := args["sql"].(string); ok {
+									sqlArg = s
+								}
+								var resultRows []map[string]interface{}
+								if err := json.Unmarshal([]byte(result), &resultRows); err == nil {
+									const maxEvidenceRows = 5
+									capped := len(resultRows) > maxEvidenceRows
+									totalRows := len(resultRows)
+									if capped {
+										resultRows = resultRows[:maxEvidenceRows]
+									}
+									analyticalEvidence = append(analyticalEvidence, evidenceItem{
+										SQL:       sqlArg,
+										Rows:      resultRows,
+										TotalRows: totalRows,
+										Capped:    capped,
+									})
+									fmt.Fprintf(os.Stderr, "[Probe] Captured analytical evidence: sql=%s, rows=%d (capped=%v)\n", truncate(sqlArg, 80), totalRows, capped)
+								}
+							}
+						}
 
 						// Symbol Extractor hook (ADR-0047): on successful read_file,
 						// parse the source via AST and persist extracted declarations
@@ -640,6 +711,21 @@ func RunProbe(
 		if step%compactEvery == 0 {
 			if err := compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, synthesisEngine); err != nil {
 				fmt.Fprintf(os.Stderr, "[Probe Compactor] Warning: compaction failed: %v\n", err)
+			}
+		}
+	}
+
+	// ADR-0053: Persist analytical evidence to the database before synthesis.
+	// Evidence is stored even if synthesis fails, ensuring the consuming
+	// harness always has access to the raw query results.
+	if len(analyticalEvidence) > 0 {
+		if evidenceJSON, err := json.Marshal(analyticalEvidence); err == nil {
+			// Store on the probe's node — the executor will retrieve it
+			// at task completion and surface it in the MCP output.
+			if err := memory.DB.SetNodeAnalyticalEvidence(taskID, probeID, string(evidenceJSON)); err != nil {
+				fmt.Fprintf(os.Stderr, "[Probe] Warning: failed to persist analytical evidence: %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "[Probe] Persisted %d analytical evidence items for %s\n", len(analyticalEvidence), probeID)
 			}
 		}
 	}
