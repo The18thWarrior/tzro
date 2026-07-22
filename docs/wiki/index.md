@@ -110,6 +110,8 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0049: Data Profiler and Cache Bridge Node](../adr/0049-data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file, path-referenced caching, and two-layer deterministic Cache Bridge Node injection. Narrows ADR-0019 bypass to non-tabular files.
 - [ADR-0051: SQL Query Language for Cached Data](../adr/0051-sql-query-language-for-cached-data.md) - Replaces jq with SQL as the query language for cached tabular data. Ephemeral materialized tables in a separate query database with 4-layer safety sandboxing.
 - [ADR-0052: CompactPreserve Semantics for Analyze Nodes](../adr/0052-compact-preserve-semantics-for-analyze-nodes.md) - Defines CompactPreserve to preserve tool output data verbatim while still LLM-compressing reasoning text. Fixes data loss in analyze node synthesis.
+- [ADR-0053: Analytical Evidence for Data Analysis](../adr/0053-analytical-evidence-for-data-analysis.md) - Structured raw data from successful sql_cached_data calls materialized alongside terminal_synthesis. Primary ground-truth output for data analysis tasks.
+- [ADR-0054: Self-Contained Task Short-Circuit and Task Lifecycle Table](../adr/0054-self-contained-task-short-circuit-and-task-lifecycle-table.md) - Caller-hint `selfContained` flag bypasses planner for tool-less prompts. New `tasks` table tracks task lifecycle and surfaces planning failures. Tactical bridge until ADR-0048 template selection is implemented.
 
 ## Ingested Sources
 

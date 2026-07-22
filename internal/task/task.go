@@ -24,12 +24,13 @@ import (
 
 // ExecuteOptions represents configuration settings for a specific task execution run.
 type ExecuteOptions struct {
-	TaskID       string
-	ParentTaskID string   // ID of the parent task
-	ParentNodeID string   // ID of the parent node
-	IntentType   string   // Optional: e.g., "workflow", "heartbeat", "research"
-	IsForeground bool     // Set to true for user-initiated tasks
-	ActivePaths  []string // File/directory paths from active workspace context
+	TaskID        string
+	ParentTaskID  string   // ID of the parent task
+	ParentNodeID  string   // ID of the parent node
+	IntentType    string   // Optional: e.g., "workflow", "heartbeat", "research"
+	IsForeground  bool     // Set to true for user-initiated tasks
+	ActivePaths   []string // File/directory paths from active workspace context
+	SelfContained bool     // ADR-0054: bypass planner, use Direct Synthesis probe
 }
 
 func init() {
@@ -102,20 +103,32 @@ func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler
 		defer proactivity.DeregisterActiveUserTask(opts.TaskID)
 	}
 
+	// ADR-0054: Persist task lifecycle record at entry
+	_ = memory.DB.CreateTask(opts.TaskID, prompt)
+
 	// 1. LLM planning or Heuristic fallback -> graph
 	graph, err := Plan(ctx, prompt, opts)
 	if err != nil {
+		_ = memory.DB.UpdateTaskStatus(opts.TaskID, "failed", err.Error())
 		return nil, nil, err
 	}
+
+	_ = memory.DB.UpdateTaskStatus(opts.TaskID, "running", "")
 
 	// 2. Kahn topological sorting -> levels
 	levels, err := compiler.CompileAndSort(graph)
 	if err != nil {
+		_ = memory.DB.UpdateTaskStatus(opts.TaskID, "failed", err.Error())
 		return graph, nil, err
 	}
 
 	// 3. Parallel levels execution, state updates, and micro-skill SOP synthesis
 	err = executor.GlobalEngine.ExecuteGraphReactive(ctx, graph)
+	if err != nil {
+		_ = memory.DB.UpdateTaskStatus(opts.TaskID, "failed", err.Error())
+	} else {
+		_ = memory.DB.UpdateTaskStatus(opts.TaskID, "completed", "")
+	}
 	return graph, levels, err
 }
 
@@ -141,6 +154,11 @@ func ExecuteStatic(ctx context.Context, graph *compiler.ExecutionGraph, opts Exe
 // Uses the Dynamic Router to evaluate privacy, complexity, and model mode
 // before dispatching to the appropriate planning backend.
 func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.ExecutionGraph, error) {
+	// ADR-0054: Self-contained prompt bypass — deterministic Direct Synthesis graph
+	if opts.SelfContained {
+		return buildSelfContainedGraph(opts.TaskID, prompt), nil
+	}
+
 	if strings.ToLower(strings.TrimSpace(prompt)) == "generate system dashboard spec" {
 		graph := &compiler.ExecutionGraph{
 			TaskID:    opts.TaskID,
@@ -272,6 +290,34 @@ func Plan(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler.Ex
 	}
 
 	return expanded, nil
+}
+
+// buildSelfContainedGraph returns a deterministic single-node graph for
+// self-contained prompts that don't need external tool calls (ADR-0054).
+// The prompt is used as the Direct Synthesis context, and save_memory is
+// the only allowed tool so results can be persisted to memory.
+func buildSelfContainedGraph(taskID, prompt string) *compiler.ExecutionGraph {
+	return &compiler.ExecutionGraph{
+		TaskID:    taskID,
+		CreatedAt: time.Now().Unix(),
+		MaxCycles: 1,
+		Nodes: []compiler.GraphNode{
+			{
+				ID:           "synthesis",
+				Type:         "probe",
+				Instructions: prompt,
+				AllowedTools: []string{"save_memory"},
+				Status:       "pending",
+				ProbeConfig: &compiler.ProbeConfig{
+					Goal:            prompt,
+					DirectSynthesis: true,
+					AllowedTools:    []string{"save_memory"},
+					StepBudget:      1,
+				},
+			},
+		},
+		Edges: []compiler.GraphEdge{},
+	}
 }
 
 // collectToolNames gathers all registered tool names from MCP daemons and the global tool registry.

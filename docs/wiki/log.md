@@ -4,6 +4,24 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-21T21:05:00-07:00] grill-with-docs | Self-Contained Task Short-Circuit & Task Lifecycle Table (ADR-0054)
+
+- **Activity**: Grill-with-docs session stress-testing 3 proposed fixes for the `tzro_run` silent planning failure. Root cause: daemon fire-and-forget goroutine discards `Execute()` errors, planner can't compile tool-less prompts, and task existence is inferred from `node_states` rows (no task-level record). 8 design questions resolved.
+- **Decisions Made**:
+  1. **Rejected `save_memory` node type** (Q1): Contradicts node type taxonomy — Probe/Analyze/Recall all run Thought Chains against tool outputs. Pure synthesis is a missing task category, not a missing node type. Use a **Direct Synthesis Probe Node** instead.
+  2. **ADR-0048 unimplemented** (Q2): Plan Template Registry was accepted but never built — the planner still generates graphs from scratch. Category classifier + template selection is the strategic fix; tactical bridge needed now.
+  3. **Caller hint over classifier** (Q3): `selfContained: true` flag on `tzro_run` MCP schema and CLI `--self-contained` flag. Zero inference cost, most honest contract. Evaluated classifier call (1s latency) and text heuristic (brittle) as alternatives.
+  4. **Direct Synthesis + cooperative escalation** (Q4): Probe Node with `DirectSynthesis: true` and `save_memory` as allowed tool. Local model does synthesis; Confidence Tier escalates to cloud if quality is insufficient.
+  5. **`tasks` table for lifecycle** (Q5–Q6): New SQLite table `(task_id, status, error, prompt, created_at, completed_at)`. Row inserted at `Execute()` entry, updated on completion/failure. Eliminates derived-status SQL aggregation in `GetRecentTasks`. Rejected synthetic `__planning__` node in `node_states` (contaminates node data) and Durable Notification fallback (wrong semantic layer).
+  6. **StreamBus event + durable record** (Q5): Emit `task_planning_failed` on StreamBus for SSE listener, AND persist failure to `tasks` table for later `tzro_status` discovery.
+  7. **AGENTS.md update** (Q7): Add `selfContained` guidance to Decision Rule — third branch: "No tool calls needed → `tzro_run` with `selfContained: true`".
+  8. **ADR warranted** (Q8): All three criteria met — `tasks` table is a schema migration (hard to reverse), `selfContained` bypass is non-obvious (surprising), and three alternatives were evaluated (real trade-off).
+- **Terms Resolved**: No new CONTEXT.md glossary terms — `selfContained` is a parameter, not a domain concept.
+- **ADR Created**: [ADR-0054: Self-Contained Task Short-Circuit and Task Lifecycle Table](../adr/0054-self-contained-task-short-circuit-and-task-lifecycle-table.md)
+- **Key Finding**: ADR-0048 (Plan Template Selection and Mutation) has not been implemented. The planner is still in "generate from scratch" mode. `selfContained` is the tactical bridge until template selection is built.
+
+---
+
 ## [2026-07-21T19:26:00-07:00] fix | Run 7 Eval: Second Recall Skip + Phase Gate Strengthening
 
 - **Activity**: Evaluated Benchmark Run 7 (cooperative mode, datanal, 5 tasks). Avg quality 1.95 → **3.40** (+74%). Identified and fixed two remaining failure modes.

@@ -1427,7 +1427,7 @@ func TestTzroWorkflow_EmptyNodes(t *testing.T) {
 	args := TzroWorkflowArgs{
 		Nodes: []WorkflowNodeInput{},
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1447,7 +1447,7 @@ func TestTzroWorkflow_DuplicateNodeID(t *testing.T) {
 			{ID: "node1", Type: "action", Action: "web_search", Instructions: "search for dogs"},
 		},
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1466,7 +1466,7 @@ func TestTzroWorkflow_EmptyNodeID(t *testing.T) {
 			{ID: "", Type: "action", Action: "web_search", Instructions: "search"},
 		},
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1488,7 +1488,7 @@ func TestTzroWorkflow_InvalidEdgeSourceRef(t *testing.T) {
 			{SourceID: "phantom", TargetID: "node1"},
 		},
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1510,7 +1510,7 @@ func TestTzroWorkflow_InvalidEdgeTargetRef(t *testing.T) {
 			{SourceID: "node1", TargetID: "phantom"},
 		},
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1529,7 +1529,7 @@ func TestTzroWorkflow_ProbeWithoutConfig(t *testing.T) {
 			{ID: "probe1", Type: "probe", Instructions: "explore the codebase"},
 		},
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1554,7 +1554,7 @@ func TestTzroWorkflow_CycleDetection(t *testing.T) {
 		},
 		DryRun: true,
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1574,7 +1574,7 @@ func TestTzroWorkflow_DryRun_SingleNode(t *testing.T) {
 		},
 		DryRun: true,
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1610,7 +1610,7 @@ func TestTzroWorkflow_DryRun_MultiNodeDAG(t *testing.T) {
 		},
 		DryRun: true,
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1654,7 +1654,7 @@ func TestTzroWorkflow_DryRun_ProbeNode(t *testing.T) {
 		},
 		DryRun: true,
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1691,7 +1691,7 @@ func TestTzroWorkflow_DryRun_MutationBudget(t *testing.T) {
 		MutationBudget: 15,
 		DryRun:         true,
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1715,7 +1715,7 @@ func TestTzroWorkflow_DryRun_DefaultMaxCycles(t *testing.T) {
 		},
 		DryRun: true,
 	}
-	result, _, err := handleTzroWorkflow(nil, nil, args)
+	result, _, err := handleTzroWorkflow(context.TODO(), nil, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

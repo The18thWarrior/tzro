@@ -165,16 +165,24 @@ func RunProbe(
 	// Direct Synthesis mode (Grilling Decision #3): bypass Thought Chain exploration
 	// and run single-shot inference against a pre-compiled context file.
 	if config.DirectSynthesis {
-		if config.ContextFile == "" {
-			return "", fmt.Errorf("DirectSynthesis requires ContextFile to be set in ProbeConfig")
-		}
-		fmt.Fprintf(os.Stderr, "[Probe] Direct Synthesis mode: reading %s\n", config.ContextFile)
-		content, err := os.ReadFile(config.ContextFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read context file for Direct Synthesis: %w", err)
+		var contextContent string
+		if config.ContextFile != "" {
+			// File-based Direct Synthesis (original path)
+			fmt.Fprintf(os.Stderr, "[Probe] Direct Synthesis mode: reading %s\n", config.ContextFile)
+			content, err := os.ReadFile(config.ContextFile)
+			if err != nil {
+				return "", fmt.Errorf("failed to read context file for Direct Synthesis: %w", err)
+			}
+			contextContent = string(content)
+		} else if config.Goal != "" {
+			// ADR-0054: Self-contained Direct Synthesis — prompt IS the context
+			fmt.Fprintf(os.Stderr, "[Probe] Direct Synthesis mode: self-contained (inline context)\n")
+			contextContent = config.Goal
+		} else {
+			return "", fmt.Errorf("DirectSynthesis requires either ContextFile or Goal to be set in ProbeConfig")
 		}
 		systemPrompt := fmt.Sprintf("You are a precise technical writer and systems architect. Your goal: %s\n\nRead the pre-compiled context below and produce a comprehensive, accurate response.", config.Goal)
-		userPrompt := fmt.Sprintf("Pre-compiled context:\n%s", string(content))
+		userPrompt := fmt.Sprintf("Pre-compiled context:\n%s", contextContent)
 		ctxWithLimit := context.WithValue(ctx, inference.MaxTokensKey, 4096)
 		result, err := synthesisEngine.Infer(ctxWithLimit, systemPrompt, userPrompt, "")
 		if err != nil {
