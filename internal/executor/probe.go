@@ -256,6 +256,7 @@ func RunProbe(
 	const minAnalyticalCalls = 2
 	var analyticalCallCount int
 	isAnalyze := isAnalyzeConfig(config.AllowedTools)
+	isExtractionGoal := isAnalyze && goalImpliesExtraction(config.Goal)
 
 	// Analytical Evidence (ADR-0053): structured raw data from successful
 	// sql_cached_data calls, materialized into the task result alongside synthesis.
@@ -364,7 +365,7 @@ func RunProbe(
 		if len(uniqueCacheIds) > 0 {
 			fmt.Fprintf(os.Stderr, "[Probe] Deterministic cacheId extraction for %s: %v\n", probeID, uniqueCacheIds)
 		}
-		systemPrompt = buildAnalyzeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext, uniqueCacheIds)
+		systemPrompt = buildAnalyzeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext, uniqueCacheIds, isExtractionGoal)
 	} else {
 		systemPrompt = buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
 	}
@@ -445,7 +446,15 @@ func RunProbe(
 				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but phase gate blocked — only %d/%d required sql_cached_data calls. Continuing exploration.\n", probeID, step, analyticalCallCount, minAnalyticalCalls)
 				chainStep.Action = "tool_call"
 				chainStep.NextThought = rawResponse
-				lastToolOutput = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Run more sql_cached_data queries with aggregate functions (COUNT, GROUP BY, SUM) before synthesizing. Use introspect_cache first if you need to see the schema.", analyticalCallCount, minAnalyticalCalls)
+				// Adaptive feedback: extraction goals need SELECT with specific columns;
+				// aggregation goals need GROUP BY / COUNT.
+				var phaseGateFeedback string
+				if isExtractionGoal {
+					phaseGateFeedback = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Your goal asks for specific records/fields — run sql_cached_data queries that SELECT the actual columns mentioned in the goal (e.g., SELECT name, email FROM table WHERE condition). Do NOT just run COUNT(*) — retrieve the actual data rows the goal asks for.", analyticalCallCount, minAnalyticalCalls)
+				} else {
+					phaseGateFeedback = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Run more sql_cached_data queries with aggregate functions (COUNT, GROUP BY, SUM) before synthesizing. Use introspect_cache first if you need to see the schema.", analyticalCallCount, minAnalyticalCalls)
+				}
+				lastToolOutput = phaseGateFeedback
 				thoughtStep := memory.ThoughtStep{
 					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
 					ProbeID:    probeID,
@@ -979,11 +988,71 @@ func isAnalyzeConfig(allowedTools []string) bool {
 	return false
 }
 
+// goalImpliesExtraction returns true when the goal text suggests the user
+// wants specific data fields extracted (names, emails, records) rather than
+// computed aggregates (counts, totals, distributions). This biases the
+// Probe's SQL queries toward SELECT with specific columns instead of COUNT(*).
+//
+// Intentionally broad: false positives (treating aggregation as extraction)
+// are low-cost because SELECT queries still work for aggregations.
+func goalImpliesExtraction(goal string) bool {
+	lower := strings.ToLower(goal)
+	// Action verbs that imply returning specific records.
+	// Note: "return the" is intentionally omitted — it's too broad and
+	// matches aggregation goals like "return the top 5 countries".
+	extractionVerbs := []string{
+		"extract ", "list the ", "list all ", "find the ",
+		"show the ", "get the ", "retrieve the ", "look up ", "lookup ",
+		"fetch the ", "pull the ", "display the ",
+		"find and return", "find all ",
+		"return the name", "return the email", "return the record",
+		"return the detail", "return the value", "return the data",
+		"return their ",
+	}
+	for _, verb := range extractionVerbs {
+		if strings.Contains(lower, verb) {
+			return true
+		}
+	}
+	// Field-level nouns that suggest row-level data is needed
+	extractionFields := []string{
+		"name column", "email column", "names and email",
+		"email address", "for each matching", "for each row",
+		"each matching row", "each matching lead",
+		"for each lead", "for every ",
+	}
+	for _, field := range extractionFields {
+		if strings.Contains(lower, field) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractionStrategySection returns an additional prompt section that biases
+// the Probe toward SELECT queries with specific columns when the goal implies
+// field-level data extraction. Returns empty string for aggregation goals.
+func extractionStrategySection(extractionMode bool) string {
+	if !extractionMode {
+		return ""
+	}
+	return `
+## EXTRACTION MODE (your goal asks for specific records/fields)
+Your goal asks you to find and return specific data (names, emails, values, etc.).
+- PRIORITIZE queries that SELECT the actual columns mentioned in the goal
+- Example: SELECT name, email FROM <table> WHERE account_name = 'Target'
+- Do NOT waste queries on COUNT(*) alone — the goal needs actual data rows, not just counts
+- Your FIRST sql_cached_data call should retrieve the data requested by the goal
+- You may run a COUNT query for verification AFTER retrieving the actual data
+`
+}
+
 // buildAnalyzeSystemPrompt constructs the system prompt for an Analyze Node's
 // Thought Chain. Unlike the probe prompt (codebase exploration), this teaches
 // the model to use cache exploration tools for data analysis, filtering, and
 // aggregation. When no cached data is available, it degrades to synthesis.
-func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext string, extractedCacheIds []string) string {
+func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext string, extractedCacheIds []string, isExtractionGoal ...bool) string {
+	extractionMode := len(isExtractionGoal) > 0 && isExtractionGoal[0]
 	toolList := ""
 	for i, t := range allowedTools {
 		if i > 0 {
@@ -1063,6 +1132,7 @@ The query engine is SQLite. Use SQLite-compatible syntax ONLY:
   - Do NOT try to count items incrementally or by hand — let SQL do the counting
   - After grouping, verify: SELECT SUM(cnt) FROM (SELECT COUNT(*) as cnt FROM table GROUP BY col)
     should equal SELECT COUNT(*) FROM table
+` + extractionStrategySection(extractionMode) + `
 
 ## Text Matching and Filtering
 - For exact value lookups, use LIKE with wildcards: WHERE ColName LIKE '%%value%%'

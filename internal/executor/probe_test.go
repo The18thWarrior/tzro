@@ -809,3 +809,148 @@ func TestProbeOutputFingerprintConvergence(t *testing.T) {
 			"Without convergence detection the probe would use all 20 budget steps.", mock.CallCount)
 	}
 }
+
+func TestGoalImpliesExtraction(t *testing.T) {
+	tests := []struct {
+		name     string
+		goal     string
+		expected bool
+	}{
+		// Extraction goals — should return true
+		{
+			name:     "find the names and emails",
+			goal:     "Find the names and email addresses for all Walmart leads",
+			expected: true,
+		},
+		{
+			name:     "list all matching records",
+			goal:     "List all leads where account_name equals 'Walmart'",
+			expected: true,
+		},
+		{
+			name:     "extract specific columns",
+			goal:     "Extract the name and email columns for each matching row",
+			expected: true,
+		},
+		{
+			name:     "return the values",
+			goal:     "Return the name and email for each lead associated with Walmart",
+			expected: true,
+		},
+		{
+			name:     "show the records",
+			goal:     "Show the lead details for accounts matching 'Walmart'",
+			expected: true,
+		},
+		{
+			name:     "get the matching data",
+			goal:     "Get the full lead records where account_name = 'Walmart'",
+			expected: true,
+		},
+		{
+			name:     "look up leads",
+			goal:     "Look up all leads by company name and return their contact info",
+			expected: true,
+		},
+		{
+			name:     "retrieve specific fields",
+			goal:     "Retrieve the name column value and the email column value for each matching row",
+			expected: true,
+		},
+		{
+			name:     "for each matching lead",
+			goal:     "Filter rows where account equals Walmart, for each matching lead return name and email",
+			expected: true,
+		},
+		// Aggregation goals — should return false
+		{
+			name:     "count by country",
+			goal:     "Count the total number of leads for each unique country and return the top 5",
+			expected: false,
+		},
+		{
+			name:     "sector breakdown",
+			goal:     "Group all leads by Sector column and compute the count and percentage for each",
+			expected: false,
+		},
+		{
+			name:     "aggregate by owner",
+			goal:     "Count the total leads per Account_Owner and collect distinct Lead_Source values",
+			expected: false,
+		},
+		{
+			name:     "distribution analysis",
+			goal:     "Analyze the distribution of leads across CDN providers",
+			expected: false,
+		},
+		{
+			name:     "summary statistics",
+			goal:     "Compute summary statistics for the dataset including total records and unique values",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := goalImpliesExtraction(tt.goal)
+			if result != tt.expected {
+				t.Errorf("goalImpliesExtraction(%q) = %v, want %v", tt.goal, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractionStrategySection(t *testing.T) {
+	t.Run("extraction mode adds strategy block", func(t *testing.T) {
+		section := extractionStrategySection(true)
+		if section == "" {
+			t.Fatal("expected non-empty extraction strategy section")
+		}
+		if !strings.Contains(section, "EXTRACTION MODE") {
+			t.Error("expected section to contain 'EXTRACTION MODE' header")
+		}
+		if !strings.Contains(section, "PRIORITIZE queries that SELECT") {
+			t.Error("expected section to contain SELECT guidance")
+		}
+		if !strings.Contains(section, "Do NOT waste queries on COUNT(*)") {
+			t.Error("expected section to warn against COUNT(*)-only queries")
+		}
+	})
+
+	t.Run("aggregation mode returns empty", func(t *testing.T) {
+		section := extractionStrategySection(false)
+		if section != "" {
+			t.Errorf("expected empty section for aggregation mode, got %q", section)
+		}
+	})
+}
+
+func TestBuildAnalyzeSystemPrompt_ExtractionMode(t *testing.T) {
+	goal := "Find the names and emails for all Walmart leads"
+	tools := []string{"introspect_cache", "sql_cached_data"}
+	cacheIds := []string{"cache_1234567890123456"}
+
+	t.Run("extraction mode injects strategy section", func(t *testing.T) {
+		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds, true)
+		if !strings.Contains(prompt, "EXTRACTION MODE") {
+			t.Error("expected extraction mode strategy block in system prompt")
+		}
+		if !strings.Contains(prompt, "PRIORITIZE queries that SELECT") {
+			t.Error("expected SELECT guidance in system prompt")
+		}
+	})
+
+	t.Run("aggregation mode omits strategy section", func(t *testing.T) {
+		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds, false)
+		if strings.Contains(prompt, "EXTRACTION MODE") {
+			t.Error("expected no extraction mode block in aggregation system prompt")
+		}
+	})
+
+	t.Run("no extraction flag defaults to aggregation", func(t *testing.T) {
+		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds)
+		if strings.Contains(prompt, "EXTRACTION MODE") {
+			t.Error("expected no extraction mode block when flag omitted")
+		}
+	})
+}
