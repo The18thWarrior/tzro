@@ -132,8 +132,12 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
-				if !hasPlannedSynthesisChild && discoveryNodesCount > 1 {
+				if !hasPlannedSynthesisChild && (discoveryNodesCount > 1 || node.Type == "analyze") {
 					// Inject Recall Node to align discovery findings (ADR-0038)
+					// ADR-0053: Analyze nodes ALWAYS get a Recall Node, even as sole
+					// discovery nodes. Their internal probe synthesis is insufficient
+					// for data analysis results — the Recall Node's Map-Reduce
+					// strategy and downstream terminal_synthesis are required.
 					recallID := node.ID + "_recall"
 					recallThreshold := 0.9
 					if isBenchmark {

@@ -730,10 +730,11 @@ func TestRunProbe_StepCallsSetsMaxTokensKey_SynthesisDoesNot(t *testing.T) {
 		}
 	}
 
-	// Synthesis calls (Infer) should NOT have MaxTokensKey
+	// Synthesis calls (Infer) should also have MaxTokensKey set (4096 for synthesis).
+	// This was added intentionally to prevent content-heavy synthesis truncation.
 	for i, present := range mock.SynthMaxTokensPresent {
-		if present {
-			t.Errorf("synthesis call %d: MaxTokensKey should NOT be in context, but it was present", i)
+		if !present {
+			t.Errorf("synthesis call %d: expected MaxTokensKey in synthesis context (set to 4096), but it was absent", i)
 		}
 	}
 }

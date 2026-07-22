@@ -241,10 +241,12 @@ func RunProbe(
 	// lower the minimum step budget when the probe has made substantial progress.
 	var successfulToolCalls int
 
-	// Phase gate for analyze nodes (ADR-0053): synthesis requires at least one
-	// successful sql_cached_data call. introspect_cache is discovery-only and
-	// does not count toward synthesis eligibility.
-	var hasAnalytical bool
+	// Phase gate for analyze nodes (ADR-0053): synthesis requires at least
+	// minAnalyticalCalls successful sql_cached_data calls. A single sampling
+	// query (e.g., SELECT * LIMIT 10) is insufficient — the probe must also
+	// run aggregate/analytical queries before synthesis is allowed.
+	const minAnalyticalCalls = 2
+	var analyticalCallCount int
 	isAnalyze := isAnalyzeConfig(config.AllowedTools)
 
 	// Analytical Evidence (ADR-0053): structured raw data from successful
@@ -405,10 +407,10 @@ func RunProbe(
 			// the model has already gathered enough data.
 			adaptiveMinMet := successfulToolCalls >= minStepBudget-2 && successfulToolCalls > 0
 
-			// Phase gate (ADR-0053): analyze nodes must have at least one
-			// successful sql_cached_data call before synthesis is allowed.
-			// introspect_cache is discovery-only and doesn't qualify.
-			phaseGateBlocked := isAnalyze && !hasAnalytical
+			// Phase gate (ADR-0053): analyze nodes must have at least
+			// minAnalyticalCalls successful sql_cached_data calls before
+			// synthesis is allowed. A single sampling query is insufficient.
+			phaseGateBlocked := isAnalyze && analyticalCallCount < minAnalyticalCalls
 
 			if step < minStepBudget && !adaptiveMinMet {
 				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but minimum is %d (successful calls: %d) — continuing exploration\n", probeID, step, minStepBudget, successfulToolCalls)
@@ -432,10 +434,10 @@ func RunProbe(
 				continue
 			}
 			if phaseGateBlocked {
-				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but phase gate blocked — no successful sql_cached_data call yet. Continuing exploration.\n", probeID, step)
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but phase gate blocked — only %d/%d required sql_cached_data calls. Continuing exploration.\n", probeID, step, analyticalCallCount, minAnalyticalCalls)
 				chainStep.Action = "tool_call"
 				chainStep.NextThought = rawResponse
-				lastToolOutput = "Synthesis signal ignored: you have not queried any data yet. Use sql_cached_data to run analytical queries before synthesizing. Use introspect_cache first if you need to see the schema."
+				lastToolOutput = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Run more sql_cached_data queries with aggregate functions (COUNT, GROUP BY, SUM) before synthesizing. Use introspect_cache first if you need to see the schema.", analyticalCallCount, minAnalyticalCalls)
 				thoughtStep := memory.ThoughtStep{
 					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
 					ProbeID:    probeID,
@@ -535,7 +537,7 @@ func RunProbe(
 						// Phase gate + evidence capture (ADR-0053):
 						// Track analytical calls and capture evidence for analyze nodes.
 						if toolName == "sql_cached_data" {
-							hasAnalytical = true
+							analyticalCallCount++
 							// Capture evidence: extract SQL and result rows
 							if isAnalyze {
 								var sqlArg string

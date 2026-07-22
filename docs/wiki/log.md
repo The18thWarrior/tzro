@@ -4,6 +4,23 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-21T19:26:00-07:00] fix | Run 7 Eval: Second Recall Skip + Phase Gate Strengthening
+
+- **Activity**: Evaluated Benchmark Run 7 (cooperative mode, datanal, 5 tasks). Avg quality 1.95 → **3.40** (+74%). Identified and fixed two remaining failure modes.
+- **Run 7 Results**: T1=5.00 ✅, T2=3.50 🟡, T3=4.25 🟢, T4=2.75 🟡, T5=1.50 🔴
+- **Fix Effectiveness from Run 6→7**:
+  - CSV parser fix: T3 2.00→4.25 (sector column misalignment resolved)
+  - Phase gate: Working (blocked premature synthesis in T5 logs)
+  - Evidence capture: Working (persisted 1 evidence item in T5)
+  - Recall Node sole-leaf skip: Working for terminal_synthesis path, but **second skip rule** bypassed it
+- **P0 Fix — Second Recall Skip Rule**: `sct_compiler.go:135` had `discoveryNodesCount > 1` gate that skipped Recall injection for sole analyze nodes. Changed to `(discoveryNodesCount > 1 || node.Type == "analyze")`. Analyze nodes now always get Recall regardless of discovery count.
+- **P1 Fix — Phase Gate Strengthened**: Changed from `hasAnalytical bool` (any 1 call) to `analyticalCallCount int` requiring ≥2 `sql_cached_data` calls. In Run 7, T5 ran only a `SELECT * LIMIT 10` sampling query, satisfied the boolean gate, then synthesized without running the aggregate GROUP BY query.
+- **Files Changed**:
+  - [MODIFY] `internal/compiler/sct_compiler.go` — exempt analyze from discoveryNodesCount skip
+  - [MODIFY] `internal/executor/probe.go` — analyticalCallCount ≥ 2 gate, improved redirect message
+
+---
+
 ## [2026-07-21T17:52:00-07:00] design | Analytical Evidence & Analyze Node Hardening (Benchmark Run 6)
 
 - **Activity**: Grill-with-docs session analyzing 4 failure modes from benchmark Run 6 (cooperative mode, datanal category, 5 tasks, avg quality 1.95/5).
