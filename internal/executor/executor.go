@@ -1332,7 +1332,10 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			})
 		}
 
-		systemPrompt := "You are the Local Tactician Node Executor. Summarize and compile all prior action outputs into a final cohesive response."
+		systemPrompt := "You are the Local Tactician Node Executor. " +
+			"Compile all prior action outputs and query results into a final cohesive response. " +
+			"The accumulated context below contains data retrieved by prior nodes — use it directly. " +
+			"If query results are provided, include the actual data values in your response."
 		accumulatedCtx := buildAccumulatedContext(taskID, graph, "synthesis")
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
@@ -1821,6 +1824,13 @@ func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}
 		// Parse "nodeId.output.propertyName" format
 		parts := strings.SplitN(bindingPath, ".", 3) // ["nodeId", "output", "propertyName"]
 		if len(parts) < 3 || parts[1] != "output" {
+			// Suppress warning for literal values (file paths, URLs, etc.)
+			// that the planner sometimes places in DynamicBindings instead of
+			// a proper nodeId.output.propertyName reference. Use them directly.
+			if strings.HasPrefix(bindingPath, "/") || strings.HasPrefix(bindingPath, "http") {
+				resolved[paramName] = ResolvedBinding{Value: bindingPath, Tier: "literal"}
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] WARNING: Invalid binding format for '%s': %q (expected 'nodeId.output.propertyName')\n", paramName, bindingPath)
 			continue
 		}

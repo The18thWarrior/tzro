@@ -71,9 +71,10 @@ func assessConfidenceTier(ctx context.Context, messages []inference.InferenceMes
 	assessMsgs = append(assessMsgs, inference.InferenceMessage{
 		Role: "user",
 		Content: "Before extracting parameters, assess your capability: " +
-			"Can you extract ALL required parameters from the accumulated context " +
-			"for the given schema? Consider whether you have sufficient information " +
-			"to fill every required field accurately. " +
+			"Can you extract ALL REQUIRED parameters from the accumulated context " +
+			"for the given schema? The schema's \"required\" array lists which fields " +
+			"are mandatory — fields NOT in \"required\" are OPTIONAL and can be omitted. " +
+			"Only answer \"insufficient\" if a REQUIRED field cannot be determined. " +
 			"Return your assessment as JSON matching the confidence schema.",
 	})
 

@@ -306,6 +306,54 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		sb.WriteString("\n")
 	}
 
+	// Fix (ADR-benchmark-data-4): Second-hop data bridge for synthesis callers.
+	// The probe's internal synthesis (runSynthesisPass) receives query results
+	// via Fix 1, but the probe's 4B local model summarizes away the actual data
+	// rows when producing its synthesis output. The terminal_synthesis node then
+	// only sees the probe's text summary ("I found N leads") not the raw data.
+	//
+	// This bridge extracts sql_cached_data and introspect_cache tool outputs
+	// directly from upstream probe thought steps and injects them as a
+	// compaction-exempt section — same pattern as Fix 1 but at the accumulated
+	// context level. This ensures terminal_synthesis has actual query results
+	// regardless of what the probe's synthesis captured.
+	if isSynthesis {
+		const maxQueryResultsInAccCtx = 16384
+		var queryBuf strings.Builder
+		for _, state := range states {
+			if state.Status != "completed" {
+				continue
+			}
+			ntype := nodeTypeMap[state.NodeID]
+			if ntype != "probe" && ntype != "analyze" {
+				continue
+			}
+			probeID := taskID + "_" + state.NodeID
+			steps, err := memory.DB.GetThoughtSteps(probeID)
+			if err != nil || len(steps) == 0 {
+				continue
+			}
+			for _, s := range steps {
+				if (s.ToolName == "sql_cached_data" || s.ToolName == "introspect_cache") && s.ToolOutput != "" {
+					if strings.HasPrefix(s.ToolOutput, "Error:") || strings.HasPrefix(s.ToolOutput, "error:") {
+						continue
+					}
+					queryBuf.WriteString(fmt.Sprintf("### %s Step %d: %s\nArgs: %s\nResult:\n%s\n\n", state.NodeID, s.StepIndex, s.ToolName, s.ToolArgs, s.ToolOutput))
+				}
+			}
+		}
+		if queryBuf.Len() > 0 {
+			qr := queryBuf.String()
+			if len(qr) > maxQueryResultsInAccCtx {
+				qr = qr[:maxQueryResultsInAccCtx] + "\n[... query results truncated ...]\n"
+			}
+			sb.WriteString("--- Probe Query Results (compaction-exempt, from thought steps) ---\n")
+			sb.WriteString(qr)
+			sb.WriteString("\n")
+			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Injected %d chars of probe query results into synthesis context\n", len(qr))
+		}
+	}
+
 	result := sb.String()
 	fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Built %d chars of structured context from %d completed nodes (of %d total, %d skipped, synthesis=%v)\n",
 		len(result), len(completed), len(completed)+skipped, skipped, isSynthesis)

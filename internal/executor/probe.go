@@ -319,7 +319,24 @@ func RunProbe(
 	// prompt; probe nodes get the codebase exploration prompt.
 	var systemPrompt string
 	if isAnalyzeConfig(config.AllowedTools) {
-		systemPrompt = buildAnalyzeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
+		// Fix 9: Deterministic cacheId extraction — extract real cacheIds from
+		// upstream context using regex so the model doesn't have to find them
+		// in the text blob (which causes fabrication like 'probe_leads_csv').
+		cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+		extractedCacheIds := cacheIdRe.FindAllString(config.UpstreamContext, -1)
+		// Deduplicate
+		seen := make(map[string]bool)
+		var uniqueCacheIds []string
+		for _, id := range extractedCacheIds {
+			if !seen[id] {
+				seen[id] = true
+				uniqueCacheIds = append(uniqueCacheIds, id)
+			}
+		}
+		if len(uniqueCacheIds) > 0 {
+			fmt.Fprintf(os.Stderr, "[Probe] Deterministic cacheId extraction for %s: %v\n", probeID, uniqueCacheIds)
+		}
+		systemPrompt = buildAnalyzeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext, uniqueCacheIds)
 	} else {
 		systemPrompt = buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
 	}
@@ -653,6 +670,32 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine 
 		contextStr += "## Source Material (pre-loaded)\n" + preloadedContent + "\n\n"
 	}
 
+	// Fix (ADR-benchmark-data-3): Extract sql_cached_data and introspect_cache
+	// tool outputs from ALL thought steps and inject them directly into synthesis
+	// context. These results contain the actual data rows that the compaction
+	// pipeline strips during Probe Compactor passes (the 1B router treats tabular
+	// data as verbose content and drops it). Without this bypass, synthesis only
+	// sees "queried cache X with SQL Y" but not the actual query results.
+	const maxQueryResultsInSynthesis = 12288
+	var queryResultsBuf strings.Builder
+	for _, s := range steps {
+		if (s.ToolName == "sql_cached_data" || s.ToolName == "introspect_cache") && s.ToolOutput != "" {
+			// Skip error outputs
+			if strings.HasPrefix(s.ToolOutput, "Error:") || strings.HasPrefix(s.ToolOutput, "error:") {
+				continue
+			}
+			queryResultsBuf.WriteString(fmt.Sprintf("### Step %d: %s\nArgs: %s\nResult:\n%s\n\n", s.StepIndex, s.ToolName, s.ToolArgs, s.ToolOutput))
+		}
+	}
+	if queryResultsBuf.Len() > 0 {
+		qr := queryResultsBuf.String()
+		if len(qr) > maxQueryResultsInSynthesis {
+			qr = qr[:maxQueryResultsInSynthesis] + "\n[... query results truncated ...]\n"
+		}
+		contextStr += "## Query Results (compaction-exempt)\n" + qr + "\n"
+		fmt.Fprintf(os.Stderr, "[Probe] Injected %d chars of sql_cached_data/introspect_cache results into synthesis context\n", len(qr))
+	}
+
 	if summary.Summary != "" {
 		contextStr += "Summary: " + summary.Summary + "\n"
 	}
@@ -844,7 +887,7 @@ func isAnalyzeConfig(allowedTools []string) bool {
 // Thought Chain. Unlike the probe prompt (codebase exploration), this teaches
 // the model to use cache exploration tools for data analysis, filtering, and
 // aggregation. When no cached data is available, it degrades to synthesis.
-func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext string) string {
+func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext string, extractedCacheIds []string) string {
 	toolList := ""
 	for i, t := range allowedTools {
 		if i > 0 {
@@ -862,6 +905,19 @@ func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext st
 %s
 
 `, taskContext)
+	}
+	// Build the available cacheId section from deterministically extracted IDs
+	var cacheIdSection string
+	if len(extractedCacheIds) > 0 {
+		cacheIdSection = "## AVAILABLE CACHE IDS (use these EXACT strings — do NOT invent your own)\n"
+		for _, id := range extractedCacheIds {
+			cacheIdSection += fmt.Sprintf("- **%s** — use this as both the cacheId argument and the SQL table name\n", id)
+			cacheIdSection += fmt.Sprintf("  Example: introspect_cache({\"cacheId\": \"%s\"})\n", id)
+			cacheIdSection += fmt.Sprintf("  Example: sql_cached_data({\"cacheId\": \"%s\", \"sql\": \"SELECT * FROM %s LIMIT 5\"})\n", id, id)
+		}
+		cacheIdSection += "\nIMPORTANT: Use ONLY the cacheIds listed above. Do NOT fabricate or guess cacheIds.\n"
+	} else {
+		cacheIdSection = "## CACHE ID DISCOVERY\nNo cacheIds were pre-extracted from upstream context. Check the upstream context for cacheId values, or use introspect_cache with any cacheId you find.\n"
 	}
 
 	return fmt.Sprintf(`You are an Analyze Node — an autonomous data analysis agent.
@@ -883,6 +939,7 @@ You analyze data from upstream nodes using a systematic approach:
    - The table name is the cacheId itself
 3. If no cacheId is available, synthesize your analysis from the raw text data in the accumulated context.
 
+%s
 ## CRITICAL: cacheId Handling
 The cacheId is an OPAQUE STRING identifier like 'cache_1784607195509971000'.
 - You MUST copy the cacheId EXACTLY as it appears — do NOT round, truncate, or modify the digits
@@ -906,6 +963,10 @@ The query engine is SQLite. Use SQLite-compatible syntax ONLY:
 - Use TRIM() to clean whitespace: SELECT TRIM(ColName) as ColName
 - When grouping text data, first run SELECT DISTINCT ColName to see actual values
 - Validate your results: if a GROUP BY total doesn't match the overall COUNT(*), investigate why
+- CRITICAL: Run aggregation queries (GROUP BY with COUNT) as a SINGLE complete SQL query
+  - Do NOT try to count items incrementally or by hand — let SQL do the counting
+  - After grouping, verify: SELECT SUM(cnt) FROM (SELECT COUNT(*) as cnt FROM table GROUP BY col)
+    should equal SELECT COUNT(*) FROM table
 
 ## Text Matching and Filtering
 - For exact value lookups, use LIKE with wildcards: WHERE ColName LIKE '%%value%%'
@@ -919,7 +980,7 @@ If you have gathered enough information and are ready to synthesize a final answ
 IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
 
 Be systematic. Start by understanding the data schema, then build your analysis incrementally.
-If a SQL query returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas)
+If a SQL query returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas, cacheIdSection)
 }
 
 // buildToolSchemaReference generates a compact reference block describing each tool's
@@ -1024,12 +1085,18 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID, upstreamCont
 		Content: systemPrompt,
 	})
 
-	// Segment 1.5: Upstream DAG context — outputs from completed upstream nodes.
-	// This is STABLE across all steps (never changes during the probe loop).
-	// For analyze nodes, this contains the cacheId and data profile from the
-	// upstream read_file execution. For probe nodes downstream of other nodes,
-	// this contains their synthesis outputs.
+	// Fix (ADR-benchmark-data-3): Cap upstream context to prevent overwhelming
+	// the local model's context window. When a read_file node returns a 42KB+
+	// JSON file, the entire dataProfile gets injected here without any limit,
+	// causing validator stalls and probe performance collapse. Use content-aware
+	// compaction to preserve structural metadata (cacheId, column names) while
+	// trimming raw data rows.
 	if upstreamContext != "" {
+		const maxUpstreamContextChars = 24576 // ~6K tokens
+		if len(upstreamContext) > maxUpstreamContextChars {
+			upstreamContext = compactor.CompactContent(upstreamContext, maxUpstreamContextChars)
+			fmt.Fprintf(os.Stderr, "[Probe] Capped upstream context from %d to %d chars for probe %s\n", len(upstreamContext), maxUpstreamContextChars, probeID)
+		}
 		msgs = append(msgs, inference.InferenceMessage{
 			Role:    "user",
 			Content: "## Upstream Node Outputs (from completed DAG steps)\n" + upstreamContext,
@@ -1123,15 +1190,26 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 		return nil
 	}
 
-	// Convert to compactor steps
+	// Convert to compactor steps.
+	// Fix (ADR-benchmark-data-3): Steps whose ToolName is sql_cached_data or
+	// introspect_cache have their ToolOutput preserved verbatim through
+	// compaction. These outputs contain actual query result rows that the
+	// 1B router model would otherwise strip as "verbose tabular content",
+	// causing downstream synthesis to lose all data.
+	hasCacheResults := false
 	compactorSteps := make([]compactor.Step, len(windowSteps))
 	for i, s := range windowSteps {
+		toolOutput := s.ToolOutput
+		isCacheTool := s.ToolName == "sql_cached_data" || s.ToolName == "introspect_cache"
+		if isCacheTool && toolOutput != "" {
+			hasCacheResults = true
+		}
 		compactorSteps[i] = compactor.Step{
 			Index:      s.StepIndex,
 			Thought:    s.Thought,
 			ToolName:   s.ToolName,
 			ToolArgs:   s.ToolArgs,
-			ToolOutput: s.ToolOutput,
+			ToolOutput: toolOutput,
 		}
 	}
 
@@ -1141,7 +1219,12 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 	// Budget: reserve ~3K tokens for system prompt + recent steps + user prompt.
 	// Compaction summary gets ~13K tokens of the router's 16K window ≈ ~52K chars.
 	const compactionBudgetChars = 52000
-	preserveOutput := compactionLevel == compiler.CompactPreserve
+	// Preserve tool output when explicitly set by compaction level OR when
+	// the window contains cache query results that must survive for synthesis.
+	preserveOutput := compactionLevel == compiler.CompactPreserve || hasCacheResults
+	if hasCacheResults && compactionLevel != compiler.CompactPreserve {
+		fmt.Fprintf(os.Stderr, "[Probe Compactor] Cache tool results detected in window — preserving tool outputs through compaction\n")
+	}
 	result, err := compactor.CompactSteps(ctx, compactorSteps, "", compactionBudgetChars, compactEngine, preserveOutput)
 
 	// Fix 4: Post-compaction size validation — detect inflation and warn.

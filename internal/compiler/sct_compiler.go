@@ -223,7 +223,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	if !hasSynthesisLeaf && discoveryNodesCount <= 1 {
 		hasProbeLeaf := false
 		for _, node := range sctNodes {
-			if node.Type == "probe" && !isSourceMap[node.ID] {
+			if (node.Type == "probe" || node.Type == "analyze") && !isSourceMap[node.ID] {
 				hasProbeLeaf = true
 				break
 			}
@@ -250,7 +250,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 		// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 		for _, node := range sctNodes {
-			if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
+			if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "analyze" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
 				sctEdges = append(sctEdges, GraphEdge{
 					SourceID: node.ID,
 					TargetID: synthID,
