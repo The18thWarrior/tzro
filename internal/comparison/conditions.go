@@ -313,6 +313,9 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			relOutputDir = testOutputDir
 		}
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: Read and explore source code from the project root directory (not from the output directory). Write all output files to this isolated output directory: %s", taskPrompt, relOutputDir)
+	} else if t.Category == CategoryDatanal {
+		// For datanal tasks, the CSV file is at helpers/LeadSuccess.csv relative to the project root.
+		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: The data file is located in the project directory at: %s/helpers/LeadSuccess.csv", taskPrompt, projectRoot)
 	}
 
 	startTime := time.Now()
@@ -377,7 +380,7 @@ func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) str
 	var lastOutput string
 	for i := len(graph.Nodes) - 1; i >= 0; i-- {
 		node := graph.Nodes[i]
-		if node.Type == "synthesis" || node.Type == "recall" || node.Type == "probe" || node.ID == "terminal_synthesis" {
+		if node.Type == "synthesis" || node.Type == "recall" || node.Type == "probe" || node.Type == "analyze" || node.ID == "terminal_synthesis" {
 			if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
 				if state.RawOutput != "" {
 					lastOutput = state.RawOutput
@@ -1011,4 +1014,3 @@ func waitForSidecarHealth(label string, model *inference.LocalModelManager) {
 	}
 	fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar health check timed out on port %d\n", label, activePort)
 }
-

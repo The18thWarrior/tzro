@@ -437,3 +437,87 @@ func TestAccumulatedContext_SynthesisUntruncatedValidatorRecall(t *testing.T) {
 		t.Error("non-synthesis caller should truncate large validator output")
 	}
 }
+
+// T7: Data-profile exec nodes (containing cacheId + dataProfile) are exempted from compaction.
+// This is the root cause fix for datanal benchmark failures where compaction destroyed
+// the cacheId envelope before analyze Probe nodes could use sql_cached_data.
+func TestAccumulatedContext_DataProfileExemptFromCompaction(t *testing.T) {
+	cleanup := setupContextTestDB(t)
+	defer cleanup()
+
+	taskID := "task_dataprofile_exempt_test"
+
+	// Simulate a data-profile exec node output (~4300 chars, typical for CSV profiler)
+	dataProfileOutput := `{"dataProfile":{"columns":["name","email","account_name","Country","Sector","Lead_Source","Accout_Owner","Target_Account?","Primary_Incumbent_CDN"],"rowCount":252,"sampleRows":[{"name":"John Doe","email":"jdoe@example.com","account_name":"Acme Corp","Country":"USA"}]},"path":"/Users/test/helpers/LeadSuccess.csv","cacheId":"cache_1784603777374136000"}` + strings.Repeat(" ", 4000)
+	regularOutput := strings.Repeat("z", 10000)
+
+	// Two nodes: one data-profile (should be untruncated), one regular (should be compacted)
+	if err := memory.DB.SetNodeState(taskID, "csv_exec", "completed", "output csv_exec"); err != nil {
+		t.Fatalf("failed to set node state: %v", err)
+	}
+	if err := memory.DB.SetNodeRawOutput(taskID, "csv_exec", dataProfileOutput); err != nil {
+		t.Fatalf("failed to set raw output: %v", err)
+	}
+	if err := memory.DB.SetNodeState(taskID, "regular_node", "completed", "output regular_node"); err != nil {
+		t.Fatalf("failed to set node state: %v", err)
+	}
+	if err := memory.DB.SetNodeRawOutput(taskID, "regular_node", regularOutput); err != nil {
+		t.Fatalf("failed to set raw output: %v", err)
+	}
+
+	graph := &compiler.ExecutionGraph{
+		Nodes: []compiler.GraphNode{
+			{ID: "csv_exec", Type: "action", Action: "read_file"},
+			{ID: "regular_node", Type: "action", Action: "tool_other"},
+		},
+	}
+
+	result := buildAccumulatedContext(taskID, graph, "action")
+
+	// The full data-profile output should be preserved (including cacheId)
+	if !strings.Contains(result, "cache_1784603777374136000") {
+		t.Error("data-profile exec node should have cacheId preserved (not compacted)")
+	}
+	if !strings.Contains(result, "dataProfile") {
+		t.Error("data-profile exec node should have dataProfile marker preserved")
+	}
+
+	// The regular node should have been compacted (10K > budget)
+	if strings.Contains(result, regularOutput) {
+		t.Error("regular node should have been compacted, but found full 10K content")
+	}
+}
+
+// T8: Pre-extracted cacheIds appear as a trailing metadata block.
+// This ensures enrichCacheBridgeContext can always find the cacheId even if
+// compaction were to strip it from a node body (belt-and-suspenders with T7).
+func TestAccumulatedContext_PreExtractedCacheIds(t *testing.T) {
+	cleanup := setupContextTestDB(t)
+	defer cleanup()
+
+	taskID := "task_cache_id_extract_test"
+
+	outputWithCache := `Result from tool: {"cacheId": "cache_1784603777374136000", "dataProfile": {"columns": ["a", "b"]}}`
+	if err := memory.DB.SetNodeState(taskID, "node_with_cache", "completed", "output node_with_cache"); err != nil {
+		t.Fatalf("failed to set node state: %v", err)
+	}
+	if err := memory.DB.SetNodeRawOutput(taskID, "node_with_cache", outputWithCache); err != nil {
+		t.Fatalf("failed to set raw output: %v", err)
+	}
+
+	graph := &compiler.ExecutionGraph{
+		Nodes: []compiler.GraphNode{
+			{ID: "node_with_cache", Type: "action", Action: "read_file"},
+		},
+	}
+
+	result := buildAccumulatedContext(taskID, graph, "action")
+
+	// Should contain the pre-extracted cacheId block
+	if !strings.Contains(result, "Pre-extracted Cache IDs") {
+		t.Error("expected pre-extracted cache ID metadata block in output")
+	}
+	if !strings.Contains(result, "cacheId: cache_1784603777374136000") {
+		t.Error("expected extracted cacheId 'cache_1784603777374136000' in metadata block")
+	}
+}

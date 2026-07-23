@@ -3,6 +3,7 @@ package routing
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"tzro/internal/compiler"
 	"tzro/internal/telemetry"
@@ -43,13 +44,13 @@ func ValidateGraph(graph *compiler.ExecutionGraph, toolExists func(string) bool)
 }
 
 // findInvalidTools returns a list of {nodeID, toolName} pairs for nodes that
-// reference tools not in the registered tool set. Probe, synthesis, and
+// reference tools not in the registered tool set. Probe, analyze, synthesis, and
 // deterministic nodes are exempt (they don't directly call external tools).
 func findInvalidTools(graph *compiler.ExecutionGraph, toolExists func(string) bool) []InvalidTool {
 	var invalid []InvalidTool
 	for _, node := range graph.Nodes {
 		switch node.Type {
-		case "probe", "synthesis", "deterministic":
+		case "probe", "analyze", "synthesis", "deterministic":
 			continue
 		}
 		if node.Action != "" && !toolExists(node.Action) {
@@ -145,27 +146,50 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 		}
 	}
 
-	// Build the replacement probe node
-	probeGoal := "Explore and complete the following objectives:\n"
+	// Build the replacement node. Detect data analysis tasks from the removed
+	// tool names and instructions to choose between probe (exploration) and
+	// analyze (data analysis) repair nodes.
+	isDataAnalysis := isDataAnalysisRepair(invalidTools, removedInstructions)
+
+	var repairGoal string
+	if isDataAnalysis {
+		repairGoal = "Analyze the data to answer the following:\n"
+	} else {
+		repairGoal = "Explore and complete the following objectives:\n"
+	}
 	for i, instr := range removedInstructions {
-		probeGoal += fmt.Sprintf("%d. %s\n", i+1, instr)
+		repairGoal += fmt.Sprintf("%d. %s\n", i+1, instr)
 	}
 
-	probeID := "repair_probe"
-	probeNode := compiler.GraphNode{
-		ID:           probeID,
-		Type:         "probe",
-		Action:       "",
-		Instructions: probeGoal,
-		AllowedTools: []string{"read_file", "list_dir", "search_files"},
-		Status:       "pending",
-		ProbeConfig: &compiler.ProbeConfig{
-			Goal:            probeGoal,
-			AllowedTools:    []string{"read_file", "list_dir", "search_files"},
-			StepBudget:      20,
-			CompactEvery:    3,
-			CompactionLevel: compiler.CompactPreserve,
-		},
+	repairID := "repair_probe"
+	var repairNode compiler.GraphNode
+
+	if isDataAnalysis {
+		// Analyze node: cache tools are auto-provisioned by the SCT compiler.
+		// We set the type and instructions; the compiler handles the rest.
+		repairNode = compiler.GraphNode{
+			ID:           repairID,
+			Type:         "analyze",
+			Action:       "",
+			Instructions: repairGoal,
+			Status:       "pending",
+		}
+	} else {
+		repairNode = compiler.GraphNode{
+			ID:           repairID,
+			Type:         "probe",
+			Action:       "",
+			Instructions: repairGoal,
+			AllowedTools: []string{"read_file", "list_dir", "search_files"},
+			Status:       "pending",
+			ProbeConfig: &compiler.ProbeConfig{
+				Goal:            repairGoal,
+				AllowedTools:    []string{"read_file", "list_dir", "search_files"},
+				StepBudget:      20,
+				CompactEvery:    3,
+				CompactionLevel: compiler.CompactPreserve,
+			},
+		}
 	}
 
 	// Collect upstream/downstream dependencies of removed nodes
@@ -188,7 +212,7 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 			newNodes = append(newNodes, node)
 		}
 	}
-	newNodes = append(newNodes, probeNode)
+	newNodes = append(newNodes, repairNode)
 
 	// Build new edges: remove edges involving removed nodes, add probe wiring
 	var newEdges []compiler.GraphEdge
@@ -198,18 +222,18 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 		}
 	}
 
-	// Wire upstream → probe
+	// Wire upstream → repair node
 	for nodeID := range upstreamOfRemoved {
 		newEdges = append(newEdges, compiler.GraphEdge{
 			SourceID: nodeID,
-			TargetID: probeID,
+			TargetID: repairID,
 		})
 	}
 
-	// Wire probe → downstream
+	// Wire repair node → downstream
 	for nodeID := range downstreamOfRemoved {
 		newEdges = append(newEdges, compiler.GraphEdge{
-			SourceID: probeID,
+			SourceID: repairID,
 			TargetID: nodeID,
 		})
 	}
@@ -223,4 +247,34 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 		CreatedAt:      graph.CreatedAt,
 		MutationBudget: graph.MutationBudget,
 	}
+}
+
+// isDataAnalysisRepair detects whether the removed invalid tools suggest a data
+// analysis task. Checks both the hallucinated tool names (e.g., postgres_insert,
+// sql_query, db_query) and the instructions for data analysis keywords.
+func isDataAnalysisRepair(invalidTools []InvalidTool, removedInstructions []string) bool {
+	// Data-oriented hallucinated tool names
+	dataTools := map[string]bool{
+		"postgres_insert": true, "postgres_query": true,
+		"sql_query": true, "db_query": true, "local_db_query": true,
+		"database_query": true, "csv_query": true, "data_query": true,
+		"aggregate": true, "pivot_table": true,
+	}
+	for _, it := range invalidTools {
+		if dataTools[it.ToolName] {
+			return true
+		}
+	}
+
+	// Check instructions for data analysis keywords
+	for _, instr := range removedInstructions {
+		lower := strings.ToLower(instr)
+		for _, keyword := range []string{"count", "group", "aggregate", "average", "sum", "filter", "sort", "rank", "top ", "breakdown", "csv", "tabular"} {
+			if strings.Contains(lower, keyword) {
+				return true
+			}
+		}
+	}
+
+	return false
 }

@@ -1742,8 +1742,9 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Prompt string `json:"prompt"`
-		TaskID string `json:"taskId"`
+		Prompt        string `json:"prompt"`
+		TaskID        string `json:"taskId"`
+		SelfContained bool   `json:"selfContained"` // ADR-0054
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1759,14 +1760,24 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	execOpts := task.ExecuteOptions{
-		TaskID:       req.TaskID,
-		IntentType:   "workflow",
-		IsForeground: false,
+		TaskID:        req.TaskID,
+		IntentType:    "workflow",
+		IsForeground:  false,
+		SelfContained: req.SelfContained,
 	}
 
 	go func() {
 		defer recoverTaskPanic(req.TaskID)
-		_, _, _ = task.Execute(context.Background(), req.Prompt, execOpts)
+		_, _, err := task.Execute(context.Background(), req.Prompt, execOpts)
+		if err != nil {
+			// ADR-0054: Emit task_failed so SSE listeners can detect planning failures
+			stream.GlobalBus.Publish(stream.StreamChunk{
+				TaskID:  req.TaskID,
+				Source:  "system",
+				Type:    "task_failed",
+				Content: err.Error(),
+			})
+		}
 	}()
 
 	w.Header().Set("Content-Type", "application/json")

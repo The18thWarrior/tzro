@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,14 +31,30 @@ type CacheStore interface {
 	// Store handles envelope creation, writes to SQLite, backups to file, and returns the envelope JSON string and CacheID.
 	Store(ctx context.Context, rawPayload string) (envelopeStr string, cacheID string, err error)
 
+	// StoreFileRef stores a reference to an on-disk file (path only, no content copy).
+	// Returns the generated cacheID.
+	StoreFileRef(ctx context.Context, filePath string, envelopeJSON string) (cacheID string, err error)
+
 	// Introspect retrieves the cache envelope JSON string (with DB lookup and file fallback).
 	Introspect(ctx context.Context, cacheID string) string
 
 	// Read retrieves offset-based paginated slice of records from the cache (with DB lookup and file fallback).
 	Read(ctx context.Context, cacheID string, limit, offset int) string
 
-	// Query runs a standard JQ expression query (using the decoupled QueryEngine).
-	Query(ctx context.Context, cacheID, jqExpr string) string
+	// Query runs a SQL query against the materialized cache table in the ephemeral query DB.
+	Query(ctx context.Context, cacheID, sqlExpr string) string
+}
+
+// NewCacheID generates a unique cache identifier from the current nanosecond
+// timestamp with trailing zeros stripped. Trailing zeros in IDs like
+// "cache_1784607195509971000" cause local LLMs to treat the ID as a number
+// and round/truncate it (e.g., "cache_178460719550000000000000000000000"),
+// producing table-not-found errors. Stripping trailing zeros yields IDs like
+// "cache_1784607195509971" which the model reliably copies verbatim.
+func NewCacheID() string {
+	ts := fmt.Sprintf("%d", time.Now().UnixNano())
+	ts = strings.TrimRight(ts, "0")
+	return "cache_" + ts
 }
 
 // resolveTzroPath delegates to config.ResolvePath — canonical TZRO_DIR resolution.
@@ -214,6 +231,13 @@ func (s *sqlCacheStore) Store(ctx context.Context, rawPayload string) (string, s
 		}
 	}
 
+	// Materialize in ephemeral query DB
+	columnTypes := envelopeFieldTypesToSQLite(envelope.FieldTypes)
+	if err := MaterializeTable(cacheID, rawPayload, columnTypes, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "[Cache] Materialization warning: %v\n", err)
+		// Non-fatal — SQL queries will lazily re-materialize
+	}
+
 	// Backup file cache
 	cacheFileDir := resolveTzroPath(filepath.Join(".tzro", "cache"))
 	if err := os.MkdirAll(cacheFileDir, 0755); err != nil {
@@ -226,6 +250,33 @@ func (s *sqlCacheStore) Store(ctx context.Context, rawPayload string) (string, s
 	}
 
 	return envelopeStr, cacheID, nil
+}
+
+func (s *sqlCacheStore) StoreFileRef(ctx context.Context, filePath string, envelopeJSON string) (string, error) {
+	cacheID := NewCacheID()
+
+	db := memory.DB.RawDB()
+	if db == nil {
+		return "", fmt.Errorf("database not available")
+	}
+
+	createdAt := time.Now().Unix()
+	_, err := db.Exec(`INSERT OR REPLACE INTO disk_cache (cache_id, raw_payload, envelope_json, file_path, created_at)
+		VALUES (?, '', ?, ?, ?)`, cacheID, envelopeJSON, filePath, createdAt)
+	if err != nil {
+		return "", fmt.Errorf("failed to store file reference: %w", err)
+	}
+
+	// Materialize in ephemeral query DB from the file
+	columnTypes := extractColumnTypesFromEnvelope(envelopeJSON)
+	rawJSON := s.readFileAsJSON(filePath)
+	if !strings.HasPrefix(rawJSON, "Error:") {
+		if err := MaterializeTable(cacheID, rawJSON, columnTypes, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "[Cache] File materialization warning: %v\n", err)
+		}
+	}
+
+	return cacheID, nil
 }
 
 func (s *sqlCacheStore) Introspect(ctx context.Context, cacheID string) string {
@@ -304,14 +355,12 @@ func (s *sqlCacheStore) Read(ctx context.Context, cacheID string, limit, offset 
 	return string(resBytes)
 }
 
-func (s *sqlCacheStore) Query(ctx context.Context, cacheID, jqExpr string) string {
-	rawPayload := s.getRawPayload(cacheID)
-	if strings.HasPrefix(rawPayload, "Error:") {
-		return rawPayload
+func (s *sqlCacheStore) Query(ctx context.Context, cacheID, sqlExpr string) string {
+	result, err := ExecuteSQL(ctx, cacheID, sqlExpr)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err)
 	}
-
-	// Delegate to the decoupled QueryEngine seam
-	return DefaultQueryEngine.Query(ctx, rawPayload, jqExpr)
+	return result
 }
 
 func (s *sqlCacheStore) getRawPayload(cacheID string) string {
@@ -322,6 +371,14 @@ func (s *sqlCacheStore) getRawPayload(cacheID string) string {
 		if err == nil && rawPayload != "" {
 			RecordCacheHit()
 			return rawPayload
+		}
+
+		// Check for file_path reference (path-only cache entry)
+		var filePath string
+		err = db.QueryRow("SELECT COALESCE(file_path, '') FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&filePath)
+		if err == nil && filePath != "" {
+			RecordCacheHit()
+			return s.readFileAsJSON(filePath)
 		}
 	}
 
@@ -334,6 +391,126 @@ func (s *sqlCacheStore) getRawPayload(cacheID string) string {
 	}
 	RecordCacheHit()
 	return string(bytes)
+}
+
+// readFileAsJSON reads a file and converts it to JSON format.
+// For CSV/TSV files, converts to a JSON array of objects.
+// For other files, reads raw content.
+func (s *sqlCacheStore) readFileAsJSON(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	switch ext {
+	case ".csv", ".tsv":
+		return csvToJSON(filePath, ext)
+	default:
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Sprintf("Error: failed to read file at '%s': %v", filePath, err)
+		}
+		return string(data)
+	}
+}
+
+// csvToJSON converts a CSV/TSV file to a JSON array of objects.
+// Uses quote-aware parsing for CSV to handle RFC 4180 quoted fields
+// (e.g., fields containing commas like "McDevitt, John").
+func csvToJSON(filePath string, ext string) string {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to open file at '%s': %v", filePath, err)
+	}
+	defer file.Close()
+
+	delimiter := ","
+	if ext == ".tsv" {
+		delimiter = "\t"
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+
+	if !scanner.Scan() {
+		return "[]"
+	}
+	headerLine := scanner.Text()
+	// Strip BOM
+	headerLine = strings.TrimPrefix(headerLine, "\xEF\xBB\xBF")
+	headerLine = strings.TrimPrefix(headerLine, "\uFEFF")
+
+	headers := splitCSVFields(headerLine, delimiter)
+	for i := range headers {
+		headers[i] = strings.TrimSpace(headers[i])
+	}
+
+	var records []map[string]interface{}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := splitCSVFields(line, delimiter)
+		record := make(map[string]interface{})
+		for i, h := range headers {
+			var val string
+			if i < len(fields) {
+				val = strings.TrimSpace(fields[i])
+			}
+			record[h] = val
+		}
+		records = append(records, record)
+	}
+
+	resBytes, err := json.Marshal(records)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to marshal CSV to JSON: %v", err)
+	}
+	return string(resBytes)
+}
+
+// splitCSVFields splits a line by the given delimiter with quote awareness.
+// For comma-delimited files, handles RFC 4180 quoting (double-quoted fields
+// may contain commas and escaped quotes). For other delimiters (TSV), uses
+// simple split since tab-delimited files rarely use quoting.
+func splitCSVFields(line, delimiter string) []string {
+	if delimiter == "," {
+		return parseCSVFields(line)
+	}
+	return strings.Split(line, delimiter)
+}
+
+// parseCSVFields handles RFC 4180 CSV quoting rules: fields enclosed in
+// double quotes may contain commas and escaped quotes ("").
+func parseCSVFields(line string) []string {
+	var fields []string
+	var current strings.Builder
+	inQuotes := false
+
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if inQuotes {
+			if ch == '"' {
+				if i+1 < len(line) && line[i+1] == '"' {
+					current.WriteByte('"')
+					i++ // skip escaped quote
+				} else {
+					inQuotes = false
+				}
+			} else {
+				current.WriteByte(ch)
+			}
+		} else {
+			if ch == '"' {
+				inQuotes = true
+			} else if ch == ',' {
+				fields = append(fields, current.String())
+				current.Reset()
+			} else {
+				current.WriteByte(ch)
+			}
+		}
+	}
+	fields = append(fields, current.String())
+	return fields
 }
 
 // Private compaction helpers
@@ -475,7 +652,7 @@ func flattenMap(input map[string]interface{}, output map[string]interface{}, pre
 }
 
 func createCacheEnvelope(payload string) (string, CacheEnvelope) {
-	cacheID := fmt.Sprintf("cache_%d", time.Now().UnixNano())
+	cacheID := NewCacheID()
 
 	var rawData interface{}
 	_ = json.Unmarshal([]byte(payload), &rawData)
@@ -580,6 +757,14 @@ func createCacheEnvelope(payload string) (string, CacheEnvelope) {
 			envelope.SampleRecord = mapData
 		}
 	}
+
+	// P0 Fix: Sanitize column names in the envelope to match the SQL table.
+	// MaterializeTable applies sanitizeColumnName (which strips non-alphanumeric
+	// chars like '?'), but the envelope was reporting the original raw names.
+	// This mismatch caused the model to generate SQL like:
+	//   SELECT * FROM cache_... WHERE Target_Account? = 'Yes'
+	// which fails because the column is actually Target_Account_ in SQLite.
+	envelope = sanitizeEnvelopeFieldNames(envelope)
 
 	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
 	return string(envJSON), envelope

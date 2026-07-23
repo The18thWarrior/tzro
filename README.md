@@ -206,17 +206,14 @@ For real-time observability, the MCP server exposes two URI templates for push n
 
 ---
 
-## 🆕 v1.0.0 Highlights
+## 🆕 v1.0.1 Highlights
 
-- **Structured Content-Aware Compaction Engine** — New `internal/compactor/` package replaces the older configurable `CompactionLevel` system. Tool outputs are now compacted using deterministic, content-type-aware strategies: code skeleton extraction (AST/regex-based, never LLM-compressed), JSON pruning, and log/text line truncation. Only the model's own reasoning text is LLM-compressed via the 1B router model. Compaction triggers every 3 steps as an architectural constant.
-- **Goal-Directed File Compaction** — When probe nodes read large files (>100 lines), the `read_file` tool automatically compresses output against the probe's goal using the router model. Files ≤100 lines are returned raw. Non-probe callers are unaffected. Falls back to deterministic truncation on router errors.
-- **Worker Sidecar Synthesis** — Terminal synthesis now routes through `WorkerInference` (64K context worker model) for superior content generation quality, while the router sidecar handles step-level tool decisions.
-- **Default Model Upgrade** — Default worker model upgraded to Agents-A1-4B (Q4_K_M quantization) for improved agentic task performance.
-- **AST-Based Symbol Extraction & Anchor Verification** — Pure-Go tree-sitter integration parses every file read during Probe Thought Chains, building a deterministic Symbol Index across 12 languages. A post-synthesis Anchor Check detects hallucinated type names and triggers targeted corrections, eliminating a 67% hallucination rate observed in docgen benchmarks.
-- **Directory Preloading** — Probe Nodes pre-load source context (AST-extracted symbols for Go, raw content for Markdown/text) from target directories before exploration begins, eliminating file discovery gaps caused by local model routing failures.
-- **Repo Mapping & Direct Synthesis** — Deterministic AST-based codebase architecture maps enable single-shot synthesis for tasks that don't require multi-step Probe exploration, bypassing the Thought Chain entirely.
-- **`.gitignore`-Aware Directory Operations** — Directory copying operations now respect `.gitignore` patterns, preventing accidental inclusion of build artifacts and dependency trees.
-- **Website v2** — Redesigned documentation site with GitHub integration, interactive architecture cards, and new legal pages (Privacy Policy, Terms of Service).
+- **SQLite-Backed Query Cache & SQL Query Language for Cached Data (ADR-0048, ADR-0051)** — Replaces raw JQ querying with a disk-backed SQLite query cache (`introspect_cache`, `sql_cached_data`). Tabular tool outputs and CSV datasets are automatically profiled and loaded into SQLite tables for fast, structured SQL queries.
+- **Analyze Nodes & CompactPreserve Semantics (ADR-0049, ADR-0050, ADR-0052)** — Introduces dedicated Analyze Nodes with schema extraction, column/table keyword sanitization, and CompactPreserve compaction semantics. Query results and cache IDs are preserved across compaction cycles without data loss.
+- **Analytical Evidence Collection (ADR-0053)** — Captures query outputs and tabular evidence from analyze nodes, feeding structured context directly to downstream DAG nodes and recall tasks.
+- **Self-Contained Task Short-Circuiting & Lifecycle Tracking (ADR-0054)** — Bypasses redundant probe discovery loops for self-contained prompts, enables inline prompt context for direct synthesis when context files are omitted, and tracks task lifecycle states across SQLite execution tables.
+- **Structured Content-Aware Compaction Engine** — `internal/compactor/` applies content-type-aware strategies: code skeleton extraction (AST/regex-based, never LLM-compressed), JSON pruning, and line truncation. Compaction triggers every 3 steps as an architectural constant.
+- **Worker Sidecar Synthesis** — Terminal synthesis routes through `WorkerInference` (64K context worker model) for superior content generation quality, while the router sidecar handles step-level tool decisions.
 
 ---
 

@@ -97,13 +97,41 @@ Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
 
 Do NOT wrap the JSON in code fences. Output raw JSON only.`
 
+const datanalJudgeSystemPrompt = `You are a data analysis quality evaluator. You will receive a data analysis result
+produced by an AI model, along with the expected correct answer. Score each criterion
+on a 1-5 scale:
+  1 = Completely wrong or missing
+  2 = Partially correct but major errors in values or groupings
+  3 = Mostly correct but some missing data points or minor calculation errors
+  4 = Correct values and groupings with only cosmetic issues
+  5 = Exact match with expected answer, clearly formatted
+
+Compare the model's output against the Expected Correct Answer section.
+
+Respond with ONLY a JSON object in this exact format:
+{
+  "scores": {
+    "Correctness": <1-5>,
+    "Completeness": <1-5>,
+    "Formatting": <1-5>,
+    "Methodology": <1-5>
+  },
+  "summary": "Brief overall assessment"
+}
+
+Do NOT wrap the JSON in code fences. Output raw JSON only.`
+
 // JudgeSystemPromptForCategory returns the appropriate judge system prompt
 // for the given task category.
 func JudgeSystemPromptForCategory(category string) string {
-	if category == CategoryCodegen {
+	switch category {
+	case CategoryCodegen:
 		return codeJudgeSystemPrompt
+	case CategoryDatanal:
+		return datanalJudgeSystemPrompt
+	default:
+		return judgeSystemPrompt
 	}
-	return judgeSystemPrompt
 }
 
 // JudgeOutput sends the generated output and rubric to the cloud model for quality scoring.
@@ -131,9 +159,12 @@ func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric Quali
 	}
 
 	contentLabel := "Generated Output"
-	if category == CategoryCodegen {
+	switch category {
+	case CategoryCodegen:
 		contentLabel = "Generated Code"
-	} else {
+	case CategoryDatanal:
+		contentLabel = "Data Analysis Result"
+	default:
 		contentLabel = "Generated Documentation"
 	}
 
@@ -182,11 +213,40 @@ func parseFlatJudgeResponse(responseText string, rubric QualityRubric) (float64,
 		return 0, "", err
 	}
 
+	// Extract summary if present at root level
+	summaryText := ""
+	if s, ok := flat["summary"].(string); ok {
+		summaryText = s
+	}
+
+	// Try nested {"scores": {"Correctness": 1, ...}} format first
+	if scoresObj, ok := flat["scores"]; ok {
+		if scoresMap, ok := scoresObj.(map[string]interface{}); ok {
+			score, summary, err := matchCriteriaScores(scoresMap, rubric, summaryText)
+			if err == nil {
+				return score, summary, nil
+			}
+		}
+	}
+
+	// Fallback: flat root-level {"correctness": 5, "accuracy": 4} format
+	return matchCriteriaScores(flat, rubric, summaryText)
+}
+
+// matchCriteriaScores extracts criterion scores from a map using case-insensitive
+// matching against rubric criteria names. Returns the mean score.
+func matchCriteriaScores(scores map[string]interface{}, rubric QualityRubric, summaryOverride string) (float64, string, error) {
+	// Build a case-insensitive lookup of the scores map
+	lowerScores := make(map[string]interface{}, len(scores))
+	for k, v := range scores {
+		lowerScores[strings.ToLower(k)] = v
+	}
+
 	var total float64
 	var count int
 	for _, c := range rubric.Criteria {
 		key := strings.ToLower(c.Name)
-		if v, ok := flat[key]; ok {
+		if v, ok := lowerScores[key]; ok {
 			switch n := v.(type) {
 			case float64:
 				total += n
@@ -200,11 +260,14 @@ func parseFlatJudgeResponse(responseText string, rubric QualityRubric) (float64,
 	}
 
 	if count == 0 {
-		return 0, "", fmt.Errorf("no matching criteria scores found in flat response")
+		return 0, "", fmt.Errorf("no matching criteria scores found in response")
 	}
 
 	avg := total / float64(count)
-	summary := fmt.Sprintf("Auto-scored from flat response (%d/%d criteria matched)", count, len(rubric.Criteria))
+	summary := summaryOverride
+	if summary == "" {
+		summary = fmt.Sprintf("Auto-scored from flat response (%d/%d criteria matched)", count, len(rubric.Criteria))
+	}
 	return avg, summary, nil
 }
 

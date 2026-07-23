@@ -7,7 +7,7 @@ import (
 
 type GraphNode struct {
 	ID              string                 `json:"id"`
-	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe" | "sub_dag"
+	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe" | "analyze" | "sub_dag"
 	Action          string                 `json:"action"`              // Target tool name or Sub-DAG template name
 	Instructions    string                 `json:"instructions"`        // Core step instruction
 	AllowedTools    []string               `json:"allowedTools"`        // Whitelist of permitted tools
@@ -45,7 +45,7 @@ type CompactionLevel string
 const (
 	CompactAggressive CompactionLevel = "aggressive" // Heavy summarization, 200-char tool output truncation
 	CompactModerate   CompactionLevel = "moderate"   // Summarize prose, preserve code/tables/signatures
-	CompactPreserve   CompactionLevel = "preserve"   // Pass through raw output, no compaction
+	CompactPreserve   CompactionLevel = "preserve"   // Preserve tool output data verbatim; reasoning text is still LLM-compressed
 )
 
 // ProbeConfig configures a Probe Node's Thought Chain execution loop.
@@ -73,6 +73,7 @@ type ProbeConfig struct {
 	// This eliminates the routing problem where probes miss files during exploration.
 	PreloadPaths    []string `json:"preloadPaths,omitempty"`    // Directories to pre-load
 	PreloadMaxChars int      `json:"preloadMaxChars,omitempty"` // Character budget for preloaded content (default: 32000)
+	UpstreamContext string   `json:"upstreamContext,omitempty"` // Accumulated context from completed upstream nodes — injected by executor so the probe can see upstream outputs (e.g., cacheId from read_file)
 }
 
 type GraphEdge struct {

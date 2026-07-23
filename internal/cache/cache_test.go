@@ -16,10 +16,21 @@ func TestCacheStore_StoreAndIntrospect(t *testing.T) {
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+
+	// Set TZRO_DIR to temp dir so cache backup files are written to a known
+	// location (main branch c00e1e2 changed ResolvePath to fall back to ~/ instead of CWD).
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_cache_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 
 	err := memory.DB.Init()
@@ -49,15 +60,11 @@ func TestCacheStore_StoreAndIntrospect(t *testing.T) {
 		t.Errorf("expected Introspect to return matching stored envelope, got: %s", introspectOutput)
 	}
 
-	// Verify backup file path exists and clean it up
-	cacheFilePath := filepath.Join(".tzro", "cache", cacheID+".json")
+	// Verify backup file path exists — resolved via TZRO_DIR
+	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	if _, err := os.Stat(cacheFilePath); os.IsNotExist(err) {
 		t.Errorf("expected backup file at %s to exist", cacheFilePath)
 	}
-	defer func() {
-		os.Remove(cacheFilePath)
-		os.RemoveAll(".tzro/cache")
-	}()
 
 	// Test fallback path: delete from DB, introspect should rebuild from file
 	db := memory.DB.RawDB()
@@ -128,10 +135,20 @@ func TestProcess_SmallPayload(t *testing.T) {
 	// Setup isolated test database to verify no writes
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+
+	// Set TZRO_DIR to a fresh temp dir so we can verify no cache dir is created.
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_cache_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 	_ = memory.DB.Init()
 
@@ -165,8 +182,8 @@ func TestProcess_SmallPayload(t *testing.T) {
 		t.Errorf("expected 0 cache records stored in database, got: %d", count)
 	}
 
-	// Verify no backup files were created
-	cacheFileDir := filepath.Join(".tzro", "cache")
+	// Verify no backup files were created — use resolveTzroPath for correct location
+	cacheFileDir := resolveTzroPath(filepath.Join(".tzro", "cache"))
 	if _, err := os.Stat(cacheFileDir); !os.IsNotExist(err) {
 		t.Errorf("expected backup cache directory to not exist, but it does")
 	}
@@ -176,23 +193,35 @@ func TestProcess_LargePayload(t *testing.T) {
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+
+	// Set TZRO_DIR to temp dir so cache backup files are written to a known location.
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_cache_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 	_ = memory.DB.Init()
 
 	ctx := context.Background()
 
 	// Generate a payload that exceeds 12288 bytes
+	// Use "Idx" instead of "Index" — "Index" is a SQLite reserved word
+	// and sanitizeColumnName now correctly suffixes it to "Index_".
 	var sb strings.Builder
 	sb.WriteString("[")
 	for i := 0; i < 300; i++ {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		sb.WriteString(`{"Index": ` + string(rune('0'+(i%10))) + `, "Text": "Some extremely long repetition that will quickly blow up the byte size beyond twelve kilobytes limit standard threshold of tzro executor caching and compaction layers inside packages."}`)
+		sb.WriteString(`{"Idx": ` + string(rune('0'+(i%10))) + `, "Text": "Some extremely long repetition that will quickly blow up the byte size beyond twelve kilobytes limit standard threshold of tzro executor caching and compaction layers inside packages."}`)
 	}
 	sb.WriteString("]")
 	largePayload := sb.String()
@@ -214,15 +243,11 @@ func TestProcess_LargePayload(t *testing.T) {
 		t.Errorf("expected returned processed payload to be a JSON Cache Envelope, got: %s", processed)
 	}
 
-	// Verify backup file path exists and clean it up
-	cacheFilePath := filepath.Join(".tzro", "cache", cacheID+".json")
+	// Verify backup file path exists — resolved via TZRO_DIR
+	cacheFilePath := resolveTzroPath(filepath.Join(".tzro", "cache", cacheID+".json"))
 	if _, err := os.Stat(cacheFilePath); os.IsNotExist(err) {
 		t.Errorf("expected backup file at %s to exist for large payload", cacheFilePath)
 	}
-	defer func() {
-		os.Remove(cacheFilePath)
-		os.RemoveAll(".tzro/cache")
-	}()
 
 	// Verify database record exists
 	db := memory.DB.RawDB()
@@ -236,42 +261,27 @@ func TestProcess_LargePayload(t *testing.T) {
 	}
 }
 
-type mockQueryEngine struct {
-	called bool
-}
+func TestSQLQueryEngine_ViaStore(t *testing.T) {
+	// Setup an in-memory ephemeral query DB
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
 
-func (m *mockQueryEngine) Query(ctx context.Context, rawPayload, jqExpr string) string {
-	m.called = true
-	return "mocked_query_success"
-}
-
-func TestQueryEngine_Seam(t *testing.T) {
-	ctx := context.Background()
-	mock := &mockQueryEngine{}
-
-	// Swap DefaultQueryEngine with our mock seam
-	oldEngine := DefaultQueryEngine
-	DefaultQueryEngine = mock
-	defer func() {
-		DefaultQueryEngine = oldEngine
-	}()
-
-	store := &sqlCacheStore{}
-	// Note: We don't need a real db because our mock handles it or we bypass query
-	res := store.Query(ctx, "any_cache_id", ".records | select(.Age > 30)")
-
-	// Because raw payload lookup will check database or file, let's isolate by preparing a file backup or DB
-	// Setup isolated test database to allow getRawPayload to return safely
+	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
-	memory.DB.SetDBPathForTesting("tzro_cache_test.db")
+	memory.DB.SetDBPathForTesting("tzro_cache_test_sql.db")
 	defer func() {
 		memory.DB.Close()
-		os.Remove("tzro_cache_test.db")
+		os.Remove("tzro_cache_test_sql.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
 	}()
 	_ = memory.DB.Init()
 
-	_, cacheID, err := DefaultStore.Store(ctx, `[{"Age": 35}]`)
+	ctx := context.Background()
+	_, cacheID, err := DefaultStore.Store(ctx, `[
+		{"Name": "Alice", "Age": 30},
+		{"Name": "Bob", "Age": 25},
+		{"Name": "Charlie", "Age": 35}
+	]`)
 	if err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
@@ -280,38 +290,27 @@ func TestQueryEngine_Seam(t *testing.T) {
 		os.RemoveAll(".tzro/cache")
 	}()
 
-	res = store.Query(ctx, cacheID, ".records | select(.Age > 30)")
-	if res != "mocked_query_success" {
-		t.Errorf("expected mock query engine to be called and return success, got: %s", res)
+	store := &sqlCacheStore{}
+
+	// Test SELECT * via CacheStore.Query
+	res := store.Query(ctx, cacheID, fmt.Sprintf("SELECT * FROM %s", cacheID))
+	if strings.HasPrefix(res, "Error:") {
+		t.Fatalf("Query failed: %s", res)
 	}
-	if !mock.called {
-		t.Errorf("expected mockQueryEngine.Query to have been invoked")
-	}
-}
-
-func TestQueryEngine_Fallback(t *testing.T) {
-	// Directly test default query engine fallback with standard records
-	rawPayload := `{"records": [
-		{"Name": "Alice", "Email": "alice@test.com", "Age": 30.0},
-		{"Name": "Bob", "Email": "bob@test.com", "Age": 25.0},
-		{"Name": "Alice Dup", "Email": "alice@test.com", "Age": 32.0},
-		{"Name": "Diana", "Email": "diana@test.com", "Age": 45.0}
-	]}`
-
-	// Even if jq is absent, the fallback is safely executed:
-	engine := &jqQueryEngine{}
-	ctx := context.Background()
-
-	// 1. Equality filter fallback test
-	resEq := engine.Query(ctx, rawPayload, `[.records[] | select(.Name == "Bob")]`)
-	if !strings.Contains(resEq, `"Name": "Bob"`) || strings.Contains(resEq, `"Name": "Alice"`) {
-		t.Errorf("expected select name == Bob result, got: %s", resEq)
+	if !strings.Contains(res, "Alice") || !strings.Contains(res, "Bob") {
+		t.Errorf("expected result to contain Alice and Bob, got: %s", res)
 	}
 
-	// 2. Numeric filter fallback test
-	resNum := engine.Query(ctx, rawPayload, `[.records[] | select(.Age > 31)]`)
-	if !strings.Contains(resNum, `"Name": "Alice Dup"`) || !strings.Contains(resNum, `"Name": "Diana"`) || strings.Contains(resNum, `"Name": "Bob"`) {
-		t.Errorf("expected select Age > 31 records (Alice Dup & Diana), got: %s", resNum)
+	// Test WHERE filter via SQL
+	res = store.Query(ctx, cacheID, fmt.Sprintf("SELECT Name FROM %s WHERE Age > 28", cacheID))
+	if strings.HasPrefix(res, "Error:") {
+		t.Fatalf("WHERE query failed: %s", res)
+	}
+	if !strings.Contains(res, "Alice") || !strings.Contains(res, "Charlie") {
+		t.Errorf("expected Alice and Charlie (age > 28), got: %s", res)
+	}
+	if strings.Contains(res, "Bob") {
+		t.Errorf("Bob (age 25) should be filtered out, got: %s", res)
 	}
 }
 
@@ -437,5 +436,113 @@ func TestProcess_IntegrationPruning(t *testing.T) {
 	expectedRow1 := "30\tAlice"
 	if lines[1] != expectedRow1 {
 		t.Errorf("expected row 1 %q, got %q", expectedRow1, lines[1])
+	}
+}
+
+// ── Phase 2: Cache Path Reference tests ─────────────────────────────────
+
+func TestStoreFileRef_StoresPathAndEnvelope(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_cache_fileref_test.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_cache_fileref_test.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+
+	// Create a CSV file
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "leads.csv")
+	if err := os.WriteFile(csvPath, []byte("name,email,status\nAlice,alice@test.com,active\nBob,bob@test.com,pending\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	envelopeJSON := `{"cacheId": "test_ref_123", "format": "csv", "rowCount": 2}`
+	cacheID, err := DefaultStore.StoreFileRef(ctx, csvPath, envelopeJSON)
+	if err != nil {
+		t.Fatalf("StoreFileRef failed: %v", err)
+	}
+	if cacheID == "" {
+		t.Error("cacheID should not be empty")
+	}
+
+	// Verify: envelope_json stored in DB
+	db := memory.DB.RawDB()
+	var storedEnvelope string
+	var storedFilePath string
+	err = db.QueryRow("SELECT envelope_json, file_path FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&storedEnvelope, &storedFilePath)
+	if err != nil {
+		t.Fatalf("failed to query stored record: %v", err)
+	}
+	if storedEnvelope != envelopeJSON {
+		t.Errorf("stored envelope = %q, want %q", storedEnvelope, envelopeJSON)
+	}
+	if storedFilePath != csvPath {
+		t.Errorf("stored file_path = %q, want %q", storedFilePath, csvPath)
+	}
+
+	// raw_payload should be empty (path reference, not copied)
+	var rawPayload string
+	err = db.QueryRow("SELECT COALESCE(raw_payload, '') FROM disk_cache WHERE cache_id = ?", cacheID).Scan(&rawPayload)
+	if err != nil {
+		t.Fatalf("failed to query raw_payload: %v", err)
+	}
+	if rawPayload != "" {
+		t.Errorf("raw_payload should be empty for file reference, got %d bytes", len(rawPayload))
+	}
+}
+
+func TestGetRawPayload_ReadsFromFilePath(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_cache_fileref_test2.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_cache_fileref_test2.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+	if err := memory.DB.Init(); err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+
+	// Create a CSV file with known content
+	tmpDir := t.TempDir()
+	csvPath := filepath.Join(tmpDir, "data.csv")
+	csvContent := "id,name,score\n1,Alice,95\n2,Bob,87\n"
+	if err := os.WriteFile(csvPath, []byte(csvContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	envelopeJSON := `{"format": "csv"}`
+	cacheID, err := DefaultStore.StoreFileRef(ctx, csvPath, envelopeJSON)
+	if err != nil {
+		t.Fatalf("StoreFileRef failed: %v", err)
+	}
+
+	// getRawPayload should read from the CSV file and convert to JSON
+	store := &sqlCacheStore{}
+	raw := store.getRawPayload(cacheID)
+
+	// For CSV file references, getRawPayload converts to JSON array
+	if strings.HasPrefix(raw, "Error:") {
+		t.Fatalf("getRawPayload returned error: %s", raw)
+	}
+
+	// Should be valid JSON (converted from CSV)
+	var records []map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &records); err != nil {
+		t.Fatalf("getRawPayload should return valid JSON for CSV file ref, got: %s (err: %v)", raw, err)
+	}
+	if len(records) != 2 {
+		t.Errorf("expected 2 records, got %d", len(records))
+	}
+	if records[0]["name"] != "Alice" {
+		t.Errorf("first record name = %q, want %q", records[0]["name"], "Alice")
 	}
 }

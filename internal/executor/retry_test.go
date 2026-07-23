@@ -17,13 +17,15 @@ func TestSchemaValidationGate_MissingRequired(t *testing.T) {
 }
 
 func TestSchemaValidationGate_EmptyField(t *testing.T) {
-	// tools.GetSchema returns a fallback schema with "query" required for unknown tools.
-	// validateAgainstSchema should correctly catch empty required fields.
+	// After removing the GetSchema fallback (phantom tool cleanup),
+	// unknown tools return an error, so validateAgainstSchema skips
+	// validation and returns nil. This is correct behavior — we don't
+	// want to validate against a made-up schema.
 	err := validateAgainstSchema("truly_unknown_tool_xyz", map[string]interface{}{
 		"query": "",
 	})
-	if err == nil {
-		t.Error("expected validation error for empty required field 'query', got nil")
+	if err != nil {
+		t.Errorf("expected nil error for unknown tool (no schema to validate), got: %v", err)
 	}
 }
 

@@ -103,21 +103,7 @@ func GetSchema(name string) (string, error) {
 		}
 	}
 
-	// Default fallback schema if not found anywhere
-	fallbackSchema := `{
-		"type": "object",
-		"properties": {
-			"tool_arguments": {
-				"type": "object",
-				"properties": {
-					"query": { "type": "string" }
-				},
-				"required": ["query"]
-			}
-		},
-		"required": ["tool_arguments"]
-	}`
-	return fallbackSchema, nil
+	return "", fmt.Errorf("tool %q not found in registry or MCP daemons", name)
 }
 
 // Call executes a tool by name with the given arguments.
@@ -300,63 +286,25 @@ func Init(configPath string) error {
 	})
 
 	Register(&FunctionTool{
-		NameVal: "read_cached_data",
+		NameVal: "sql_cached_data",
 		SchemaVal: `{
 			"type": "object",
 			"properties": {
 				"tool_arguments": {
 					"type": "object",
 					"properties": {
-						"cacheId": { "type": "string" },
-						"limit": { "type": "integer" },
-						"offset": { "type": "integer" }
+						"cacheId": { "type": "string", "description": "The cache identifier from the data profile" },
+						"sql": { "type": "string", "description": "SQL SELECT query to execute against the cached data table. The table name is the cacheId." }
 					},
-					"required": ["cacheId"]
+					"required": ["cacheId", "sql"]
 				}
 			},
 			"required": ["tool_arguments"]
 		}`,
 		Fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
 			cacheID, _ := args["cacheId"].(string)
-			var limit, offset int
-			if l, ok := args["limit"].(float64); ok {
-				limit = int(l)
-			} else if l, ok := args["limit"].(int); ok {
-				limit = l
-			} else {
-				limit = 10
-			}
-			if o, ok := args["offset"].(float64); ok {
-				offset = int(o)
-			} else if o, ok := args["offset"].(int); ok {
-				offset = o
-			} else {
-				offset = 0
-			}
-			return cache.DefaultStore.Read(ctx, cacheID, limit, offset), nil
-		},
-	})
-
-	Register(&FunctionTool{
-		NameVal: "jq_cached_data",
-		SchemaVal: `{
-			"type": "object",
-			"properties": {
-				"tool_arguments": {
-					"type": "object",
-					"properties": {
-						"cacheId": { "type": "string" },
-						"filter": { "type": "string" }
-					},
-					"required": ["cacheId", "filter"]
-				}
-			},
-			"required": ["tool_arguments"]
-		}`,
-		Fn: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			cacheID, _ := args["cacheId"].(string)
-			filter, _ := args["filter"].(string)
-			return cache.DefaultStore.Query(ctx, cacheID, filter), nil
+			sqlQuery, _ := args["sql"].(string)
+			return cache.ExecuteSQL(ctx, cacheID, sqlQuery)
 		},
 	})
 

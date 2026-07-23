@@ -20,6 +20,7 @@ _Map of system features, product requirements, and specs._
 - [MCP Singleton Guard](features/mcp-singleton-guard.md) - PID lockfile preventing duplicate tzro-mcp instances when multiple IDE language servers spawn MCP children. (Sources: 1 | Last Updated: 2026-06-09)
 - [Response Resolver](features/response-resolver.md) - Three-tier output resolution cascade (recursive key search + KV-line + semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator. (Sources: 1 | Last Updated: 2026-06-10)
 - [Dual-Audience Hardening](features/dual-audience-hardening.md) - Secure local-first loopback, MCP-to-daemon delegation proxy, and complete Package Manager CLI/MCP integration. (Sources: 1 | Last Updated: 2026-06-15)
+- [Data Profiler & Cache Bridge Node](../working-specs/data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file with deterministic Cache Bridge Node injection for CSV, TSV, Excel, and large JSON. (Sources: 1 | Last Updated: 2026-07-13)
 
 ## Bugs & Post-Mortems
 
@@ -56,7 +57,8 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [Llama Server Sidecar](../llama-server-sidecar.md) - Spec of llama.cpp local server runtime interface.
 - [Cooperative Local Cloud DAG Execution](../cooperative-local-cloud-dag-execution.md) - Hybrid model of local and remote coordination.
 - [Hybrid Cloud Local Worker Execution](../hybrid-cloud-local-worker-execution.md) - Remote task dispatching mechanisms.
-- [Disk-Backed JQ Cache Architecture](architecture/disk-backed-jq-cache.md) - Deep subsystem for context compaction, page-sliced pagination, and JQ process queries.
+- [Disk-Backed Query Cache Architecture](architecture/disk-backed-jq-cache.md) - Deep subsystem for context compaction, page-sliced pagination, and SQL query execution against ephemeral materialized tables.
+- [SQL Query Language for Cached Data — Spec](../working-specs/sql-query-language-for-cached-data.md) - Implementation spec for replacing jq with SQL. Covers ephemeral materialized tables, 4-layer safety, tool changes, prompt updates, and migration.
 - [Task-to-Workflow Promotion Engine](architecture/task-workflow-promotion.md) - Deep subsystem that dynamically elevates Single Task DAGs to persistent Multi-Task Workflows.
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
 - [Agentic Harness Integration](architecture/agentic-harness-integration.md) - Analysis of MCP Server, Native Plugin, and Sidecar paradigms for orchestrating client-side execution steps.
@@ -105,6 +107,11 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0042: Map-Reduce Recall and Shallow Planning](../adr/0042-map-reduce-recall-and-shallow-planning.md) - Multi-pass Recall synthesis and code-blind Strategist to reduce wall clock time and token waste.
 - [ADR-0043: Two-Tier Context Budget](../adr/0043-two-tier-context-budget.md) - Probe step generation cap (max_tokens via context key) and per-node accumulated context truncation to prevent local model speed collapse from oversized prompts.
 - [ADR-0044: Synthesis-Aware Context Assembly and Tiered Budgets](../adr/0044-synthesis-aware-context-assembly-and-tiered-budgets.md) - Splits context assembly into synthesis-path (untruncated validators, no ceiling) and mid-DAG-path (tiered allocation, dynamic ceiling). Supersedes ADR-0043 Mechanism B.
+- [ADR-0049: Data Profiler and Cache Bridge Node](../adr/0049-data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file, path-referenced caching, and two-layer deterministic Cache Bridge Node injection. Narrows ADR-0019 bypass to non-tabular files.
+- [ADR-0051: SQL Query Language for Cached Data](../adr/0051-sql-query-language-for-cached-data.md) - Replaces jq with SQL as the query language for cached tabular data. Ephemeral materialized tables in a separate query database with 4-layer safety sandboxing.
+- [ADR-0052: CompactPreserve Semantics for Analyze Nodes](../adr/0052-compact-preserve-semantics-for-analyze-nodes.md) - Defines CompactPreserve to preserve tool output data verbatim while still LLM-compressing reasoning text. Fixes data loss in analyze node synthesis.
+- [ADR-0053: Analytical Evidence for Data Analysis](../adr/0053-analytical-evidence-for-data-analysis.md) - Structured raw data from successful sql_cached_data calls materialized alongside terminal_synthesis. Primary ground-truth output for data analysis tasks.
+- [ADR-0054: Self-Contained Task Short-Circuit and Task Lifecycle Table](../adr/0054-self-contained-task-short-circuit-and-task-lifecycle-table.md) - Caller-hint `selfContained` flag bypasses planner for tool-less prompts. New `tasks` table tracks task lifecycle and surfaces planning failures. Tactical bridge until ADR-0048 template selection is implemented.
 
 ## Ingested Sources
 

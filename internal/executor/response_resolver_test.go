@@ -766,4 +766,3 @@ func TestNodeTypeAwarePlainTextFallback(t *testing.T) {
 		}
 	})
 }
-

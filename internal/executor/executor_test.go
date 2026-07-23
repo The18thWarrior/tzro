@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -177,10 +178,20 @@ func TestDiskBackedCachePersistence(t *testing.T) {
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_test.db")
+
+	// Set TZRO_DIR to temp dir so cache backup files are written to a known location.
+	tmpDir := t.TempDir()
+	oldTzroDir := os.Getenv("TZRO_DIR")
+	os.Setenv("TZRO_DIR", tmpDir)
 	defer func() {
 		memory.DB.Close()
 		os.Remove("tzro_test.db")
 		memory.DB.SetDBPathForTesting(oldDBPath)
+		if oldTzroDir != "" {
+			os.Setenv("TZRO_DIR", oldTzroDir)
+		} else {
+			os.Unsetenv("TZRO_DIR")
+		}
 	}()
 
 	err := memory.DB.Init()
@@ -202,21 +213,14 @@ func TestDiskBackedCachePersistence(t *testing.T) {
 		t.Errorf("expected introspect output to contain cache ID, got: %s", env)
 	}
 
-	// Verify file backup fallback path
-	cacheFileDir := filepath.Join(".tzro", "cache")
+	// Verify file backup fallback path — use TZRO_DIR-resolved paths
+	cacheFileDir := config.ResolvePath(filepath.Join(".tzro", "cache"))
 	_ = os.MkdirAll(cacheFileDir, 0755)
-	cacheFilePath := filepath.Join(cacheFileDir, cacheID+".json")
-	_ = os.WriteFile(cacheFilePath, []byte(rawPayload), 0644)
-	defer func() {
-		os.Remove(cacheFilePath)
-		os.RemoveAll(".tzro/cache")
-	}()
 
 	// Query with DB lookup failure (simulate delete or non-existing DB entry)
 	missingCacheID := "cache_missing_456"
 	missingCacheFilePath := filepath.Join(cacheFileDir, missingCacheID+".json")
 	_ = os.WriteFile(missingCacheFilePath, []byte(rawPayload), 0644)
-	defer os.Remove(missingCacheFilePath)
 
 	// Since database won't have it, it should fall back to disk file and build envelope dynamically
 	fallbackEnv := cache.DefaultStore.Introspect(context.Background(), missingCacheID)
@@ -275,7 +279,7 @@ func TestExecuteReadCachedData(t *testing.T) {
 	}
 }
 
-func TestExecuteJQQueryFallback(t *testing.T) {
+func TestExecuteSQLQuery(t *testing.T) {
 	// Setup isolated test database
 	oldDBPath := memory.DB.GetDBPathForTesting()
 	memory.DB.SetDBPathForTesting("tzro_test.db")
@@ -286,6 +290,22 @@ func TestExecuteJQQueryFallback(t *testing.T) {
 	}()
 
 	_ = memory.DB.Init()
+
+	// Setup in-memory ephemeral query DB for this test
+	qdb, err2 := sql.Open("sqlite", ":memory:")
+	if err2 != nil {
+		t.Fatalf("failed to open in-memory query DB: %v", err2)
+	}
+	qdb.Exec(`CREATE TABLE IF NOT EXISTS _cache_tables (
+		table_name TEXT PRIMARY KEY,
+		task_id TEXT,
+		created_at INTEGER
+	)`)
+	cache.SetQueryDBForTesting(qdb)
+	defer func() {
+		qdb.Close()
+		cache.SetQueryDBForTesting(nil)
+	}()
 
 	// Setup payload containing duplicate emails and ages
 	rawPayload := `{"records": [
@@ -303,32 +323,36 @@ func TestExecuteJQQueryFallback(t *testing.T) {
 		os.RemoveAll(".tzro/cache")
 	}()
 
-	// Test 1: Duplicates grouping filter (basicJQFallback logic)
-	dupResult := cache.DefaultStore.Query(context.Background(), cacheID, ".records | group_by(.Email) | .[] | select(length > 1)")
-	var dupRecords []map[string]interface{}
-	_ = json.Unmarshal([]byte(dupResult), &dupRecords)
-
-	if len(dupRecords) != 2 {
-		t.Errorf("expected 2 duplicate email records, got: %d (%s)", len(dupRecords), dupResult)
+	// Test 1: Duplicates grouping via SQL GROUP BY + HAVING
+	dupResult := cache.DefaultStore.Query(context.Background(), cacheID,
+		fmt.Sprintf("SELECT Email, COUNT(*) as cnt FROM %s GROUP BY Email HAVING cnt > 1", cacheID))
+	if strings.HasPrefix(dupResult, "Error:") {
+		t.Fatalf("SQL duplicate query failed: %s", dupResult)
 	}
-	if dupRecords[0]["Email"].(string) != "alice@test.com" || dupRecords[1]["Email"].(string) != "alice@test.com" {
-		t.Errorf("expected duplicate email records to have alice@test.com, got: %v", dupRecords)
+	if !strings.Contains(dupResult, "alice@test.com") {
+		t.Errorf("expected alice@test.com in duplicates result, got: %s", dupResult)
 	}
 
-	// Test 2: Select with equality match
-	equalityResult := cache.DefaultStore.Query(context.Background(), cacheID, `[.records[] | select(.Name == "Bob")]`)
+	// Test 2: Select with equality match (WHERE Name = 'Bob')
+	equalityResult := cache.DefaultStore.Query(context.Background(), cacheID,
+		fmt.Sprintf("SELECT * FROM %s WHERE Name = 'Bob'", cacheID))
+	if strings.HasPrefix(equalityResult, "Error:") {
+		t.Fatalf("SQL equality query failed: %s", equalityResult)
+	}
 	var bobRecords []map[string]interface{}
 	_ = json.Unmarshal([]byte(equalityResult), &bobRecords)
-
-	if len(bobRecords) != 1 || bobRecords[0]["Name"].(string) != "Bob" {
+	if len(bobRecords) != 1 {
 		t.Errorf("expected only Bob record, got: %s", equalityResult)
 	}
 
-	// Test 3: Select with numeric inequality match
-	numericResult := cache.DefaultStore.Query(context.Background(), cacheID, `[.records[] | select(.Age > 31)]`)
+	// Test 3: Select with numeric inequality (WHERE Age > 31)
+	numericResult := cache.DefaultStore.Query(context.Background(), cacheID,
+		fmt.Sprintf("SELECT * FROM %s WHERE Age > 31", cacheID))
+	if strings.HasPrefix(numericResult, "Error:") {
+		t.Fatalf("SQL numeric query failed: %s", numericResult)
+	}
 	var ageRecords []map[string]interface{}
 	_ = json.Unmarshal([]byte(numericResult), &ageRecords)
-
 	if len(ageRecords) != 2 {
 		t.Errorf("expected 2 records with Age > 31 (Alice Dup:32, Diana:45), got: %d (%v)", len(ageRecords), ageRecords)
 	}
@@ -346,20 +370,12 @@ func TestGBNFSchemas(t *testing.T) {
 		t.Errorf("expected schema for introspect_cache to contain cacheId, got: %s", schemaIntrospect)
 	}
 
-	schemaRead, err := tools.GetSchema("read_cached_data")
+	schemaSQL, err := tools.GetSchema("sql_cached_data")
 	if err != nil {
 		t.Fatalf("failed to get schema: %v", err)
 	}
-	if !strings.Contains(schemaRead, "limit") || !strings.Contains(schemaRead, "offset") {
-		t.Errorf("expected schema for read_cached_data to contain limit/offset, got: %s", schemaRead)
-	}
-
-	schemaJQ, err := tools.GetSchema("jq_cached_data")
-	if err != nil {
-		t.Fatalf("failed to get schema: %v", err)
-	}
-	if !strings.Contains(schemaJQ, "filter") {
-		t.Errorf("expected schema for jq_cached_data to contain filter, got: %s", schemaJQ)
+	if !strings.Contains(schemaSQL, "sql") || !strings.Contains(schemaSQL, "cacheId") {
+		t.Errorf("expected schema for sql_cached_data to contain sql and cacheId, got: %s", schemaSQL)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	ignore "github.com/sabhiram/go-gitignore"
+	"tzro/internal/cache"
 	"tzro/internal/inference"
 )
 
@@ -79,8 +80,54 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 				return ToolError(fmt.Sprintf("path '%s' is a directory, not a file. Use list_dir to explore directories.", in.Path)), nil
 			}
 
-			// If it's a PDF, parse using the ParsePDF utility
+			// Route tabular files (CSV, TSV, Excel) through the Data Profiler
 			ext := strings.ToLower(filepath.Ext(resolvedPath))
+			if IsTabularExtension(ext) {
+				profile, profErr := ProfileTabularFile(resolvedPath)
+				if profErr != nil {
+					return ToolError(fmt.Sprintf("failed to profile tabular file: %v", profErr)), nil
+				}
+
+				// Store file reference in cache (path only, no content copy)
+				envelopeJSON, _ := json.MarshalIndent(profile, "", "  ")
+				storeCacheID, storeErr := cache.DefaultStore.StoreFileRef(ctx, resolvedPath, string(envelopeJSON))
+				if storeErr == nil {
+					profile.CacheID = storeCacheID
+				}
+
+				result := ToolSuccess(map[string]interface{}{
+					"dataProfile": profile,
+					"path":        resolvedPath,
+					"cacheId":     profile.CacheID,
+				})
+				result.Hint = "This is a tabular data file. Use introspect_cache and sql_cached_data with the cacheId to explore the data."
+				result.RelatedTools = []string{"introspect_cache", "sql_cached_data"}
+				return result, nil
+			}
+
+			// Route large JSON through the Data Profiler
+			if ext == ".json" && ShouldProfileJSON(resolvedPath) {
+				profile, profErr := ProfileJSONFile(resolvedPath)
+				if profErr == nil && profile != nil {
+					envelopeJSON, _ := json.MarshalIndent(profile, "", "  ")
+					storeCacheID, storeErr := cache.DefaultStore.StoreFileRef(ctx, resolvedPath, string(envelopeJSON))
+					if storeErr == nil {
+						profile.CacheID = storeCacheID
+					}
+
+					result := ToolSuccess(map[string]interface{}{
+						"dataProfile": profile,
+						"path":        resolvedPath,
+						"cacheId":     profile.CacheID,
+					})
+					result.Hint = "This is a large JSON data file. Use introspect_cache and sql_cached_data with the cacheId to explore the data."
+					result.RelatedTools = []string{"introspect_cache", "sql_cached_data"}
+					return result, nil
+				}
+				// Falls through to raw read if JSON profiling fails
+			}
+
+			// If it's a PDF, parse using the ParsePDF utility
 			if ext == ".pdf" {
 				content, err := ParsePDF(ctx, resolvedPath)
 				if err != nil {
@@ -755,6 +802,14 @@ func NewPeekFileTool(validator *PathValidator) *BaseAgentTool {
 				return ToolError(fmt.Sprintf("path '%s' is a directory, not a file. Use list_dir to explore directories.", in.Path)), nil
 			}
 
+			// Spec §6: Excel files are binary — can't peek
+			ext := strings.ToLower(filepath.Ext(resolvedPath))
+			if ext == ".xlsx" || ext == ".xls" {
+				result := ToolError("Cannot peek binary Excel file. Use read_file for full profiling and cached data access.")
+				result.RelatedTools = []string{"read_file"}
+				return result, nil
+			}
+
 			file, err := os.Open(resolvedPath)
 			if err != nil {
 				return ToolError(fmt.Sprintf("failed to open file '%s': %v", in.Path, err)), nil
@@ -787,6 +842,16 @@ func NewPeekFileTool(validator *PathValidator) *BaseAgentTool {
 
 			if len(lines) >= peekLines {
 				result.Hint = "File continues beyond 20 lines. Use read_file with startLine/endLine to see more."
+			}
+
+			// Spec §6: tabular file hint
+			if ext == ".csv" || ext == ".tsv" {
+				tabularHint := "This is a tabular data file. Use read_file for full profiling and cached data access."
+				if result.Hint != "" {
+					result.Hint += "\n" + tabularHint
+				} else {
+					result.Hint = tabularHint
+				}
 			}
 
 			return result, nil

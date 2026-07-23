@@ -34,8 +34,9 @@ import (
 
 // TzroRunArgs defines the inputs for running a natural language task.
 type TzroRunArgs struct {
-	Prompt  string `json:"prompt" jsonschema:"required,The natural language task to execute"`
-	Timeout int    `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 60"`
+	Prompt        string `json:"prompt" jsonschema:"required,The natural language task to execute"`
+	Timeout       int    `json:"timeout,omitempty" jsonschema:"Execution timeout in seconds before switching to async. Default 60"`
+	SelfContained bool   `json:"selfContained,omitempty" jsonschema:"Set to true when the prompt contains all required data and no external tool calls are needed. Bypasses planner and runs Direct Synthesis."`
 }
 
 func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunArgs) (*mcp.CallToolResult, any, error) {
@@ -76,12 +77,14 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 	go func() {
 		if isDaemonRunning() {
 			type RunRequest struct {
-				Prompt string `json:"prompt"`
-				TaskID string `json:"taskId"`
+				Prompt        string `json:"prompt"`
+				TaskID        string `json:"taskId"`
+				SelfContained bool   `json:"selfContained,omitempty"` // ADR-0054
 			}
 			reqBody := RunRequest{
-				Prompt: args.Prompt,
-				TaskID: taskID,
+				Prompt:        args.Prompt,
+				TaskID:        taskID,
+				SelfContained: args.SelfContained,
 			}
 			_, err := proxyToDaemon("/api/tasks/run", "POST", reqBody)
 			if err != nil {
@@ -148,9 +151,10 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 			doneChan <- execResult{nodes: nodes, err: taskErr}
 		} else {
 			execOpts := task.ExecuteOptions{
-				TaskID:       taskID,
-				IntentType:   "workflow",
-				IsForeground: true,
+				TaskID:        taskID,
+				IntentType:    "workflow",
+				IsForeground:  true,
+				SelfContained: args.SelfContained,
 			}
 			_, _, err := task.Execute(context.Background(), args.Prompt, execOpts)
 			nodes := memory.DB.GetAllNodeStates(taskID)
@@ -666,6 +670,28 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 
 	nodes := memory.DB.GetAllNodeStates(args.TaskID)
 	if len(nodes) == 0 {
+		// ADR-0054: Check tasks table for task-level status before returning "not found".
+		// Planning failures and in-progress planning produce no node_states rows.
+		taskRecord, _ := memory.DB.GetTask(args.TaskID)
+		if taskRecord != nil {
+			respMap := map[string]interface{}{
+				"taskId": args.TaskID,
+				"status": taskRecord.Status,
+			}
+			if taskRecord.Error != "" {
+				respMap["error"] = taskRecord.Error
+				respMap["instruction"] = fmt.Sprintf(
+					"Task planning failed. Review the error and re-submit with adjustments. Error: %s", taskRecord.Error)
+			}
+			respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: string(respBytes)},
+				},
+				IsError: taskRecord.Status == "failed",
+			}, nil, nil
+		}
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: fmt.Sprintf(`{"taskId": "%s", "error": "task not found"}`, args.TaskID)},

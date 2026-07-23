@@ -2,9 +2,13 @@ package compiler
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// tabularExtRe detects tabular file extension references in node instructions.
+var tabularExtRe = regexp.MustCompile(`\.(csv|tsv|xlsx|xls)\b`)
 
 // ExpandToSCTGraph dynamically expands a simplified Strategy Plan (high-level DAG)
 // into a fine-grained execution graph with paired Semantic-Validator, execution, and synthesis nodes.
@@ -82,13 +86,35 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			execNodeMap[node.ID] = execID
 			bridgeNodeMap[node.ID] = validatorID
 		} else {
-			if node.Type == "probe" {
+			if node.Type == "probe" || node.Type == "analyze" {
+				// Analyze nodes: auto-provision cache tools and ProbeConfig if not already set.
+				// The planner emits analyze nodes without knowing about cache internals —
+				// the compiler deterministically injects the right tool set.
+				if node.Type == "analyze" {
+					if node.ProbeConfig == nil {
+						node.ProbeConfig = &ProbeConfig{
+							Goal:            node.Instructions,
+							AllowedTools:    cacheTools,
+							StepBudget:      15,
+							CompactEvery:    3,
+							CompactionLevel: CompactPreserve,
+						}
+					}
+					// Ensure cache tools are always present in AllowedTools
+					if !hasCacheToolsInAllowed(node.AllowedTools) {
+						node.AllowedTools = append(node.AllowedTools, cacheTools...)
+					}
+					if !hasCacheToolsInAllowed(node.ProbeConfig.AllowedTools) {
+						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, cacheTools...)
+					}
+				}
+
 				if node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
 					node.ProbeConfig.CompactionLevel = CompactPreserve
 				}
 				sctNodes = append(sctNodes, node)
 
-				// Planning Awareness: Check if this probe already has a planned synthesis-type child.
+				// Planning Awareness: Check if this probe/analyze already has a planned synthesis-type child.
 				// If so, we skip automatic Recall injection to avoid redundant consolidation steps (Discovery -> Aligned Findings -> Terminal).
 				hasPlannedSynthesisChild := false
 				for _, edge := range graph.Edges {
@@ -106,8 +132,12 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
-				if !hasPlannedSynthesisChild && discoveryNodesCount > 1 {
+				if !hasPlannedSynthesisChild && (discoveryNodesCount > 1 || node.Type == "analyze") {
 					// Inject Recall Node to align discovery findings (ADR-0038)
+					// ADR-0053: Analyze nodes ALWAYS get a Recall Node, even as sole
+					// discovery nodes. Their internal probe synthesis is insufficient
+					// for data analysis results — the Recall Node's Map-Reduce
+					// strategy and downstream terminal_synthesis are required.
 					recallID := node.ID + "_recall"
 					recallThreshold := 0.9
 					if isBenchmark {
@@ -117,20 +147,20 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 						ID:                  recallID,
 						Type:                "recall",
 						Action:              "synthesize",
-						Instructions:        fmt.Sprintf("Traverse the execution history of probe node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.ID),
+						Instructions:        fmt.Sprintf("Traverse the execution history of %s node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.Type, node.ID),
 						Status:              "pending",
 						ActivationThreshold: recallThreshold, // High skepticism for synthesis
 						DynamicBindings:     node.DynamicBindings,
 					})
 
-					// Probe -> Recall edge
+					// Probe/Analyze -> Recall edge
 					sctEdges = append(sctEdges, GraphEdge{
 						SourceID: node.ID,
 						TargetID: recallID,
 					})
 
 					execNodeMap[node.ID] = recallID
-					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe first, then the recall handles synthesis
+					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
 				} else {
 					if discoveryNodesCount <= 1 {
 						fmt.Printf("[Compiler] Probe %s is the sole discovery node in the graph (discoveryNodesCount=%d). Skipping automatic Recall injection.\n", node.ID, discoveryNodesCount)
@@ -172,6 +202,11 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		}
 	}
 
+	// ── Cache Bridge Node injection ──
+	// For each node whose instructions reference a tabular file extension,
+	// inject a deterministic cache bridge node between it and its downstream targets.
+	sctNodes, sctEdges = injectCacheBridgeNodes(graph.Nodes, sctNodes, sctEdges, execNodeMap)
+
 	// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 	// A node is an endpoint if it is an execution node and has no outbound edges to other high-level steps.
 	isSourceMap := make(map[string]bool)
@@ -191,13 +226,22 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 	if !hasSynthesisLeaf && discoveryNodesCount <= 1 {
 		hasProbeLeaf := false
+		hasAnalyzeLeaf := false
 		for _, node := range sctNodes {
-			if node.Type == "probe" && !isSourceMap[node.ID] {
-				hasProbeLeaf = true
-				break
+			if !isSourceMap[node.ID] {
+				if node.Type == "probe" {
+					hasProbeLeaf = true
+				}
+				if node.Type == "analyze" {
+					hasAnalyzeLeaf = true
+				}
 			}
 		}
-		if hasProbeLeaf {
+		// ADR-0053: Analyze nodes always get a downstream synthesis step.
+		// Their internal probe synthesis is insufficient for data analysis
+		// results — the Recall Node's Map-Reduce strategy is required.
+		// Only regular probe nodes skip when they're sole leaves.
+		if hasProbeLeaf && !hasAnalyzeLeaf {
 			fmt.Printf("[Compiler] Graph has a sole probe leaf. Skipping automatic terminal_synthesis injection.\n")
 			hasSynthesisLeaf = true
 		}
@@ -219,7 +263,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 		// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 		for _, node := range sctNodes {
-			if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
+			if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "analyze" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
 				sctEdges = append(sctEdges, GraphEdge{
 					SourceID: node.ID,
 					TargetID: synthID,
@@ -253,4 +297,137 @@ func isSynthesisGoal(instructions string) bool {
 		}
 	}
 	return false
+}
+
+// cacheTools are the tools available to cache bridge and analyze nodes.
+var cacheTools = []string{"introspect_cache", "sql_cached_data"}
+
+// referencesTabularFile returns true if the instructions contain a tabular file extension.
+func referencesTabularFile(instructions string) bool {
+	return tabularExtRe.MatchString(instructions)
+}
+
+// hasCacheToolsInAllowed returns true if any of the node's allowedTools overlap with cache tools.
+func hasCacheToolsInAllowed(tools []string) bool {
+	for _, tool := range tools {
+		for _, ct := range cacheTools {
+			if tool == ct {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// injectCacheBridgeNodes scans the high-level nodes for tabular file references
+// and injects CacheBridgeNodes between them and their downstream targets.
+// Also expands probe node allowedTools when referencing tabular files.
+func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdges []GraphEdge, execNodeMap map[string]string) ([]GraphNode, []GraphEdge) {
+	// Build a lookup of original nodes by ID
+	originalNodeMap := make(map[string]GraphNode)
+	for _, n := range originalNodes {
+		originalNodeMap[n.ID] = n
+	}
+
+	// Expand probe allowedTools for tabular references (spec §5.1)
+	// Trigger: probe has read_file in allowedTools (may encounter tabular at runtime)
+	// OR probe instructions explicitly reference tabular file extensions
+	for i, node := range sctNodes {
+		if node.Type == "probe" && node.ProbeConfig != nil {
+			hasReadFile := false
+			for _, tool := range node.ProbeConfig.AllowedTools {
+				if tool == "read_file" {
+					hasReadFile = true
+					break
+				}
+			}
+			if (hasReadFile || referencesTabularFile(node.Instructions)) && !hasCacheToolsInAllowed(node.ProbeConfig.AllowedTools) {
+				sctNodes[i].ProbeConfig.AllowedTools = append(sctNodes[i].ProbeConfig.AllowedTools, cacheTools...)
+			}
+		}
+	}
+
+	// For each original node that references tabular files, check if a bridge is needed
+	for _, origNode := range originalNodes {
+		if !referencesTabularFile(origNode.Instructions) {
+			continue
+		}
+		if origNode.Type == "probe" || origNode.Type == "synthesis" || origNode.Type == "analyze" {
+			continue // Probes handle cache tools via expansion; synthesis doesn't produce profiles;
+			// analyze nodes query SQL directly
+		}
+
+		// Resolve the exec node ID for this original node
+		execID, exists := execNodeMap[origNode.ID]
+		if !exists {
+			continue
+		}
+
+		// Check if any downstream node already has cache tools or is an analyze node
+		hasDownstreamCacheTools := false
+		for _, edge := range sctEdges {
+			if edge.SourceID == execID {
+				for _, node := range sctNodes {
+					if node.ID == edge.TargetID {
+						if hasCacheToolsInAllowed(node.AllowedTools) || node.Type == "analyze" {
+							hasDownstreamCacheTools = true
+							break
+						}
+					}
+				}
+			}
+		}
+		if hasDownstreamCacheTools {
+			continue
+		}
+
+		// Inject cache bridge node
+		bridgeID := "cache_bridge_" + origNode.ID
+		bridgeNode := GraphNode{
+			ID:     bridgeID,
+			Type:   "action",
+			Action: "sql_cached_data",
+			Instructions: "Query the cached tabular data from the upstream node's Data Profile. " +
+				"Use the cacheId from the upstream output. " +
+				"Execute: SELECT * FROM cache_<id> LIMIT 100 to return a representative sample.",
+			AllowedTools:        cacheTools,
+			Status:              "pending",
+			ActivationThreshold: 0.0, // Deterministic — no Edge Thought overhead
+		}
+		sctNodes = append(sctNodes, bridgeNode)
+
+		// Re-wire edges: find all edges leaving execID and re-route through bridge
+		var newEdges []GraphEdge
+		bridgeConnected := false
+		for _, edge := range sctEdges {
+			if edge.SourceID == execID {
+				// Replace: execID → target becomes execID → bridge, bridge → target
+				if !bridgeConnected {
+					newEdges = append(newEdges, GraphEdge{
+						SourceID: execID,
+						TargetID: bridgeID,
+					})
+					bridgeConnected = true
+				}
+				newEdges = append(newEdges, GraphEdge{
+					SourceID: bridgeID,
+					TargetID: edge.TargetID,
+				})
+			} else {
+				newEdges = append(newEdges, edge)
+			}
+		}
+
+		// If execID had no outgoing edges (it's a leaf), just connect it to the bridge
+		if !bridgeConnected {
+			newEdges = append(newEdges, GraphEdge{
+				SourceID: execID,
+				TargetID: bridgeID,
+			})
+		}
+
+		sctEdges = newEdges
+	}
+
+	return sctNodes, sctEdges
 }

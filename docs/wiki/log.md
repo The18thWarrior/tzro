@@ -4,6 +4,56 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-21T21:05:00-07:00] grill-with-docs | Self-Contained Task Short-Circuit & Task Lifecycle Table (ADR-0054)
+
+- **Activity**: Grill-with-docs session stress-testing 3 proposed fixes for the `tzro_run` silent planning failure. Root cause: daemon fire-and-forget goroutine discards `Execute()` errors, planner can't compile tool-less prompts, and task existence is inferred from `node_states` rows (no task-level record). 8 design questions resolved.
+- **Decisions Made**:
+  1. **Rejected `save_memory` node type** (Q1): Contradicts node type taxonomy — Probe/Analyze/Recall all run Thought Chains against tool outputs. Pure synthesis is a missing task category, not a missing node type. Use a **Direct Synthesis Probe Node** instead.
+  2. **ADR-0048 unimplemented** (Q2): Plan Template Registry was accepted but never built — the planner still generates graphs from scratch. Category classifier + template selection is the strategic fix; tactical bridge needed now.
+  3. **Caller hint over classifier** (Q3): `selfContained: true` flag on `tzro_run` MCP schema and CLI `--self-contained` flag. Zero inference cost, most honest contract. Evaluated classifier call (1s latency) and text heuristic (brittle) as alternatives.
+  4. **Direct Synthesis + cooperative escalation** (Q4): Probe Node with `DirectSynthesis: true` and `save_memory` as allowed tool. Local model does synthesis; Confidence Tier escalates to cloud if quality is insufficient.
+  5. **`tasks` table for lifecycle** (Q5–Q6): New SQLite table `(task_id, status, error, prompt, created_at, completed_at)`. Row inserted at `Execute()` entry, updated on completion/failure. Eliminates derived-status SQL aggregation in `GetRecentTasks`. Rejected synthetic `__planning__` node in `node_states` (contaminates node data) and Durable Notification fallback (wrong semantic layer).
+  6. **StreamBus event + durable record** (Q5): Emit `task_planning_failed` on StreamBus for SSE listener, AND persist failure to `tasks` table for later `tzro_status` discovery.
+  7. **AGENTS.md update** (Q7): Add `selfContained` guidance to Decision Rule — third branch: "No tool calls needed → `tzro_run` with `selfContained: true`".
+  8. **ADR warranted** (Q8): All three criteria met — `tasks` table is a schema migration (hard to reverse), `selfContained` bypass is non-obvious (surprising), and three alternatives were evaluated (real trade-off).
+- **Terms Resolved**: No new CONTEXT.md glossary terms — `selfContained` is a parameter, not a domain concept.
+- **ADR Created**: [ADR-0054: Self-Contained Task Short-Circuit and Task Lifecycle Table](../adr/0054-self-contained-task-short-circuit-and-task-lifecycle-table.md)
+- **Key Finding**: ADR-0048 (Plan Template Selection and Mutation) has not been implemented. The planner is still in "generate from scratch" mode. `selfContained` is the tactical bridge until template selection is built.
+
+---
+
+## [2026-07-21T19:26:00-07:00] fix | Run 7 Eval: Second Recall Skip + Phase Gate Strengthening
+
+- **Activity**: Evaluated Benchmark Run 7 (cooperative mode, datanal, 5 tasks). Avg quality 1.95 → **3.40** (+74%). Identified and fixed two remaining failure modes.
+- **Run 7 Results**: T1=5.00 ✅, T2=3.50 🟡, T3=4.25 🟢, T4=2.75 🟡, T5=1.50 🔴
+- **Fix Effectiveness from Run 6→7**:
+  - CSV parser fix: T3 2.00→4.25 (sector column misalignment resolved)
+  - Phase gate: Working (blocked premature synthesis in T5 logs)
+  - Evidence capture: Working (persisted 1 evidence item in T5)
+  - Recall Node sole-leaf skip: Working for terminal_synthesis path, but **second skip rule** bypassed it
+- **P0 Fix — Second Recall Skip Rule**: `sct_compiler.go:135` had `discoveryNodesCount > 1` gate that skipped Recall injection for sole analyze nodes. Changed to `(discoveryNodesCount > 1 || node.Type == "analyze")`. Analyze nodes now always get Recall regardless of discovery count.
+- **P1 Fix — Phase Gate Strengthened**: Changed from `hasAnalytical bool` (any 1 call) to `analyticalCallCount int` requiring ≥2 `sql_cached_data` calls. In Run 7, T5 ran only a `SELECT * LIMIT 10` sampling query, satisfied the boolean gate, then synthesized without running the aggregate GROUP BY query.
+- **Files Changed**:
+  - [MODIFY] `internal/compiler/sct_compiler.go` — exempt analyze from discoveryNodesCount skip
+  - [MODIFY] `internal/executor/probe.go` — analyticalCallCount ≥ 2 gate, improved redirect message
+
+---
+
+## [2026-07-21T17:52:00-07:00] design | Analytical Evidence & Analyze Node Hardening (Benchmark Run 6)
+
+- **Activity**: Grill-with-docs session analyzing 4 failure modes from benchmark Run 6 (cooperative mode, datanal category, 5 tasks, avg quality 1.95/5).
+- **Decisions Made**:
+  1. **Phase gate for synthesis eligibility** (FM-1): Track `hasDiscovery` and `hasAnalytical` booleans in analyze probe loop. Only `sql_cached_data` calls count toward synthesis eligibility; `introspect_cache` is discovery-only. Prevents premature synthesis after schema inspection.
+  2. **Never skip Recall Node for analyze nodes** (FM-1/FM-2): The Kahn Compiler's sole-leaf skip rule is exempted for analyze nodes. They always get a downstream Recall Node.
+  3. **Analytical Evidence output contract** (FM-2): New `analytical_evidence` column on task result row containing `{sql, rows (≤5), totalRows, capped}` from successful `sql_cached_data` calls. Evidence is the primary output; synthesis is best-effort. Captured at tool dispatch time in the probe loop.
+  4. **CSV parser bug fix** (FM-3): `csvToJSON` in `cache.go:449` uses naive `strings.Split` instead of quote-aware `parseCSVLine`. Confirmed via investigation — rows with quoted commas (e.g., `"McDevitt, John"`) produce extra fields that shift all subsequent columns. Straight bug fix.
+  5. **Parked FM-4** (validator cloud dependency): Working as designed, $0.002/task cost, not worth engineering effort.
+- **Terms Resolved**: Added **Analytical Evidence** to CONTEXT.md. Updated **Analyze Node** to document mandatory Recall Node injection.
+- **ADR Created**: [ADR-0053: Analytical Evidence for Data Analysis Tasks](../adr/0053-analytical-evidence-for-data-analysis.md)
+- **Root Cause Verified**: CSV column misalignment is NOT dirty source data — Python's RFC 4180 parser produces correct Sector values (eCommerce: 126, Other: 33, etc.) with zero spurious entries. The bug is in the materialization path's CSV parser.
+
+---
+
 ## [2026-07-16T19:30:00-07:00] fix | Full Context Window for Terminal Synthesis (65536 tokens)
 
 - **Activity**: Eliminated terminal synthesis truncation by giving synthesis nodes the full 64K context window for generation.
@@ -183,6 +233,27 @@ Chronological append-only record of wiki operations and major agent engineering 
 - **Files Modified**: `CONTEXT.md`, `docs/adr/0047-ast-symbol-extraction-for-probe-nodes.md` [NEW]
 
 ---
+
+
+## [2026-07-13T22:53:00-07:00] grill-with-docs | SQL Query Language for Cached Data (ADR-0048) — DESIGN COMPLETE
+
+- **Activity**: Grill-with-docs session resolving 13 design branches for replacing jq with SQL as the query language for cached tabular data analysis. Pivoted from the handoff's proposed structured query spec (GBNF-constrained JSON) to SQL, leveraging existing SQLite infrastructure and SQL's massive representation in LLM training data.
+- **Decisions Captured**: ADR-0051 (SQL Query Language for Cached Data). Ephemeral materialized tables in separate query DB (`query.db`). CacheId as table name. Profiler-inferred column types with NULL-on-failure coercion. Tool-based interface `sql_cached_data` with `{cacheId, sql}`. 4-layer SQL safety (separate DB, statement parsing, table allowlist, query timeout/row cap). Task completion cleanup + 1-day TTL sweep. Clean tool rename from `jq_cached_data` to `sql_cached_data`. Drop `read_cached_data` (subsumed by SQL). Keep `introspect_cache`. Cache Bridge skips Analyze Node paths, uses SQL for non-analyze hydration. Singleton `cache.QueryDB` with `_cache_tables` metadata. Lazy re-materialization from prod DB JSON blob on cache miss. JSON array result format with 500-row cap. Simple SQL patterns in prompts (no window functions), multi-step Thought Chain composition.
+- **Glossary Updates**: Renamed "Disk-Backed JQ Cache" → "Disk-Backed Query Cache". Updated Analyze Node, Cache Bridge Node, Data Profiler definitions. Updated example dialogue.
+- **New Files**: `docs/adr/0048-sql-query-language-for-cached-data.md`
+- **Modified Files**: `CONTEXT.md` (5 glossary updates), `docs/wiki/index.md` (ADR-0048 linked, cache architecture description updated)
+- **Implementation Files (planned)**: `internal/cache/query.go` (rewrite — SQL executor replacing jq), `internal/cache/cache.go` (table materialization at Store/StoreFileRef), `internal/tools/tools.go` (new `sql_cached_data` tool, remove `read_cached_data` and `jq_cached_data`), `internal/executor/probe.go` (analyze system prompt — SQL patterns), `internal/executor/cache_bridge.go` (SQL hydration, skip analyze paths), `internal/executor/executor.go` (CacheExplorationGuide update), `internal/compiler/sct_compiler.go` (tool list and instruction updates)
+
+---
+
+## [2026-07-13T11:56:00-07:00] grill-with-docs | Data Profiler & Cache Bridge Node (ADR-0046) — SPEC COMPLETE
+
+- **Activity**: Grill-with-docs session resolving 11 design branches for content-aware tabular file profiling in `read_file` and deterministic Cache Bridge Node injection. No code changes — design only.
+- **Decisions Captured**: ADR-0049 (Data Profiler and Cache Bridge Node). Routing rules (csv/tsv always, xlsx/xls always, json conditional >200 lines or >10KB). Excel via excelize/v2 with multi-sheet summary (all sheets summarized, first sheet profiled). Deterministic column pruning only (no LLM at read time). Two-layer Cache Bridge injection (compile-time in Kahn Compiler + runtime post-execution hook) with deduplication. Unconditional bridge firing. Adaptive sample sizing (5→3→1, 10K char budget). TSV format for samples. CSV edge cases (assume headers, sniff delimiters, BOM/encoding fallback). Streaming parse with cardinality cap at 1000. Path-reference caching (no file copy). peek_file raw + hint. Probe allowedTools auto-expansion with cache tools.
+- **New Glossary Terms**: Data Profiler, Cache Bridge Node (added to CONTEXT.md)
+- **New Files**: `docs/adr/0046-data-profiler-and-cache-bridge-node.md`, `docs/working-specs/data-profiler-and-cache-bridge-node.md`
+- **Modified Files**: `CONTEXT.md` (2 new glossary terms), `docs/wiki/index.md` (ADR + spec linked)
+- **Implementation Files (planned)**: `internal/tools/tabular.go`, `internal/tools/excel.go`, modifications to `filesystem.go`, `cache.go`, `sct_compiler.go`, `ready_queue.go`
 
 
 ## [2026-07-09T10:33:00-07:00] tdd | MCTS Multi-Branch Edge Thought Evaluation (ADR-0045) — COMPLETE

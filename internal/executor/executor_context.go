@@ -13,6 +13,7 @@ package executor
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"tzro/internal/compactor"
@@ -163,6 +164,18 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 	// Two paths depending on the calling node type.
 	isSynthesis := callingNodeType == "synthesis"
 
+	// Pre-extract cacheIds from raw outputs BEFORE compaction so
+	// enrichCacheBridgeContext can always find them even if compaction
+	// strips the cacheId from the body text. These are injected as
+	// a trailing metadata block after the accumulated context.
+	cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+	var extractedCacheIds []string
+	for _, cn := range completed {
+		if ids := cacheIdRe.FindAllString(cn.output, -1); len(ids) > 0 {
+			extractedCacheIds = append(extractedCacheIds, ids...)
+		}
+	}
+
 	// Compute per-node budgets based on calling node type.
 	type budgetEntry struct {
 		nodeID string
@@ -228,6 +241,13 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		}
 
 		for i, cn := range completed {
+			// Exempt data-profile exec nodes from compaction — the cacheId
+			// and dataProfile envelope ARE the data. Compacting them severs
+			// the sql_cached_data pipeline for downstream analyze Probe nodes.
+			if strings.Contains(cn.output, "cacheId") && strings.Contains(cn.output, "dataProfile") {
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				continue
+			}
 			perNodeBudget := (nodeWeights[i] * dynamicCeiling) / totalWeight
 			if perNodeBudget < 256 {
 				perNodeBudget = 256 // absolute floor
@@ -270,6 +290,68 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n", sym.Name, sym.Kind, sym.Signature))
 		}
 		sb.WriteString("\n")
+	}
+
+	// Inject pre-extracted cacheIds as a metadata block so enrichCacheBridgeContext
+	// can always find them even if compaction stripped them from individual node outputs.
+	if len(extractedCacheIds) > 0 {
+		seen := make(map[string]bool)
+		sb.WriteString("--- Pre-extracted Cache IDs ---\n")
+		for _, id := range extractedCacheIds {
+			if !seen[id] {
+				sb.WriteString(fmt.Sprintf("cacheId: %s\n", id))
+				seen[id] = true
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// Fix (ADR-benchmark-data-4): Second-hop data bridge for synthesis callers.
+	// The probe's internal synthesis (runSynthesisPass) receives query results
+	// via Fix 1, but the probe's 4B local model summarizes away the actual data
+	// rows when producing its synthesis output. The terminal_synthesis node then
+	// only sees the probe's text summary ("I found N leads") not the raw data.
+	//
+	// This bridge extracts sql_cached_data and introspect_cache tool outputs
+	// directly from upstream probe thought steps and injects them as a
+	// compaction-exempt section — same pattern as Fix 1 but at the accumulated
+	// context level. This ensures terminal_synthesis has actual query results
+	// regardless of what the probe's synthesis captured.
+	if isSynthesis {
+		const maxQueryResultsInAccCtx = 16384
+		var queryBuf strings.Builder
+		for _, state := range states {
+			if state.Status != "completed" {
+				continue
+			}
+			ntype := nodeTypeMap[state.NodeID]
+			if ntype != "probe" && ntype != "analyze" {
+				continue
+			}
+			probeID := taskID + "_" + state.NodeID
+			steps, err := memory.DB.GetThoughtSteps(probeID)
+			if err != nil || len(steps) == 0 {
+				continue
+			}
+			for _, s := range steps {
+				if (s.ToolName == "sql_cached_data" || s.ToolName == "introspect_cache") && s.ToolOutput != "" {
+					if strings.HasPrefix(s.ToolOutput, "Error:") || strings.HasPrefix(s.ToolOutput, "error:") {
+						continue
+					}
+					queryBuf.WriteString(fmt.Sprintf("### %s Step %d: %s\nArgs: %s\nResult:\n%s\n\n", state.NodeID, s.StepIndex, s.ToolName, s.ToolArgs, s.ToolOutput))
+				}
+			}
+		}
+		if queryBuf.Len() > 0 {
+			qr := queryBuf.String()
+			if len(qr) > maxQueryResultsInAccCtx {
+				qr = qr[:maxQueryResultsInAccCtx] + "\n[... query results truncated ...]\n"
+			}
+			sb.WriteString("--- Probe Query Results (compaction-exempt, from thought steps) ---\n")
+			sb.WriteString(qr)
+			sb.WriteString("\n")
+			fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Injected %d chars of probe query results into synthesis context\n", len(qr))
+		}
 	}
 
 	result := sb.String()

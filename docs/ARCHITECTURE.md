@@ -281,15 +281,20 @@ Before outputs are injected back into the LLM's active prompt, they pass through
 4. **Layer 3 (KV Compactor):** Collapses single flat objects into line-delimited `key: value` formats, removing JSON brackets.
 5. **Layer 4 (Dot Notation):** Flattens nested structures (`user.profile.zip: 94016`) up to depth 3 and discards metadata.
 
-### 4.2. SQLite Disk-Backed JQ Cache
+### 4.2. SQLite Disk-Backed Query Cache & Analyze Nodes (v1.0.1, ADR-0048–0053)
 
-When a compacted payload exceeds **12KB**, the Go Executor intercepts it:
-1. Writes the full JSON to the SQLite cache table (`disk_backed_jq_cache`).
-2. Returns a light **Cache Envelope** containing the cache ID, columns, and a sample record.
-3. Appends a **Cache Exploration Guide** to the step prompt.
-4. The model uses `jq_cached_data` to run `jq` queries directly on-disk, feeding only the matching slice back into memory.
+When a compacted payload exceeds **12KB** or represents a structured tabular dataset (CSV, JSON array):
+1. Writes the full dataset to the SQLite query cache (`disk_backed_query_cache`).
+2. Data profiler extracts table schemas and creates sanitized table and column identifiers (`introspect_cache`).
+3. Executes full SQL queries (`sql_cached_data`) via embedded SQLite engine with reserved SQL keyword sanitization and column matching.
+4. **Analyze Nodes (v1.0.1):** Structured analysis nodes that maintain **CompactPreserve** semantics (preserving tabular query results and cache IDs during probe compaction) and collect analytical evidence to feed upstream DAG context.
 
-### 4.3. Priority KV Cache Preemption
+### 4.3. Self-Contained Task Short-Circuiting & Task Lifecycle (v1.0.1, ADR-0054)
+
+- **Self-Contained Short-Circuit:** Tasks with self-contained prompts bypass unnecessary exploration probe loops. Direct synthesis mode operates using prompt inline context when `ContextFile` is omitted.
+- **Task Lifecycle Schema:** Persists orchestration mode, goals, token consumption, and approval levels across workflow execution tables in SQLite.
+
+### 4.4. Priority KV Cache Preemption
 
 Background execution must not slow down interactive user chat:
 - The **`PreemptionManager`** exports active KV slots to disk (`~/.tzro/models/kv-cache/slot_0.bin`) when an interactive user message arrives.

@@ -212,6 +212,7 @@ func (sdb *SqliteDatabase) createTables() error {
 			cache_id TEXT PRIMARY KEY,
 			raw_payload TEXT,
 			envelope_json TEXT,
+			file_path TEXT,
 			created_at INTEGER
 		);`,
 		`CREATE TABLE IF NOT EXISTS workflows (
@@ -336,6 +337,14 @@ func (sdb *SqliteDatabase) createTables() error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_symbol_index_probe ON symbol_index(probe_id);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_symbol_index_dedup ON symbol_index(probe_id, name, file, line);`,
+		`CREATE TABLE IF NOT EXISTS tasks (
+			task_id TEXT PRIMARY KEY,
+			status TEXT NOT NULL DEFAULT 'planning',
+			error TEXT NOT NULL DEFAULT '',
+			prompt TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			completed_at INTEGER NOT NULL DEFAULT 0
+		);`,
 	}
 
 	for _, query := range queries {
@@ -353,6 +362,10 @@ func (sdb *SqliteDatabase) createTables() error {
 	}
 	if err := sdb.ensureColumnExistsTx(tx, "node_states", "raw_output", "TEXT"); err != nil {
 		return fmt.Errorf("failed to migrate node_states schema: %w", err)
+	}
+	// ADR-0053: Analytical Evidence — structured raw data from sql_cached_data calls
+	if err := sdb.ensureColumnExistsTx(tx, "node_states", "analytical_evidence", "TEXT"); err != nil {
+		return fmt.Errorf("failed to migrate node_states analytical_evidence schema: %w", err)
 	}
 
 	// Dynamic Workflow Orchestration column migrations (PRD: Dynamic Workflow Orchestration)
@@ -379,6 +392,11 @@ func (sdb *SqliteDatabase) createTables() error {
 	}
 	if err := sdb.ensureColumnExistsTx(tx, "workflow_executions", "tool_calls_consumed", "INTEGER DEFAULT 0"); err != nil {
 		return fmt.Errorf("failed to migrate workflow_executions schema (tool_calls_consumed): %w", err)
+	}
+
+	// Data Profiler: file_path column for path-reference cache entries
+	if err := sdb.ensureColumnExistsTx(tx, "disk_cache", "file_path", "TEXT"); err != nil {
+		return fmt.Errorf("failed to migrate disk_cache schema (file_path): %w", err)
 	}
 
 	return tx.Commit()
@@ -576,9 +594,9 @@ func (sdb *SqliteDatabase) GetNodeState(taskID, nodeID string) (NodeState, bool)
 	defer sdb.mutex.RUnlock()
 
 	var ns NodeState
-	var rawOutput sql.NullString
-	err := sdb.db.QueryRow("SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, completed_at FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).
-		Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &ns.CompletedAt)
+	var rawOutput, analyticalEvidence sql.NullString
+	err := sdb.db.QueryRow("SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, COALESCE(analytical_evidence, '') as analytical_evidence, completed_at FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).
+		Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &analyticalEvidence, &ns.CompletedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return NodeState{}, false
@@ -588,6 +606,9 @@ func (sdb *SqliteDatabase) GetNodeState(taskID, nodeID string) (NodeState, bool)
 	}
 	if rawOutput.Valid {
 		ns.RawOutput = rawOutput.String
+	}
+	if analyticalEvidence.Valid {
+		ns.AnalyticalEvidence = analyticalEvidence.String
 	}
 	return ns, true
 }
@@ -600,6 +621,69 @@ func (sdb *SqliteDatabase) SetNodeRawOutput(taskID, nodeID, rawOutput string) er
 
 	_, err := sdb.db.Exec("UPDATE node_states SET raw_output = ? WHERE task_id = ? AND node_id = ?", rawOutput, taskID, nodeID)
 	return err
+}
+
+// SetNodeAnalyticalEvidence stores analytical evidence JSON for a node (ADR-0053).
+// Called from the probe loop when sql_cached_data calls succeed in analyze nodes.
+func (sdb *SqliteDatabase) SetNodeAnalyticalEvidence(taskID, nodeID, evidenceJSON string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec("UPDATE node_states SET analytical_evidence = ? WHERE task_id = ? AND node_id = ?", evidenceJSON, taskID, nodeID)
+	return err
+}
+
+// GetNodeAnalyticalEvidence retrieves analytical evidence for a specific node.
+func (sdb *SqliteDatabase) GetNodeAnalyticalEvidence(taskID, nodeID string) (string, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	var evidence string
+	err := sdb.db.QueryRow("SELECT COALESCE(analytical_evidence, '') FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).Scan(&evidence)
+	if err != nil {
+		return "", err
+	}
+	return evidence, nil
+}
+
+// GetTaskAnalyticalEvidence retrieves all analytical evidence across all nodes of a task.
+// Returns a merged JSON array of evidence items from all analyze nodes.
+func (sdb *SqliteDatabase) GetTaskAnalyticalEvidence(taskID string) (string, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	rows, err := sdb.db.Query("SELECT COALESCE(analytical_evidence, '') FROM node_states WHERE task_id = ? AND analytical_evidence != '' AND analytical_evidence IS NOT NULL", taskID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var allEvidence []string
+	for rows.Next() {
+		var evidence string
+		if rows.Scan(&evidence) == nil && evidence != "" {
+			allEvidence = append(allEvidence, evidence)
+		}
+	}
+	if len(allEvidence) == 0 {
+		return "", nil
+	}
+	// If single node, return as-is. If multiple, merge arrays.
+	if len(allEvidence) == 1 {
+		return allEvidence[0], nil
+	}
+	// Merge: strip outer [] from each and join
+	var merged []string
+	for _, e := range allEvidence {
+		e = strings.TrimSpace(e)
+		if strings.HasPrefix(e, "[") && strings.HasSuffix(e, "]") {
+			e = e[1 : len(e)-1]
+		}
+		if e != "" {
+			merged = append(merged, e)
+		}
+	}
+	return "[" + strings.Join(merged, ",") + "]", nil
 }
 
 func (sdb *SqliteDatabase) GetLatestNodeOutput(taskID string) (string, error) {
@@ -629,7 +713,7 @@ func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
 	}
 
 	rows, err := sdb.db.Query(
-		"SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, completed_at FROM node_states WHERE task_id = ? ORDER BY completed_at ASC",
+		"SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, COALESCE(analytical_evidence, '') as analytical_evidence, completed_at FROM node_states WHERE task_id = ? ORDER BY completed_at ASC",
 		taskID,
 	)
 	if err != nil {
@@ -641,13 +725,16 @@ func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
 	var states []NodeState
 	for rows.Next() {
 		var ns NodeState
-		var rawOutput sql.NullString
-		if err := rows.Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &ns.CompletedAt); err != nil {
+		var rawOutput, analyticalEvidence sql.NullString
+		if err := rows.Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &analyticalEvidence, &ns.CompletedAt); err != nil {
 			fmt.Printf("[Memory Error] Failed to scan node state row: %v\n", err)
 			continue
 		}
 		if rawOutput.Valid {
 			ns.RawOutput = rawOutput.String
+		}
+		if analyticalEvidence.Valid {
+			ns.AnalyticalEvidence = analyticalEvidence.String
 		}
 		states = append(states, ns)
 	}
@@ -655,14 +742,86 @@ func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
 }
 
 // TaskSummary represents a derived summary of a planning task and its node states.
+// TaskRecord represents a task lifecycle record in the tasks table (ADR-0054).
+type TaskRecord struct {
+	TaskID      string `json:"taskId"`
+	Status      string `json:"status"` // "planning" | "running" | "completed" | "failed"
+	Error       string `json:"error,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	CreatedAt   int64  `json:"createdAt"`
+	CompletedAt int64  `json:"completedAt,omitempty"`
+}
+
 type TaskSummary struct {
 	TaskID    string `json:"taskId"`
-	Status    string `json:"status"` // "pending" | "running" | "completed" | "failed"
+	Status    string `json:"status"` // "planning" | "running" | "completed" | "failed"
 	CreatedAt int64  `json:"createdAt"`
 	NodeCount int    `json:"nodeCount"`
 }
 
-// GetRecentTasks scans node_states to retrieve derived summaries of recent tasks.
+// CreateTask inserts a new task record with status "planning" (ADR-0054).
+func (sdb *SqliteDatabase) CreateTask(taskID, prompt string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	if sdb.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	_, err := sdb.db.Exec(
+		"INSERT OR REPLACE INTO tasks (task_id, status, error, prompt, created_at) VALUES (?, 'planning', '', ?, ?)",
+		taskID, prompt, time.Now().Unix(),
+	)
+	return err
+}
+
+// UpdateTaskStatus updates a task's status and optional error message (ADR-0054).
+func (sdb *SqliteDatabase) UpdateTaskStatus(taskID, status, errMsg string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	if sdb.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	var completedAt int64
+	if status == "completed" || status == "failed" {
+		completedAt = time.Now().Unix()
+	}
+
+	_, err := sdb.db.Exec(
+		"UPDATE tasks SET status = ?, error = ?, completed_at = ? WHERE task_id = ?",
+		status, errMsg, completedAt, taskID,
+	)
+	return err
+}
+
+// GetTask retrieves a single task record by ID (ADR-0054).
+func (sdb *SqliteDatabase) GetTask(taskID string) (*TaskRecord, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	var rec TaskRecord
+	err := sdb.db.QueryRow(
+		"SELECT task_id, status, error, prompt, created_at, completed_at FROM tasks WHERE task_id = ?",
+		taskID,
+	).Scan(&rec.TaskID, &rec.Status, &rec.Error, &rec.Prompt, &rec.CreatedAt, &rec.CompletedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &rec, nil
+}
+
+// GetRecentTasks retrieves recent tasks from the tasks table (ADR-0054).
+// Falls back to aggregating node_states for backward compatibility with
+// tasks created before the tasks table was introduced.
 func (sdb *SqliteDatabase) GetRecentTasks(limit int, statusFilter string) ([]TaskSummary, error) {
 	sdb.mutex.RLock()
 	defer sdb.mutex.RUnlock()
@@ -671,38 +830,66 @@ func (sdb *SqliteDatabase) GetRecentTasks(limit int, statusFilter string) ([]Tas
 		return nil, fmt.Errorf("database not initialized")
 	}
 
-	query := `
-		SELECT task_id, 
-		       MAX(completed_at) as last_completed,
-		       COUNT(*) as node_count,
-		       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed_count,
-		       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running_count,
-		       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count
-		FROM node_states
-		GROUP BY task_id
-	`
+	// Primary path: query the tasks table directly
 	var args []interface{}
-	wrappedQuery := fmt.Sprintf(`
-		SELECT task_id, last_completed, node_count, failed_count, running_count, completed_count
-		FROM (%s)
-	`, query)
-	wrappedQuery += " ORDER BY last_completed DESC"
+	query := "SELECT task_id, status, created_at FROM tasks"
+	if statusFilter != "" && statusFilter != "all" {
+		query += " WHERE status = ?"
+		args = append(args, statusFilter)
+	}
+	query += " ORDER BY created_at DESC"
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
 
-	// If no status filter, we can limit at the database level.
-	// But since we filter status in Go memory (as it is derived), we do limit filtering after.
-	// However, if we do a subquery, we can filter status in SQL!
-	// Let's write the status derivation in SQL so we can filter and limit at DB level:
-	// CASE WHEN failed_count > 0 THEN 'failed' ...
-	// That's even cleaner! Let's do that.
+	rows, err := sdb.db.Query(query, args...)
+	if err != nil {
+		// Fall back to legacy node_states aggregation if tasks table doesn't exist yet
+		return sdb.getRecentTasksLegacy(limit, statusFilter)
+	}
+	defer rows.Close()
 
+	var list []TaskSummary
+	for rows.Next() {
+		var summary TaskSummary
+		err := rows.Scan(&summary.TaskID, &summary.Status, &summary.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		// Get node count from node_states for detail
+		nodes := sdb.getNodeCountUnlocked(summary.TaskID)
+		summary.NodeCount = nodes
+		list = append(list, summary)
+	}
+
+	if list == nil {
+		list = []TaskSummary{}
+	}
+	return list, nil
+}
+
+// getNodeCountUnlocked returns the number of node_states rows for a task.
+// Caller must hold at least a read lock.
+func (sdb *SqliteDatabase) getNodeCountUnlocked(taskID string) int {
+	var count int
+	_ = sdb.db.QueryRow("SELECT COUNT(*) FROM node_states WHERE task_id = ?", taskID).Scan(&count)
+	return count
+}
+
+// getRecentTasksLegacy is the backward-compatible path for databases
+// that don't have the tasks table yet (pre-ADR-0054).
+func (sdb *SqliteDatabase) getRecentTasksLegacy(limit int, statusFilter string) ([]TaskSummary, error) {
+	var args []interface{}
 	sqlWithStatus := `
-		SELECT task_id, last_completed, node_count,
+		SELECT task_id, node_count,
 		       CASE 
 		           WHEN failed_count > 0 THEN 'failed'
 		           WHEN running_count > 0 THEN 'running'
 		           WHEN completed_count = node_count AND node_count > 0 THEN 'completed'
 		           ELSE 'pending'
-		       END as derived_status
+		       END as derived_status,
+		       last_completed
 		FROM (
 			SELECT task_id, 
 			       MAX(completed_at) as last_completed,
@@ -736,7 +923,7 @@ func (sdb *SqliteDatabase) GetRecentTasks(limit int, statusFilter string) ([]Tas
 	for rows.Next() {
 		var summary TaskSummary
 		var lastCompleted sql.NullInt64
-		err := rows.Scan(&summary.TaskID, &lastCompleted, &summary.NodeCount, &summary.Status)
+		err := rows.Scan(&summary.TaskID, &summary.NodeCount, &summary.Status, &lastCompleted)
 		if err != nil {
 			return nil, err
 		}

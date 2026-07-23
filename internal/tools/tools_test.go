@@ -180,33 +180,16 @@ func TestFunctionTools(t *testing.T) {
 		t.Errorf("unexpected introspect result: %s", introResult)
 	}
 
-	// 2. Test read_cached_data
-	readResult, err := Call(ctx, "read_cached_data", map[string]interface{}{
+	// 2. Test sql_cached_data
+	sqlResult, err := Call(ctx, "sql_cached_data", map[string]interface{}{
 		"cacheId": cacheID,
-		"limit":   1.0,
-		"offset":  0.0,
+		"sql":     fmt.Sprintf("SELECT * FROM %s", cacheID),
 	})
 	if err != nil {
-		t.Fatalf("failed to call read_cached_data: %v", err)
+		t.Fatalf("failed to call sql_cached_data: %v", err)
 	}
-	var readRecords []map[string]interface{}
-	if err := json.Unmarshal([]byte(readResult), &readRecords); err != nil {
-		t.Fatalf("failed to parse read result: %v", err)
-	}
-	if len(readRecords) != 1 || readRecords[0]["id"].(float64) != 10 {
-		t.Errorf("unexpected read records: %v", readRecords)
-	}
-
-	// 3. Test jq_cached_data
-	jqResult, err := Call(ctx, "jq_cached_data", map[string]interface{}{
-		"cacheId": cacheID,
-		"filter":  ".records[0].name",
-	})
-	if err != nil {
-		t.Fatalf("failed to call jq_cached_data: %v", err)
-	}
-	if !strings.Contains(jqResult, "Tools Test") {
-		t.Errorf("unexpected jq result: %s", jqResult)
+	if !strings.Contains(sqlResult, "Tools Test") {
+		t.Errorf("unexpected sql result: %s", sqlResult)
 	}
 }
 

@@ -295,7 +295,7 @@ func RunSuite(ctx context.Context, dataset string, mode string, modelMode string
 		return nil, fmt.Errorf("failed to init benchmark database: %w", err)
 	}
 
-	// Initialize standard tool registry to register cache tools (e.g. jq_cached_data)
+	// Initialize standard tool registry to register cache tools (e.g. sql_cached_data)
 	_ = tools.Init("")
 
 	testCases, err := LoadTestCases(dataset)

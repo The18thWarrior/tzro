@@ -19,6 +19,7 @@ const (
 	CategoryAll     = "" // Run both docgen and codegen
 	CategoryDocgen  = "docgen"
 	CategoryCodegen = "codegen"
+	CategoryDatanal = "datanal"
 )
 
 // AllConditions returns the canonical ordered list of condition IDs
@@ -30,6 +31,11 @@ func AllConditions() []string {
 // CodegenConditions returns all conditions applicable to code generation benchmarks.
 func CodegenConditions() []string {
 	return []string{ConditionCloudCode, ConditionTzroCode}
+}
+
+// DatanalConditions returns all conditions applicable to data analysis benchmarks.
+func DatanalConditions() []string {
+	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
 }
 
 // CodegenConditionsForTier returns the conditions to run for a given task tier.
@@ -62,12 +68,13 @@ type ComparisonTask struct {
 	Prompt      string   `json:"prompt"`
 	TargetPaths []string `json:"targetPaths,omitempty"`
 	// Code-generation specific fields (category=codegen)
-	Spec          string        `json:"spec,omitempty"`     // Specification for tzro_code
-	Filepath      string        `json:"filepath,omitempty"` // Target file path for code generation
-	Language      string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
-	Action        string        `json:"action,omitempty"`   // "create" or "update"
-	SeedFile      string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
-	QualityRubric QualityRubric `json:"qualityRubric"`
+	Spec           string        `json:"spec,omitempty"`     // Specification for tzro_code
+	Filepath       string        `json:"filepath,omitempty"` // Target file path for code generation
+	Language       string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
+	Action         string        `json:"action,omitempty"`   // "create" or "update"
+	SeedFile       string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
+	QualityRubric  QualityRubric `json:"qualityRubric"`
+	ExpectedAnswer string        `json:"expectedAnswer,omitempty"` // Pre-computed ground truth for data analysis tasks
 }
 
 // ComparisonResult captures metrics for one condition × task execution run.

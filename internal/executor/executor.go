@@ -113,12 +113,10 @@ You have access to the following special tools to explore and query this cached 
 
 1. 'introspect_cache': Retrieve schema, field lists, types, and sample record of the cached payload.
    Format: {"tool_arguments": {"cacheId": "cache_..."}}
-2. 'read_cached_data': Page through the records of an array data type using standard offset-based pagination.
-   Format: {"tool_arguments": {"cacheId": "cache_...", "limit": 10, "offset": 0}}
-3. 'jq_cached_data': Query the cached payload using standard JQ filters (e.g. to filter, map, select, group, or calculate).
-   Format: {"tool_arguments": {"cacheId": "cache_...", "filter": ".records[] | select(.Age > 30)"}}
+2. 'sql_cached_data': Query the cached data using standard SQL. The table name is the cacheId.
+   Format: {"tool_arguments": {"cacheId": "cache_...", "sql": "SELECT Sector, COUNT(*) as cnt FROM cache_... GROUP BY Sector ORDER BY cnt DESC"}}
 
-If you need to analyze, filter, paginate, or count records from the cache, you MUST use one of these tools instead of attempting to read the raw cache envelope directly.`
+If you need to analyze, filter, paginate, or count records from the cache, you MUST use one of these tools.`
 
 // ExecuteGraph runs the compiled topological execution levels.
 // It executes nodes at the same Kahn level in parallel via goroutines,
@@ -351,6 +349,9 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	fmt.Fprintf(os.Stderr, "[Executor] Task %s completed successfully. Synthesizing SOP...\n", graph.TaskID)
 	e.getPublisher().PublishEvent("task_completed", graph.TaskID, "", "Task execution completed successfully")
 	_, _ = notification.Send(ctx, "executor", "info", "Task Completed Successfully", fmt.Sprintf("Task '%s' completed all topological levels successfully.", graph.TaskID), notification.WithTaskID(graph.TaskID))
+
+	// Clean up ephemeral cache tables for this task
+	cache.DropTaskTables(graph.TaskID)
 
 	// Retrieve user goal prompt from first node or custom string
 	goalDescription := "Dynamic Workflow automation goal"
@@ -912,12 +913,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		return nil
 	}
 
-	// 1.3 Probe node: autonomous Thought Chain exploration (ADR-0019)
-	// We have restored the native probe execution path to prevent the quality loss
-	// associated with flattening exploration into single action nodes (ADR-0035 rollback).
-	if node.Type == "probe" {
+	// 1.3 Probe/Analyze node: autonomous Thought Chain exploration (ADR-0019)
+	// Analyze nodes use the same Thought Chain execution but with a data-analysis-specific
+	// system prompt and cache tools instead of filesystem exploration tools.
+	if node.Type == "probe" || node.Type == "analyze" {
 		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Probe: "+node.Instructions)
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, strings.Title(node.Type)+": "+node.Instructions)
 
 		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
 			e.getPublisher().PublishStream(stream.StreamChunk{
@@ -939,11 +940,84 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			probeConfig = *node.ProbeConfig
 		}
 
+		// Fix 4 (Probe allowedTools Enrichment): Runtime expansion of cache tools
+		// for probes/analyze nodes that need to query cached data. Three triggers:
+		//
+		// (a) Probe has read_file in allowedTools — it may encounter tabular data
+		//     at runtime, which the Data Profiler will cache automatically.
+		//     No need to regex-match file extensions in instructions; the profiler
+		//     at filesystem.go:IsTabularExtension detects this natively.
+		// (b) Upstream completed nodes contain cacheId + dataProfile markers,
+		//     meaning tabular data was already read and cached — the analyze node
+		//     needs SQL tools to query it.
+		// (c) The node's instructions contain a cacheId pattern directly.
+		if (node.Type == "probe" || node.Type == "analyze") && !isAnalyzeConfig(probeConfig.AllowedTools) {
+			shouldExpand := false
+
+			// (a) Probe has read_file — may encounter tabular data at runtime
+			for _, t := range probeConfig.AllowedTools {
+				if t == "read_file" {
+					shouldExpand = true
+					break
+				}
+			}
+
+			// (b) Upstream completed nodes already produced cached tabular data
+			if !shouldExpand {
+				states := memory.DB.GetAllNodeStates(taskID)
+				for _, state := range states {
+					if state.Status == "completed" {
+						raw := state.RawOutput
+						if raw == "" {
+							raw = state.Output
+						}
+						if strings.Contains(raw, "cacheId") && strings.Contains(raw, "dataProfile") {
+							shouldExpand = true
+							break
+						}
+					}
+				}
+			}
+
+			// (c) Instructions contain a cacheId pattern (cache_NNNN)
+			if !shouldExpand {
+				cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+				if cacheIdRe.MatchString(node.Instructions) {
+					shouldExpand = true
+				}
+			}
+
+			if shouldExpand {
+				probeConfig.AllowedTools = append(probeConfig.AllowedTools, "introspect_cache", "sql_cached_data")
+				node.AllowedTools = probeConfig.AllowedTools
+				fmt.Fprintf(os.Stderr, "[Executor] Expanded probe allowedTools with cache tools for %s\n", node.ID)
+			}
+		}
+
 		// Inject the original task spec/goal so the Probe knows the actual
 		// requirements (e.g., target language) even when the workspace context
 		// suggests different patterns. Only set if not already provided by planner.
 		if probeConfig.TaskContext == "" && graph.GoalPrompt != "" {
 			probeConfig.TaskContext = graph.GoalPrompt
+		}
+
+		// Inject accumulated context from completed upstream nodes so the
+		// probe/analyze Thought Chain can see outputs from prior DAG steps
+		// (e.g., cacheId from an upstream read_file execution). Without this,
+		// analyze nodes have no way to discover the cacheId and must guess,
+		// causing futility aborts when all cache lookups fail.
+		if probeConfig.UpstreamContext == "" {
+			upstreamCtx := buildAccumulatedContext(taskID, graph, node.Type)
+			if upstreamCtx != "" {
+				// Enrich analyze nodes with introspect_cache schema so the probe
+				// sees the actual data shape (flat JSON array) and column names,
+				// enabling correct SQL query generation.
+				if isAnalyzeConfig(node.AllowedTools) {
+					upstreamCtx = enrichCacheBridgeContext(ctx, upstreamCtx, node.Instructions)
+				}
+				probeConfig.UpstreamContext = upstreamCtx
+				fmt.Fprintf(os.Stderr, "[Executor] Injected %d chars of upstream context into %s node %s\n", len(upstreamCtx), node.Type, node.ID)
+			}
 		}
 
 		// Auto-detect PreloadPaths from probe instructions if not explicitly set.
@@ -1012,6 +1086,64 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			return ErrTaskPaused
 		}
 
+		// Preserve cacheIds for downstream nodes. When a probe reads a CSV,
+		// the Data Profiler caches the data and returns a cacheId in the tool
+		// result, but the probe's synthesis is prose that strips this.
+		// Downstream analyze nodes need the cacheId to query via sql_cached_data.
+		//
+		// Sources checked:
+		// 1. Upstream context (passed to this probe)
+		// 2. Ephemeral query DB's _cache_tables (materialized during this task)
+		cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+		synthesisCacheIds := cacheIdRe.FindAllString(synthesis, -1)
+		synthesisCacheSet := make(map[string]bool)
+		for _, id := range synthesisCacheIds {
+			synthesisCacheSet[id] = true
+		}
+
+		var allDiscovered []string
+		seen := make(map[string]bool)
+
+		// Source 1: upstream context
+		if probeConfig.UpstreamContext != "" {
+			for _, id := range cacheIdRe.FindAllString(probeConfig.UpstreamContext, -1) {
+				if !synthesisCacheSet[id] && !seen[id] {
+					allDiscovered = append(allDiscovered, id)
+					seen[id] = true
+				}
+			}
+		}
+
+		// Source 2: ephemeral query DB — tables materialized recently
+		// (the probe may have created them internally via read_file →
+		// Data Profiler). Scoped to last 60 seconds to avoid picking up
+		// stale tables from prior task runs.
+		if qdb := cache.QueryDB(); qdb != nil {
+			cutoff := time.Now().Add(-60 * time.Second).Format(time.RFC3339)
+			rows, err := qdb.Query("SELECT table_name FROM _cache_tables WHERE created_at > ? ORDER BY created_at DESC LIMIT 3", cutoff)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var tableName string
+					if rows.Scan(&tableName) == nil {
+						if !synthesisCacheSet[tableName] && !seen[tableName] && cacheIdRe.MatchString(tableName) {
+							allDiscovered = append(allDiscovered, tableName)
+							seen[tableName] = true
+						}
+					}
+				}
+			}
+		}
+
+		if len(allDiscovered) > 0 {
+			synthesis += "\n\n## Data Cache Reference\n"
+			for _, id := range allDiscovered {
+				synthesis += fmt.Sprintf("cacheId: %s (use sql_cached_data to query)\n", id)
+				synthesis += "dataProfile: available via introspect_cache\n"
+			}
+			fmt.Fprintf(os.Stderr, "[Executor] Appended %d cacheIds to probe %s synthesis for downstream discovery\n", len(allDiscovered), node.ID)
+		}
+
 		nodeStatus := fmt.Sprintf("[Probe] %s", synthesis)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
 		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
@@ -1048,7 +1180,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 					parentID := edge.SourceID
 					// Check if parent is a probe
 					for _, n := range graph.Nodes {
-						if n.ID == parentID && n.Type == "probe" {
+						if n.ID == parentID && (n.Type == "probe" || n.Type == "analyze") {
 							upstreamNodeIDs = append(upstreamNodeIDs, parentID)
 						}
 					}
@@ -1200,7 +1332,10 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			})
 		}
 
-		systemPrompt := "You are the Local Tactician Node Executor. Summarize and compile all prior action outputs into a final cohesive response."
+		systemPrompt := "You are the Local Tactician Node Executor. " +
+			"Compile all prior action outputs and query results into a final cohesive response. " +
+			"The accumulated context below contains data retrieved by prior nodes — use it directly. " +
+			"If query results are provided, include the actual data values in your response."
 		accumulatedCtx := buildAccumulatedContext(taskID, graph, "synthesis")
 		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
 
@@ -1382,10 +1517,17 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// to extract values by key name rather than re-parsing them from prose.
 	accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 
+	// Schema enrichment for cache bridge nodes: inject introspect_cache output
+	// so the model sees the actual data shape (flat JSON array) rather than
+	// assuming the dataProfile envelope structure from upstream output.
+	if isCacheExploration && node.Action == "sql_cached_data" {
+		accumulatedCtx = enrichCacheBridgeContext(ctx, accumulatedCtx, interpolatedPrompt)
+	}
+
 	var systemPrompt string
 	if isCacheExploration {
 		systemPrompt = fmt.Sprintf(
-			"You are the Local Tactician Node Executor. Your job is to convert the dynamic user step instruction into structured tool parameters.\n\nALLOWED TOOLS:\n- %s\n- introspect_cache\n- read_cached_data\n- jq_cached_data%s",
+			"You are the Local Tactician Node Executor. Your job is to convert the dynamic user step instruction into structured tool parameters.\n\nALLOWED TOOLS:\n- %s\n- introspect_cache\n- sql_cached_data%s",
 			node.Action,
 			CacheExplorationGuide,
 		)
@@ -1661,8 +1803,8 @@ func stripSchemaProperties(schemaStr string, keysToStrip []string) string {
 //
 // Uses a three-tier resolution cascade (ADR-0029 Response Resolver):
 //  1. Recursive key search — parse JSON and walk the tree for an exact key match at any depth
-//  1.5. Fuzzy key search — suffix/substring containment on JSON keys
-//  1.6. Node-type-aware plain-text fallback — for probe/synthesis/recall nodes whose output is raw text
+//     1.5. Fuzzy key search — suffix/substring containment on JSON keys
+//     1.6. Node-type-aware plain-text fallback — for probe/synthesis/recall nodes whose output is raw text
 //  2. KV-line key search — fall back to "key: value" per-line parsing for non-JSON outputs
 //  3. Semantic fallback — invoke the Local Model to semantically match the binding key
 //
@@ -1682,6 +1824,13 @@ func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}
 		// Parse "nodeId.output.propertyName" format
 		parts := strings.SplitN(bindingPath, ".", 3) // ["nodeId", "output", "propertyName"]
 		if len(parts) < 3 || parts[1] != "output" {
+			// Suppress warning for literal values (file paths, URLs, etc.)
+			// that the planner sometimes places in DynamicBindings instead of
+			// a proper nodeId.output.propertyName reference. Use them directly.
+			if strings.HasPrefix(bindingPath, "/") || strings.HasPrefix(bindingPath, "http") {
+				resolved[paramName] = ResolvedBinding{Value: bindingPath, Tier: "literal"}
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] WARNING: Invalid binding format for '%s': %q (expected 'nodeId.output.propertyName')\n", paramName, bindingPath)
 			continue
 		}
@@ -2177,6 +2326,13 @@ func coerceStringArguments(args map[string]interface{}, instruction string, tool
 	instructionLower := strings.ToLower(instruction)
 
 	for key, val := range args {
+		// sql_cached_data.sql arguments are already validated by GBNF Pass 2.
+		// StringCoercion's fuzzy matching treats valid SQL as "hallucinated"
+		// and truncates it to a single keyword (e.g., "FROM"), destroying the query.
+		if toolName == "sql_cached_data" && key == "sql" {
+			continue
+		}
+
 		// Only coerce string arguments
 		strVal, isStr := val.(string)
 		if !isStr {

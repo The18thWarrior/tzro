@@ -252,6 +252,11 @@ func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compi
 					// Mark resolved
 					resolved[nID] = true
 
+					// --- Cache Bridge Runtime Injection (spec §4.3) ---
+					// If a node's output contains cacheId and dataProfile, and no
+					// downstream node has cache tools, inject a cache bridge node.
+					e.maybeInjectCacheBridge(graph, nodeIndex, node, nID)
+
 					// --- Neural Edge Traversal (ADR-0024) ---
 					e.handleEdgeTraversal(ctx, graph, nodeIndex, node, resolved, &stepIndex, activeHooks, &firstErr, &errOnce)
 				}(nodeID)
