@@ -1014,4 +1014,3 @@ func waitForSidecarHealth(label string, model *inference.LocalModelManager) {
 	}
 	fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar health check timed out on port %d\n", label, activePort)
 }
-

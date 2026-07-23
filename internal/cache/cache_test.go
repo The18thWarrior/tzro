@@ -546,4 +546,3 @@ func TestGetRawPayload_ReadsFromFilePath(t *testing.T) {
 		t.Errorf("first record name = %q, want %q", records[0]["name"], "Alice")
 	}
 }
-

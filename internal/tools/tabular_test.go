@@ -289,11 +289,11 @@ func TestBuildSampleRows_AdaptiveSizing(t *testing.T) {
 // Slice 9: Column pruning (high null, constant, high-cardinality string)
 func TestComputePrunedColumns(t *testing.T) {
 	columns := []ColumnProfile{
-		{Name: "id", Type: "string", NullRate: 0.0, Cardinality: ">1000"},       // high cardinality string → prune
-		{Name: "status", Type: "string", NullRate: 0.0, Cardinality: 3},         // low cardinality → keep
-		{Name: "notes", Type: "string", NullRate: 0.95, Cardinality: 5},         // >90% null → prune
-		{Name: "constant", Type: "string", NullRate: 0.0, Cardinality: 1},       // single value → prune
-		{Name: "score", Type: "integer", NullRate: 0.0, Cardinality: 100},       // numeric → keep
+		{Name: "id", Type: "string", NullRate: 0.0, Cardinality: ">1000"}, // high cardinality string → prune
+		{Name: "status", Type: "string", NullRate: 0.0, Cardinality: 3},   // low cardinality → keep
+		{Name: "notes", Type: "string", NullRate: 0.95, Cardinality: 5},   // >90% null → prune
+		{Name: "constant", Type: "string", NullRate: 0.0, Cardinality: 1}, // single value → prune
+		{Name: "score", Type: "integer", NullRate: 0.0, Cardinality: 100}, // numeric → keep
 	}
 
 	pruned := computePrunedColumns(columns, 1000)
@@ -429,9 +429,9 @@ func TestIsTabularExtension(t *testing.T) {
 // Test CSV quoting edge case
 func TestParseCSVLine(t *testing.T) {
 	tests := []struct {
-		name  string
-		line  string
-		want  []string
+		name string
+		line string
+		want []string
 	}{
 		{"simple", "a,b,c", []string{"a", "b", "c"}},
 		{"quoted", `"hello, world",b,c`, []string{"hello, world", "b", "c"}},

@@ -68,12 +68,12 @@ type ComparisonTask struct {
 	Prompt      string   `json:"prompt"`
 	TargetPaths []string `json:"targetPaths,omitempty"`
 	// Code-generation specific fields (category=codegen)
-	Spec          string        `json:"spec,omitempty"`     // Specification for tzro_code
-	Filepath      string        `json:"filepath,omitempty"` // Target file path for code generation
-	Language      string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
-	Action        string        `json:"action,omitempty"`   // "create" or "update"
-	SeedFile      string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
-	QualityRubric QualityRubric `json:"qualityRubric"`
+	Spec           string        `json:"spec,omitempty"`     // Specification for tzro_code
+	Filepath       string        `json:"filepath,omitempty"` // Target file path for code generation
+	Language       string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
+	Action         string        `json:"action,omitempty"`   // "create" or "update"
+	SeedFile       string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
+	QualityRubric  QualityRubric `json:"qualityRubric"`
 	ExpectedAnswer string        `json:"expectedAnswer,omitempty"` // Pre-computed ground truth for data analysis tasks
 }
 

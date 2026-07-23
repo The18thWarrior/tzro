@@ -354,7 +354,7 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 		}
 		if origNode.Type == "probe" || origNode.Type == "synthesis" || origNode.Type == "analyze" {
 			continue // Probes handle cache tools via expansion; synthesis doesn't produce profiles;
-			         // analyze nodes query SQL directly
+			// analyze nodes query SQL directly
 		}
 
 		// Resolve the exec node ID for this original node

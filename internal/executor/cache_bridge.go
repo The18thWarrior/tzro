@@ -59,7 +59,6 @@ Schema introspection result:
 	return accumulatedCtx + enrichment
 }
 
-
 // cacheToolNames are the tools that indicate cache access capability.
 var cacheToolNames = []string{"introspect_cache", "sql_cached_data"}
 

@@ -1803,8 +1803,8 @@ func stripSchemaProperties(schemaStr string, keysToStrip []string) string {
 //
 // Uses a three-tier resolution cascade (ADR-0029 Response Resolver):
 //  1. Recursive key search — parse JSON and walk the tree for an exact key match at any depth
-//  1.5. Fuzzy key search — suffix/substring containment on JSON keys
-//  1.6. Node-type-aware plain-text fallback — for probe/synthesis/recall nodes whose output is raw text
+//     1.5. Fuzzy key search — suffix/substring containment on JSON keys
+//     1.6. Node-type-aware plain-text fallback — for probe/synthesis/recall nodes whose output is raw text
 //  2. KV-line key search — fall back to "key: value" per-line parsing for non-JSON outputs
 //  3. Semantic fallback — invoke the Local Model to semantically match the binding key
 //

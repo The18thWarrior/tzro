@@ -33,14 +33,14 @@ func sanitizeSQLColumnName(name string) string {
 // DataProfile is the structured profile returned by the Data Profiler
 // when read_file encounters a tabular file (CSV, TSV, Excel, large JSON array).
 type DataProfile struct {
-	Format        string          `json:"format"`                  // "csv", "tsv", "xlsx", "json"
+	Format        string          `json:"format"` // "csv", "tsv", "xlsx", "json"
 	Path          string          `json:"path"`
-	Delimiter     string          `json:"delimiter,omitempty"`     // for csv/tsv
+	Delimiter     string          `json:"delimiter,omitempty"` // for csv/tsv
 	RowCount      int             `json:"rowCount"`
 	ColumnCount   int             `json:"columnCount"`
 	FileSizeBytes int64           `json:"fileSizeBytes"`
 	Columns       []ColumnProfile `json:"columns"`
-	SampleRows    string          `json:"sampleRows"`             // TSV-formatted
+	SampleRows    string          `json:"sampleRows"` // TSV-formatted
 	CacheID       string          `json:"cacheId"`
 	// Excel-specific
 	Sheets      []SheetSummary `json:"sheets,omitempty"`
@@ -50,13 +50,13 @@ type DataProfile struct {
 // ColumnProfile describes a single column's statistical properties.
 type ColumnProfile struct {
 	Name        string      `json:"name"`
-	Type        string      `json:"type"`                    // "integer", "float", "string", "boolean", "enum", "mixed"
+	Type        string      `json:"type"` // "integer", "float", "string", "boolean", "enum", "mixed"
 	NullRate    float64     `json:"nullRate"`
-	Cardinality interface{} `json:"cardinality"`             // int or ">1000"
+	Cardinality interface{} `json:"cardinality"` // int or ">1000"
 	// Conditional fields
-	Values []string `json:"values,omitempty"`                // only for enum (cardinality ≤ 20)
-	Min    *float64 `json:"min,omitempty"`                   // only for numeric types
-	Max    *float64 `json:"max,omitempty"`                   // only for numeric types
+	Values []string `json:"values,omitempty"` // only for enum (cardinality ≤ 20)
+	Min    *float64 `json:"min,omitempty"`    // only for numeric types
+	Max    *float64 `json:"max,omitempty"`    // only for numeric types
 }
 
 // SheetSummary summarizes a single Excel sheet.
@@ -204,8 +204,8 @@ func ProfileTabularFile(filePath string) (*DataProfile, error) {
 
 	// Stream rows
 	rowCount := 0
-	var firstRows [][]string   // first 3 rows
-	var reservoir [][]string   // reservoir-sampled rows
+	var firstRows [][]string // first 3 rows
+	var reservoir [][]string // reservoir-sampled rows
 	const reservoirSize = 2
 
 	for scanner.Scan() {

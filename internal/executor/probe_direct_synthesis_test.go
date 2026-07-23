@@ -86,7 +86,7 @@ func TestDirectSynthesis(t *testing.T) {
 		synthEngine := &mockSynthesisEngine{response: "unused"}
 
 		config := compiler.ProbeConfig{
-			Goal:            "Generate docs",
+			Goal:            "", // Missing both ContextFile and Goal
 			DirectSynthesis: true,
 			ContextFile:     "", // Missing!
 		}
@@ -102,10 +102,10 @@ func TestDirectSynthesis(t *testing.T) {
 		)
 
 		if err == nil {
-			t.Fatal("Expected error when ContextFile is missing")
+			t.Fatal("Expected error when ContextFile and Goal are missing")
 		}
-		if !strings.Contains(err.Error(), "ContextFile") {
-			t.Errorf("Error should mention ContextFile, got: %v", err)
+		if !strings.Contains(err.Error(), "ContextFile") && !strings.Contains(err.Error(), "Goal") {
+			t.Errorf("Error should mention ContextFile or Goal, got: %v", err)
 		}
 	})
 

@@ -73,7 +73,7 @@ type ProbeConfig struct {
 	// This eliminates the routing problem where probes miss files during exploration.
 	PreloadPaths    []string `json:"preloadPaths,omitempty"`    // Directories to pre-load
 	PreloadMaxChars int      `json:"preloadMaxChars,omitempty"` // Character budget for preloaded content (default: 32000)
-	UpstreamContext string          `json:"upstreamContext,omitempty"` // Accumulated context from completed upstream nodes — injected by executor so the probe can see upstream outputs (e.g., cacheId from read_file)
+	UpstreamContext string   `json:"upstreamContext,omitempty"` // Accumulated context from completed upstream nodes — injected by executor so the probe can see upstream outputs (e.g., cacheId from read_file)
 }
 
 type GraphEdge struct {

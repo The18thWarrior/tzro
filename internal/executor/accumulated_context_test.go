@@ -521,4 +521,3 @@ func TestAccumulatedContext_PreExtractedCacheIds(t *testing.T) {
 		t.Error("expected extracted cacheId 'cache_1784603777374136000' in metadata block")
 	}
 }
-

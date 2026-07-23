@@ -14,8 +14,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"tzro/internal/cache"
 	ignore "github.com/sabhiram/go-gitignore"
+	"tzro/internal/cache"
 	"tzro/internal/inference"
 )
 

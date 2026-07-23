@@ -7,8 +7,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"tzro/internal/compactor"
 	"tzro/internal/cache"
+	"tzro/internal/compactor"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
@@ -169,7 +169,6 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 		}
 		symbolRefBlock = sb.String()
 	}
-
 
 	// Fix 1 (Recall Context Injection): When refinedContext is empty (the local
 	// model short-circuited to SYNTHESIZE_READY without calling update_refined_context),

@@ -302,7 +302,7 @@ func RunProbe(
 	// Pre-load target directory files if PreloadPaths is set.
 	// Strategy: Write pre-loaded content to a temp file in the first PreloadPath
 	// directory, then add a directive in the goal telling the probe to read it.
-	// 
+	//
 	// Why NOT lastToolOutput: Rolling compaction at step 3 destroys the pre-loaded
 	// content (observed: 32K chars → 375 char summary for T3 ADRs).
 	// Why NOT TaskContext: Bloats system prompt on every step, overwhelming the router.
@@ -332,8 +332,6 @@ func RunProbe(
 	if preloadCleanup != nil {
 		defer preloadCleanup()
 	}
-
-
 
 	// Pass 1: High-Entropy Tool Loop
 	//
@@ -1132,7 +1130,7 @@ The query engine is SQLite. Use SQLite-compatible syntax ONLY:
   - Do NOT try to count items incrementally or by hand — let SQL do the counting
   - After grouping, verify: SELECT SUM(cnt) FROM (SELECT COUNT(*) as cnt FROM table GROUP BY col)
     should equal SELECT COUNT(*) FROM table
-` + extractionStrategySection(extractionMode) + `
+`+extractionStrategySection(extractionMode)+`
 
 ## Text Matching and Filtering
 - For exact value lookups, use LIKE with wildcards: WHERE ColName LIKE '%%value%%'
