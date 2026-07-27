@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -175,6 +176,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}
 	}
 
+	var adrCombinedPath string // Set by adr_summary pre-compilation for prompt augmentation (Fix 3)
 	if t.ID == "adr_summary" {
 		adrDir := filepath.Join(testOutputDir, "docs/adr")
 		files, err := os.ReadDir(adrDir)
@@ -191,6 +193,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			}
 			combinedPath := filepath.Join(adrDir, "all_adrs_combined.md")
 			_ = os.WriteFile(combinedPath, []byte(combined.String()), 0644)
+			adrCombinedPath = combinedPath
 			fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled all ADRs into %s\n", combinedPath)
 		}
 	} else if t.ID == "internal_architecture" {
@@ -317,6 +320,12 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			relOutputDir = testOutputDir
 		}
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: Read and explore source code from the project root directory (not from the output directory). Write all output files to this isolated output directory: %s", taskPrompt, relOutputDir)
+
+		// Fix 3: Point the Probe at the pre-compiled ADR file so it doesn't
+		// miss files due to step budget exhaustion.
+		if adrCombinedPath != "" {
+			taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: All ADR files have been pre-compiled into a single document at: %s. Read this file FIRST to access all ADR content in one read.", taskPrompt, adrCombinedPath)
+		}
 	} else if t.Category == CategoryDatanal {
 		// For datanal tasks, the CSV file is at helpers/LeadSuccess.csv relative to the project root.
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: The data file is located in the project directory at: %s/helpers/LeadSuccess.csv", taskPrompt, projectRoot)
@@ -397,7 +406,69 @@ func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) str
 			}
 		}
 	}
-	return lastOutput
+
+	// Fix 2: Sanitize synthesis output — strip model reasoning artifacts
+	// (<thinking> tags, repetitive preambles) and fallback to accumulated
+	// node outputs when synthesis is empty or invalid.
+	cleaned := sanitizeSynthesisOutput(lastOutput, 50)
+	if cleaned != "" {
+		return cleaned
+	}
+
+	// Fallback: accumulate partial outputs from completed action/tool nodes
+	if lastOutput != "" {
+		fmt.Fprintf(os.Stderr, "[extractTerminalSynthesis] Synthesis output invalid after sanitization (%d raw chars → 0 clean chars). Falling back to accumulated partial outputs.\n", len(lastOutput))
+	}
+	return accumulatePartialOutputs(graph, taskID)
+}
+
+// sanitizeSynthesisOutput strips model reasoning artifacts (<thinking> tags,
+// repetitive preambles) from synthesis output. If the cleaned result is too
+// short (< minChars), it returns empty string to trigger fallback to
+// accumulated node outputs.
+func sanitizeSynthesisOutput(raw string, minChars int) string {
+	if raw == "" {
+		return ""
+	}
+
+	cleaned := raw
+
+	// Strip <thinking>...</thinking> blocks (greedy, handles newlines)
+	thinkingRe := regexp.MustCompile(`(?s)<thinking>.*?</thinking>`)
+	cleaned = thinkingRe.ReplaceAllString(cleaned, "")
+
+	// Strip leading/trailing whitespace
+	cleaned = strings.TrimSpace(cleaned)
+
+	if len(cleaned) < minChars {
+		return ""
+	}
+
+	return cleaned
+}
+
+// accumulatePartialOutputs collects outputs from completed non-synthesis nodes
+// as a fallback when synthesis produces no usable content.
+func accumulatePartialOutputs(graph *compiler.ExecutionGraph, taskID string) string {
+	if graph == nil {
+		return ""
+	}
+	var parts []string
+	for _, node := range graph.Nodes {
+		if node.Type == "synthesis" || node.ID == "terminal_synthesis" {
+			continue
+		}
+		if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok && state.Status == "completed" {
+			output := state.RawOutput
+			if output == "" {
+				output = state.Output
+			}
+			if len(output) > 100 { // Only include substantive outputs
+				parts = append(parts, fmt.Sprintf("## %s\n%s", node.ID, output))
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n---\n\n")
 }
 
 // extractLastWriteContent attempts to recover the generated documentation from the execution graph
@@ -729,9 +800,14 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 	}, nil
 }
 
-// runDraftFixMode executes draft+fix codegen: a single-pass local draft
-// (no CompilationGateHook, no self-repair), then a cloud fix if compilation
-// fails. This was formerly the separate RunCodegenDraftCondition.
+// runDraftFixMode executes draft+fix codegen: a local draft with compilation
+// feedback loop (CompilationGateHook + cloud repair escalation), then a
+// post-hoc cloud fix as a second-chance fallback if compilation still fails.
+//
+// Benchmark results-full-2 showed that without the CompilationGateHook, Go
+// tasks consistently scored ≤ 2.5 (3/7 draft tasks). Enabling the hook gives
+// draft mode the same compile→diagnose→repair loop as direct mode (ADR-0036
+// + ADR-0057).
 func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPath, tmpDir string, t ComparisonTask, codeCtx *codegen.CodeContext, pricing PricingTable) (ComparisonResult, error) {
 	// ── Phase 1: Draft (local model, cooperative mode) ──────────────────
 
@@ -745,10 +821,20 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 	// Build the DAG — same structure as direct mode
 	graph := codegen.BuildCodeDAG(taskID, spec, targetPath, language, 500, codeCtx)
 
-	// KEY DIFFERENCE: Do NOT register the CompilationGateHook.
-	// No AfterNode compilation check, no OnEdgeTraversal confidence override,
-	// no repair spawns. The local model gets exactly one shot.
-	fmt.Fprintf(os.Stderr, "[Comparison/Draft] Executing single-pass draft (no compilation gate) for %s/%s\n", conditionID, t.ID)
+	// Register CompilationGateHook WITH cloud repair escalation.
+	// This gives draft mode the same compile→diagnose→repair loop as direct
+	// mode (ADR-0036 + ADR-0057). Without this, Go tasks consistently fail
+	// compilation with no recovery path (benchmark results-full-2: 3 Go tasks
+	// all scoring ≤ 2.5).
+	compilationHook := &codegen.CompilationGateHook{
+		FilePath:         targetPath,
+		Language:         language,
+		Spec:             spec,
+		AllowCloudRepair: true,
+	}
+	executor.GlobalEngine.RegisterHook(compilationHook)
+	defer executor.GlobalEngine.UnregisterHook(compilationHook)
+	fmt.Fprintf(os.Stderr, "[Comparison/Draft] Executing draft WITH compilation gate for %s/%s\n", conditionID, t.ID)
 
 	err := executor.GlobalEngine.ExecuteGraphReactive(draftCtx, graph)
 

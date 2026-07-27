@@ -315,8 +315,30 @@ func RunProbe(
 		if maxChars <= 0 {
 			maxChars = defaultPreloadMaxChars
 		}
-		preloadedContent = preloadDirectoryContext(config.PreloadPaths, maxChars)
-		if preloadedContent != "" {
+
+		// Fix 3: Compute full content first (no budget) to detect truncation.
+		// If the full content exceeds maxChars, auto-promote to DirectSynthesis
+		// instead of truncating — this prevents probes from missing files in
+		// large directories (e.g., 55+ ADR files exceeding 32K budget).
+		fullContent := preloadDirectoryContext(config.PreloadPaths, 10*1024*1024) // 10MB ceiling
+		if len(fullContent) > maxChars && !config.DirectSynthesis {
+			// Content exceeds probe context budget — promote to DirectSynthesis
+			contextFile := filepath.Join(config.PreloadPaths[0], ".preload_context_full.md")
+			if err := os.WriteFile(contextFile, []byte(fullContent), 0644); err == nil {
+				config.DirectSynthesis = true
+				config.ContextFile = contextFile
+				preloadCleanup = func() {
+					os.Remove(contextFile)
+				}
+				fmt.Fprintf(os.Stderr, "[Probe] Preload content (%d chars) exceeds budget (%d) — auto-promoting to DirectSynthesis via %s\n",
+					len(fullContent), maxChars, contextFile)
+			}
+		} else if fullContent != "" {
+			// Content fits within budget — use normal preload flow
+			preloadedContent = fullContent
+			if len(preloadedContent) > maxChars {
+				preloadedContent = preloadedContent[:maxChars]
+			}
 			// Write to temp file in the first preload directory
 			preloadFile := filepath.Join(config.PreloadPaths[0], ".preload_context.md")
 			if err := os.WriteFile(preloadFile, []byte(preloadedContent), 0644); err == nil {
