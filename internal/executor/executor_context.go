@@ -215,6 +215,28 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			dynamicCeiling = hardCap
 		}
 
+		// Build a set of node IDs whose outputs are explicitly referenced by
+		// downstream DynamicBindings. These carry data that a downstream node
+		// will attempt to extract — compacting them destroys the pipeline.
+		// Binding format: paramName → "nodeId.output.propertyName".
+		// The compiler expands "nodeId" into "nodeId_validator" + "nodeId_exec",
+		// so we exempt both the raw nodeId and the derived _exec form.
+		bindingExempt := make(map[string]bool)
+		if graph != nil {
+			for _, n := range graph.Nodes {
+				for _, rawBinding := range n.DynamicBindings {
+					bindingStr := fmt.Sprintf("%v", rawBinding)
+					// Extract the source node ID from "nodeId.output.propertyName"
+					if parts := strings.SplitN(bindingStr, ".", 2); len(parts) >= 1 {
+						sourceID := parts[0]
+						bindingExempt[sourceID] = true
+						bindingExempt[sourceID+"_exec"] = true
+						bindingExempt[sourceID+"_validator"] = true
+					}
+				}
+			}
+		}
+
 		// Compute total weight for tiered allocation
 		typeWeights := map[string]int{
 			"recall":        8,
@@ -246,6 +268,14 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			// the sql_cached_data pipeline for downstream analyze Probe nodes.
 			if strings.Contains(cn.output, "cacheId") && strings.Contains(cn.output, "dataProfile") {
 				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				continue
+			}
+			// Exempt nodes explicitly referenced by downstream DynamicBindings.
+			// Their output is the data source for a downstream node's parameter
+			// extraction — compacting it destroys the data pipeline.
+			if bindingExempt[cn.nodeID] {
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Exempting node %s from compaction — referenced by downstream DynamicBinding\n", cn.nodeID)
 				continue
 			}
 			perNodeBudget := (nodeWeights[i] * dynamicCeiling) / totalWeight

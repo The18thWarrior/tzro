@@ -991,31 +991,43 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	return nil, fmt.Errorf("invalid or empty response choice returned from local model")
 }
 
-// StripThinkTags removes <think>...</think> blocks from model output.
-// When thinking mode is enabled, the serving backend should strip these in the
-// content field, but some backends (especially llama.cpp with certain chat
-// templates) may leak them through. This is a safety net.
+// StripThinkTags removes <think>...</think> and <thinking>...</thinking>
+// blocks from model output. When thinking mode is enabled, the serving backend
+// should strip these in the content field, but some backends (especially
+// llama.cpp with certain chat templates) may leak them through. Some models
+// also emit <thinking> (Claude-style) instead of <think> — both must be
+// stripped to prevent interference with downstream tag extraction (e.g.,
+// <ACTION>, <SYNTHESIZE_READY> in probe Thought Chains).
 // Exported for use by the executor package (probe.go).
 func StripThinkTags(content string) string {
-	// Fast path: no think tags present
-	if !strings.Contains(content, "<think>") {
+	// Fast path: no think tags present (catches both <think> and <thinking>)
+	if !strings.Contains(content, "<think>") && !strings.Contains(content, "<thinking>") {
 		return content
 	}
-	// Remove all <think>...</think> blocks (possibly multi-line)
+	// Strip both variants — order matters: <thinking> first (longer tag),
+	// otherwise <think> would match the prefix of <thinking>.
+	content = stripTagPair(content, "<thinking>", "</thinking>")
+	content = stripTagPair(content, "<think>", "</think>")
+	return strings.TrimSpace(content)
+}
+
+// stripTagPair removes all occurrences of open...close tag pairs from content.
+// If an unclosed open tag is found, strips from the open tag to the end.
+func stripTagPair(content, openTag, closeTag string) string {
 	for {
-		start := strings.Index(content, "<think>")
+		start := strings.Index(content, openTag)
 		if start == -1 {
 			break
 		}
-		end := strings.Index(content, "</think>")
+		end := strings.Index(content[start:], closeTag)
 		if end == -1 {
-			// Unclosed <think> tag — strip from <think> to end
+			// Unclosed tag — strip from open tag to end
 			content = content[:start]
 			break
 		}
-		content = content[:start] + content[end+len("</think>"):]
+		content = content[:start] + content[start+end+len(closeTag):]
 	}
-	return strings.TrimSpace(content)
+	return content
 }
 
 type StreamMeta struct {
