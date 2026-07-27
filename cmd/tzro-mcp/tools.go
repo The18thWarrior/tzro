@@ -442,17 +442,21 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 
 	doneChan := make(chan execResult, 1)
 
+	// Register the compilation gate hook for this task's execution.
+	// It runs the compiler on source_code nodes and enriches their output
+	// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
+	// ADR-0057: AllowCloudRepair is true in Direct mode (no pseudocode provided)
+	// and false in Draft mode (pseudocode provided). Draft mode returns
+	// the failing code + compiler errors to the caller for targeted edits.
+	isDraftMode := strings.TrimSpace(args.Pseudocode) != ""
+	compilationHook := &codegen.CompilationGateHook{
+		FilePath:         args.Filepath,
+		Language:         language,
+		Spec:             args.Spec,
+		AllowCloudRepair: !isDraftMode,
+	}
+
 	go func() {
-
-		// Register the compilation gate hook for this task's execution.
-
-		// It runs the compiler on source_code nodes and enriches their output
-		// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
-		compilationHook := &codegen.CompilationGateHook{
-			FilePath: args.Filepath,
-			Language: language,
-			Spec:     args.Spec,
-		}
 		executor.GlobalEngine.RegisterHook(compilationHook)
 		defer executor.GlobalEngine.UnregisterHook(compilationHook)
 
@@ -497,6 +501,18 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		}
 		if errMsg != "" {
 			respMap["error"] = errMsg
+		}
+
+		// ADR-0057: In Draft mode, enrich failure responses with the failing
+		// code and compiler errors so the harness can do targeted edits
+		// instead of full regeneration.
+		if status == "failed" && isDraftMode && compilationHook.GetLocalFailureCount() > 0 {
+			respMap["status"] = "complexity_exceeded"
+			respMap["compilerErrors"] = compilationHook.GetLastCompilerErrors()
+			// Read the failing file content from disk
+			if failingCode, readErr := os.ReadFile(args.Filepath); readErr == nil {
+				respMap["failingCode"] = string(failingCode)
+			}
 		}
 
 		// Post-process: extract reason_code output, write file (pure Go)

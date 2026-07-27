@@ -277,8 +277,12 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		if err := inference.StartActive(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", conditionID, err)
 		} else {
-			waitForSidecarHealth("worker", inference.GlobalWorkerModel)
-			waitForSidecarHealth("router", inference.GlobalRouterModel)
+			if err := waitForSidecarHealth("worker", inference.GlobalWorkerModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Worker health check failed: %v\n", err)
+			}
+			if err := waitForSidecarHealth("router", inference.GlobalRouterModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Router health check failed: %v\n", err)
+			}
 		}
 	}
 
@@ -540,8 +544,12 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		if err := inference.StartActive(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", conditionID, err)
 		} else {
-			waitForSidecarHealth("worker", inference.GlobalWorkerModel)
-			waitForSidecarHealth("router", inference.GlobalRouterModel)
+			if err := waitForSidecarHealth("worker", inference.GlobalWorkerModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Worker health check failed: %v\n", err)
+			}
+			if err := waitForSidecarHealth("router", inference.GlobalRouterModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Router health check failed: %v\n", err)
+			}
 		}
 	}
 
@@ -651,10 +659,13 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 
 	// Register the compilation gate hook so Edge Thought sees compilation
 	// evidence and can trigger repair spawns (ADR-0036).
+	// ADR-0057: AllowCloudRepair enables cloud repair escalation after
+	// local repair attempts are exhausted (Direct mode = true).
 	compilationHook := &codegen.CompilationGateHook{
-		FilePath: targetPath,
-		Language: language,
-		Spec:     spec,
+		FilePath:         targetPath,
+		Language:         language,
+		Spec:             spec,
+		AllowCloudRepair: true,
 	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)
@@ -991,26 +1002,42 @@ func copyDir(src, dst, projectRoot string, gi *ignore.GitIgnore) error {
 }
 
 // waitForSidecarHealth blocks until a sidecar's /health endpoint returns 200 OK,
-// or gives up after 30 attempts (1s apart). Does nothing if the sidecar is in
-// "Stopped" state (i.e., not configured or failed to start).
-func waitForSidecarHealth(label string, model *inference.LocalModelManager) {
+// or gives up after 90 attempts (1s apart). Returns an error if the sidecar fails
+// to become healthy. Does nothing (returns nil) if the sidecar is in "Stopped" state.
+//
+// The function also checks process liveness every 5 attempts to bail early if the
+// sidecar process crashed during model loading (avoids wasting 90s on a dead process).
+func waitForSidecarHealth(label string, model *inference.LocalModelManager) error {
 	status, activePort, _, _, _ := model.GetStatusInfo()
 	if strings.ToLower(status) == "stopped" || activePort == 0 {
-		return // not configured or didn't start
+		return nil // not configured or didn't start
 	}
 	fmt.Fprintf(os.Stderr, "[Comparison] Waiting for %s sidecar health on port %d...\n", label, activePort)
-	for attempt := range 30 {
+
+	const maxAttempts = 90 // 90s budget — non-catalog models may take longer to load
+	for attempt := range maxAttempts {
 		healthURL := fmt.Sprintf("http://localhost:%d/health", activePort)
 		resp, err := http.Get(healthURL)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
 			fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar healthy after %d attempts\n", label, attempt+1)
-			return
+			return nil
 		}
 		if resp != nil {
 			resp.Body.Close()
 		}
+
+		// Every 5 attempts, verify the sidecar process is still alive.
+		// This prevents wasting the full 90s polling a dead process.
+		if attempt > 0 && attempt%5 == 0 {
+			currentStatus, _, _, _, _ := model.GetStatusInfo()
+			if strings.ToLower(currentStatus) == "stopped" {
+				return fmt.Errorf("%s sidecar process died during model load (port %d)", label, activePort)
+			}
+		}
+
 		time.Sleep(1 * time.Second)
 	}
-	fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar health check timed out on port %d\n", label, activePort)
+	return fmt.Errorf("%s sidecar health check timed out after %ds on port %d", label, maxAttempts, activePort)
 }
+

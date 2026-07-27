@@ -4,6 +4,23 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-27T12:08:00-07:00] grill-with-docs | Codegen Quality & Analyze Node Reliability (ADR-0057)
+
+- **Activity**: Grill-with-docs session challenging the Task Envelope implementation plan against the domain model and existing ADRs. 8 design questions resolved. Pivoted from Task Envelope pre-flight classification to targeted infrastructure fixes.
+- **Key Findings**:
+  1. **Cloud routing violates 3 ADRs**: The original plan's "route T3+ codegen to cloud" contradicts ADR-0010 (local-default), ADR-0036 (no cloud codegen dependency), and the CONTEXT.md Offload Policy definition. Killed.
+  2. **Compilation gate exists but isn't the gap**: `CompilationGateHook` + Edge Thought repair loop fires correctly. The 4B model sees compiler errors but can't fix its own type-system mistakes on retry.
+  3. **Analyze node failure is tool-calling, not planning**: Planner correctly emitted `type: "analyze"`, compiler correctly provisioned `AllowedTools = ["introspect_cache", "sql_cached_data"]`. But 0 successful tool calls in 15 steps — model wasn't emitting valid `<ACTION>` tags.
+- **Decisions Made**:
+  1. **Kill Task Envelope** (Q6): YAGNI. Tiered repair + planner routing address the actual gap.
+  2. **Tiered codegen repair** (Q2–Q4): Local 2x → cloud repair (Direct mode only). Draft mode returns failing code + compiler errors on `complexity_exceeded`.
+  3. **Mode-dependent cloud repair** (Q5): Direct = `AllowCloudRepair: true` (caller delegated quality). Draft = `AllowCloudRepair: false` (caller did architectural thinking, expects to do own edits).
+  4. **`tzro_run` routes codegen to `tzro_code`** (Q5): Planner emits `tzro_code` tool calls instead of raw `source_code` nodes. No pipeline duplication.
+  5. **Analyze node fix** (Q7–Q8): Root cause is tool-calling reliability, not planning. Fix: few-shot `<ACTION>` examples with real cacheId substitution in the analyze system prompt.
+- **ADR Created**: [ADR-0057](../adr/0057-tiered-codegen-repair-escalation.md) — Tiered Codegen Repair Escalation
+
+---
+
 ## [2026-07-27T00:10:00-07:00] tdd | Implement Structured Execution Envelope (ADR-0055)
 
 - **Activity**: TDD implementation of the Structured Execution Envelope. 7 vertical slices (red→green), 10 new tests across 3 packages.

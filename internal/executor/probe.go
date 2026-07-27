@@ -1142,6 +1142,35 @@ func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext st
 		cacheIdSection = "## CACHE ID DISCOVERY\nNo cacheIds were pre-extracted from upstream context. Check the upstream context for cacheId values, or use introspect_cache with any cacheId you find.\n"
 	}
 
+	// Build few-shot examples with real cacheId substitution.
+	// The 4B model needs concrete examples of the exact <ACTION> XML format
+	// to reliably emit tool calls. Without these, it often generates reasoning
+	// text without valid tags (benchmark: 0/15 successful tool calls).
+	var fewShotSection string
+	exampleCacheId := "cache_1784607195509971000" // generic fallback
+	if len(extractedCacheIds) > 0 {
+		exampleCacheId = extractedCacheIds[0] // use real cacheId for copy-paste accuracy
+	}
+	fewShotSection = fmt.Sprintf(`## MANDATORY: Tool Call Format — Follow These Examples EXACTLY
+
+Your FIRST action must be to inspect the cache schema. Output this EXACT format:
+
+Step 1 — Always start here:
+<ACTION>{"tool": "introspect_cache", "arguments": {"cacheId": "%s"}}</ACTION>
+
+Step 2 — Count total records:
+<ACTION>{"tool": "sql_cached_data", "arguments": {"cacheId": "%s", "sql": "SELECT COUNT(*) as total FROM %s"}}</ACTION>
+
+Step 3 — Group and count by a column:
+<ACTION>{"tool": "sql_cached_data", "arguments": {"cacheId": "%s", "sql": "SELECT column_name, COUNT(*) as cnt FROM %s GROUP BY column_name ORDER BY cnt DESC"}}</ACTION>
+
+CRITICAL RULES:
+- You MUST wrap every tool call in <ACTION>...</ACTION> tags — no other format works
+- You MUST use the exact JSON structure shown above — {"tool": "...", "arguments": {...}}
+- Do NOT use markdown code blocks, do NOT describe what you would do — CALL THE TOOL
+- If you want data, you MUST call sql_cached_data. Do NOT try to count or aggregate manually from text.
+`, exampleCacheId, exampleCacheId, exampleCacheId, exampleCacheId, exampleCacheId)
+
 	return fmt.Sprintf(`You are an Analyze Node — an autonomous data analysis agent.
 %sYour goal: %s
 
@@ -1192,10 +1221,11 @@ The query engine is SQLite. Use SQLite-compatible syntax ONLY:
 `+extractionStrategySection(extractionMode)+`
 
 ## Text Matching and Filtering
-- For exact value lookups, use LIKE with wildcards: WHERE ColName LIKE '%%value%%'
+- For exact value lookups, use LIKE with wildcards: WHERE ColName LIKE '%%%%value%%%%'
 - For case-insensitive matching: WHERE LOWER(ColName) = LOWER('value')
 - When filtering by a company or category name, always try case-insensitive LIKE first
 
+%s
 On each step, reason about what analysis to perform next.
 If you need to use a tool, output an XML tag: <ACTION>{"tool": "tool_name", "arguments": {"param": "value"}}</ACTION>.
 If you have gathered enough information and are ready to synthesize a final answer, output <SYNTHESIZE_READY>.
@@ -1203,7 +1233,7 @@ If you have gathered enough information and are ready to synthesize a final answ
 IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
 
 Be systematic. Start by understanding the data schema, then build your analysis incrementally.
-If a SQL query returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas, cacheIdSection)
+If a SQL query returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas, cacheIdSection, fewShotSection)
 }
 
 // buildToolSchemaReference generates a compact reference block describing each tool's

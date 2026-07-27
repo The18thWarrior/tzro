@@ -236,10 +236,23 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	_ = os.MkdirAll(slotSavePath, 0755)
 
 	// 7. Spawn child process
-	_, err = exec.LookPath("llama-server")
-	if err != nil {
-		m.Status = "Stopped"
-		return fmt.Errorf("llama-server binary not found in PATH; please install llama.cpp server: %w", err)
+	// Prefer the bundled llama-server in ~/.tzro/bin (installed by install.sh with
+	// the pinned version) over whatever is in PATH. This ensures consistent behavior
+	// between fresh installs and dev environments.
+	llamaBinary := ""
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		bundledPath := filepath.Join(home, ".tzro", "bin", "llama-server")
+		if _, statErr := os.Stat(bundledPath); statErr == nil {
+			llamaBinary = bundledPath
+		}
+	}
+	if llamaBinary == "" {
+		pathBinary, lookErr := exec.LookPath("llama-server")
+		if lookErr != nil {
+			m.Status = "Stopped"
+			return fmt.Errorf("llama-server binary not found in ~/.tzro/bin or PATH; please install llama.cpp server: %w", lookErr)
+		}
+		llamaBinary = pathBinary
 	}
 
 	// Pre-flight check: verify the GGUF model file exists on disk
@@ -342,7 +355,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Catalog mmproj '%s' not found on disk, vision disabled\n", catalogEntry.CompanionMMProj.Filename)
 		}
 	} else {
-		// Non-catalog model: only use explicitly configured mmproj (never auto-detect)
+		// Model has no catalog mmproj — only use explicitly configured mmproj (never auto-detect)
 		configMutex := config.GetExplicitMMProjPath()
 		if configMutex != "" {
 			if _, err := os.Stat(configMutex); err == nil {
@@ -350,7 +363,11 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			}
 		}
 		if mmProjPath == "" {
-			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Non-catalog model detected, skipping auto-detected mmproj to avoid architecture mismatch\n")
+			if catalogEntry != nil {
+				fmt.Fprintf(os.Stderr, "[Llama Sidecar] No vision projector configured for %s, vision disabled\n", catalogEntry.DisplayName)
+			} else {
+				fmt.Fprintf(os.Stderr, "[Llama Sidecar] Non-catalog model detected, skipping auto-detected mmproj to avoid architecture mismatch\n")
+			}
 		}
 	}
 	if mmProjPath != "" {
@@ -391,7 +408,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=%d (routing mode, no speculative decoding)\n", config.GetCacheReuseTokens())
 	}
 
-	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
+	m.cmd = exec.CommandContext(context.Background(), llamaBinary, args...)
 
 	// Create logs folder
 	logsDir := resolveTzroPath(filepath.Join(".tzro", "logs"))

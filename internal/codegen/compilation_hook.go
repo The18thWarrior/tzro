@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"tzro/internal/compiler"
+	"tzro/internal/config"
 	"tzro/internal/executor"
+	"tzro/internal/inference"
 	"tzro/internal/memory"
 )
 
@@ -27,7 +29,22 @@ type CompilationGateHook struct {
 	// Spec is the original code generation specification, used to build
 	// structured repair prompts when compilation fails.
 	Spec string
+	// AllowCloudRepair enables cloud model escalation for repair after local
+	// repair attempts are exhausted (ADR-0057). Set to true in Direct mode,
+	// false in Draft/Pseudocode mode.
+	AllowCloudRepair bool
+	// localFailureCount tracks how many times the local model has produced
+	// code that fails compilation within this task. Used to decide when to
+	// escalate to cloud repair.
+	localFailureCount int
+	// lastCompilerErrors stores the most recent compiler error output,
+	// used for the complexity_exceeded response in Draft mode.
+	lastCompilerErrors string
 }
+
+// MaxLocalRepairAttempts is the number of local repair attempts before
+// escalating to cloud repair. The initial generation counts as attempt 1.
+const MaxLocalRepairAttempts = 2
 
 // Ensure CompilationGateHook satisfies ExecutionHook at compile time.
 var _ executor.ExecutionHook = (*CompilationGateHook)(nil)
@@ -48,6 +65,9 @@ func (h *CompilationGateHook) BeforeNode(ctx context.Context, taskID string, nod
 // OutputFormat is "source_code", it writes the raw output to the target file,
 // runs the compilation command, and appends the result to the raw output.
 // This enriched output is then available to the Edge Thought inference.
+//
+// ADR-0057: After MaxLocalRepairAttempts local failures, if AllowCloudRepair
+// is true, escalates the repair to the cloud model with a narrow payload.
 func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node *compiler.GraphNode, rawOutput *string) (executor.HookAction, error) {
 	if node.OutputFormat != "source_code" {
 		return executor.ActionContinue, nil
@@ -79,10 +99,48 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 
 	if compResult.Pass {
 		evidence.WriteString("PASSED\n")
+		// Reset failure count on success
+		h.localFailureCount = 0
 	} else {
+		h.localFailureCount++
+		h.lastCompilerErrors = compResult.Reason
 		evidence.WriteString("FAILED\n")
 		evidence.WriteString(compResult.Reason)
 		evidence.WriteString("\n")
+
+		// ADR-0057: Cloud repair escalation after local attempts exhausted
+		if h.localFailureCount >= MaxLocalRepairAttempts && h.AllowCloudRepair && !isCloudRepairBlocked() {
+			fmt.Fprintf(os.Stderr, "[CompilationGateHook] Local repair exhausted (%d attempts). Escalating to cloud repair for %s\n",
+				h.localFailureCount, h.FilePath)
+
+			cloudCode, cloudErr := h.attemptCloudRepair(ctx, cleanCode, compResult.Reason, taskID)
+			if cloudErr == nil {
+				// Write cloud-repaired code and re-run compilation
+				if _, _, writeErr := WriteCodeFile(h.FilePath, cloudCode, 0); writeErr == nil {
+					recheck := RunCompilationGate(h.Language, h.FilePath)
+					if recheck.Pass {
+						fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud repair PASSED for %s\n", h.FilePath)
+						cleanCode = cloudCode
+						evidence.Reset()
+						evidence.WriteString("\n\n## Compilation Result\nPASSED\n")
+						evidence.WriteString("(Cloud repair after local exhaustion)\n")
+						h.localFailureCount = 0
+					} else {
+						fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud repair still FAILED for %s: %s\n",
+							h.FilePath, recheck.Reason)
+						// Write the cloud attempt anyway — it may be closer to correct
+						cleanCode = cloudCode
+						evidence.Reset()
+						evidence.WriteString("\n\n## Compilation Result\nFAILED\n")
+						evidence.WriteString(recheck.Reason)
+						evidence.WriteString("\n")
+						h.lastCompilerErrors = recheck.Reason
+					}
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud repair failed for %s: %v\n", h.FilePath, cloudErr)
+			}
+		}
 	}
 
 	// Also inject available module context for repair decisions
@@ -96,8 +154,8 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 	// The Edge Thought will see this when evaluating the activation threshold
 	*rawOutput = cleanCode + evidence.String()
 
-	fmt.Fprintf(os.Stderr, "[CompilationGateHook] %s → %s (file: %s)\n",
-		node.ID, map[bool]string{true: "PASSED", false: "FAILED"}[compResult.Pass], h.FilePath)
+	fmt.Fprintf(os.Stderr, "[CompilationGateHook] %s → %s (file: %s, attempt: %d)\n",
+		node.ID, map[bool]string{true: "PASSED", false: "FAILED"}[compResult.Pass || h.localFailureCount == 0], h.FilePath, h.localFailureCount)
 
 	return executor.ActionContinue, nil
 }
@@ -150,6 +208,65 @@ func (h *CompilationGateHook) OnEdgeTraversal(ctx context.Context, taskID string
 	}
 
 	return executor.ActionContinue, nil
+}
+
+// GetLastCompilerErrors returns the most recent compiler errors, used by
+// the complexity_exceeded response in Draft mode (ADR-0057).
+func (h *CompilationGateHook) GetLastCompilerErrors() string {
+	return h.lastCompilerErrors
+}
+
+// GetLocalFailureCount returns the number of local compilation failures.
+func (h *CompilationGateHook) GetLocalFailureCount() int {
+	return h.localFailureCount
+}
+
+// attemptCloudRepair sends a narrow repair payload to the cloud model:
+// compiler errors, spec, broken code, and module context. Returns the
+// repaired code or an error.
+func (h *CompilationGateHook) attemptCloudRepair(ctx context.Context, brokenCode, compilerErrors, taskID string) (string, error) {
+	moduleCtx := DiscoverModuleContext(h.FilePath, h.Language)
+
+	systemPrompt := fmt.Sprintf(`You are a code repair agent. Fix the compilation errors in the %s code below.
+Output ONLY the corrected source code — no explanations, no markdown fences, no commentary.
+
+## Specification
+%s
+
+## Module Context
+%s`, h.Language, h.Spec, moduleCtx)
+
+	userPrompt := fmt.Sprintf(`## Broken Code
+%s
+
+## Compiler Errors
+%s
+
+Fix ALL compiler errors. Output the complete corrected file.`, brokenCode, compilerErrors)
+
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	result, err := inference.CallCloudModel(ctx, messages, "")
+	if err != nil {
+		return "", fmt.Errorf("cloud repair inference failed: %w", err)
+	}
+
+	// Strip markdown fences from cloud response
+	result = StripMarkdownFences(result)
+
+	fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud repair response: %d chars for task %s\n",
+		len(result), taskID)
+
+	return result, nil
+}
+
+// isCloudRepairBlocked returns true when cloud repair must not be attempted.
+func isCloudRepairBlocked() bool {
+	cfg := config.Get()
+	return cfg.PrivacyLevel == "strict-local" || cfg.ModelMode == "local"
 }
 
 // extractCompilationEvidence splits node output into the original code and
