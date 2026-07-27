@@ -703,6 +703,7 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 	failedCount := 0
 	runningCount := 0
 	completedCount := 0
+	cancelledCount := 0
 	nodeCount := len(nodes)
 	var completedAt int64
 
@@ -713,6 +714,8 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 			runningCount++
 		} else if n.Status == "completed" {
 			completedCount++
+		} else if n.Status == "cancelled" {
+			cancelledCount++
 		}
 		if n.CompletedAt > completedAt {
 			completedAt = n.CompletedAt
@@ -720,7 +723,9 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 	}
 
 	taskStatus := "pending"
-	if failedCount > 0 {
+	if cancelledCount > 0 {
+		taskStatus = "cancelled"
+	} else if failedCount > 0 {
 		taskStatus = "failed"
 	} else if runningCount > 0 {
 		taskStatus = "running"
@@ -762,6 +767,44 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 	}
 
 	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// tzro_cancel tool definition
+
+// TzroCancelArgs defines the inputs for cancelling a running task.
+type TzroCancelArgs struct {
+	TaskID string `json:"taskId" jsonschema:"required,The task ID to cancel"`
+}
+
+func handleTzroCancel(ctx context.Context, req *mcp.CallToolRequest, args TzroCancelArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.TaskID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "taskId cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// POST to daemon /api/tasks/cancel
+	reqBody, _ := json.Marshal(map[string]string{"taskId": args.TaskID})
+	httpResp, err := http.Post(config.GetDaemonURL()+"/api/tasks/cancel", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to reach daemon: %v"}`, err)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+	defer httpResp.Body.Close()
+
+	respBytes, _ := io.ReadAll(httpResp.Body)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: string(respBytes)},
@@ -2641,6 +2684,14 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_status",
 		Description: "Check the execution status, node states, and outcomes of a specific tzro task by its ID.",
 	}, handleTzroStatus)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_cancel",
+		Description: "Cancel a running task. Terminates the active execution goroutine, marks pending/running nodes " +
+			"as cancelled in the database, and emits a task_cancelled event. Also works on zombie tasks " +
+			"(stuck in 'running' status with no active goroutine) for SQLite-only cleanup. " +
+			"Proactivity Level: L3 (Reversible Action).",
+	}, handleTzroCancel)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_list_tasks",

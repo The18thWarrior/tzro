@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -166,9 +170,63 @@ var taskStatusCmd = &cobra.Command{
 	},
 }
 
+var taskCancelCmd = &cobra.Command{
+	Use:   "cancel [taskId]",
+	Short: "Cancel a running task and mark remaining nodes as cancelled",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		taskID := args[0]
+
+		if globalFlags.Offline {
+			fmt.Fprintln(os.Stderr, "Error: cancel is not available in offline mode. The daemon must be running.")
+			os.Exit(1)
+		}
+
+		daemonURL := getDaemonURL()
+
+		body, _ := json.Marshal(map[string]string{"taskId": taskID})
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Post(daemonURL+"/api/tasks/cancel", "application/json", bytes.NewReader(body))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: could not reach daemon at %s: %v\n", daemonURL, err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+
+		respBytes, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Fprintf(os.Stderr, "Error: daemon returned status %d: %s\n", resp.StatusCode, string(respBytes))
+			os.Exit(1)
+		}
+
+		var cancelResp struct {
+			Status           string `json:"status"`
+			TaskID           string `json:"taskId"`
+			CancelledNodes   int    `json:"cancelledNodes"`
+			HadActiveContext bool   `json:"hadActiveContext"`
+		}
+		_ = json.Unmarshal(respBytes, &cancelResp)
+
+		if globalFlags.JSONOut {
+			_ = printJSON(os.Stdout, cancelResp)
+			return
+		}
+
+		fmt.Printf("Task %s cancelled.\n", cancelResp.TaskID)
+		fmt.Printf("  Nodes cancelled: %d\n", cancelResp.CancelledNodes)
+		if cancelResp.HadActiveContext {
+			fmt.Println("  Active goroutine was terminated.")
+		} else {
+			fmt.Println("  No active goroutine (zombie task cleanup).")
+		}
+	},
+}
+
 func init() {
 	taskCmd.AddCommand(taskListCmd)
 	taskCmd.AddCommand(taskStatusCmd)
+	taskCmd.AddCommand(taskCancelCmd)
 	RootCmd.AddCommand(taskCmd)
 }
 

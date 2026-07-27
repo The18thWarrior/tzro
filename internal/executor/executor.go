@@ -190,6 +190,22 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 			break
 		}
 
+		// Context cancellation check (e.g., from /api/tasks/cancel)
+		if ctx.Err() == context.Canceled {
+			fmt.Fprintf(os.Stderr, "[Executor] Task %s cancelled by user. Marking remaining nodes.\n", graph.TaskID)
+			e.getPublisher().PublishEvent("task_cancelled", graph.TaskID, "",
+				fmt.Sprintf("Task cancelled by user. Remaining levels: %d", len(levels)-levelIdx))
+
+			for _, remainingLevel := range levels[levelIdx:] {
+				for _, nodeID := range remainingLevel {
+					if state, ok := memory.DB.GetNodeState(graph.TaskID, nodeID); ok && state.Status == "pending" {
+						_ = memory.DB.SetNodeState(graph.TaskID, nodeID, "cancelled", "Task cancelled by user")
+					}
+				}
+			}
+			return fmt.Errorf("task %s cancelled by user", graph.TaskID)
+		}
+
 		fmt.Fprintf(os.Stderr, "[Executor] Running topological level %d/%d containing %d parallel actions...\n", levelIdx+1, len(levels), len(level))
 
 		// Resolve level node references for hook arguments

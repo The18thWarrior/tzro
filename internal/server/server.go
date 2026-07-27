@@ -65,6 +65,7 @@ type ChatResponse struct {
 
 var (
 	activeGraphs    = make(map[string]*compiler.ExecutionGraph)
+	activeCancels   = make(map[string]context.CancelFunc)
 	graphsMutex     sync.RWMutex
 	DaemonStartTime = time.Now()
 )
@@ -111,6 +112,7 @@ func StartServer(addr string) error {
 	mux.HandleFunc("/api/tasks/events", corsHandler(handleTaskSSE))
 	mux.HandleFunc("/api/tasks/resume", corsHandler(handleTasksResume))
 	mux.HandleFunc("/api/tasks/approve", corsHandler(handleTasksApprove))
+	mux.HandleFunc("/api/tasks/cancel", corsHandler(handleTasksCancel))
 	mux.HandleFunc("/api/tasks/run", corsHandler(handleTasksRun))
 	mux.HandleFunc("/api/apps/install", corsHandler(handleAppsInstall))
 	mux.HandleFunc("/api/apps/uninstall", corsHandler(handleAppsUninstall))
@@ -239,18 +241,25 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		resp.Graph = graph
 		resp.Levels = levels
 
-		// Save graph in active mapping
+		// Save graph in active mapping with cancellable context
+		taskCtx, taskCancel := context.WithCancel(context.Background())
 		graphsMutex.Lock()
 		activeGraphs[resp.TaskID] = graph
+		activeCancels[resp.TaskID] = taskCancel
 		graphsMutex.Unlock()
 
-		// Run graph in background asynchronously to prevent HTTP blocking (using Background context)
+		// Run graph in background asynchronously to prevent HTTP blocking
 		go func() {
 			defer recoverTaskPanic(graph.TaskID)
+			defer func() {
+				graphsMutex.Lock()
+				delete(activeCancels, graph.TaskID)
+				graphsMutex.Unlock()
+			}()
 			proactivity.RegisterActiveUserTask(graph.TaskID)
 			defer proactivity.DeregisterActiveUserTask(graph.TaskID)
 
-			err := executor.GlobalEngine.ExecuteGraph(context.Background(), graph, levels)
+			err := executor.GlobalEngine.ExecuteGraph(taskCtx, graph, levels)
 			if err != nil {
 				fmt.Printf("[Server Executor Error] %v\n", err)
 			}
@@ -1735,6 +1744,71 @@ func handleAppsList(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(apps)
 }
 
+// handleTasksCancel handles POST /api/tasks/cancel — cancels a running task.
+// If the task has an active goroutine, its context is cancelled. All pending/running
+// nodes are marked as 'cancelled' in SQLite. Falls back to SQLite-only update for
+// zombie tasks that are no longer in memory.
+func handleTasksCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if req.TaskID == "" {
+		http.Error(w, `{"error":"taskId is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 1. Cancel the active context (if task goroutine is still running)
+	graphsMutex.Lock()
+	cancelFn, hasCancel := activeCancels[req.TaskID]
+	graph := activeGraphs[req.TaskID]
+	if hasCancel {
+		cancelFn()
+		delete(activeCancels, req.TaskID)
+	}
+	if graph != nil {
+		delete(activeGraphs, req.TaskID)
+	}
+	graphsMutex.Unlock()
+
+	// 2. Mark all pending/running nodes as cancelled in SQLite
+	cancelledNodes := 0
+	nodeStates := memory.DB.GetAllNodeStates(req.TaskID)
+	for _, state := range nodeStates {
+		if state.Status == "pending" || state.Status == "running" {
+			_ = memory.DB.SetNodeState(req.TaskID, state.NodeID, "cancelled", "Task cancelled by user")
+			cancelledNodes++
+		}
+	}
+
+	// 3. Update task-level status
+	_ = memory.DB.UpdateTaskStatus(req.TaskID, "cancelled", "cancelled by user")
+
+	// 4. Emit telemetry event
+	stream.GlobalBus.Publish(stream.StreamChunk{
+		TaskID:  req.TaskID,
+		Source:  "system",
+		Type:    "task_cancelled",
+		Content: fmt.Sprintf("Task cancelled. %d nodes marked as cancelled.", cancelledNodes),
+	})
+
+	fmt.Fprintf(os.Stderr, "[Server] Task %s cancelled (%d nodes cancelled, had active context: %v)\n",
+		req.TaskID, cancelledNodes, hasCancel)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"cancelled","taskId":"%s","cancelledNodes":%d,"hadActiveContext":%v}`,
+		req.TaskID, cancelledNodes, hasCancel)))
+}
+
 func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1766,9 +1840,19 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 		SelfContained: req.SelfContained,
 	}
 
+	taskCtx, taskCancel := context.WithCancel(context.Background())
+	graphsMutex.Lock()
+	activeCancels[req.TaskID] = taskCancel
+	graphsMutex.Unlock()
+
 	go func() {
 		defer recoverTaskPanic(req.TaskID)
-		_, _, err := task.Execute(context.Background(), req.Prompt, execOpts)
+		defer func() {
+			graphsMutex.Lock()
+			delete(activeCancels, req.TaskID)
+			graphsMutex.Unlock()
+		}()
+		_, _, err := task.Execute(taskCtx, req.Prompt, execOpts)
 		if err != nil {
 			// ADR-0054: Emit task_failed so SSE listeners can detect planning failures
 			stream.GlobalBus.Publish(stream.StreamChunk{
