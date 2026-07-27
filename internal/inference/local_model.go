@@ -295,7 +295,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)
-		"--cache-reuse", "2048", // ADR-0021: segmented prompt structure shares static prefix across nodes
+		"--cache-reuse", strconv.Itoa(config.GetCacheReuseTokens()), // ADR-0056: append-only probe context; 0 = unlimited prefix matching for full KV cache reuse
 		"--n-predict", "16384", // Q9: max tokens per generation
 		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
 		"--cache-ram", "2048", // Limit maximum prompt cache host memory to 2GB to resolve memory pressure
@@ -368,10 +368,9 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			if a == "--n-predict" && i+1 < len(args) {
 				args[i+1] = "4096" // Router outputs: compaction can produce longer reasoning summaries
 			}
-			// Override --cache-reuse to 256 (compaction system prompt prefix caching)
-			if a == "--cache-reuse" && i+1 < len(args) {
-				args[i+1] = "256"
-			}
+			// cache-reuse is already set from config via config.GetCacheReuseTokens()
+			// (default 0 = unlimited), no override needed for router — same value
+			// works for both sidecars since append-only context benefits both.
 		}
 		// Remove speculative decoding args (overkill for router) and vision projector
 		var cleanArgs []string
@@ -389,7 +388,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			cleanArgs = append(cleanArgs, a)
 		}
 		args = cleanArgs
-		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=256 (routing mode, no speculative decoding)\n")
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=%d (routing mode, no speculative decoding)\n", config.GetCacheReuseTokens())
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)

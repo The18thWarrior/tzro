@@ -335,12 +335,21 @@ func RunProbe(
 
 	// Pass 1: High-Entropy Tool Loop
 	//
-	// KV Cache Prefix Sharing (ADR-0021 extension for probes):
-	// The system prompt (goal + tool schemas) is identical across all steps.
-	// By hoisting it outside the loop, we ensure the llama-server's
-	// --cache-reuse 2048 window matches the system message tokens on every
-	// step, avoiding ~500-1000 tokens of redundant KV computation per step.
-	// Over 20 steps at ~10s each, this can save 3-5s per step (60-100s total).
+	// ADR-0056: Append-Only Conversation for Full KV Cache Prefill Reuse
+	//
+	// Instead of rebuilding the message array from scratch each step (which
+	// invalidates KV cache beyond the system prompt prefix), we maintain an
+	// in-memory conversation that grows by appending user/assistant turns.
+	// This makes the entire prefix byte-identical across steps, enabling
+	// llama-server's --cache-reuse to match the FULL prefix (not just the
+	// first 2048 tokens). Over 20 steps, this eliminates ~120-140s of
+	// redundant prefill computation.
+	//
+	// Sliding window: when the conversation exceeds the context budget,
+	// the oldest user/assistant turns are dropped (keeping the static
+	// prefix and most recent N turns). This is a one-time penalty per
+	// window boundary vs. the old approach of paying prefill every step.
+	//
 	// Select system prompt based on node type.
 	// Analyze nodes (identified by cache tools in allowedTools) get a data analysis
 	// prompt; probe nodes get the codebase exploration prompt.
@@ -368,18 +377,55 @@ func RunProbe(
 		systemPrompt = buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
 	}
 
-	for step := 1; step <= stepBudget; step++ {
-		userPrompt, err := buildProbeUserPrompt(probeID, step, lastToolOutput)
-		if err != nil {
-			return "", fmt.Errorf("failed to build probe prompt at step %d: %w", step, err)
-		}
+	// ADR-0056: Initialize append-only conversation with static prefix.
+	// These messages form the immutable prefix that is byte-identical across
+	// all probe steps, enabling full KV cache reuse.
+	conversationHistory := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+	}
 
-		// Build segmented messages to maximize KV cache prefix reuse:
-		//   Segment 1 (system): static goal + tool schemas — identical every step
-		//   Segment 1.5 (user→assistant): upstream DAG context — stable across all steps
-		//   Segment 2 (user→assistant): accumulated context — grows but prefix is stable
-		//   Segment 3 (user): per-step volatile query — changes every step
-		probeMessages := buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID, config.UpstreamContext)
+	// Static prefix includes upstream context if available
+	if config.UpstreamContext != "" {
+		const maxUpstreamContextChars = 24576 // ~6K tokens
+		upstreamCtx := config.UpstreamContext
+		if len(upstreamCtx) > maxUpstreamContextChars {
+			upstreamCtx = compactor.CompactContent(upstreamCtx, maxUpstreamContextChars)
+			fmt.Fprintf(os.Stderr, "[Probe] Capped upstream context from %d to %d chars for probe %s\n", len(config.UpstreamContext), maxUpstreamContextChars, probeID)
+		}
+		conversationHistory = append(conversationHistory,
+			inference.InferenceMessage{Role: "user", Content: "## Upstream Node Outputs (from completed DAG steps)\n" + upstreamCtx},
+			inference.InferenceMessage{Role: "assistant", Content: "I have reviewed the upstream node outputs. I can see the data context from prior steps."},
+		)
+	}
+
+	// staticPrefixLen is the number of messages in the immutable prefix.
+	// The sliding window never drops messages before this index.
+	staticPrefixLen := len(conversationHistory)
+
+	// Sliding window context budget: aggressive for router (16K ctx), generous for worker (64K).
+	// Reserve 30% of context window for system prompt + generation headroom.
+	routerContextTokens := 16384
+	contextBudgetTokens := int(float64(routerContextTokens) * 0.70) // ~11.4K tokens for conversation
+
+	for step := 1; step <= stepBudget; step++ {
+		// Build per-step user message with tool output and step query
+		var stepContent strings.Builder
+		if lastToolOutput != "" {
+			stepContent.WriteString(fmt.Sprintf("## Last Tool Output\n```\n%s\n```\n\n", lastToolOutput))
+		}
+		stepContent.WriteString(fmt.Sprintf("Step %d: What should we do next?", step))
+
+		// Append user turn to conversation (append-only — preserves full prefix)
+		conversationHistory = append(conversationHistory, inference.InferenceMessage{
+			Role:    "user",
+			Content: stepContent.String(),
+		})
+
+		// ADR-0056: Sliding window compaction — when conversation exceeds the
+		// context budget, drop the oldest user/assistant turn pairs (after the
+		// static prefix) to keep within budget. This preserves the most recent
+		// context while paying a one-time cache miss for the compacted turns.
+		conversationHistory = slidingWindowCompact(conversationHistory, staticPrefixLen, contextBudgetTokens)
 
 		// Call Local Model WITHOUT constraint. Probe steps are routing decisions
 		// (which file/tool to use next) — thinking mode is NOT enabled here
@@ -390,10 +436,19 @@ func RunProbe(
 		// (observed: 16K tokens in a single step collapsed all subsequent calls
 		// to 0.1 t/s). Synthesis calls remain uncapped.
 		stepCtx := context.WithValue(ctx, inference.MaxTokensKey, cfgpkg.GetProbeStepMaxTokens())
-		rawResponse, err := engine.InferMessages(stepCtx, probeMessages, "")
+		rawResponse, err := engine.InferMessages(stepCtx, conversationHistory, "")
 		if err != nil {
 			return "", fmt.Errorf("probe inference failed at step %d: %w", step, err)
 		}
+
+		// ADR-0056: Append assistant response to conversation for next step's
+		// prefix. This is the key to cache reuse — the next step's request
+		// will have this response as part of its prefix, which llama-server
+		// will find in its KV cache and skip prefilling.
+		conversationHistory = append(conversationHistory, inference.InferenceMessage{
+			Role:    "assistant",
+			Content: rawResponse,
+		})
 
 		// Strip <think>...</think> blocks before tag extraction. The thinking
 		// content is reasoning noise — we preserve it in NextThought for logging
@@ -1328,6 +1383,95 @@ func buildProbeSegmentedMessages(systemPrompt, userPrompt, probeID, upstreamCont
 	})
 
 	return msgs
+}
+
+// estimateConversationTokens provides a fast heuristic token count for a message
+// array. Uses the ~4 chars/token approximation (standard for English text with
+// code and JSON). This is used by the sliding window compaction to decide when
+// to drop oldest turns — exact counts aren't needed, just a budget estimate.
+func estimateConversationTokens(messages []inference.InferenceMessage) int {
+	total := 0
+	for _, m := range messages {
+		// ~4 chars per token + overhead for role/template tokens
+		total += len(m.Content)/4 + 4
+	}
+	return total
+}
+
+// slidingWindowCompact implements the sliding window strategy for append-only
+// conversations (ADR-0056). When the estimated token count exceeds the budget,
+// it drops the oldest user/assistant turn pairs (after the static prefix)
+// while keeping the most recent turns that fit within the budget.
+//
+// Parameters:
+//   - messages: the full conversation history
+//   - staticPrefixLen: number of messages in the immutable prefix (system + upstream)
+//   - budgetTokens: maximum estimated tokens for the conversation
+//
+// Returns the compacted message slice. If no compaction is needed, returns the
+// original slice unchanged. When compaction occurs, a brief "[N earlier turns
+// compacted]" marker is injected after the static prefix.
+func slidingWindowCompact(messages []inference.InferenceMessage, staticPrefixLen, budgetTokens int) []inference.InferenceMessage {
+	estimated := estimateConversationTokens(messages)
+	if estimated <= budgetTokens {
+		return messages
+	}
+
+	// Static prefix is immutable — only compact dynamic turns
+	prefix := messages[:staticPrefixLen]
+	dynamic := messages[staticPrefixLen:]
+
+	if len(dynamic) <= 2 {
+		// Can't compact further — only 1 turn pair remains
+		return messages
+	}
+
+	// Drop oldest turn pairs (user + assistant) until we're within budget.
+	// Keep dropping pairs from the front of dynamic turns.
+	prefixTokens := estimateConversationTokens(prefix)
+	droppedCount := 0
+
+	for len(dynamic) > 2 {
+		// Estimate tokens for prefix + remaining dynamic
+		remainingTokens := prefixTokens
+		for _, m := range dynamic {
+			remainingTokens += len(m.Content)/4 + 4
+		}
+		if remainingTokens <= budgetTokens {
+			break
+		}
+
+		// Drop the oldest pair (user + assistant) or single message
+		if len(dynamic) >= 2 && dynamic[0].Role == "user" && dynamic[1].Role == "assistant" {
+			dynamic = dynamic[2:]
+			droppedCount += 2
+		} else {
+			dynamic = dynamic[1:]
+			droppedCount++
+		}
+	}
+
+	if droppedCount == 0 {
+		return messages
+	}
+
+	fmt.Fprintf(os.Stderr, "[Probe] Sliding window compaction: dropped %d messages, keeping %d dynamic + %d prefix (est. %d → %d tokens)\n",
+		droppedCount, len(dynamic), staticPrefixLen, estimated, estimateConversationTokens(append(prefix, dynamic...)))
+
+	// Reassemble: prefix + compaction marker + remaining dynamic turns
+	result := make([]inference.InferenceMessage, 0, staticPrefixLen+1+len(dynamic))
+	result = append(result, prefix...)
+	result = append(result, inference.InferenceMessage{
+		Role:    "user",
+		Content: fmt.Sprintf("[%d earlier exploration turns compacted to fit context window]", droppedCount/2),
+	})
+	result = append(result, inference.InferenceMessage{
+		Role:    "assistant",
+		Content: "Understood. I will continue exploration from the most recent context.",
+	})
+	result = append(result, dynamic...)
+
+	return result
 }
 
 // compactThoughtChain creates a rolling summary of recent thought chain steps.

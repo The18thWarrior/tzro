@@ -117,6 +117,14 @@ type EngineConfig struct {
 	// higher-quality routing and more accurate convergence signals.
 	// Default false (use router). Set to true to use the worker model.
 	ProbeUseWorkerModel bool `json:"probeUseWorkerModel,omitempty"`
+
+	// CacheReuseTokens controls the --cache-reuse flag passed to llama-server.
+	// This determines how many tokens of the prompt prefix are checked for KV
+	// cache matches. 0 means unlimited (match the entire prefix), which enables
+	// full append-only conversation cache reuse during probe Thought Chains.
+	// Higher values use more memory for the prefix cache but eliminate redundant
+	// prefill computation. Default 0 (unlimited). Set to a positive value to limit.
+	CacheReuseTokens int `json:"cacheReuseTokens,omitempty"`
 }
 
 type BackendConfig struct {
@@ -277,6 +285,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
+	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
@@ -321,6 +330,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
+	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	if cfg.ModelsDir != "" {
@@ -652,6 +662,19 @@ func GetProbeStepMaxTokens() int {
 	if v <= 0 {
 		return 2048
 	}
+	return v
+}
+
+// GetCacheReuseTokens returns the configured --cache-reuse value for llama-server.
+// Default 0 (unlimited prefix matching) enables full KV cache reuse for
+// append-only probe conversations (ADR-0056).
+func GetCacheReuseTokens() int {
+	configMutex.RLock()
+	v := GlobalConfig.CacheReuseTokens
+	configMutex.RUnlock()
+
+	// 0 means unlimited (default) — return 0 to signal llama-server should
+	// match the entire prompt prefix for KV cache hits.
 	return v
 }
 
