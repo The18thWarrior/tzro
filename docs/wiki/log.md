@@ -4,6 +4,40 @@ Chronological append-only record of wiki operations and major agent engineering 
 
 ---
 
+## [2026-07-27T00:10:00-07:00] tdd | Implement Structured Execution Envelope (ADR-0055)
+
+- **Activity**: TDD implementation of the Structured Execution Envelope. 7 vertical slices (red→green), 10 new tests across 3 packages.
+- **Components Implemented**:
+  1. **Envelope types & assembly** (`internal/executor/envelope.go`): `ToolDispatch`, `ExecutionEnvelope`, `AssembleEnvelope()`, `findSynthesisText()`, `findTerminalNodeID()`. Pure Go, deterministic — no LLM generation.
+  2. **In-memory accumulator** (`internal/executor/executor.go`): `map[string][]ToolDispatch` on `ExecutionEngine` with `RecordDispatch`/`DrainDispatches`. Wired at action node dispatch site and probe thought chain via context callback (`DispatchRecorderKey`).
+  3. **Storage extension** (`internal/memory/models.go`, `memory.go`): `StructuredOutput` field on `NodeState`, `structured_output` column migration, `SetNodeStructuredOutput()` method, updated `GetNodeState`/`GetAllNodeStates` queries.
+  4. **MCP response surfaces** (`cmd/tzro-mcp/tools.go`, `resources.go`): `extractEnvelopeResult()` helper. Hoisted `result` key in `handleTzroRun`, `handleTzroStatus`, and `handleReadTaskOutputResource`.
+- **Bugs Fixed**: Pre-existing `sqlrowserr` in executor.go — `rows.Err()` not checked after cache table discovery iteration.
+- **Tests**: `TestAssembleEnvelope_SynthesisNode`, `TestAssembleEnvelope_ExtractsFilePaths`, `TestAssembleEnvelope_ProbeOnlyGraph`, `TestAssembleEnvelope_FailedNodes`, `TestExecutionEngine_DispatchAccumulator`, `TestStructuredOutput_PersistAndRetrieve`, `TestExtractEnvelopeResult_FindsStructuredOutput`, `TestExtractEnvelopeResult_ReturnsNilWhenMissing`, `TestExtractEnvelopeResult_HoistableInResponse`
+- **ADR**: [ADR-0055](../adr/0055-structured-execution-envelope.md)
+- **Files Created**: `internal/executor/envelope.go`, `internal/executor/envelope_test.go`, `cmd/tzro-mcp/envelope_extract.go`, `cmd/tzro-mcp/envelope_extract_test.go`
+- **Files Modified**: `internal/memory/models.go`, `internal/memory/memory.go`, `internal/memory/memory_test.go`, `internal/executor/executor.go`, `internal/executor/probe.go`, `cmd/tzro-mcp/tools.go`, `cmd/tzro-mcp/resources.go`
+
+---
+
+## [2026-07-26T23:53:00-07:00] grill-with-docs | Structured Execution Envelope (ADR-0055)
+
+- **Activity**: Grill-with-docs session designing structured output for compiled DAGs fired from MCP. 12 design questions resolved across envelope shape, assembly location, data collection, storage model, and response surfaces.
+- **Decisions Made**:
+  1. **JSON envelope shape** (Q1): Wraps synthesis text + structured metadata. Not schema-constrained LLM output, not raw context passthrough.
+  2. **Storage-level assembly** (Q2): Executor assembles envelope post-synthesis, not the MCP response layer. All consumers (MCP, CLI, resources) get it for free.
+  3. **Fully deterministic** (Q3): Zero LLM-generated envelope fields. All metadata computed from graph state and tool dispatch history.
+  4. **In-memory accumulator** (Q4–Q5): Per-task `[]ToolDispatch` slice on ExecutionEngine. No new persistent tables. Populated at action node dispatch and probe thought chain loop. GC'd after task.
+  5. **New `StructuredOutput` field** (Q6): Third output field on `NodeState` alongside `Output` (display) and `RawOutput` (interpolation). Additive — zero breakage to existing consumers.
+  6. **Hoisted `result` key** (Q7): MCP responses extract envelope to top-level `result` instead of burying it in node arrays.
+  7. **Lean schema** (Q8): synthesis, toolsUsed, filesRead, filesModified, nodeCount, nodesCompleted, nodesFailed, nodesSkipped, durationMs, goalPrompt. Excludes analyticalEvidence (separate path).
+  8. **Always produce envelope** (Q9): Probe-only graphs source `synthesis` from the effective terminal node. Envelope metadata is always valuable.
+  9. **All three surfaces** (Q10): tzro_run, tzro_status, resource URI all hoist the `result` key.
+- **Terms Resolved**: **Execution Envelope** added to CONTEXT.md. Avoided: Task Result, Structured Context, output schema.
+- **ADR Created**: [ADR-0055](../adr/0055-structured-execution-envelope.md)
+
+---
+
 ## [2026-07-21T21:05:00-07:00] grill-with-docs | Self-Contained Task Short-Circuit & Task Lifecycle Table (ADR-0054)
 
 - **Activity**: Grill-with-docs session stress-testing 3 proposed fixes for the `tzro_run` silent planning failure. Root cause: daemon fire-and-forget goroutine discards `Execute()` errors, planner can't compile tool-less prompts, and task existence is inferred from `node_states` rows (no task-level record). 8 design questions resolved.

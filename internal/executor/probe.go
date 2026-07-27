@@ -549,6 +549,10 @@ func RunProbe(
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
 
+						// ADR-0055: Record tool dispatch for Execution Envelope
+						if recorder, ok := ctx.Value(DispatchRecorderKey).(func(string, map[string]interface{})); ok {
+							recorder(toolName, args)
+						}
 						// Phase gate + evidence capture (ADR-0053):
 						// Track analytical calls and capture evidence for analyze nodes.
 						if toolName == "sql_cached_data" {

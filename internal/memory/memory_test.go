@@ -1308,3 +1308,60 @@ func TestCountToolCallsByTaskID(t *testing.T) {
 		t.Errorf("CountToolCallsByTaskID for nonexistent = %d, want 0", count)
 	}
 }
+
+func TestStructuredOutput_PersistAndRetrieve(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_structured_output.db")
+	jsonPath := filepath.Join(tempDir, "test_structured_output_db.json")
+
+	db := &SqliteDatabase{jsonPath: jsonPath, dbPath: dbPath}
+	if err := db.Init(); err != nil {
+		t.Fatalf("Failed to init DB: %v", err)
+	}
+	defer db.Close()
+
+	taskID := "task-env-test"
+	nodeID := "terminal_synthesis"
+
+	// 1. Create a node state
+	if err := db.SetNodeState(taskID, nodeID, "completed", "synthesis text"); err != nil {
+		t.Fatalf("SetNodeState failed: %v", err)
+	}
+
+	// 2. Set structured output
+	envelope := `{"synthesis":"summary","toolsUsed":["read_file"],"nodeCount":3}`
+	if err := db.SetNodeStructuredOutput(taskID, nodeID, envelope); err != nil {
+		t.Fatalf("SetNodeStructuredOutput failed: %v", err)
+	}
+
+	// 3. Retrieve via GetNodeState — should include structured output
+	ns, ok := db.GetNodeState(taskID, nodeID)
+	if !ok {
+		t.Fatal("GetNodeState returned false")
+	}
+	if ns.StructuredOutput != envelope {
+		t.Errorf("GetNodeState.StructuredOutput = %q, want %q", ns.StructuredOutput, envelope)
+	}
+
+	// 4. Retrieve via GetAllNodeStates — should include structured output
+	allStates := db.GetAllNodeStates(taskID)
+	if len(allStates) != 1 {
+		t.Fatalf("GetAllNodeStates returned %d states, want 1", len(allStates))
+	}
+	if allStates[0].StructuredOutput != envelope {
+		t.Errorf("GetAllNodeStates[0].StructuredOutput = %q, want %q", allStates[0].StructuredOutput, envelope)
+	}
+
+	// 5. Node without structured output should have empty string
+	otherNodeID := "step_1"
+	if err := db.SetNodeState(taskID, otherNodeID, "completed", "output"); err != nil {
+		t.Fatalf("SetNodeState for other node failed: %v", err)
+	}
+	ns2, ok := db.GetNodeState(taskID, otherNodeID)
+	if !ok {
+		t.Fatal("GetNodeState for other node returned false")
+	}
+	if ns2.StructuredOutput != "" {
+		t.Errorf("expected empty StructuredOutput for node without envelope, got %q", ns2.StructuredOutput)
+	}
+}

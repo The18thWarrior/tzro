@@ -367,6 +367,10 @@ func (sdb *SqliteDatabase) createTables() error {
 	if err := sdb.ensureColumnExistsTx(tx, "node_states", "analytical_evidence", "TEXT"); err != nil {
 		return fmt.Errorf("failed to migrate node_states analytical_evidence schema: %w", err)
 	}
+	// ADR-0055: Execution Envelope — deterministic structured output for MCP consumers
+	if err := sdb.ensureColumnExistsTx(tx, "node_states", "structured_output", "TEXT"); err != nil {
+		return fmt.Errorf("failed to migrate node_states structured_output schema: %w", err)
+	}
 
 	// Dynamic Workflow Orchestration column migrations (PRD: Dynamic Workflow Orchestration)
 	if err := sdb.ensureColumnExistsTx(tx, "workflows", "orchestration_mode", "TEXT DEFAULT 'static'"); err != nil {
@@ -594,9 +598,9 @@ func (sdb *SqliteDatabase) GetNodeState(taskID, nodeID string) (NodeState, bool)
 	defer sdb.mutex.RUnlock()
 
 	var ns NodeState
-	var rawOutput, analyticalEvidence sql.NullString
-	err := sdb.db.QueryRow("SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, COALESCE(analytical_evidence, '') as analytical_evidence, completed_at FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).
-		Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &analyticalEvidence, &ns.CompletedAt)
+	var rawOutput, analyticalEvidence, structuredOutput sql.NullString
+	err := sdb.db.QueryRow("SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, COALESCE(analytical_evidence, '') as analytical_evidence, COALESCE(structured_output, '') as structured_output, completed_at FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).
+		Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &analyticalEvidence, &structuredOutput, &ns.CompletedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return NodeState{}, false
@@ -609,6 +613,9 @@ func (sdb *SqliteDatabase) GetNodeState(taskID, nodeID string) (NodeState, bool)
 	}
 	if analyticalEvidence.Valid {
 		ns.AnalyticalEvidence = analyticalEvidence.String
+	}
+	if structuredOutput.Valid {
+		ns.StructuredOutput = structuredOutput.String
 	}
 	return ns, true
 }
@@ -630,6 +637,16 @@ func (sdb *SqliteDatabase) SetNodeAnalyticalEvidence(taskID, nodeID, evidenceJSO
 	defer sdb.mutex.Unlock()
 
 	_, err := sdb.db.Exec("UPDATE node_states SET analytical_evidence = ? WHERE task_id = ? AND node_id = ?", evidenceJSON, taskID, nodeID)
+	return err
+}
+
+// SetNodeStructuredOutput stores the Execution Envelope JSON for a node (ADR-0055).
+// Called by the executor after task completion on the effective terminal node.
+func (sdb *SqliteDatabase) SetNodeStructuredOutput(taskID, nodeID, structuredOutput string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec("UPDATE node_states SET structured_output = ? WHERE task_id = ? AND node_id = ?", structuredOutput, taskID, nodeID)
 	return err
 }
 
@@ -713,7 +730,7 @@ func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
 	}
 
 	rows, err := sdb.db.Query(
-		"SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, COALESCE(analytical_evidence, '') as analytical_evidence, completed_at FROM node_states WHERE task_id = ? ORDER BY completed_at ASC",
+		"SELECT task_id, node_id, status, output, COALESCE(raw_output, '') as raw_output, COALESCE(analytical_evidence, '') as analytical_evidence, COALESCE(structured_output, '') as structured_output, completed_at FROM node_states WHERE task_id = ? ORDER BY completed_at ASC",
 		taskID,
 	)
 	if err != nil {
@@ -725,8 +742,8 @@ func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
 	var states []NodeState
 	for rows.Next() {
 		var ns NodeState
-		var rawOutput, analyticalEvidence sql.NullString
-		if err := rows.Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &analyticalEvidence, &ns.CompletedAt); err != nil {
+		var rawOutput, analyticalEvidence, structuredOutput sql.NullString
+		if err := rows.Scan(&ns.TaskID, &ns.NodeID, &ns.Status, &ns.Output, &rawOutput, &analyticalEvidence, &structuredOutput, &ns.CompletedAt); err != nil {
 			fmt.Printf("[Memory Error] Failed to scan node state row: %v\n", err)
 			continue
 		}
@@ -735,6 +752,9 @@ func (sdb *SqliteDatabase) GetAllNodeStates(taskID string) []NodeState {
 		}
 		if analyticalEvidence.Valid {
 			ns.AnalyticalEvidence = analyticalEvidence.String
+		}
+		if structuredOutput.Valid {
+			ns.StructuredOutput = structuredOutput.String
 		}
 		states = append(states, ns)
 	}

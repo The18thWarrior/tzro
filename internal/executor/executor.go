@@ -57,6 +57,35 @@ type ExecutionEngine struct {
 	hooks          []ExecutionHook
 	mutex          sync.Mutex
 	Sequential     bool // If true, execute nodes one by one (ADR-0040)
+
+	// ADR-0055: In-memory tool dispatch accumulator for Execution Envelope assembly.
+	// Keyed by taskID. Populated at tool call sites, drained at task completion.
+	dispatches map[string][]ToolDispatch
+	dispatchMu sync.Mutex
+}
+
+// RecordDispatch appends a tool dispatch record for a task.
+// Called at action node dispatch and probe thought chain tool call sites.
+func (e *ExecutionEngine) RecordDispatch(taskID, toolName string, args map[string]interface{}) {
+	e.dispatchMu.Lock()
+	defer e.dispatchMu.Unlock()
+	if e.dispatches == nil {
+		e.dispatches = make(map[string][]ToolDispatch)
+	}
+	e.dispatches[taskID] = append(e.dispatches[taskID], ToolDispatch{ToolName: toolName, Args: args})
+}
+
+// DrainDispatches returns all dispatches for a task and removes them from the map.
+// Called once at task completion for envelope assembly; the slice is GC'd after.
+func (e *ExecutionEngine) DrainDispatches(taskID string) []ToolDispatch {
+	e.dispatchMu.Lock()
+	defer e.dispatchMu.Unlock()
+	if e.dispatches == nil {
+		return nil
+	}
+	result := e.dispatches[taskID]
+	delete(e.dispatches, taskID)
+	return result
 }
 
 func (e *ExecutionEngine) RegisterHook(h ExecutionHook) {
@@ -164,6 +193,7 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	}
 
 	var allCompletedStates []memory.NodeState
+	startTime := time.Now() // ADR-0055: Capture for Execution Envelope duration
 
 	activeHooks := e.getHooksUnlocked()
 
@@ -365,6 +395,19 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	fmt.Fprintf(os.Stderr, "[Executor] Task %s completed successfully. Synthesizing SOP...\n", graph.TaskID)
 	e.getPublisher().PublishEvent("task_completed", graph.TaskID, "", "Task execution completed successfully")
 	_, _ = notification.Send(ctx, "executor", "info", "Task Completed Successfully", fmt.Sprintf("Task '%s' completed all topological levels successfully.", graph.TaskID), notification.WithTaskID(graph.TaskID))
+
+	// ADR-0055: Assemble and persist the Execution Envelope
+	dispatches := e.DrainDispatches(graph.TaskID)
+	envelope := AssembleEnvelope(graph, allCompletedStates, dispatches, startTime)
+	if envJSON, err := json.Marshal(envelope); err == nil {
+		// Find the effective terminal node to persist the envelope on
+		terminalNodeID := findTerminalNodeID(graph, allCompletedStates)
+		if terminalNodeID != "" {
+			_ = memory.DB.SetNodeStructuredOutput(graph.TaskID, terminalNodeID, string(envJSON))
+		}
+		fmt.Fprintf(os.Stderr, "[Executor] Assembled Execution Envelope for task %s (%d tools, %d files read, %d files modified)\n",
+			graph.TaskID, len(envelope.ToolsUsed), len(envelope.FilesRead), len(envelope.FilesModified))
+	}
 
 	// Clean up ephemeral cache tables for this task
 	cache.DropTaskTables(graph.TaskID)
@@ -1075,7 +1118,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			probeEngine = &WorkerInference{}
 		}
 		synthesisEngine := &WorkerInference{}
-		synthesis, err := RunProbe(ctx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+		// ADR-0055: Inject dispatch recorder so probe tool calls are captured
+		probeCtx := context.WithValue(ctx, DispatchRecorderKey, func(toolName string, args map[string]interface{}) {
+			e.RecordDispatch(taskID, toolName, args)
+		})
+		synthesis, err := RunProbe(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
 			return fmt.Errorf("probe node %s execution failed: %w", node.ID, err)
@@ -1147,6 +1194,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 							seen[tableName] = true
 						}
 					}
+				}
+				if err := rows.Err(); err != nil {
+					fmt.Fprintf(os.Stderr, "[Executor] Cache table discovery rows error: %v\n", err)
 				}
 			}
 		}
@@ -1687,6 +1737,9 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// Without this, interpolateVariables() falls back to the display-formatted Output
 	// which contains tier prefix + compaction, corrupting JSON property lookups.
 	_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
+
+	// ADR-0055: Record tool dispatch for Execution Envelope assembly
+	e.RecordDispatch(taskID, node.Action, toolCall.ToolArguments)
 
 	// 6. Compact Output & Cache via deep module
 	var compactedOutput string

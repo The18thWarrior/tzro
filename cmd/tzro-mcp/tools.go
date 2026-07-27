@@ -179,6 +179,10 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 		if errMsg != "" {
 			respMap["error"] = errMsg
 		}
+		// ADR-0055: Hoist Execution Envelope to top-level result
+		if envelope := extractEnvelopeResult(res.nodes); envelope != nil {
+			respMap["result"] = envelope
+		}
 
 		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 		return &mcp.CallToolResult{
@@ -756,6 +760,10 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 		"status":      taskStatus,
 		"nodes":       nodes,
 		"completedAt": completedAt,
+	}
+	// ADR-0055: Hoist Execution Envelope to top-level result
+	if envelope := extractEnvelopeResult(nodes); envelope != nil {
+		respMap["result"] = envelope
 	}
 
 	if taskStatus == "waiting_for_approval" {

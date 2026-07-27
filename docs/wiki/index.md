@@ -112,6 +112,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0052: CompactPreserve Semantics for Analyze Nodes](../adr/0052-compact-preserve-semantics-for-analyze-nodes.md) - Defines CompactPreserve to preserve tool output data verbatim while still LLM-compressing reasoning text. Fixes data loss in analyze node synthesis.
 - [ADR-0053: Analytical Evidence for Data Analysis](../adr/0053-analytical-evidence-for-data-analysis.md) - Structured raw data from successful sql_cached_data calls materialized alongside terminal_synthesis. Primary ground-truth output for data analysis tasks.
 - [ADR-0054: Self-Contained Task Short-Circuit and Task Lifecycle Table](../adr/0054-self-contained-task-short-circuit-and-task-lifecycle-table.md) - Caller-hint `selfContained` flag bypasses planner for tool-less prompts. New `tasks` table tracks task lifecycle and surfaces planning failures. Tactical bridge until ADR-0048 template selection is implemented.
+- [ADR-0055: Structured Execution Envelope](../adr/0055-structured-execution-envelope.md) - Deterministic JSON Execution Envelope assembled by the executor at task completion, wrapping synthesis text with structured metadata (tools, files, node counts, duration). Persisted on new `StructuredOutput` field, hoisted to `result` key in all MCP surfaces.
 
 ## Ingested Sources
 

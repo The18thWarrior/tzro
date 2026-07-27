@@ -45,6 +45,7 @@ type NodeState struct {
 	Output             string `json:"output"`
 	RawOutput          string `json:"rawOutput,omitempty"`          // Clean tool output for interpolation (no tier prefix, no compaction)
 	AnalyticalEvidence string `json:"analyticalEvidence,omitempty"` // ADR-0053: structured raw data from sql_cached_data calls
+	StructuredOutput   string `json:"structuredOutput,omitempty"`   // ADR-0055: deterministic Execution Envelope JSON
 	CompletedAt        int64  `json:"completedAt"`
 }
 
