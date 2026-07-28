@@ -320,9 +320,15 @@ func RunProbe(
 		// If the full content exceeds maxChars, auto-promote to DirectSynthesis
 		// instead of truncating — this prevents probes from missing files in
 		// large directories (e.g., 55+ ADR files exceeding 32K budget).
+		//
+		// ADR-0058: Hard-cap DirectSynthesis promotion at 200K chars.
+		// Content above this threshold overwhelms the 4B model's single-shot
+		// synthesis capacity (observed: 2.1M chars → 910 char vacuous summary).
+		// Fall through to Thought Chain with truncated preload instead.
+		const maxDirectSynthesisChars = 200_000
 		fullContent := preloadDirectoryContext(config.PreloadPaths, 10*1024*1024) // 10MB ceiling
-		if len(fullContent) > maxChars && !config.DirectSynthesis {
-			// Content exceeds probe context budget — promote to DirectSynthesis
+		if len(fullContent) > maxChars && len(fullContent) <= maxDirectSynthesisChars && !config.DirectSynthesis {
+			// Content exceeds probe context budget but fits DirectSynthesis — promote
 			contextFile := filepath.Join(config.PreloadPaths[0], ".preload_context_full.md")
 			if err := os.WriteFile(contextFile, []byte(fullContent), 0644); err == nil {
 				config.DirectSynthesis = true
@@ -333,6 +339,22 @@ func RunProbe(
 				fmt.Fprintf(os.Stderr, "[Probe] Preload content (%d chars) exceeds budget (%d) — auto-promoting to DirectSynthesis via %s\n",
 					len(fullContent), maxChars, contextFile)
 			}
+		} else if len(fullContent) > maxDirectSynthesisChars && !config.DirectSynthesis {
+			// Content exceeds DirectSynthesis cap — fall through to Thought Chain
+			// with truncated preload. The Thought Chain + Compactor handles large
+			// content via rolling summarization; DirectSynthesis does not.
+			fmt.Fprintf(os.Stderr, "[Probe] Preload content (%d chars) exceeds DirectSynthesis cap (%d) — using Thought Chain with truncated preload\n",
+				len(fullContent), maxDirectSynthesisChars)
+			preloadedContent = fullContent[:maxChars]
+			preloadFile := filepath.Join(config.PreloadPaths[0], ".preload_context.md")
+			if err := os.WriteFile(preloadFile, []byte(preloadedContent), 0644); err == nil {
+				config.Goal = fmt.Sprintf("%s\n\nIMPORTANT: Start by reading the pre-compiled source context file at '%s' — it contains source files from the target directories. Read it FIRST before any other exploration.", config.Goal, preloadFile)
+				preloadCleanup = func() {
+					os.Remove(preloadFile)
+				}
+				fmt.Fprintf(os.Stderr, "[Probe] Pre-loaded %d chars (truncated from %d) into %s\n", len(preloadedContent), len(fullContent), preloadFile)
+			}
+
 		} else if fullContent != "" {
 			// Content fits within budget — use normal preload flow
 			preloadedContent = fullContent
@@ -353,6 +375,18 @@ func RunProbe(
 	}
 	if preloadCleanup != nil {
 		defer preloadCleanup()
+	}
+
+	// ADR-0058: Initialize Exploration Queue from PreloadPaths for deterministic
+	// loop-breaking. When a duplicate read_file is detected, redirect to the next
+	// unvisited file instead of injecting a text hint the model ignores.
+	var explorationQueue *ExplorationQueue
+	if len(config.PreloadPaths) > 0 {
+		queueFiles := collectPreloadFiles(config.PreloadPaths)
+		if len(queueFiles) > 0 {
+			explorationQueue = NewExplorationQueue(queueFiles)
+			fmt.Fprintf(os.Stderr, "[Probe] Exploration Queue initialized with %d files for %s\n", len(queueFiles), probeID)
+		}
 	}
 
 	// Pass 1: High-Entropy Tool Loop
@@ -428,6 +462,13 @@ func RunProbe(
 	// Reserve 30% of context window for system prompt + generation headroom.
 	routerContextTokens := 16384
 	contextBudgetTokens := int(float64(routerContextTokens) * 0.70) // ~11.4K tokens for conversation
+
+	// ADR-0058: No-action retry counter. Steps without an <ACTION> tag
+	// are protocol violations — we retry with a corrective prompt instead
+	// of burning a step slot. Capped at 1 retry to avoid 3x slowdown when
+	// the model enters a degenerate rambling state (observed in results-full-5).
+	const maxNoActionRetries = 1
+	noActionRetries := 0
 
 	for step := 1; step <= stepBudget; step++ {
 		// Build per-step user message with tool output and step query
@@ -664,11 +705,19 @@ func RunProbe(
 						// to the Symbol Index side-channel table.
 						if toolName == "read_file" {
 							if filePath, ok := args["path"].(string); ok {
+								// ADR-0058: Mark file as visited in Exploration Queue
+								if explorationQueue != nil {
+									explorationQueue.MarkVisited(filePath)
+								}
+
 								var parsedRes struct {
 									Content string `json:"content"`
 									Path    string `json:"path"`
 								}
 								if json.Unmarshal([]byte(result), &parsedRes) == nil && parsedRes.Path != "" {
+									if explorationQueue != nil {
+										explorationQueue.MarkVisited(parsedRes.Path) // Also mark resolved path
+									}
 									extractAndPersistSymbols(probeID, taskID, parsedRes.Path)
 								} else {
 									// Fallback: if json parsing fails, try to use filePath directly
@@ -776,17 +825,102 @@ func RunProbe(
 			recentCalls = append(recentCalls, currentCall)
 
 			if repeats >= maxConsecutiveRepeats {
-				fmt.Fprintf(os.Stderr, "[Probe] Loop detected: %s called %d times. Injecting hint.\n", toolName, repeats+1)
-				lastToolOutput = fmt.Sprintf("LOOP DETECTED: You have called '%s' with identical arguments %d times. You MUST try something DIFFERENT, or output <SYNTHESIZE_READY>.", toolName, repeats+1)
+				// ADR-0058: For read_file loops, redirect to next unvisited file
+				// from the Exploration Queue instead of injecting a text hint.
+				if toolName == "read_file" && explorationQueue != nil {
+					if nextFile, ok := explorationQueue.NextUnvisited(); ok {
+						fmt.Fprintf(os.Stderr, "[Probe] Exploration Queue redirect: %s -> %s\n", toolArgsStr, nextFile)
+						// Re-execute with redirected path
+						redirectedArgs := map[string]interface{}{"path": nextFile}
+						redirectCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
+						redirectedOutput, redirErr := tools.Call(redirectCtx, toolName, redirectedArgs)
+						if redirErr == nil {
+							explorationQueue.MarkVisited(nextFile)
+							lastToolOutput = redirectedOutput
+							// Reset repeat tracking for the redirected call
+							recentCalls = recentCalls[:0]
+						} else {
+							lastToolOutput = fmt.Sprintf("Exploration Queue redirect failed for %s: %v", nextFile, redirErr)
+						}
+					} else {
+						// Queue exhausted — all files visited, use original hint
+						visited, total := explorationQueue.Stats()
+						lastToolOutput = fmt.Sprintf("LOOP DETECTED: All %d/%d files already visited. Output <SYNTHESIZE_READY> to complete.", visited, total)
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "[Probe] Loop detected: %s called %d times. Injecting hint.\n", toolName, repeats+1)
+					lastToolOutput = fmt.Sprintf("LOOP DETECTED: You have called '%s' with identical arguments %d times. You MUST try something DIFFERENT, or output <SYNTHESIZE_READY>.", toolName, repeats+1)
+				}
 			} else {
 				lastToolOutput = toolOutput
+				noActionRetries = 0 // Reset on valid action
 			}
 		} else if isSynthesisReady {
 			lastToolOutput = "Synthesis readiness signaled."
+			noActionRetries = 0 // Reset on valid action
 		} else {
+			// ADR-0058: No-action retry. "Reasoning without acting" is not a
+			// valid Thought Chain execution pattern. The contract is think → act → observe.
+			noActionRetries++
+
+			// Rambling guard: if the response length suggests the model hit max_tokens,
+			// it's in a degenerate state (observed: 2048 tokens of reasoning without
+			// ACTION tag). Retrying just 3x's the step cost (~100s × 3 = ~300s per step).
+			// Skip retries entirely and burn the step immediately.
+			maxTokens := cfgpkg.GetProbeStepMaxTokens()
+			isRambling := len(rawResponse) >= maxTokens*3 // conservative: 3+ chars/token average
+
+			if !isRambling && noActionRetries <= maxNoActionRetries {
+				// ADR-0058: For Analyze Nodes, attempt SQL auto-extraction from
+				// the model's reasoning text before falling back to corrective prompt.
+				if isAnalyze {
+					if sql, cacheTable := extractSQLFromText(cleanedResponse); sql != "" {
+						fmt.Fprintf(os.Stderr, "[Probe] Auto-extracted SQL from reasoning text: %s (table: %s)\n", truncate(sql, 100), cacheTable)
+						extractArgs := map[string]interface{}{"sql": sql}
+						extractCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
+						result, err := tools.Call(extractCtx, "sql_cached_data", extractArgs)
+						if err == nil {
+							lastToolOutput = result
+							noActionRetries = 0
+							// Don't decrement step — this was a successful auto-extraction
+							toolName = "sql_cached_data"
+							toolArgsStr = sql
+							toolOutput = result
+							goto persistStep
+						}
+						fmt.Fprintf(os.Stderr, "[Probe] Auto-extracted SQL failed: %v\n", err)
+					}
+				}
+
+				// Don't burn the step — decrement so the for-loop re-increment
+				// lands us at the same step position.
+				step--
+				// Build corrective prompt with available tools and the model's text
+				preview := cleanedResponse
+				if len(preview) > 300 {
+					preview = preview[:300] + "..."
+				}
+				availableTools := strings.Join(config.AllowedTools, ", ")
+				lastToolOutput = fmt.Sprintf(
+					"NO ACTION DETECTED (retry %d/%d): Your response contained analysis but no <ACTION> tag. "+
+						"Available tools: [%s]. Reformat as a tool call using <ACTION>{\"tool\":\"...\",\"arguments\":{...}}</ACTION>, "+
+						"or output <SYNTHESIZE_READY> if done.\nYour previous response: %s",
+					noActionRetries, maxNoActionRetries, availableTools, preview)
+				fmt.Fprintf(os.Stderr, "[Probe] No-action retry %d/%d for step %d — injecting corrective prompt\n", noActionRetries, maxNoActionRetries, step+1)
+				// Don't persist this as a ThoughtStep — it's not a valid step
+				continue
+			}
+			// Retries exhausted or rambling detected — burn the step
+			if isRambling {
+				fmt.Fprintf(os.Stderr, "[Probe] No-action + rambling detected at step %d (response %d chars, max_tokens %d) — skipping retry, burning step\n", step, len(rawResponse), maxTokens)
+			} else {
+				fmt.Fprintf(os.Stderr, "[Probe] No-action retries exhausted at step %d — burning step\n", step)
+			}
 			lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
+			noActionRetries = 0
 		}
 
+	persistStep:
 		thoughtStep := memory.ThoughtStep{
 			ID:         fmt.Sprintf("%s_step_%d", probeID, step),
 			ProbeID:    probeID,
@@ -830,13 +964,21 @@ func RunProbe(
 
 	// Pass 2: Structured Synthesis
 	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, compactEvery, preloadedContent)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, compactEvery, preloadedContent, isAnalyze)
 }
 
-func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, detailWindow int, preloadedContent string) (string, error) {
-	summary, _ := memory.DB.GetLatestSummary(probeID)
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, detailWindow int, preloadedContent string, isAnalyze bool) (string, error) {
+	// ADR-0058: Retrieve ALL compaction summaries chronologically, not just the latest.
+	// Long-running probes (25+ steps) produce multiple compaction windows. Using only
+	// the latest summary loses earlier exploration findings during synthesis.
+	allSummaries, _ := memory.DB.GetAllSummaries(probeID)
 	steps, _ := memory.DB.GetThoughtSteps(probeID)
-	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaryLen=%d, detailWindow=%d\n", probeID, len(steps), len(summary.Summary), detailWindow)
+
+	totalSummaryLen := 0
+	for _, s := range allSummaries {
+		totalSummaryLen += len(s.Summary)
+	}
+	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaries=%d (totalLen=%d), detailWindow=%d\n", probeID, len(steps), len(allSummaries), totalSummaryLen, detailWindow)
 
 	var contextStr string
 
@@ -880,19 +1022,29 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine 
 		fmt.Fprintf(os.Stderr, "[Probe] Injected %d chars of sql_cached_data/introspect_cache results into synthesis context\n", len(qr))
 	}
 
-	if summary.Summary != "" {
-		contextStr += "Summary: " + summary.Summary + "\n"
+	// ADR-0058: Concatenate all summaries chronologically for full rolling view
+	if len(allSummaries) > 0 {
+		var summaryBuf strings.Builder
+		for _, s := range allSummaries {
+			if s.Summary != "" {
+				summaryBuf.WriteString(fmt.Sprintf("Summary (steps %s): %s\n", s.StepRange, s.Summary))
+			}
+		}
+		if summaryBuf.Len() > 0 {
+			contextStr += summaryBuf.String() + "\n"
+		}
 	}
 
 	// Build synthesis steps for intelligent truncation.
-	// If a compacted summary is available, we only append the last N steps of detail
+	// If compacted summaries are available, we only append the last N steps of detail
 	// (where N = detailWindow, tied to CompactEvery) to avoid context bloat
 	// and local model performance collapse.
 	var synthSteps []SynthesisStep
 	startIdx := 0
-	if summary.Summary != "" && len(steps) > detailWindow {
+	if len(allSummaries) > 0 && len(steps) > detailWindow {
 		startIdx = len(steps) - detailWindow
 	}
+
 	for i := startIdx; i < len(steps); i++ {
 		s := steps[i]
 		synthSteps = append(synthSteps, SynthesisStep{
@@ -927,7 +1079,12 @@ You have completed your exploration. Review the findings and produce a comprehen
 	// Fix 3 (Synthesis Generation Guard): Validate probe synthesis output.
 	// Detect control token leaks, degenerate output, and repetitive content.
 	// Re-attempt with cloud model on failure (same pattern as ConfidenceTier escalation).
-	reason := validateSynthesisOutput(result)
+	// ADR-0058: Analyze Node synthesis is exempt from the repetition detector.
+	var validationOpts []ValidationOption
+	if isAnalyze {
+		validationOpts = append(validationOpts, WithAnalyzeNode())
+	}
+	reason := validateSynthesisOutput(result, validationOpts...)
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "[Probe] Synthesis output invalid (%s), escalating to cloud\n", reason)
 		if !isCloudEscalationBlocked() {
@@ -935,7 +1092,7 @@ You have completed your exploration. Review the findings and produce a comprehen
 				{Role: "system", Content: systemPrompt},
 				{Role: "user", Content: contextStr},
 			}, synthSchema, taskID)
-			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+			if cloudErr == nil && validateSynthesisOutput(cloudResult, validationOpts...) == "" {
 				fmt.Fprintf(os.Stderr, "[Probe] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
 				result = cloudResult
 			}

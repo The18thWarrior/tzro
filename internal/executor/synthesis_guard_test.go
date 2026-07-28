@@ -62,6 +62,38 @@ func TestValidateSynthesisOutput_PlaceholderTemplates(t *testing.T) {
 	}
 }
 
+func TestValidateSynthesisOutput_AnalyzeNode_AllowsTabularRepetition(t *testing.T) {
+	// Tabular data that naturally repeats column headers across rows —
+	// this is the exact pattern that caused lead_source_by_owner to fail.
+	output := "Analysis of leads by source:\n" +
+		"- Account_Owner: John Smith\n  leads\n - Distinct Lead_Sources: Web, Referral\n  Total: 45\n" +
+		"- Account_Owner: Jane Doe\n  leads\n - Distinct Lead_Sources: Event, Web\n  Total: 32\n" +
+		"- Account_Owner: Bob Wilson\n  leads\n - Distinct Lead_Sources: Partner, Web\n  Total: 28\n" +
+		"Overall the dataset contains 105 leads across 3 owners."
+
+	// Without WithAnalyzeNode — should detect repetition
+	reason := validateSynthesisOutput(output)
+	if reason == "" {
+		t.Error("expected repetition detection WITHOUT WithAnalyzeNode()")
+	}
+
+	// With WithAnalyzeNode — should pass (tabular repetition is valid)
+	reason = validateSynthesisOutput(output, WithAnalyzeNode())
+	if reason != "" {
+		t.Errorf("expected valid output WITH WithAnalyzeNode(), got reason: %s", reason)
+	}
+}
+
+func TestValidateSynthesisOutput_AnalyzeNode_StillCatchesDegenerate(t *testing.T) {
+	// Even with WithAnalyzeNode, degenerate output should still fail
+	output := "No data."
+	reason := validateSynthesisOutput(output, WithAnalyzeNode())
+	if reason == "" {
+		t.Error("expected degenerate detection even with WithAnalyzeNode()")
+	}
+}
+
+
 func TestStripControlTokens(t *testing.T) {
 	input := "Here is the result <SYNTHESIZE_READY>\nMore content <ACTION>test</ACTION>"
 	result := stripControlTokens(input)

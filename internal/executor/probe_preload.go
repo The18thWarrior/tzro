@@ -19,6 +19,36 @@ import (
 // alongside the system prompt (~2K tokens) and per-step prompts (~1K tokens).
 const defaultPreloadMaxChars = 32000
 
+// collectPreloadFiles walks the PreloadPaths and returns a sorted list of all
+// readable file paths (same filter as preloadDirectoryContext). Used to
+// initialize the Exploration Queue (ADR-0058).
+func collectPreloadFiles(paths []string) []string {
+	var allFiles []string
+	for _, dir := range paths {
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			name := filepath.Base(path)
+			if strings.HasSuffix(name, "_test.go") {
+				return nil
+			}
+			switch ext {
+			case ".go", ".md", ".txt":
+				allFiles = append(allFiles, path)
+			}
+			return nil
+		})
+	}
+	sort.Strings(allFiles)
+	return allFiles
+}
+
 // preloadDirectoryContext walks one or more directories and concatenates their
 // readable files into a single context string. This provides probes with complete
 // source material before the Thought Chain loop, eliminating the routing problem

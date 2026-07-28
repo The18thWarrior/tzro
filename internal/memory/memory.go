@@ -1532,6 +1532,37 @@ func (sdb *SqliteDatabase) GetLatestSummary(probeID string) (ThoughtSummary, err
 	return s, nil
 }
 
+// GetAllSummaries retrieves all compaction summaries for a probe in chronological order.
+// ADR-0058: Synthesis pass uses this to concatenate the full rolling view rather than
+// only seeing the latest summary, which caused information loss for long-running probes.
+func (sdb *SqliteDatabase) GetAllSummaries(probeID string) ([]ThoughtSummary, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	if sdb.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	rows, err := sdb.db.Query(
+		`SELECT id, probe_id, task_id, step_range, summary, embedding, created_at
+		FROM thought_chain_summaries WHERE probe_id = ? ORDER BY created_at ASC`, probeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []ThoughtSummary
+	for rows.Next() {
+		var s ThoughtSummary
+		if err := rows.Scan(&s.ID, &s.ProbeID, &s.TaskID, &s.StepRange, &s.Summary, &s.Embedding, &s.CreatedAt); err != nil {
+			return summaries, err
+		}
+		summaries = append(summaries, s)
+	}
+	return summaries, rows.Err()
+}
+
 // CountToolCallsByTaskID counts thought chain steps with a non-empty tool_name
 // for the given task ID. This captures actual tool calls made within probe nodes.
 func (sdb *SqliteDatabase) CountToolCallsByTaskID(taskID string) (int, error) {
