@@ -174,22 +174,20 @@ func TestRunProbe_PersistsThoughtSteps(t *testing.T) {
 	}
 }
 
-func TestRunProbe_RollingCompaction(t *testing.T) {
+// TestRunProbe_EdgeEntryAccumulation verifies that the probe loop accumulates
+// EdgeEntry records and passes them to synthesis instead of calling compactThoughtChain.
+// ADR-0059: Supersedes the old TestRunProbe_RollingCompaction test.
+func TestRunProbe_EdgeEntryAccumulation(t *testing.T) {
 	cleanup := setupProbeTestDB(t)
 	defer cleanup()
 	setupProbeTestTools(t)
 
 	// Use the test file created by setupProbeTestTools for tool calls that succeed.
-	// We use read_file instead of list_dir because the PathValidator reliably
-	// resolves TZRO_DIR-relative file paths in the test environment.
-	// Resolve symlinks (macOS: /var → /private/var) so PathValidator prefix check passes.
 	tzroDir, _ := filepath.EvalSymlinks(os.Getenv("TZRO_DIR"))
 	testFile := filepath.Join(tzroDir, "test.go")
 
-	// Set up 4 steps — compaction should trigger at step 3 (compactEvery=3).
-	// Note: The structured compactor uses RouterEngine (inference.CallRouter) internally
-	// rather than the mock engine, so no compaction response is needed in the mock.
-	// In test env without a running sidecar, RouterEngine falls back to passthrough.
+	// Set up 4 steps — previously compaction would trigger at step 3.
+	// With ADR-0059, no compaction occurs; edge entries accumulate instead.
 	mock := &MockProbeInference{
 		Responses: []string{
 			fmt.Sprintf("Step 1\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
@@ -197,15 +195,15 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 			fmt.Sprintf("Step 3\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"%s\"}}</ACTION>", testFile),
 			`Done
 <SYNTHESIZE_READY>`,
-			`{"synthesis":"Final synthesis after compaction"}`,
+			`{"synthesis":"Final synthesis via edge entries"}`,
 		},
 	}
 
 	config := compiler.ProbeConfig{
-		Goal:         "Test compaction",
+		Goal:         "Test edge entry accumulation",
 		AllowedTools: []string{"read_file", "list_dir"},
 		StepBudget:   5,
-		CompactEvery: 3,
+		CompactEvery: 3, // still set but no longer triggers compaction
 	}
 
 	probeID := "probe_compact_test"
@@ -214,22 +212,20 @@ func TestRunProbe_RollingCompaction(t *testing.T) {
 		t.Fatalf("RunProbe failed: %v", err)
 	}
 
-	if result != "Final synthesis after compaction" {
+	if result != "Final synthesis via edge entries" {
 		t.Errorf("unexpected result: %s", result)
 	}
 
-	// Verify compaction summary was persisted
-	summary, err := memory.DB.GetLatestSummary(probeID)
-	if err != nil {
-		t.Fatalf("GetLatestSummary failed: %v", err)
+	// Verify NO compaction summaries were created (ADR-0059: compaction removed from loop)
+	_, err = memory.DB.GetLatestSummary(probeID)
+	if err == nil {
+		t.Error("expected no compaction summaries with ADR-0059, but GetLatestSummary succeeded")
 	}
-	// The structured compactor produces step-by-step output with tool outputs
-	// rather than a single LLM-generated summary.
-	if !strings.Contains(summary.Summary, "Step 1:") {
-		t.Errorf("expected structured summary with 'Step 1:', got: %s", summary.Summary)
-	}
-	if summary.StepRange != "1-3" {
-		t.Errorf("unexpected step range: %s", summary.StepRange)
+
+	// Verify thought steps WERE still persisted to SQLite (for Recall Node)
+	steps, _ := memory.DB.GetThoughtSteps(probeID)
+	if len(steps) < 3 {
+		t.Errorf("expected at least 3 persisted thought steps, got %d", len(steps))
 	}
 }
 
@@ -931,7 +927,7 @@ func TestBuildAnalyzeSystemPrompt_ExtractionMode(t *testing.T) {
 	cacheIds := []string{"cache_1234567890123456"}
 
 	t.Run("extraction mode injects strategy section", func(t *testing.T) {
-		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds, true)
+		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds, "", true)
 		if !strings.Contains(prompt, "EXTRACTION MODE") {
 			t.Error("expected extraction mode strategy block in system prompt")
 		}
@@ -941,14 +937,14 @@ func TestBuildAnalyzeSystemPrompt_ExtractionMode(t *testing.T) {
 	})
 
 	t.Run("aggregation mode omits strategy section", func(t *testing.T) {
-		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds, false)
+		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds, "", false)
 		if strings.Contains(prompt, "EXTRACTION MODE") {
 			t.Error("expected no extraction mode block in aggregation system prompt")
 		}
 	})
 
 	t.Run("no extraction flag defaults to aggregation", func(t *testing.T) {
-		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds)
+		prompt := buildAnalyzeSystemPrompt(goal, tools, "", cacheIds, "")
 		if strings.Contains(prompt, "EXTRACTION MODE") {
 			t.Error("expected no extraction mode block when flag omitted")
 		}

@@ -426,3 +426,182 @@ func searchStr(s, sub string) bool {
 	}
 	return false
 }
+
+// --- Slice 1: DocComment and EndLine ---
+
+func TestExtractSymbols_Go_DocComment(t *testing.T) {
+	src := []byte(`package example
+
+// RunServer starts the HTTP server.
+func RunServer(addr string) error {
+	return nil
+}
+
+// Config holds application settings.
+type Config struct {
+	Port int
+}
+
+// comment that is NOT a doc comment (blank line separates it)
+
+func HandleRequest() {}
+
+// ProcessData transforms input records.
+// It applies the configured pipeline.
+func ProcessData(input []byte) []byte {
+	return input
+}
+`)
+
+	symbols, err := ExtractSymbols("example.go", src)
+	if err != nil {
+		t.Fatalf("ExtractSymbols returned error: %v", err)
+	}
+
+	byName := make(map[string]Symbol)
+	for _, s := range symbols {
+		byName[s.Name] = s
+	}
+
+	// RunServer should have doc comment
+	if sym, ok := byName["RunServer"]; !ok {
+		t.Fatal("RunServer not found")
+	} else {
+		if sym.DocComment != "RunServer starts the HTTP server." {
+			t.Errorf("RunServer.DocComment = %q, want %q", sym.DocComment, "RunServer starts the HTTP server.")
+		}
+	}
+
+	// Config should have doc comment
+	if sym, ok := byName["Config"]; !ok {
+		t.Fatal("Config not found")
+	} else {
+		if sym.DocComment != "Config holds application settings." {
+			t.Errorf("Config.DocComment = %q, want %q", sym.DocComment, "Config holds application settings.")
+		}
+	}
+
+	// HandleRequest has no doc comment (blank line separates it)
+	if sym, ok := byName["HandleRequest"]; !ok {
+		t.Fatal("HandleRequest not found")
+	} else {
+		if sym.DocComment != "" {
+			t.Errorf("HandleRequest.DocComment = %q, want empty", sym.DocComment)
+		}
+	}
+
+	// ProcessData has multi-line doc — we capture first line only
+	if sym, ok := byName["ProcessData"]; !ok {
+		t.Fatal("ProcessData not found")
+	} else {
+		if sym.DocComment != "ProcessData transforms input records." {
+			t.Errorf("ProcessData.DocComment = %q, want %q", sym.DocComment, "ProcessData transforms input records.")
+		}
+	}
+}
+
+func TestExtractSymbols_Go_EndLine(t *testing.T) {
+	src := []byte(`package example
+
+func Short() {}
+
+func Multi(
+	a int,
+	b int,
+) error {
+	if a > b {
+		return nil
+	}
+	return nil
+}
+`)
+
+	symbols, err := ExtractSymbols("example.go", src)
+	if err != nil {
+		t.Fatalf("ExtractSymbols returned error: %v", err)
+	}
+
+	byName := make(map[string]Symbol)
+	for _, s := range symbols {
+		byName[s.Name] = s
+	}
+
+	// Short is a one-liner on line 3
+	if sym, ok := byName["Short"]; !ok {
+		t.Fatal("Short not found")
+	} else {
+		if sym.EndLine <= 0 {
+			t.Errorf("Short.EndLine = %d, want positive", sym.EndLine)
+		}
+		if sym.EndLine < sym.Line {
+			t.Errorf("Short.EndLine (%d) < Short.Line (%d)", sym.EndLine, sym.Line)
+		}
+	}
+
+	// Multi spans multiple lines
+	if sym, ok := byName["Multi"]; !ok {
+		t.Fatal("Multi not found")
+	} else {
+		if sym.EndLine <= sym.Line {
+			t.Errorf("Multi.EndLine (%d) should be > Multi.Line (%d)", sym.EndLine, sym.Line)
+		}
+	}
+}
+
+// --- Slice 2: ExtractAllSymbols ---
+
+func TestExtractAllSymbols_Go_IncludesUnexported(t *testing.T) {
+	src := []byte(`package example
+
+// RunServer starts the HTTP server.
+func RunServer(addr string) error {
+	return nil
+}
+
+func helperFunc() string {
+	return "internal"
+}
+
+type Config struct {
+	Port int
+}
+
+type internalState struct {
+	active bool
+}
+`)
+
+	symbols, err := ExtractAllSymbols("example.go", src)
+	if err != nil {
+		t.Fatalf("ExtractAllSymbols returned error: %v", err)
+	}
+
+	byName := make(map[string]Symbol)
+	for _, s := range symbols {
+		byName[s.Name] = s
+	}
+
+	// Should include exported
+	if _, ok := byName["RunServer"]; !ok {
+		t.Error("expected exported RunServer")
+	}
+	if _, ok := byName["Config"]; !ok {
+		t.Error("expected exported Config")
+	}
+
+	// Should also include unexported
+	if _, ok := byName["helperFunc"]; !ok {
+		t.Error("expected unexported helperFunc")
+	}
+	if _, ok := byName["internalState"]; !ok {
+		t.Error("expected unexported internalState")
+	}
+
+	// Exported field should be set correctly
+	if sym := byName["RunServer"]; !sym.Exported {
+		t.Error("RunServer should have Exported=true")
+	}
+	if sym := byName["helperFunc"]; sym.Exported {
+		t.Error("helperFunc should have Exported=false")
+	}
+}

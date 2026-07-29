@@ -35,12 +35,14 @@ const (
 
 // Symbol represents a single extracted declaration from a source file.
 type Symbol struct {
-	Name      string     `json:"name"`
-	Kind      SymbolKind `json:"kind"`
-	Signature string     `json:"signature"`
-	File      string     `json:"file"`
-	Line      int        `json:"line"`
-	Exported  bool       `json:"exported"`
+	Name       string     `json:"name"`
+	Kind       SymbolKind `json:"kind"`
+	Signature  string     `json:"signature"`
+	DocComment string     `json:"docComment,omitempty"` // First line of the doc comment preceding the declaration
+	File       string     `json:"file"`
+	Line       int        `json:"line"`
+	EndLine    int        `json:"endLine"`              // Last line of the declaration (1-indexed)
+	Exported   bool       `json:"exported"`
 }
 
 // ExtractSymbols parses the given source code using the appropriate
@@ -83,6 +85,45 @@ func ExtractSymbols(filename string, source []byte) ([]Symbol, error) {
 	return extractor(bt, root, source, filename), nil
 }
 
+// ExtractAllSymbols is like ExtractSymbols but includes unexported/private declarations.
+// Used by the Call Graph Builder where internal functions participate in call edges.
+func ExtractAllSymbols(filename string, source []byte) ([]Symbol, error) {
+	if len(source) == 0 {
+		return nil, nil
+	}
+
+	entry := grammars.DetectLanguage(filepath.Base(filename))
+	if entry == nil {
+		return nil, nil
+	}
+
+	lang := entry.Language()
+	if lang == nil {
+		return nil, nil
+	}
+
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		return nil, err
+	}
+	defer tree.Release()
+
+	bt := gotreesitter.Bind(tree)
+	root := bt.RootNode()
+	if root == nil {
+		return nil, nil
+	}
+
+	langName := strings.ToLower(entry.Name)
+	extractor := getAllLanguageExtractor(langName)
+	if extractor == nil {
+		return nil, nil
+	}
+
+	return extractor(bt, root, source, filename), nil
+}
+
 // languageExtractor is a function that walks the AST for a specific language
 // and extracts public symbols.
 type languageExtractor func(bt *gotreesitter.BoundTree, root *gotreesitter.Node, source []byte, filename string) []Symbol
@@ -94,6 +135,26 @@ func getLanguageExtractor(langName string) languageExtractor {
 		return extractGo
 	case "python":
 		return extractPython
+	case "typescript", "tsx":
+		return extractTypeScript
+	case "javascript":
+		return extractJavaScript
+	case "rust":
+		return extractRust
+	case "java":
+		return extractJava
+	default:
+		return nil
+	}
+}
+
+// getAllLanguageExtractor returns extractors that include unexported/private symbols.
+func getAllLanguageExtractor(langName string) languageExtractor {
+	switch langName {
+	case "go":
+		return extractGoAll
+	case "python":
+		return extractPython // Python: _ prefix filtering is for public API; for call graph, include all
 	case "typescript", "tsx":
 		return extractTypeScript
 	case "javascript":
@@ -148,6 +209,47 @@ func extractGo(bt *gotreesitter.BoundTree, root *gotreesitter.Node, source []byt
 	return symbols
 }
 
+// extractGoAll extracts ALL Go declarations (exported + unexported).
+// Used by the Call Graph Builder for complete call edge resolution.
+func extractGoAll(bt *gotreesitter.BoundTree, root *gotreesitter.Node, source []byte, filename string) []Symbol {
+	var symbols []Symbol
+	walkChildren(bt, root, func(node *gotreesitter.Node) {
+		nodeType := bt.NodeType(node)
+		switch nodeType {
+		case "function_declaration":
+			if sym := extractGoFuncAll(bt, node, source, filename); sym != nil {
+				symbols = append(symbols, *sym)
+			}
+		case "method_declaration":
+			if sym := extractGoMethodAll(bt, node, source, filename); sym != nil {
+				symbols = append(symbols, *sym)
+			}
+		case "type_declaration":
+			specs := collectNamedChildren(bt, node, "type_spec")
+			for _, spec := range specs {
+				if sym := extractGoTypeSpecAll(bt, spec, source, filename); sym != nil {
+					symbols = append(symbols, *sym)
+				}
+			}
+		case "const_declaration", "var_declaration":
+			kind := SymbolConst
+			if nodeType == "var_declaration" {
+				kind = SymbolVar
+			}
+			specs := collectNamedChildren(bt, node, "const_spec")
+			if len(specs) == 0 {
+				specs = collectNamedChildren(bt, node, "var_spec")
+			}
+			for _, spec := range specs {
+				if sym := extractGoVarConstSpecAll(bt, spec, source, filename, kind); sym != nil {
+					symbols = append(symbols, *sym)
+				}
+			}
+		}
+	})
+	return symbols
+}
+
 func extractGoFunc(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source []byte, filename string) *Symbol {
 	nameNode := bt.ChildByField(node, "name")
 	if nameNode == nil {
@@ -158,12 +260,14 @@ func extractGoFunc(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source [
 		return nil
 	}
 	return &Symbol{
-		Name:      name,
-		Kind:      SymbolFunc,
-		Signature: extractNodeSignature(node, source),
-		File:      filename,
-		Line:      int(node.StartPoint().Row) + 1,
-		Exported:  true,
+		Name:       name,
+		Kind:       SymbolFunc,
+		Signature:  extractNodeSignature(node, source),
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   true,
 	}
 }
 
@@ -181,12 +285,14 @@ func extractGoMethod(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source
 	sig := extractNodeSignature(node, source)
 
 	return &Symbol{
-		Name:      name,
-		Kind:      SymbolMethod,
-		Signature: sig,
-		File:      filename,
-		Line:      int(node.StartPoint().Row) + 1,
-		Exported:  true,
+		Name:       name,
+		Kind:       SymbolMethod,
+		Signature:  sig,
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   true,
 	}
 }
 
@@ -212,12 +318,14 @@ func extractGoTypeSpec(bt *gotreesitter.BoundTree, node *gotreesitter.Node, sour
 	}
 
 	return &Symbol{
-		Name:      name,
-		Kind:      kind,
-		Signature: extractNodeSignature(node, source),
-		File:      filename,
-		Line:      int(node.StartPoint().Row) + 1,
-		Exported:  true,
+		Name:       name,
+		Kind:       kind,
+		Signature:  extractNodeSignature(node, source),
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   true,
 	}
 }
 
@@ -242,12 +350,14 @@ func extractGoVarConstSpec(bt *gotreesitter.BoundTree, node *gotreesitter.Node, 
 	}
 
 	return &Symbol{
-		Name:      name,
-		Kind:      kind,
-		Signature: extractNodeSignature(node, source),
-		File:      filename,
-		Line:      int(node.StartPoint().Row) + 1,
-		Exported:  true,
+		Name:       name,
+		Kind:       kind,
+		Signature:  extractNodeSignature(node, source),
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   true,
 	}
 }
 
@@ -257,6 +367,103 @@ func isGoExported(name string) bool {
 	}
 	r := rune(name[0])
 	return unicode.IsUpper(r)
+}
+
+// --- Go All-Symbol Extractors (include unexported) ---
+
+func extractGoFuncAll(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source []byte, filename string) *Symbol {
+	nameNode := bt.ChildByField(node, "name")
+	if nameNode == nil {
+		return nil
+	}
+	name := bt.NodeText(nameNode)
+	return &Symbol{
+		Name:       name,
+		Kind:       SymbolFunc,
+		Signature:  extractNodeSignature(node, source),
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   isGoExported(name),
+	}
+}
+
+func extractGoMethodAll(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source []byte, filename string) *Symbol {
+	nameNode := bt.ChildByField(node, "name")
+	if nameNode == nil {
+		return nil
+	}
+	name := bt.NodeText(nameNode)
+	sig := extractNodeSignature(node, source)
+	return &Symbol{
+		Name:       name,
+		Kind:       SymbolMethod,
+		Signature:  sig,
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   isGoExported(name),
+	}
+}
+
+func extractGoTypeSpecAll(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source []byte, filename string) *Symbol {
+	nameNode := bt.ChildByField(node, "name")
+	if nameNode == nil {
+		return nil
+	}
+	name := bt.NodeText(nameNode)
+
+	kind := SymbolType
+	typeNode := bt.ChildByField(node, "type")
+	if typeNode != nil {
+		switch bt.NodeType(typeNode) {
+		case "interface_type":
+			kind = SymbolInterface
+		case "struct_type":
+			kind = SymbolType
+		}
+	}
+
+	return &Symbol{
+		Name:       name,
+		Kind:       kind,
+		Signature:  extractNodeSignature(node, source),
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   isGoExported(name),
+	}
+}
+
+func extractGoVarConstSpecAll(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source []byte, filename string, kind SymbolKind) *Symbol {
+	nameNode := bt.ChildByField(node, "name")
+	if nameNode == nil {
+		for i := 0; i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child != nil && bt.NodeType(child) == "identifier" {
+				nameNode = child
+				break
+			}
+		}
+	}
+	if nameNode == nil {
+		return nil
+	}
+	name := bt.NodeText(nameNode)
+
+	return &Symbol{
+		Name:       name,
+		Kind:       kind,
+		Signature:  extractNodeSignature(node, source),
+		DocComment: extractDocComment(bt, node, source),
+		File:       filename,
+		Line:       int(node.StartPoint().Row) + 1,
+		EndLine:    int(node.EndPoint().Row) + 1,
+		Exported:   isGoExported(name),
+	}
 }
 
 // --- Python Extractor ---
@@ -665,6 +872,69 @@ func extractJavaMethod(bt *gotreesitter.BoundTree, node *gotreesitter.Node, sour
 }
 
 // --- Helpers ---
+
+// extractDocComment looks for comment nodes immediately preceding the given node
+// and extracts the first line of the doc comment block (stripping the // prefix).
+// Handles consecutive comment lines (multi-line doc comments) by walking backwards.
+func extractDocComment(bt *gotreesitter.BoundTree, node *gotreesitter.Node, source []byte) string {
+	// For type_spec inside type_declaration, look at the type_declaration's siblings
+	targetNode := node
+	parent := node.Parent()
+	if parent != nil && bt.NodeType(parent) == "type_declaration" {
+		targetNode = parent
+		parent = parent.Parent()
+	}
+	if parent == nil {
+		return ""
+	}
+
+	// Find the index of this node in its parent's children
+	var nodeIdx int = -1
+	for i := 0; i < parent.ChildCount(); i++ {
+		child := parent.Child(i)
+		if child != nil && child.StartByte() == targetNode.StartByte() && child.EndByte() == targetNode.EndByte() {
+			nodeIdx = i
+			break
+		}
+	}
+	if nodeIdx <= 0 {
+		return ""
+	}
+
+	// Walk backwards through consecutive comment siblings
+	var commentNodes []*gotreesitter.Node
+	for i := nodeIdx - 1; i >= 0; i-- {
+		sibling := parent.Child(i)
+		if sibling == nil {
+			break
+		}
+		if bt.NodeType(sibling) != "comment" {
+			break
+		}
+		commentNodes = append(commentNodes, sibling)
+	}
+	if len(commentNodes) == 0 {
+		return ""
+	}
+
+	// The last comment in our reversed list is the first comment line
+	firstComment := commentNodes[len(commentNodes)-1]
+
+	// Verify the last comment (closest to the node) ends on the line before the node
+	lastComment := commentNodes[0]
+	commentEndLine := int(lastComment.EndPoint().Row)
+	nodeStartLine := int(targetNode.StartPoint().Row)
+	if commentEndLine+1 != nodeStartLine {
+		return "" // not immediately preceding
+	}
+
+	commentText := string(source[firstComment.StartByte():firstComment.EndByte()])
+	firstLine := strings.TrimSpace(commentText)
+	if strings.HasPrefix(firstLine, "//") {
+		return strings.TrimSpace(firstLine[2:])
+	}
+	return firstLine
+}
 
 // walkChildren iterates over all top-level named children of root.
 func walkChildren(bt *gotreesitter.BoundTree, root *gotreesitter.Node, fn func(*gotreesitter.Node)) {

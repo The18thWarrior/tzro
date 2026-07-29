@@ -391,24 +391,33 @@ func RunProbe(
 
 	// Pass 1: High-Entropy Tool Loop
 	//
-	// ADR-0056: Append-Only Conversation for Full KV Cache Prefill Reuse
+	// ADR-0059: Fixed-Context-Window with Edge Entry Accumulation
 	//
-	// Instead of rebuilding the message array from scratch each step (which
-	// invalidates KV cache beyond the system prompt prefix), we maintain an
-	// in-memory conversation that grows by appending user/assistant turns.
-	// This makes the entire prefix byte-identical across steps, enabling
-	// llama-server's --cache-reuse to match the FULL prefix (not just the
-	// first 2048 tokens). Over 20 steps, this eliminates ~120-140s of
-	// redundant prefill computation.
+	// Each step receives exactly two messages: the static system prompt
+	// (goal + upstream context + tool schemas) and a user message
+	// (breadcrumbs + last tool output + step query). The system message
+	// is byte-identical across all steps, enabling perfect KV cache prefix
+	// reuse with zero prefill overhead after step 1.
 	//
-	// Sliding window: when the conversation exceeds the context budget,
-	// the oldest user/assistant turns are dropped (keeping the static
-	// prefix and most recent N turns). This is a one-time penalty per
-	// window boundary vs. the old approach of paying prefill every step.
+	// Accumulated findings are captured as EdgeEntry structs (tool name,
+	// args, deterministically truncated result snippet) and compiled for
+	// synthesis at loop termination. No in-loop compaction calls.
 	//
 	// Select system prompt based on node type.
 	// Analyze nodes (identified by cache tools in allowedTools) get a data analysis
 	// prompt; probe nodes get the codebase exploration prompt.
+
+	// Cap upstream context before baking into system prompt (ADR-0059).
+	var cappedUpstreamCtx string
+	if config.UpstreamContext != "" {
+		const maxUpstreamContextChars = 24576 // ~6K tokens
+		cappedUpstreamCtx = config.UpstreamContext
+		if len(cappedUpstreamCtx) > maxUpstreamContextChars {
+			cappedUpstreamCtx = compactor.CompactContent(cappedUpstreamCtx, maxUpstreamContextChars)
+			fmt.Fprintf(os.Stderr, "[Probe] Capped upstream context from %d to %d chars for probe %s\n", len(config.UpstreamContext), maxUpstreamContextChars, probeID)
+		}
+	}
+
 	var systemPrompt string
 	if isAnalyzeConfig(config.AllowedTools) {
 		// Fix 9: Deterministic cacheId extraction — extract real cacheIds from
@@ -428,40 +437,18 @@ func RunProbe(
 		if len(uniqueCacheIds) > 0 {
 			fmt.Fprintf(os.Stderr, "[Probe] Deterministic cacheId extraction for %s: %v\n", probeID, uniqueCacheIds)
 		}
-		systemPrompt = buildAnalyzeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext, uniqueCacheIds, isExtractionGoal)
+		systemPrompt = buildAnalyzeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext, uniqueCacheIds, cappedUpstreamCtx, isExtractionGoal)
 	} else {
-		systemPrompt = buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
+		systemPrompt = buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext, cappedUpstreamCtx)
 	}
 
-	// ADR-0056: Initialize append-only conversation with static prefix.
-	// These messages form the immutable prefix that is byte-identical across
-	// all probe steps, enabling full KV cache reuse.
-	conversationHistory := []inference.InferenceMessage{
-		{Role: "system", Content: systemPrompt},
-	}
+	// ADR-0059: Edge Entry accumulator. Each successful tool call appends
+	// an entry with tool-type-aware truncation. Compiled for synthesis.
+	var edgeEntries []EdgeEntry
 
-	// Static prefix includes upstream context if available
-	if config.UpstreamContext != "" {
-		const maxUpstreamContextChars = 24576 // ~6K tokens
-		upstreamCtx := config.UpstreamContext
-		if len(upstreamCtx) > maxUpstreamContextChars {
-			upstreamCtx = compactor.CompactContent(upstreamCtx, maxUpstreamContextChars)
-			fmt.Fprintf(os.Stderr, "[Probe] Capped upstream context from %d to %d chars for probe %s\n", len(config.UpstreamContext), maxUpstreamContextChars, probeID)
-		}
-		conversationHistory = append(conversationHistory,
-			inference.InferenceMessage{Role: "user", Content: "## Upstream Node Outputs (from completed DAG steps)\n" + upstreamCtx},
-			inference.InferenceMessage{Role: "assistant", Content: "I have reviewed the upstream node outputs. I can see the data context from prior steps."},
-		)
-	}
-
-	// staticPrefixLen is the number of messages in the immutable prefix.
-	// The sliding window never drops messages before this index.
-	staticPrefixLen := len(conversationHistory)
-
-	// Sliding window context budget: aggressive for router (16K ctx), generous for worker (64K).
-	// Reserve 30% of context window for system prompt + generation headroom.
-	routerContextTokens := 16384
-	contextBudgetTokens := int(float64(routerContextTokens) * 0.70) // ~11.4K tokens for conversation
+	// Context budget for lastToolOutput capping.
+	// Router has 16K tokens ≈ 64K chars. Reserve space for system prompt + breadcrumbs + query.
+	contextBudgetChars := 64000 - len(systemPrompt) - 600 // 600 chars for breadcrumbs + step query
 
 	// ADR-0058: No-action retry counter. Steps without an <ACTION> tag
 	// are protocol violations — we retry with a corrective prompt instead
@@ -471,24 +458,37 @@ func RunProbe(
 	noActionRetries := 0
 
 	for step := 1; step <= stepBudget; step++ {
-		// Build per-step user message with tool output and step query
+		// ADR-0059: Build fixed-context-window prompt per step.
+		// Two messages: [system, user(breadcrumbs + lastToolOutput + query)]
+		// System prompt is byte-identical every step → perfect KV cache hit.
 		var stepContent strings.Builder
+
+		// Inject breadcrumbs for routing memory (ADR-0059)
+		breadcrumbs := BuildBreadcrumbs(edgeEntries, stepBudget, isAnalyze)
+		if breadcrumbs != "" {
+			stepContent.WriteString(breadcrumbs)
+			stepContent.WriteString("\n")
+		}
+
 		if lastToolOutput != "" {
-			stepContent.WriteString(fmt.Sprintf("## Last Tool Output\n```\n%s\n```\n\n", lastToolOutput))
+			// Cap lastToolOutput to remaining context budget (ADR-0059)
+			cappedOutput := lastToolOutput
+			maxOutput := contextBudgetChars - len(breadcrumbs) - 200
+			if maxOutput < 1000 {
+				maxOutput = 1000
+			}
+			if len(cappedOutput) > maxOutput {
+				cappedOutput = compactor.CompactContent(cappedOutput, maxOutput)
+			}
+			stepContent.WriteString(fmt.Sprintf("## Last Tool Output\n```\n%s\n```\n\n", cappedOutput))
 		}
 		stepContent.WriteString(fmt.Sprintf("Step %d: What should we do next?", step))
 
-		// Append user turn to conversation (append-only — preserves full prefix)
-		conversationHistory = append(conversationHistory, inference.InferenceMessage{
-			Role:    "user",
-			Content: stepContent.String(),
-		})
-
-		// ADR-0056: Sliding window compaction — when conversation exceeds the
-		// context budget, drop the oldest user/assistant turn pairs (after the
-		// static prefix) to keep within budget. This preserves the most recent
-		// context while paying a one-time cache miss for the compacted turns.
-		conversationHistory = slidingWindowCompact(conversationHistory, staticPrefixLen, contextBudgetTokens)
+		// ADR-0059: Fixed two-message array per step.
+		stepMessages := []inference.InferenceMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: stepContent.String()},
+		}
 
 		// Call Local Model WITHOUT constraint. Probe steps are routing decisions
 		// (which file/tool to use next) — thinking mode is NOT enabled here
@@ -499,19 +499,10 @@ func RunProbe(
 		// (observed: 16K tokens in a single step collapsed all subsequent calls
 		// to 0.1 t/s). Synthesis calls remain uncapped.
 		stepCtx := context.WithValue(ctx, inference.MaxTokensKey, cfgpkg.GetProbeStepMaxTokens())
-		rawResponse, err := engine.InferMessages(stepCtx, conversationHistory, "")
+		rawResponse, err := engine.InferMessages(stepCtx, stepMessages, "")
 		if err != nil {
 			return "", fmt.Errorf("probe inference failed at step %d: %w", step, err)
 		}
-
-		// ADR-0056: Append assistant response to conversation for next step's
-		// prefix. This is the key to cache reuse — the next step's request
-		// will have this response as part of its prefix, which llama-server
-		// will find in its KV cache and skip prefilling.
-		conversationHistory = append(conversationHistory, inference.InferenceMessage{
-			Role:    "assistant",
-			Content: rawResponse,
-		})
 
 		// Strip <think>...</think> blocks before tag extraction. The thinking
 		// content is reasoning noise — we preserve it in NextThought for logging
@@ -666,6 +657,9 @@ func RunProbe(
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
+
+						// ADR-0059: Accumulate Edge Entry with tool-type-aware truncation.
+						edgeEntries = append(edgeEntries, NewEdgeEntry(step, toolName, toolArgsStr, result))
 
 						// ADR-0055: Record tool dispatch for Execution Envelope
 						if recorder, ok := ctx.Value(DispatchRecorderKey).(func(string, map[string]interface{})); ok {
@@ -940,11 +934,9 @@ func RunProbe(
 			break
 		}
 
-		if step%compactEvery == 0 {
-			if err := compactThoughtChain(ctx, probeID, taskID, step, compactEvery, config.CompactionLevel, synthesisEngine); err != nil {
-				fmt.Fprintf(os.Stderr, "[Probe Compactor] Warning: compaction failed: %v\n", err)
-			}
-		}
+		// ADR-0059: No in-loop compaction. Edge Entries accumulate in-memory;
+		// compactThoughtChain is retained in the codebase for Recall Node and
+		// future consumers but no longer called from the probe loop.
 	}
 
 	// ADR-0053: Persist analytical evidence to the database before synthesis.
@@ -962,30 +954,23 @@ func RunProbe(
 		}
 	}
 
-	// Pass 2: Structured Synthesis
-	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis.\n", probeID)
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, compactEvery, preloadedContent, isAnalyze)
+	// Pass 2: Structured Synthesis (ADR-0059: reads from Edge Entry log)
+	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis (%d edge entries).\n", probeID, len(edgeEntries))
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, edgeEntries, preloadedContent, isAnalyze)
 }
 
-func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, detailWindow int, preloadedContent string, isAnalyze bool) (string, error) {
-	// ADR-0058: Retrieve ALL compaction summaries chronologically, not just the latest.
-	// Long-running probes (25+ steps) produce multiple compaction windows. Using only
-	// the latest summary loses earlier exploration findings during synthesis.
-	allSummaries, _ := memory.DB.GetAllSummaries(probeID)
-	steps, _ := memory.DB.GetThoughtSteps(probeID)
-
-	totalSummaryLen := 0
-	for _, s := range allSummaries {
-		totalSummaryLen += len(s.Summary)
-	}
-	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, steps=%d, summaries=%d (totalLen=%d), detailWindow=%d\n", probeID, len(steps), len(allSummaries), totalSummaryLen, detailWindow)
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, edgeEntries []EdgeEntry, preloadedContent string, isAnalyze bool) (string, error) {
+	// ADR-0059: Synthesis reads from the Edge Entry log accumulated during the
+	// Thought Chain loop. No more reading compaction summaries or raw thought
+	// steps from SQLite — the edge log is the authoritative exploration record.
+	fmt.Fprintf(os.Stderr, "[Probe] Synthesis Pass: probeID=%s, edgeEntries=%d\n", probeID, len(edgeEntries))
 
 	var contextStr string
 
 	// Inject pre-loaded source material directly into synthesis context.
 	// This bypasses the compaction pipeline that would otherwise destroy the content.
-	// The pre-loaded content is the GROUND TRUTH source data; the compacted summary
-	// and thought steps provide the probe's exploration findings on top of it.
+	// The pre-loaded content is the GROUND TRUTH source data; the edge entries
+	// provide the probe's exploration findings on top of it.
 	if preloadedContent != "" {
 		// Budget: use at most 16K chars of preloaded content for synthesis
 		// to avoid overwhelming the local model's context window.
@@ -996,64 +981,39 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine 
 		contextStr += "## Source Material (pre-loaded)\n" + preloadedContent + "\n\n"
 	}
 
-	// Fix (ADR-benchmark-data-3): Extract sql_cached_data and introspect_cache
-	// tool outputs from ALL thought steps and inject them directly into synthesis
-	// context. These results contain the actual data rows that the compaction
-	// pipeline strips during Probe Compactor passes (the 1B router treats tabular
-	// data as verbose content and drops it). Without this bypass, synthesis only
-	// sees "queried cache X with SQL Y" but not the actual query results.
-	const maxQueryResultsInSynthesis = 12288
-	var queryResultsBuf strings.Builder
-	for _, s := range steps {
-		if (s.ToolName == "sql_cached_data" || s.ToolName == "introspect_cache") && s.ToolOutput != "" {
-			// Skip error outputs
-			if strings.HasPrefix(s.ToolOutput, "Error:") || strings.HasPrefix(s.ToolOutput, "error:") {
-				continue
-			}
-			queryResultsBuf.WriteString(fmt.Sprintf("### Step %d: %s\nArgs: %s\nResult:\n%s\n\n", s.StepIndex, s.ToolName, s.ToolArgs, s.ToolOutput))
-		}
-	}
-	if queryResultsBuf.Len() > 0 {
-		qr := queryResultsBuf.String()
-		if len(qr) > maxQueryResultsInSynthesis {
-			qr = qr[:maxQueryResultsInSynthesis] + "\n[... query results truncated ...]\n"
-		}
-		contextStr += "## Query Results (compaction-exempt)\n" + qr + "\n"
-		fmt.Fprintf(os.Stderr, "[Probe] Injected %d chars of sql_cached_data/introspect_cache results into synthesis context\n", len(qr))
-	}
-
-	// ADR-0058: Concatenate all summaries chronologically for full rolling view
-	if len(allSummaries) > 0 {
-		var summaryBuf strings.Builder
-		for _, s := range allSummaries {
-			if s.Summary != "" {
-				summaryBuf.WriteString(fmt.Sprintf("Summary (steps %s): %s\n", s.StepRange, s.Summary))
+	// ADR-0059: For Analyze Nodes, also read sql_cached_data results from SQLite
+	// ThoughtSteps as a high-fidelity supplement. The edge log has truncated snippets;
+	// the raw ThoughtSteps have full query results that are critical for data analysis.
+	if isAnalyze {
+		steps, _ := memory.DB.GetThoughtSteps(probeID)
+		const maxQueryResultsInSynthesis = 12288
+		var queryResultsBuf strings.Builder
+		for _, s := range steps {
+			if (s.ToolName == "sql_cached_data" || s.ToolName == "introspect_cache") && s.ToolOutput != "" {
+				// Skip error outputs
+				if strings.HasPrefix(s.ToolOutput, "Error:") || strings.HasPrefix(s.ToolOutput, "error:") {
+					continue
+				}
+				queryResultsBuf.WriteString(fmt.Sprintf("### Step %d: %s\nArgs: %s\nResult:\n%s\n\n", s.StepIndex, s.ToolName, s.ToolArgs, s.ToolOutput))
 			}
 		}
-		if summaryBuf.Len() > 0 {
-			contextStr += summaryBuf.String() + "\n"
+		if queryResultsBuf.Len() > 0 {
+			qr := queryResultsBuf.String()
+			if len(qr) > maxQueryResultsInSynthesis {
+				qr = qr[:maxQueryResultsInSynthesis] + "\n[... query results truncated ...]\n"
+			}
+			contextStr += "## Query Results (compaction-exempt)\n" + qr + "\n"
+			fmt.Fprintf(os.Stderr, "[Probe] Injected %d chars of sql_cached_data/introspect_cache results into synthesis context\n", len(qr))
 		}
 	}
 
-	// Build synthesis steps for intelligent truncation.
-	// If compacted summaries are available, we only append the last N steps of detail
-	// (where N = detailWindow, tied to CompactEvery) to avoid context bloat
-	// and local model performance collapse.
-	var synthSteps []SynthesisStep
-	startIdx := 0
-	if len(allSummaries) > 0 && len(steps) > detailWindow {
-		startIdx = len(steps) - detailWindow
+	// ADR-0059: Compile the Edge Entry log for synthesis.
+	// CompileEdgeLog returns the formatted exploration log and whether overflow was detected.
+	edgeLog, overflow := CompileEdgeLog(edgeEntries)
+	if overflow {
+		fmt.Fprintf(os.Stderr, "[Probe] Edge log overflow detected (%d entries, %d chars) — truncated oldest entries\n", len(edgeEntries), len(edgeLog))
 	}
-
-	for i := startIdx; i < len(steps); i++ {
-		s := steps[i]
-		synthSteps = append(synthSteps, SynthesisStep{
-			StepIndex:  s.StepIndex,
-			Thought:    s.Thought,
-			ToolOutput: s.ToolOutput,
-		})
-	}
-	contextStr += TruncateSynthesisContext(synthSteps)
+	contextStr += edgeLog
 
 	// Build the synthesis schema dynamically. When downstream nodes declare
 	// dynamic bindings referencing this probe's output (e.g., "probe_id.output.handler_file_path"),
@@ -1172,7 +1132,7 @@ For each field, extract the most relevant value discovered during exploration. I
 // each tool requires (fixes empty-arguments bug where model omitted required params).
 // taskContext, when non-empty, is pinned above the exploration goal so task requirements
 // (e.g., target language, specific APIs) override workspace conventions.
-func buildProbeSystemPrompt(goal string, allowedTools []string, taskContext string) string {
+func buildProbeSystemPrompt(goal string, allowedTools []string, taskContext string, upstreamContext string) string {
 	toolList := ""
 	for i, t := range allowedTools {
 		if i > 0 {
@@ -1192,8 +1152,18 @@ func buildProbeSystemPrompt(goal string, allowedTools []string, taskContext stri
 `, taskContext)
 	}
 
+	// ADR-0059: Upstream context baked into system prompt for maximum KV cache reuse.
+	var upstreamSection string
+	if upstreamContext != "" {
+		upstreamSection = fmt.Sprintf(`
+## Upstream Node Outputs (from completed DAG steps)
+%s
+
+`, upstreamContext)
+	}
+
 	return fmt.Sprintf(`You are a Probe Node — an autonomous code exploration agent.
-%sYour goal: %s
+%s%sYour goal: %s
 
 You have access to these tools: [%s]
 
@@ -1210,7 +1180,7 @@ Exploration strategy: list_dir for structure, read_file for content of files rel
 If you list a directory and see files that are directly related to your goal, read them using read_file directly rather than trying to search or guess. Do not assume search_files is required if you already know which files to read.
 Do not read the same file multiple times with overlapping ranges. Once you have read a file, assume you know its structure and move on to the other files in the directory to ensure complete coverage. Do not exhaust your step budget on a single file.
 If a path fails with "does not exist", DO NOT call list_dir or read_file on that path again. You MUST use search_files to locate the correct file instead of guessing directory names.
-Do not assume documentation files describe implementation — verify by reading source code.`, taskContextSection, goal, toolList, toolSchemas)
+Do not assume documentation files describe implementation — verify by reading source code.`, taskContextSection, upstreamSection, goal, toolList, toolSchemas)
 }
 
 // isAnalyzeConfig returns true if the allowed tools contain cache tools,
@@ -1287,7 +1257,7 @@ Your goal asks you to find and return specific data (names, emails, values, etc.
 // Thought Chain. Unlike the probe prompt (codebase exploration), this teaches
 // the model to use cache exploration tools for data analysis, filtering, and
 // aggregation. When no cached data is available, it degrades to synthesis.
-func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext string, extractedCacheIds []string, isExtractionGoal ...bool) string {
+func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext string, extractedCacheIds []string, upstreamContext string, isExtractionGoal ...bool) string {
 	extractionMode := len(isExtractionGoal) > 0 && isExtractionGoal[0]
 	toolList := ""
 	for i, t := range allowedTools {
@@ -1350,8 +1320,18 @@ CRITICAL RULES:
 - If you want data, you MUST call sql_cached_data. Do NOT try to count or aggregate manually from text.
 `, exampleCacheId, exampleCacheId, exampleCacheId, exampleCacheId, exampleCacheId)
 
+	// ADR-0059: Upstream context baked into system prompt.
+	var upstreamSection string
+	if upstreamContext != "" {
+		upstreamSection = fmt.Sprintf(`
+## Upstream Node Outputs (from completed DAG steps)
+%s
+
+`, upstreamContext)
+	}
+
 	return fmt.Sprintf(`You are an Analyze Node — an autonomous data analysis agent.
-%sYour goal: %s
+%s%sYour goal: %s
 
 You have access to these tools: [%s]
 
@@ -1412,7 +1392,7 @@ If you have gathered enough information and are ready to synthesize a final answ
 IMPORTANT: Do NOT output markdown JSON blocks for the action, use the raw <ACTION> tag.
 
 Be systematic. Start by understanding the data schema, then build your analysis incrementally.
-If a SQL query returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, goal, toolList, toolSchemas, cacheIdSection, fewShotSection)
+If a SQL query returns an error, try a simpler approach or inspect the data with introspect_cache first.`, taskContextSection, upstreamSection, goal, toolList, toolSchemas, cacheIdSection, fewShotSection)
 }
 
 // buildToolSchemaReference generates a compact reference block describing each tool's

@@ -16,7 +16,7 @@ import (
 	"tzro/internal/executor"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
-	"tzro/internal/repomap"
+	"tzro/internal/symbols"
 	"tzro/internal/task"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
@@ -198,11 +198,14 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}
 	} else if t.ID == "internal_architecture" {
 		internalDir := filepath.Join(testOutputDir, "internal")
-		archContent, err := repomap.GenerateRepoMap(internalDir)
-		if err == nil {
-			combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
-			_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
-			fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled internal architecture into %s\n", combinedPath)
+		graphSymbols, graphEdges, err := symbols.BuildCallGraph(internalDir)
+		if err == nil && len(graphSymbols) > 0 {
+			archContent, err := symbols.AssembleContext(graphSymbols, graphEdges, internalDir, false)
+			if err == nil {
+				combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
+				_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
+				fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled internal architecture via call graph into %s\n", combinedPath)
+			}
 		}
 	} else if t.ID == "comprehensive_readme" {
 		// Pre-compile ADRs
@@ -223,9 +226,13 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			adrsCombined = combined.String()
 		}
 
-		// Pre-compile internal architecture
+		// Pre-compile internal architecture via call graph
 		internalDir := filepath.Join(testOutputDir, "internal")
-		archContentStr, _ := repomap.GenerateRepoMap(internalDir)
+		graphSymbols, graphEdges, cgErr := symbols.BuildCallGraph(internalDir)
+		var archContentStr string
+		if cgErr == nil && len(graphSymbols) > 0 {
+			archContentStr, _ = symbols.AssembleContext(graphSymbols, graphEdges, internalDir, false)
+		}
 		archPath := filepath.Join(internalDir, "all_internal_combined.md")
 		if archContentStr != "" {
 			_ = os.WriteFile(archPath, []byte(archContentStr), 0644)

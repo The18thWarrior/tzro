@@ -169,6 +169,28 @@ func (d *SqliteDialect) SchemaInitQueries() []string {
 			is_hit INTEGER NOT NULL,
 			recorded_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS call_graph_symbols (
+			dir TEXT NOT NULL,
+			file TEXT NOT NULL,
+			name TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			signature TEXT,
+			doc_comment TEXT,
+			line INTEGER,
+			end_line INTEGER,
+			exported INTEGER,
+			content_hash TEXT,
+			PRIMARY KEY (dir, file, name)
+		);`,
+		`CREATE TABLE IF NOT EXISTS call_graph_edges (
+			dir TEXT NOT NULL,
+			caller_name TEXT NOT NULL,
+			callee_name TEXT NOT NULL,
+			caller_file TEXT NOT NULL,
+			callee_file TEXT NOT NULL,
+			call_line INTEGER,
+			edge_kind TEXT
+		);`,
 	}
 }
 

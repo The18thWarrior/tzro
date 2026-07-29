@@ -140,6 +140,28 @@ func (d *MysqlDialect) SchemaInitQueries() []string {
 			action_payload TEXT,
 			created_at BIGINT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS call_graph_symbols (
+			dir VARCHAR(255) NOT NULL,
+			file VARCHAR(255) NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			kind VARCHAR(255) NOT NULL,
+			signature TEXT,
+			doc_comment TEXT,
+			line INTEGER,
+			end_line INTEGER,
+			exported INTEGER,
+			content_hash VARCHAR(255),
+			PRIMARY KEY (dir, file, name)
+		);`,
+		`CREATE TABLE IF NOT EXISTS call_graph_edges (
+			dir VARCHAR(255) NOT NULL,
+			caller_name VARCHAR(255) NOT NULL,
+			callee_name VARCHAR(255) NOT NULL,
+			caller_file VARCHAR(255) NOT NULL,
+			callee_file VARCHAR(255) NOT NULL,
+			call_line INTEGER,
+			edge_kind VARCHAR(255)
+		);`,
 	}
 }
 

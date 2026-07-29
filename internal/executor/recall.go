@@ -443,5 +443,86 @@ func stripControlTokens(output string) string {
 	for _, token := range controlTokens {
 		result = strings.ReplaceAll(result, token, "")
 	}
-	return strings.TrimSpace(result)
+	result = strings.TrimSpace(result)
+
+	// Strip trailing repetitive single-character sequences.
+	// The local model frequently fills remaining max_tokens budget with
+	// repeating backticks, spaces, or dots after emitting valid content
+	// (e.g., "...useful content...</json>` ` ` ` ` ` ` `...").
+	// This wastes downstream context budget — observed cases had ~4K tokens
+	// of pure padding.
+	result = stripTrailingRepetition(result)
+
+	return result
+}
+
+// stripTrailingRepetition detects and removes trailing degenerate output where
+// the local model fills remaining max_tokens budget with a repeating character
+// pattern. Common patterns observed:
+//   - "` ` ` ` ` `" (backtick-space pairs, ~4K tokens)
+//   - "` ` ` ` `" (backtick-space)
+//   - "........" (dots)
+//   - "        " (spaces — caught by TrimSpace, but interleaved patterns aren't)
+//
+// Detection: scan backwards from the end. If the last 100+ bytes consist of
+// ≤3 unique non-whitespace characters, everything after the last line of
+// diverse content is stripped.
+func stripTrailingRepetition(s string) string {
+	if len(s) < 200 {
+		return s
+	}
+
+	// Check the last 200 bytes for repetitive patterns
+	tail := s[len(s)-200:]
+
+	// Count unique non-whitespace characters in the tail
+	seen := make(map[byte]struct{})
+	nonWSCount := 0
+	for i := 0; i < len(tail); i++ {
+		c := tail[i]
+		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+			seen[c] = struct{}{}
+			nonWSCount++
+		}
+	}
+
+	// If the tail has ≤3 unique non-whitespace chars and is mostly non-whitespace,
+	// it's degenerate padding. Scan backwards to find where meaningful content ends.
+	if len(seen) > 3 || nonWSCount < 50 {
+		return s
+	}
+
+	// Find the degenerate char(s)
+	degenChars := seen
+
+	// Scan backwards from end to find where the repetition starts
+	cutPoint := len(s)
+	consecutiveDegenerate := 0
+	for i := len(s) - 1; i >= 0; i-- {
+		c := s[i]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			// Whitespace interleaved with degenerate chars — continue scanning
+			continue
+		}
+		if _, isDegen := degenChars[c]; isDegen {
+			consecutiveDegenerate++
+			cutPoint = i
+		} else {
+			// Hit a non-degenerate character. If we've seen enough repetition,
+			// cut here. Otherwise, this was a false alarm.
+			if consecutiveDegenerate >= 20 {
+				break
+			}
+			// Reset — not enough repetition to be degenerate
+			return s
+		}
+	}
+
+	if consecutiveDegenerate >= 20 && cutPoint < len(s) {
+		result := strings.TrimSpace(s[:cutPoint])
+		fmt.Fprintf(os.Stderr, "[Probe] Stripped %d chars of trailing degenerate repetition\n", len(s)-cutPoint)
+		return result
+	}
+
+	return s
 }
