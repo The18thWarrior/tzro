@@ -74,6 +74,13 @@ type ProbeConfig struct {
 	PreloadPaths    []string `json:"preloadPaths,omitempty"`    // Directories to pre-load
 	PreloadMaxChars int      `json:"preloadMaxChars,omitempty"` // Character budget for preloaded content (default: 32000)
 	UpstreamContext string   `json:"upstreamContext,omitempty"` // Accumulated context from completed upstream nodes — injected by executor so the probe can see upstream outputs (e.g., cacheId from read_file)
+
+	// SubstrateMode determines how pre-computed context is assembled before the
+	// Thought Chain loop. When unset, auto-detected via lightweight GBNF classification.
+	//   "overview"  — Directory manifest, depth 2, wide coverage
+	//   "focused"   — Call Graph Index, entry-point traversal, deep
+	//   "aggregate" — Content aggregation, map-reduce if needed
+	SubstrateMode string `json:"substrateMode,omitempty"`
 }
 
 type GraphEdge struct {

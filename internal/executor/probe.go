@@ -152,6 +152,53 @@ const ThoughtChainStepSchema = `{
 // non-empty, the synthesis schema is extended with these keys as required
 // string fields so the Response Resolver can extract them deterministically.
 //
+// classifyProbeGoal determines the substrate mode from the probe's goal text
+// using keyword matching. This is a fast, deterministic fallback when
+// SubstrateMode is not set by the planner.
+//
+// Returns "overview", "focused", "aggregate", or "" (unknown → Thought Chain fallback).
+func classifyProbeGoal(goal string) string {
+	lower := strings.ToLower(goal)
+
+	// Overview patterns: broad documentation, README, architecture summaries
+	overviewKeywords := []string{
+		"readme", "overview", "architecture", "project structure",
+		"comprehensive", "high-level", "documentation", "describe the project",
+		"explain the codebase", "write a readme",
+	}
+	for _, kw := range overviewKeywords {
+		if strings.Contains(lower, kw) {
+			return "overview"
+		}
+	}
+
+	// Aggregate patterns: summarize collections, list items, consolidate
+	aggregateKeywords := []string{
+		"summarize all", "summarize the", "list all", "aggregate",
+		"consolidate", "compile all", "summarize adr", "summarize each",
+		"all files in", "every file", "catalog",
+	}
+	for _, kw := range aggregateKeywords {
+		if strings.Contains(lower, kw) {
+			return "aggregate"
+		}
+	}
+
+	// Focused patterns: specific function/module analysis, deep dives
+	focusedKeywords := []string{
+		"explain how", "trace the", "follow the", "debug",
+		"how does", "call graph", "entry point", "specific",
+		"deep dive", "detailed analysis of",
+	}
+	for _, kw := range focusedKeywords {
+		if strings.Contains(lower, kw) {
+			return "focused"
+		}
+	}
+
+	return "" // Unknown → Thought Chain fallback
+}
+
 // All steps are persisted to SQLite for durability.
 func RunProbe(
 	ctx context.Context,
@@ -333,8 +380,8 @@ func RunProbe(
 		// Fall through to Thought Chain with truncated preload instead.
 		const maxDirectSynthesisChars = 200_000
 		fullContent := preloadDirectoryContext(config.PreloadPaths, 10*1024*1024) // 10MB ceiling
-		if len(fullContent) > maxChars && len(fullContent) <= maxDirectSynthesisChars && !config.DirectSynthesis {
-			// Content exceeds probe context budget but fits DirectSynthesis — promote
+		if len(fullContent) <= maxDirectSynthesisChars && !config.DirectSynthesis {
+			// Content fits DirectSynthesis — always promote (even if within preload budget).
 			contextFile := filepath.Join(config.PreloadPaths[0], ".preload_context_full.md")
 			if err := os.WriteFile(contextFile, []byte(fullContent), 0644); err == nil {
 				config.DirectSynthesis = true

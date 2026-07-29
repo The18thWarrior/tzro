@@ -284,8 +284,9 @@ type TzroCodeArgs struct {
 const maxFullRewriteLines = 500
 
 // autoModeDiffThreshold is the line count above which auto-mode selects diff
-// instead of full. Set lower than the hard guard to prefer diff early.
-const autoModeDiffThreshold = 200
+// instead of full. Set aggressively low: files ≥20 lines use the Edit Loop
+// for ~30-50× token reduction over full-file generation.
+const autoModeDiffThreshold = 20
 
 func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCodeArgs) (*mcp.CallToolResult, any, error) {
 	if strings.TrimSpace(args.Spec) == "" {
@@ -429,7 +430,61 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 
 		switch mode {
 		case "diff":
-			graph = codegen.BuildDiffDAG(taskID, args.Spec, args.Filepath, language, codeCtx)
+			// Edit Loop: plan-then-hunk iterative codegen (replaces BuildDiffDAG)
+			// Runs inline — no DAG execution needed.
+			moduleContext := codegen.DiscoverModuleContext(args.Filepath, language)
+			editEngine := &codegen.DefaultEditLoopEngine{}
+			patchedContent, editErr := codegen.RunEditLoop(
+				ctx, editEngine, args.Spec, args.Filepath,
+				codeCtx.ExistingContent, language, codeCtx.Siblings, moduleContext,
+			)
+			if editErr != nil {
+				respMap := map[string]interface{}{
+					"taskId":   taskID,
+					"status":   "failed",
+					"filepath": args.Filepath,
+					"language": language,
+					"mode":     mode,
+					"error":    fmt.Sprintf("edit loop failed: %v", editErr),
+				}
+				respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+					IsError: true,
+				}, nil, nil
+			}
+
+			// Write patched file
+			if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
+				fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
+			}
+			if writeErr := os.WriteFile(args.Filepath, []byte(patchedContent), 0644); writeErr != nil {
+				respMap := map[string]interface{}{
+					"taskId": taskID, "status": "failed", "error": fmt.Sprintf("file write failed: %v", writeErr),
+				}
+				respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+					IsError: true,
+				}, nil, nil
+			}
+
+			totalLines := strings.Count(patchedContent, "\n")
+			respMap := map[string]interface{}{
+				"taskId":     taskID,
+				"status":     "completed",
+				"filepath":   args.Filepath,
+				"language":   language,
+				"mode":       "diff",
+				"action":     "updated",
+				"totalLines": totalLines,
+				"method":     "edit_loop",
+			}
+			respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: string(respBytes)}},
+			}, nil, nil
+
 		default:
 			graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
 		}

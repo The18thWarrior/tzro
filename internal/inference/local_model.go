@@ -297,11 +297,12 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	}
 
 	// Optimized launch args (12 resolved decisions from sidecar optimization session)
+	parallelSlots := getWorkerParallelSlots(getSystemMemoryGB())
 	args := []string{
 		"-m", m.GGUFModelPath,
 		"--port", strconv.Itoa(m.ActivePort),
 		"--threads", strconv.Itoa(pCores),
-		"--parallel", "1",
+		"--parallel", strconv.Itoa(parallelSlots),
 		"--jinja",
 		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
 		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 64K)
@@ -312,6 +313,8 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--n-predict", "16384", // Q9: max tokens per generation
 		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
 		"--cache-ram", "2048", // Limit maximum prompt cache host memory to 2GB to resolve memory pressure
+		"-b", "2048", // Prompt processing batch size (up from default 512)
+		"-ub", "512", // Micro-batch size for prompt processing
 	}
 
 	if useMTP {
@@ -389,12 +392,11 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			// (default 0 = unlimited), no override needed for router — same value
 			// works for both sidecars since append-only context benefits both.
 		}
-		// Remove speculative decoding args (overkill for router) and vision projector
+		// Remove vision projector and slot-save-path for router; re-enable spec decoding with ngram-simple.
 		var cleanArgs []string
 		skip := false
 		for _, a := range args {
-			if a == "--spec-type" || a == "--spec-draft-model" || a == "--spec-draft-n-max" ||
-				a == "--slot-save-path" || a == "--mmproj" {
+			if a == "--slot-save-path" || a == "--mmproj" {
 				skip = true
 				continue
 			}
@@ -404,8 +406,33 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			}
 			cleanArgs = append(cleanArgs, a)
 		}
-		args = cleanArgs
-		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=%d (routing mode, no speculative decoding)\n", config.GetCacheReuseTokens())
+		// Override router speculative decoding to lightweight ngram-simple
+		// (rather than stripping it entirely). Provides ~20-30% faster
+		// generation for structured/repetitive outputs (ACTION tags, JSON).
+		for i, a := range cleanArgs {
+			if a == "--spec-type" && i+1 < len(cleanArgs) {
+				cleanArgs[i+1] = "ngram-simple"
+			}
+			if a == "--spec-draft-n-max" && i+1 < len(cleanArgs) {
+				cleanArgs[i+1] = "16"
+			}
+			if a == "--spec-draft-model" {
+				// Remove draft model arg (ngram-simple doesn't need it)
+				cleanArgs[i] = ""
+				if i+1 < len(cleanArgs) {
+					cleanArgs[i+1] = ""
+				}
+			}
+		}
+		// Filter empty strings from draft model removal
+		var filteredArgs []string
+		for _, a := range cleanArgs {
+			if a != "" {
+				filteredArgs = append(filteredArgs, a)
+			}
+		}
+		args = filteredArgs
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=%d (routing mode, ngram-simple speculative decoding)\n", config.GetCacheReuseTokens())
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), llamaBinary, args...)
@@ -790,6 +817,49 @@ func (m *LocalModelManager) getGPULayerCount() int {
 	// Intel Mac, Windows, Linux: CPU-only by default.
 	// Users with discrete GPUs can set "gpuLayers": -1 in config.
 	return 0
+}
+
+// getSystemMemoryGB returns the total system memory in gigabytes.
+// Uses sysctl on macOS, /proc/meminfo on Linux, runtime fallback elsewhere.
+func getSystemMemoryGB() int {
+	if runtime.GOOS == "darwin" {
+		out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
+		if err == nil {
+			if bytes, parseErr := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); parseErr == nil {
+				return int(bytes / (1024 * 1024 * 1024))
+			}
+		}
+	}
+
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile("/proc/meminfo")
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "MemTotal:") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						if kb, parseErr := strconv.ParseUint(fields[1], 10, 64); parseErr == nil {
+							return int(kb / (1024 * 1024))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback: assume 16GB (conservative default)
+	return 16
+}
+
+// getWorkerParallelSlots returns the number of parallel inference slots
+// for the worker sidecar, based on system memory.
+// ≥24GB → 2 slots (enables DAG-level concurrency)
+// <24GB → 1 slot (baseline, avoids memory pressure)
+func getWorkerParallelSlots(memoryGB int) int {
+	if memoryGB >= 24 {
+		return 2
+	}
+	return 1
 }
 
 // allocateRandomPort asks the OS for a random free port by briefly binding to :0,
