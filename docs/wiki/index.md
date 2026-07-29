@@ -112,6 +112,13 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0052: CompactPreserve Semantics for Analyze Nodes](../adr/0052-compact-preserve-semantics-for-analyze-nodes.md) - Defines CompactPreserve to preserve tool output data verbatim while still LLM-compressing reasoning text. Fixes data loss in analyze node synthesis.
 - [ADR-0053: Analytical Evidence for Data Analysis](../adr/0053-analytical-evidence-for-data-analysis.md) - Structured raw data from successful sql_cached_data calls materialized alongside terminal_synthesis. Primary ground-truth output for data analysis tasks.
 - [ADR-0054: Self-Contained Task Short-Circuit and Task Lifecycle Table](../adr/0054-self-contained-task-short-circuit-and-task-lifecycle-table.md) - Caller-hint `selfContained` flag bypasses planner for tool-less prompts. New `tasks` table tracks task lifecycle and surfaces planning failures. Tactical bridge until ADR-0048 template selection is implemented.
+- [ADR-0055: Structured Execution Envelope](../adr/0055-structured-execution-envelope.md) - Deterministic JSON Execution Envelope assembled by the executor at task completion, wrapping synthesis text with structured metadata (tools, files, node counts, duration). Persisted on new `StructuredOutput` field, hoisted to `result` key in all MCP surfaces.
+- [ADR-0056: Append-Only Probe Context](../adr/0056-append-only-probe-context.md) - Append-only context accumulation within Probe Node Thought Chains.
+- [ADR-0057: Tiered Codegen Repair Escalation](../adr/0057-tiered-codegen-repair-escalation.md) - Local repair budget with cloud escalation for codegen compilation failures. Relaxes ADR-0036 boundary.
+- [ADR-0058: Probe Execution Resilience](../adr/0058-probe-execution-resilience.md) - DirectSynthesis size cap, Analyze Node repetition exemption, Exploration Queue, no-action retry, and SQL auto-extraction.
+- [ADR-0059: Incremental Edge Entry Accumulation](../adr/0059-incremental-edge-entry-accumulation.md) - Incremental edge entry accumulation within Probe Node Thought Chains.
+- [ADR-0060: Generation Guard on Inference Backend](../adr/0060-generation-guard-on-inference-backend.md) - Streaming/post-generation quality gate on the Inference Backend detecting character-level and block-level repetition. Subsumes legacy `stripTrailingRepetition`.
+- [ADR-0061: Spec Compliance Gate for Codegen](../adr/0061-spec-compliance-gate-for-codegen.md) - Post-compilation functional completeness check against original task spec. Full regeneration on failure. Subsumes language-specific linting.
 
 ## Ingested Sources
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 	"tzro/internal/executor"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
-	"tzro/internal/repomap"
+	"tzro/internal/symbols"
 	"tzro/internal/task"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
@@ -175,6 +176,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}
 	}
 
+	var adrCombinedPath string // Set by adr_summary pre-compilation for prompt augmentation (Fix 3)
 	if t.ID == "adr_summary" {
 		adrDir := filepath.Join(testOutputDir, "docs/adr")
 		files, err := os.ReadDir(adrDir)
@@ -191,15 +193,19 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			}
 			combinedPath := filepath.Join(adrDir, "all_adrs_combined.md")
 			_ = os.WriteFile(combinedPath, []byte(combined.String()), 0644)
+			adrCombinedPath = combinedPath
 			fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled all ADRs into %s\n", combinedPath)
 		}
 	} else if t.ID == "internal_architecture" {
 		internalDir := filepath.Join(testOutputDir, "internal")
-		archContent, err := repomap.GenerateRepoMap(internalDir)
-		if err == nil {
-			combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
-			_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
-			fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled internal architecture into %s\n", combinedPath)
+		graphSymbols, graphEdges, err := symbols.BuildCallGraph(internalDir)
+		if err == nil && len(graphSymbols) > 0 {
+			archContent, err := symbols.AssembleContext(graphSymbols, graphEdges, internalDir, false)
+			if err == nil {
+				combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
+				_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
+				fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled internal architecture via call graph into %s\n", combinedPath)
+			}
 		}
 	} else if t.ID == "comprehensive_readme" {
 		// Pre-compile ADRs
@@ -220,9 +226,13 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			adrsCombined = combined.String()
 		}
 
-		// Pre-compile internal architecture
+		// Pre-compile internal architecture via call graph
 		internalDir := filepath.Join(testOutputDir, "internal")
-		archContentStr, _ := repomap.GenerateRepoMap(internalDir)
+		graphSymbols, graphEdges, cgErr := symbols.BuildCallGraph(internalDir)
+		var archContentStr string
+		if cgErr == nil && len(graphSymbols) > 0 {
+			archContentStr, _ = symbols.AssembleContext(graphSymbols, graphEdges, internalDir, false)
+		}
 		archPath := filepath.Join(internalDir, "all_internal_combined.md")
 		if archContentStr != "" {
 			_ = os.WriteFile(archPath, []byte(archContentStr), 0644)
@@ -277,8 +287,12 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		if err := inference.StartActive(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", conditionID, err)
 		} else {
-			waitForSidecarHealth("worker", inference.GlobalWorkerModel)
-			waitForSidecarHealth("router", inference.GlobalRouterModel)
+			if err := waitForSidecarHealth("worker", inference.GlobalWorkerModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Worker health check failed: %v\n", err)
+			}
+			if err := waitForSidecarHealth("router", inference.GlobalRouterModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Router health check failed: %v\n", err)
+			}
 		}
 	}
 
@@ -313,6 +327,12 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			relOutputDir = testOutputDir
 		}
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: Read and explore source code from the project root directory (not from the output directory). Write all output files to this isolated output directory: %s", taskPrompt, relOutputDir)
+
+		// Fix 3: Point the Probe at the pre-compiled ADR file so it doesn't
+		// miss files due to step budget exhaustion.
+		if adrCombinedPath != "" {
+			taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: All ADR files have been pre-compiled into a single document at: %s. Read this file FIRST to access all ADR content in one read.", taskPrompt, adrCombinedPath)
+		}
 	} else if t.Category == CategoryDatanal {
 		// For datanal tasks, the CSV file is at helpers/LeadSuccess.csv relative to the project root.
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: The data file is located in the project directory at: %s/helpers/LeadSuccess.csv", taskPrompt, projectRoot)
@@ -393,7 +413,69 @@ func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) str
 			}
 		}
 	}
-	return lastOutput
+
+	// Fix 2: Sanitize synthesis output — strip model reasoning artifacts
+	// (<thinking> tags, repetitive preambles) and fallback to accumulated
+	// node outputs when synthesis is empty or invalid.
+	cleaned := sanitizeSynthesisOutput(lastOutput, 50)
+	if cleaned != "" {
+		return cleaned
+	}
+
+	// Fallback: accumulate partial outputs from completed action/tool nodes
+	if lastOutput != "" {
+		fmt.Fprintf(os.Stderr, "[extractTerminalSynthesis] Synthesis output invalid after sanitization (%d raw chars → 0 clean chars). Falling back to accumulated partial outputs.\n", len(lastOutput))
+	}
+	return accumulatePartialOutputs(graph, taskID)
+}
+
+// sanitizeSynthesisOutput strips model reasoning artifacts (<thinking> tags,
+// repetitive preambles) from synthesis output. If the cleaned result is too
+// short (< minChars), it returns empty string to trigger fallback to
+// accumulated node outputs.
+func sanitizeSynthesisOutput(raw string, minChars int) string {
+	if raw == "" {
+		return ""
+	}
+
+	cleaned := raw
+
+	// Strip <thinking>...</thinking> blocks (greedy, handles newlines)
+	thinkingRe := regexp.MustCompile(`(?s)<thinking>.*?</thinking>`)
+	cleaned = thinkingRe.ReplaceAllString(cleaned, "")
+
+	// Strip leading/trailing whitespace
+	cleaned = strings.TrimSpace(cleaned)
+
+	if len(cleaned) < minChars {
+		return ""
+	}
+
+	return cleaned
+}
+
+// accumulatePartialOutputs collects outputs from completed non-synthesis nodes
+// as a fallback when synthesis produces no usable content.
+func accumulatePartialOutputs(graph *compiler.ExecutionGraph, taskID string) string {
+	if graph == nil {
+		return ""
+	}
+	var parts []string
+	for _, node := range graph.Nodes {
+		if node.Type == "synthesis" || node.ID == "terminal_synthesis" {
+			continue
+		}
+		if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok && state.Status == "completed" {
+			output := state.RawOutput
+			if output == "" {
+				output = state.Output
+			}
+			if len(output) > 100 { // Only include substantive outputs
+				parts = append(parts, fmt.Sprintf("## %s\n%s", node.ID, output))
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n---\n\n")
 }
 
 // extractLastWriteContent attempts to recover the generated documentation from the execution graph
@@ -540,8 +622,12 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 		if err := inference.StartActive(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison] Sidecar auto-start failed for %s: %v\n", conditionID, err)
 		} else {
-			waitForSidecarHealth("worker", inference.GlobalWorkerModel)
-			waitForSidecarHealth("router", inference.GlobalRouterModel)
+			if err := waitForSidecarHealth("worker", inference.GlobalWorkerModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Worker health check failed: %v\n", err)
+			}
+			if err := waitForSidecarHealth("router", inference.GlobalRouterModel); err != nil {
+				fmt.Fprintf(os.Stderr, "[Comparison] Router health check failed: %v\n", err)
+			}
 		}
 	}
 
@@ -651,10 +737,13 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 
 	// Register the compilation gate hook so Edge Thought sees compilation
 	// evidence and can trigger repair spawns (ADR-0036).
+	// ADR-0057: AllowCloudRepair enables cloud repair escalation after
+	// local repair attempts are exhausted (Direct mode = true).
 	compilationHook := &codegen.CompilationGateHook{
-		FilePath: targetPath,
-		Language: language,
-		Spec:     spec,
+		FilePath:         targetPath,
+		Language:         language,
+		Spec:             spec,
+		AllowCloudRepair: true,
 	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)
@@ -718,9 +807,14 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 	}, nil
 }
 
-// runDraftFixMode executes draft+fix codegen: a single-pass local draft
-// (no CompilationGateHook, no self-repair), then a cloud fix if compilation
-// fails. This was formerly the separate RunCodegenDraftCondition.
+// runDraftFixMode executes draft+fix codegen: a local draft with compilation
+// feedback loop (CompilationGateHook + cloud repair escalation), then a
+// post-hoc cloud fix as a second-chance fallback if compilation still fails.
+//
+// Benchmark results-full-2 showed that without the CompilationGateHook, Go
+// tasks consistently scored ≤ 2.5 (3/7 draft tasks). Enabling the hook gives
+// draft mode the same compile→diagnose→repair loop as direct mode (ADR-0036
+// + ADR-0057).
 func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPath, tmpDir string, t ComparisonTask, codeCtx *codegen.CodeContext, pricing PricingTable) (ComparisonResult, error) {
 	// ── Phase 1: Draft (local model, cooperative mode) ──────────────────
 
@@ -734,10 +828,20 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 	// Build the DAG — same structure as direct mode
 	graph := codegen.BuildCodeDAG(taskID, spec, targetPath, language, 500, codeCtx)
 
-	// KEY DIFFERENCE: Do NOT register the CompilationGateHook.
-	// No AfterNode compilation check, no OnEdgeTraversal confidence override,
-	// no repair spawns. The local model gets exactly one shot.
-	fmt.Fprintf(os.Stderr, "[Comparison/Draft] Executing single-pass draft (no compilation gate) for %s/%s\n", conditionID, t.ID)
+	// Register CompilationGateHook WITH cloud repair escalation.
+	// This gives draft mode the same compile→diagnose→repair loop as direct
+	// mode (ADR-0036 + ADR-0057). Without this, Go tasks consistently fail
+	// compilation with no recovery path (benchmark results-full-2: 3 Go tasks
+	// all scoring ≤ 2.5).
+	compilationHook := &codegen.CompilationGateHook{
+		FilePath:         targetPath,
+		Language:         language,
+		Spec:             spec,
+		AllowCloudRepair: true,
+	}
+	executor.GlobalEngine.RegisterHook(compilationHook)
+	defer executor.GlobalEngine.UnregisterHook(compilationHook)
+	fmt.Fprintf(os.Stderr, "[Comparison/Draft] Executing draft WITH compilation gate for %s/%s\n", conditionID, t.ID)
 
 	err := executor.GlobalEngine.ExecuteGraphReactive(draftCtx, graph)
 
@@ -991,26 +1095,41 @@ func copyDir(src, dst, projectRoot string, gi *ignore.GitIgnore) error {
 }
 
 // waitForSidecarHealth blocks until a sidecar's /health endpoint returns 200 OK,
-// or gives up after 30 attempts (1s apart). Does nothing if the sidecar is in
-// "Stopped" state (i.e., not configured or failed to start).
-func waitForSidecarHealth(label string, model *inference.LocalModelManager) {
+// or gives up after 90 attempts (1s apart). Returns an error if the sidecar fails
+// to become healthy. Does nothing (returns nil) if the sidecar is in "Stopped" state.
+//
+// The function also checks process liveness every 5 attempts to bail early if the
+// sidecar process crashed during model loading (avoids wasting 90s on a dead process).
+func waitForSidecarHealth(label string, model *inference.LocalModelManager) error {
 	status, activePort, _, _, _ := model.GetStatusInfo()
 	if strings.ToLower(status) == "stopped" || activePort == 0 {
-		return // not configured or didn't start
+		return nil // not configured or didn't start
 	}
 	fmt.Fprintf(os.Stderr, "[Comparison] Waiting for %s sidecar health on port %d...\n", label, activePort)
-	for attempt := range 30 {
+
+	const maxAttempts = 90 // 90s budget — non-catalog models may take longer to load
+	for attempt := range maxAttempts {
 		healthURL := fmt.Sprintf("http://localhost:%d/health", activePort)
 		resp, err := http.Get(healthURL)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
 			fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar healthy after %d attempts\n", label, attempt+1)
-			return
+			return nil
 		}
 		if resp != nil {
 			resp.Body.Close()
 		}
+
+		// Every 5 attempts, verify the sidecar process is still alive.
+		// This prevents wasting the full 90s polling a dead process.
+		if attempt > 0 && attempt%5 == 0 {
+			currentStatus, _, _, _, _ := model.GetStatusInfo()
+			if strings.ToLower(currentStatus) == "stopped" {
+				return fmt.Errorf("%s sidecar process died during model load (port %d)", label, activePort)
+			}
+		}
+
 		time.Sleep(1 * time.Second)
 	}
-	fmt.Fprintf(os.Stderr, "[Comparison] %s sidecar health check timed out on port %d\n", label, activePort)
+	return fmt.Errorf("%s sidecar health check timed out after %ds on port %d", label, maxAttempts, activePort)
 }

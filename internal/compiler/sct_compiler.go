@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -112,6 +113,35 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				if node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
 					node.ProbeConfig.CompactionLevel = CompactPreserve
 				}
+
+				// ADR-0060 Breadth Detection: auto-detect breadth tasks and inject
+				// directory manifest + scale step budget. This allows depth-optimized
+				// probes to efficiently navigate broad directory structures by providing
+				// a top-level map before exploration begins.
+				if node.ProbeConfig != nil && len(node.ProbeConfig.PreloadPaths) > 0 {
+					isBreadth, subdirCount, manifest := DetectBreadthMode(node.ProbeConfig.PreloadPaths)
+					if isBreadth {
+						// Inject manifest into TaskContext
+						manifestBlock := BuildBreadthManifest(node.ProbeConfig.PreloadPaths[0], manifest)
+						if node.ProbeConfig.TaskContext != "" {
+							node.ProbeConfig.TaskContext = manifestBlock + "\n\n" + node.ProbeConfig.TaskContext
+						} else {
+							node.ProbeConfig.TaskContext = manifestBlock
+						}
+
+						// Scale step budget
+						defaultMax := 60
+						if node.ProbeConfig.StepBudget > 0 {
+							node.ProbeConfig.StepBudget = ScaleStepBudget(node.ProbeConfig.StepBudget, subdirCount, defaultMax)
+						} else {
+							node.ProbeConfig.StepBudget = ScaleStepBudget(24, subdirCount, defaultMax) // Default base
+						}
+
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] Breadth mode detected for %s: %d subdirs, budget=%d\n",
+							node.ID, subdirCount, node.ProbeConfig.StepBudget)
+					}
+				}
+
 				sctNodes = append(sctNodes, node)
 
 				// Planning Awareness: Check if this probe/analyze already has a planned synthesis-type child.

@@ -216,10 +216,32 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 		}
 	}
 
+	// ADR-0058: Detect if upstream was an Analyze Node by checking for
+	// cache tool usage. If so, exempt synthesis from repetition detection
+	// since tabular data naturally repeats column headers.
+	isAnalyzeUpstream := false
+	for _, nodeID := range upstreamNodeIDs {
+		if steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID); err == nil {
+			for _, s := range steps {
+				if s.ToolName == "sql_cached_data" || s.ToolName == "introspect_cache" {
+					isAnalyzeUpstream = true
+					break
+				}
+			}
+		}
+		if isAnalyzeUpstream {
+			break
+		}
+	}
+	var recallValidationOpts []ValidationOption
+	if isAnalyzeUpstream {
+		recallValidationOpts = append(recallValidationOpts, WithAnalyzeNode())
+	}
+
 	// Fix 3 (Synthesis Generation Guard): Validate the synthesis output.
 	// Detect control token leaks, degenerate output, and repetitive content.
 	// Re-attempt with cloud model on failure (same pattern as ConfidenceTier escalation).
-	reason := validateSynthesisOutput(synthesis)
+	reason := validateSynthesisOutput(synthesis, recallValidationOpts...)
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "[Recall] Synthesis output invalid (%s), escalating to cloud\n", reason)
 		if !isCloudEscalationBlocked() {
@@ -227,7 +249,7 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 				{Role: "system", Content: synthPrompt},
 				{Role: "user", Content: lastResult},
 			}, "", taskID)
-			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+			if cloudErr == nil && validateSynthesisOutput(cloudResult, recallValidationOpts...) == "" {
 				fmt.Fprintf(os.Stderr, "[Recall] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
 				synthesis = cloudResult
 			}
@@ -336,13 +358,35 @@ var controlTokens = []string{
 	"</TOOL_CALL>",
 }
 
+// validationConfig holds options for validateSynthesisOutput.
+type validationConfig struct {
+	isAnalyzeNode bool // When true, skip repetition detection (tabular data naturally repeats column headers)
+}
+
+// ValidationOption configures synthesis output validation behavior.
+type ValidationOption func(*validationConfig)
+
+// WithAnalyzeNode exempts the output from the repetition detector.
+// Analyze Node synthesis naturally contains repeated column headers and
+// structural patterns in tabular data — these are not failure modes.
+func WithAnalyzeNode() ValidationOption {
+	return func(c *validationConfig) {
+		c.isAnalyzeNode = true
+	}
+}
+
 // validateSynthesisOutput checks the synthesis output for common failure modes:
 //   - Control token leaks (SYNTHESIZE_READY, ACTION, TOOL_CALL)
 //   - Degenerate output (< 50 chars after stripping control tokens)
-//   - Repetitive content (3+ repeated 4-word sequences)
+//   - Repetitive content (3+ repeated 4-word sequences) — skipped for Analyze Nodes
 //
 // Returns empty string if valid, or a reason string describing the failure.
-func validateSynthesisOutput(output string) string {
+func validateSynthesisOutput(output string, opts ...ValidationOption) string {
+	var cfg validationConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	// Strip control tokens for length check
 	cleaned := output
 	for _, token := range controlTokens {
@@ -363,15 +407,20 @@ func validateSynthesisOutput(output string) string {
 		}
 	}
 
-	// Check for repetitive content: detect 3+ occurrences of any 4-word sequence
-	words := strings.Fields(cleaned)
-	if len(words) >= 12 { // Need at least 12 words to detect 3x repetition of 4-word sequences
-		ngramCounts := make(map[string]int)
-		for i := 0; i <= len(words)-4; i++ {
-			ngram := strings.Join(words[i:i+4], " ")
-			ngramCounts[ngram]++
-			if ngramCounts[ngram] >= 3 {
-				return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 40), ngramCounts[ngram])
+	// Check for repetitive content: detect 3+ occurrences of any 4-word sequence.
+	// ADR-0058: Skip for Analyze Nodes — tabular data naturally repeats column
+	// headers and structural patterns (e.g., "leads\n - Distinct Lead_Sources:"
+	// across data rows). These are valid output, not degeneration.
+	if !cfg.isAnalyzeNode {
+		words := strings.Fields(cleaned)
+		if len(words) >= 12 { // Need at least 12 words to detect 3x repetition of 4-word sequences
+			ngramCounts := make(map[string]int)
+			for i := 0; i <= len(words)-4; i++ {
+				ngram := strings.Join(words[i:i+4], " ")
+				ngramCounts[ngram]++
+				if ngramCounts[ngram] >= 3 {
+					return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 40), ngramCounts[ngram])
+				}
 			}
 		}
 	}
@@ -392,5 +441,17 @@ func stripControlTokens(output string) string {
 	for _, token := range controlTokens {
 		result = strings.ReplaceAll(result, token, "")
 	}
-	return strings.TrimSpace(result)
+	result = strings.TrimSpace(result)
+
+	// ADR-0060: Trailing repetition stripping is now handled by the
+	// GenerationGuard at the Inference Backend layer. Character-level
+	// degeneration is caught during streaming (or post-generation for
+	// non-streaming backends), so we no longer need to scan here.
+
+	return result
 }
+
+// NOTE: stripTrailingRepetition has been removed (ADR-0060).
+// Character-level degeneration detection is now handled by the GenerationGuard
+// at the Inference Backend layer, which can abort streaming generation early
+// rather than stripping post-hoc. See internal/inference/generation_guard.go.

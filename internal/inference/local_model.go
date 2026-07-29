@@ -236,10 +236,23 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	_ = os.MkdirAll(slotSavePath, 0755)
 
 	// 7. Spawn child process
-	_, err = exec.LookPath("llama-server")
-	if err != nil {
-		m.Status = "Stopped"
-		return fmt.Errorf("llama-server binary not found in PATH; please install llama.cpp server: %w", err)
+	// Prefer the bundled llama-server in ~/.tzro/bin (installed by install.sh with
+	// the pinned version) over whatever is in PATH. This ensures consistent behavior
+	// between fresh installs and dev environments.
+	llamaBinary := ""
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		bundledPath := filepath.Join(home, ".tzro", "bin", "llama-server")
+		if _, statErr := os.Stat(bundledPath); statErr == nil {
+			llamaBinary = bundledPath
+		}
+	}
+	if llamaBinary == "" {
+		pathBinary, lookErr := exec.LookPath("llama-server")
+		if lookErr != nil {
+			m.Status = "Stopped"
+			return fmt.Errorf("llama-server binary not found in ~/.tzro/bin or PATH; please install llama.cpp server: %w", lookErr)
+		}
+		llamaBinary = pathBinary
 	}
 
 	// Pre-flight check: verify the GGUF model file exists on disk
@@ -295,7 +308,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)
-		"--cache-reuse", "2048", // ADR-0021: segmented prompt structure shares static prefix across nodes
+		"--cache-reuse", strconv.Itoa(config.GetCacheReuseTokens()), // ADR-0056: append-only probe context; 0 = unlimited prefix matching for full KV cache reuse
 		"--n-predict", "16384", // Q9: max tokens per generation
 		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
 		"--cache-ram", "2048", // Limit maximum prompt cache host memory to 2GB to resolve memory pressure
@@ -342,7 +355,7 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Catalog mmproj '%s' not found on disk, vision disabled\n", catalogEntry.CompanionMMProj.Filename)
 		}
 	} else {
-		// Non-catalog model: only use explicitly configured mmproj (never auto-detect)
+		// Model has no catalog mmproj — only use explicitly configured mmproj (never auto-detect)
 		configMutex := config.GetExplicitMMProjPath()
 		if configMutex != "" {
 			if _, err := os.Stat(configMutex); err == nil {
@@ -350,7 +363,11 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			}
 		}
 		if mmProjPath == "" {
-			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Non-catalog model detected, skipping auto-detected mmproj to avoid architecture mismatch\n")
+			if catalogEntry != nil {
+				fmt.Fprintf(os.Stderr, "[Llama Sidecar] No vision projector configured for %s, vision disabled\n", catalogEntry.DisplayName)
+			} else {
+				fmt.Fprintf(os.Stderr, "[Llama Sidecar] Non-catalog model detected, skipping auto-detected mmproj to avoid architecture mismatch\n")
+			}
 		}
 	}
 	if mmProjPath != "" {
@@ -368,10 +385,9 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			if a == "--n-predict" && i+1 < len(args) {
 				args[i+1] = "4096" // Router outputs: compaction can produce longer reasoning summaries
 			}
-			// Override --cache-reuse to 256 (compaction system prompt prefix caching)
-			if a == "--cache-reuse" && i+1 < len(args) {
-				args[i+1] = "256"
-			}
+			// cache-reuse is already set from config via config.GetCacheReuseTokens()
+			// (default 0 = unlimited), no override needed for router — same value
+			// works for both sidecars since append-only context benefits both.
 		}
 		// Remove speculative decoding args (overkill for router) and vision projector
 		var cleanArgs []string
@@ -389,10 +405,10 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			cleanArgs = append(cleanArgs, a)
 		}
 		args = cleanArgs
-		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=256 (routing mode, no speculative decoding)\n")
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=%d (routing mode, no speculative decoding)\n", config.GetCacheReuseTokens())
 	}
 
-	m.cmd = exec.CommandContext(context.Background(), "llama-server", args...)
+	m.cmd = exec.CommandContext(context.Background(), llamaBinary, args...)
 
 	// Create logs folder
 	logsDir := resolveTzroPath(filepath.Join(".tzro", "logs"))
@@ -975,31 +991,43 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	return nil, fmt.Errorf("invalid or empty response choice returned from local model")
 }
 
-// StripThinkTags removes <think>...</think> blocks from model output.
-// When thinking mode is enabled, the serving backend should strip these in the
-// content field, but some backends (especially llama.cpp with certain chat
-// templates) may leak them through. This is a safety net.
+// StripThinkTags removes <think>...</think> and <thinking>...</thinking>
+// blocks from model output. When thinking mode is enabled, the serving backend
+// should strip these in the content field, but some backends (especially
+// llama.cpp with certain chat templates) may leak them through. Some models
+// also emit <thinking> (Claude-style) instead of <think> — both must be
+// stripped to prevent interference with downstream tag extraction (e.g.,
+// <ACTION>, <SYNTHESIZE_READY> in probe Thought Chains).
 // Exported for use by the executor package (probe.go).
 func StripThinkTags(content string) string {
-	// Fast path: no think tags present
-	if !strings.Contains(content, "<think>") {
+	// Fast path: no think tags present (catches both <think> and <thinking>)
+	if !strings.Contains(content, "<think>") && !strings.Contains(content, "<thinking>") {
 		return content
 	}
-	// Remove all <think>...</think> blocks (possibly multi-line)
+	// Strip both variants — order matters: <thinking> first (longer tag),
+	// otherwise <think> would match the prefix of <thinking>.
+	content = stripTagPair(content, "<thinking>", "</thinking>")
+	content = stripTagPair(content, "<think>", "</think>")
+	return strings.TrimSpace(content)
+}
+
+// stripTagPair removes all occurrences of open...close tag pairs from content.
+// If an unclosed open tag is found, strips from the open tag to the end.
+func stripTagPair(content, openTag, closeTag string) string {
 	for {
-		start := strings.Index(content, "<think>")
+		start := strings.Index(content, openTag)
 		if start == -1 {
 			break
 		}
-		end := strings.Index(content, "</think>")
+		end := strings.Index(content[start:], closeTag)
 		if end == -1 {
-			// Unclosed <think> tag — strip from <think> to end
+			// Unclosed tag — strip from open tag to end
 			content = content[:start]
 			break
 		}
-		content = content[:start] + content[end+len("</think>"):]
+		content = content[:start] + content[start+end+len(closeTag):]
 	}
-	return strings.TrimSpace(content)
+	return content
 }
 
 type StreamMeta struct {
@@ -1115,6 +1143,10 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	promptTokens := 0
 	completionTokens := 0
 
+	// ADR-0060: Extract GenerationGuard from context (opt-in)
+	guard := GetGenerationGuard(ctx)
+	generationAborted := false
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -1163,6 +1195,17 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 					Type:     "token",
 					Content:  contentDelta,
 				})
+
+				// ADR-0060: Check GenerationGuard on newlines
+				if guard != nil && strings.Contains(contentDelta, "\n") {
+					if guard.OnChunk(accumulatedContent.String()) == GuardAbort {
+						fmt.Fprintf(os.Stderr, "[GenerationGuard] Degenerate output detected — aborting generation (accumulated %d chars)\n",
+							accumulatedContent.Len())
+						accumulatedContent.WriteString(GenerationAbortedMarker)
+						generationAborted = true
+						break
+					}
+				}
 			}
 		}
 
@@ -1170,6 +1213,11 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 			promptTokens = chunk.Usage.PromptTokens
 			completionTokens = chunk.Usage.CompletionTokens
 		}
+	}
+
+	// If generation was aborted, close the response body to cancel the stream
+	if generationAborted {
+		resp.Body.Close()
 	}
 
 	duration := time.Since(startTime).Seconds()

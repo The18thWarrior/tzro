@@ -120,6 +120,17 @@ var modelCatalog = []ModelEntry{
 		},
 	},
 	{
+		ID:           "nanbeige42-3b",
+		DisplayName:  "Nanbeige 4.2 3B",
+		Params:       "3B",
+		SizeBytes:    2574807936,
+		SizeLabel:    "~2.4 GB",
+		DownloadURL:  "https://huggingface.co/owao/Nanbeige4.2-3B-GGUF/resolve/main/nanbeige4.2-3b-Q4_K_M.gguf",
+		Filename:     "nanbeige4.2-3b-Q4_K_M.gguf",
+		Description:  "Nanbeige 4.2 3B instruction-tuned model with good tool calling",
+		ToolCallTier: "good",
+	},
+	{
 		ID:           "grm-25",
 		DisplayName:  "GRM 2.5",
 		Params:       "",

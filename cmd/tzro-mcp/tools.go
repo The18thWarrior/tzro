@@ -179,6 +179,10 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 		if errMsg != "" {
 			respMap["error"] = errMsg
 		}
+		// ADR-0055: Hoist Execution Envelope to top-level result
+		if envelope := extractEnvelopeResult(res.nodes); envelope != nil {
+			respMap["result"] = envelope
+		}
 
 		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 		return &mcp.CallToolResult{
@@ -438,17 +442,21 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 
 	doneChan := make(chan execResult, 1)
 
+	// Register the compilation gate hook for this task's execution.
+	// It runs the compiler on source_code nodes and enriches their output
+	// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
+	// ADR-0057: AllowCloudRepair is true in Direct mode (no pseudocode provided)
+	// and false in Draft mode (pseudocode provided). Draft mode returns
+	// the failing code + compiler errors to the caller for targeted edits.
+	isDraftMode := strings.TrimSpace(args.Pseudocode) != ""
+	compilationHook := &codegen.CompilationGateHook{
+		FilePath:         args.Filepath,
+		Language:         language,
+		Spec:             args.Spec,
+		AllowCloudRepair: !isDraftMode,
+	}
+
 	go func() {
-
-		// Register the compilation gate hook for this task's execution.
-
-		// It runs the compiler on source_code nodes and enriches their output
-		// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
-		compilationHook := &codegen.CompilationGateHook{
-			FilePath: args.Filepath,
-			Language: language,
-			Spec:     args.Spec,
-		}
 		executor.GlobalEngine.RegisterHook(compilationHook)
 		defer executor.GlobalEngine.UnregisterHook(compilationHook)
 
@@ -493,6 +501,18 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 		}
 		if errMsg != "" {
 			respMap["error"] = errMsg
+		}
+
+		// ADR-0057: In Draft mode, enrich failure responses with the failing
+		// code and compiler errors so the harness can do targeted edits
+		// instead of full regeneration.
+		if status == "failed" && isDraftMode && compilationHook.GetLocalFailureCount() > 0 {
+			respMap["status"] = "complexity_exceeded"
+			respMap["compilerErrors"] = compilationHook.GetLastCompilerErrors()
+			// Read the failing file content from disk
+			if failingCode, readErr := os.ReadFile(args.Filepath); readErr == nil {
+				respMap["failingCode"] = string(failingCode)
+			}
 		}
 
 		// Post-process: extract reason_code output, write file (pure Go)
@@ -703,6 +723,7 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 	failedCount := 0
 	runningCount := 0
 	completedCount := 0
+	cancelledCount := 0
 	nodeCount := len(nodes)
 	var completedAt int64
 
@@ -713,6 +734,8 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 			runningCount++
 		} else if n.Status == "completed" {
 			completedCount++
+		} else if n.Status == "cancelled" {
+			cancelledCount++
 		}
 		if n.CompletedAt > completedAt {
 			completedAt = n.CompletedAt
@@ -720,7 +743,9 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 	}
 
 	taskStatus := "pending"
-	if failedCount > 0 {
+	if cancelledCount > 0 {
+		taskStatus = "cancelled"
+	} else if failedCount > 0 {
 		taskStatus = "failed"
 	} else if runningCount > 0 {
 		taskStatus = "running"
@@ -752,6 +777,10 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 		"nodes":       nodes,
 		"completedAt": completedAt,
 	}
+	// ADR-0055: Hoist Execution Envelope to top-level result
+	if envelope := extractEnvelopeResult(nodes); envelope != nil {
+		respMap["result"] = envelope
+	}
 
 	if taskStatus == "waiting_for_approval" {
 		respMap["instruction"] = fmt.Sprintf("Task is waiting for human approval. Use the 'tzro_hook_approve' tool with taskId: '%s' and nodeId: '<nodeId>' to approve, or check pending approvals via 'tzro_hook_list'.", args.TaskID)
@@ -762,6 +791,44 @@ func handleTzroStatus(ctx context.Context, req *mcp.CallToolRequest, args TzroSt
 	}
 
 	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
+}
+
+// tzro_cancel tool definition
+
+// TzroCancelArgs defines the inputs for cancelling a running task.
+type TzroCancelArgs struct {
+	TaskID string `json:"taskId" jsonschema:"required,The task ID to cancel"`
+}
+
+func handleTzroCancel(ctx context.Context, req *mcp.CallToolRequest, args TzroCancelArgs) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(args.TaskID) == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "taskId cannot be empty"}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
+	// POST to daemon /api/tasks/cancel
+	reqBody, _ := json.Marshal(map[string]string{"taskId": args.TaskID})
+	httpResp, err := http.Post(config.GetDaemonURL()+"/api/tasks/cancel", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf(`{"error": "failed to reach daemon: %v"}`, err)},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+	defer httpResp.Body.Close()
+
+	respBytes, _ := io.ReadAll(httpResp.Body)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: string(respBytes)},
@@ -2641,6 +2708,14 @@ func registerTools(server *mcp.Server) {
 		Name:        "tzro_status",
 		Description: "Check the execution status, node states, and outcomes of a specific tzro task by its ID.",
 	}, handleTzroStatus)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "tzro_cancel",
+		Description: "Cancel a running task. Terminates the active execution goroutine, marks pending/running nodes " +
+			"as cancelled in the database, and emits a task_cancelled event. Also works on zombie tasks " +
+			"(stuck in 'running' status with no active goroutine) for SQLite-only cleanup. " +
+			"Proactivity Level: L3 (Reversible Action).",
+	}, handleTzroCancel)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_list_tasks",

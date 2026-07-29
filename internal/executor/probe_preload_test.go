@@ -243,7 +243,7 @@ func TestProbeConfig_PreloadPaths_IntegrationWithLastToolOutput(t *testing.T) {
 		config.Goal = fmt.Sprintf("%s\n\nIMPORTANT: Start by reading the pre-compiled source context file at '%s'", config.Goal, preloadFile)
 
 		// System prompt should NOT contain the source content itself
-		systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext)
+		systemPrompt := buildProbeSystemPrompt(config.Goal, config.AllowedTools, config.TaskContext, "")
 		if strings.Contains(systemPrompt, "HandleRequest") {
 			t.Error("System prompt should NOT contain preloaded source content")
 		}

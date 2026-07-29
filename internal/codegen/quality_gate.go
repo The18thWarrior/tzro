@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"tzro/internal/tools"
@@ -81,6 +82,9 @@ func RunStructuralQualityGate(output, language string) QualityGateResult {
 // If no compilation command is available for the language (e.g., unknown or
 // unsupported), the gate is skipped gracefully (returns Pass: true).
 func RunCompilationGate(language, filePath string) QualityGateResult {
+	// Absolutize to prevent go build from interpreting relative paths as
+	// package patterns (which silently match no packages → exit 0 → false PASS).
+	filePath, _ = filepath.Abs(filePath)
 	command, available := CompilationCommand(language, filePath)
 	if !available {
 		return QualityGateResult{Pass: true, Reason: "no compilation command available — skipped"}

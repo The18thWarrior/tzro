@@ -154,20 +154,49 @@ else
     chmod +x "${INSTALL_DIR}/bin/tzro-mcp" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/bin/tzrod" 2>/dev/null || true
 
-    # Downloading static precompiled llama-server
-    # Real downloads target static platform binaries hosted on tzro CDN / GitHub Releases
-    LLAMA_SERVER_URL="https://github.com/ggerganov/llama.cpp/releases/download/b4777/llama-b4777-bin-${PLATFORM}-${ARCH_TYPE}.zip"
-    echo -e "  Downloading llama-server sidecar from GitHub Releases..."
-    # Note: For GA, we download static binaries. We mock or download to ~/.tzro/bin/llama-server
-    # In case curl fails or needs bypass:
-    # Here we create a small wrapper or download.
-    # To keep script robust and offline-resilient for development:
-    if curl -s --head "${LLAMA_SERVER_URL}" | grep "200 OK" > /dev/null; then
-        TEMP_ZIP="/tmp/tzro-llama.zip"
-        curl -L -o "${TEMP_ZIP}" "${LLAMA_SERVER_URL}"
-        # unzip or extract
-        # For simplicity of installer demo we fall back to a self-contained static execution helper if not fully available
-        rm -f "${TEMP_ZIP}"
+    # Downloading static precompiled llama-server (b10153)
+    # Release naming: llama-b{VER}-bin-{macos|ubuntu}-{arm64|x64}.tar.gz
+    LLAMA_BUILD="b10153"
+    LLAMA_PLATFORM=""
+    LLAMA_ARCH=""
+    case "${PLATFORM}" in
+        darwin) LLAMA_PLATFORM="macos" ;;
+        linux)  LLAMA_PLATFORM="ubuntu" ;;
+    esac
+    case "${ARCH_TYPE}" in
+        arm64) LLAMA_ARCH="arm64" ;;
+        amd64) LLAMA_ARCH="x64" ;;
+    esac
+    LLAMA_SERVER_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_BUILD}/llama-${LLAMA_BUILD}-bin-${LLAMA_PLATFORM}-${LLAMA_ARCH}.tar.gz"
+    echo -e "  Downloading llama-server sidecar (${LLAMA_BUILD}) from GitHub Releases..."
+    TEMP_ARCHIVE="/tmp/tzro-llama.tar.gz"
+    TEMP_EXTRACT="/tmp/tzro-llama-extract"
+    if curl -fSL -o "${TEMP_ARCHIVE}" "${LLAMA_SERVER_URL}" 2>/dev/null; then
+        rm -rf "${TEMP_EXTRACT}"
+        mkdir -p "${TEMP_EXTRACT}"
+        tar -xzf "${TEMP_ARCHIVE}" -C "${TEMP_EXTRACT}"
+        # Find llama-server binary in extracted tree (may be in bin/ subdirectory)
+        EXTRACTED_BIN="$(find "${TEMP_EXTRACT}" -name "llama-server" -type f | head -1)"
+        if [ -n "${EXTRACTED_BIN}" ]; then
+            EXTRACTED_DIR="$(dirname "${EXTRACTED_BIN}")"
+            # Copy the binary
+            cp "${EXTRACTED_BIN}" "${INSTALL_DIR}/bin/llama-server"
+            chmod +x "${INSTALL_DIR}/bin/llama-server"
+            # Copy all shared libraries (.dylib on macOS, .so on Linux) alongside the binary
+            # These are required at runtime — the binary links via @rpath
+            find "${EXTRACTED_DIR}" \( -name "*.dylib" -o -name "*.so" -o -name "*.so.*" -o -name "*.metal" \) -exec cp {} "${INSTALL_DIR}/bin/" \;
+            # Fix rpath so the binary finds its libraries in the install dir
+            if [ "${PLATFORM}" = "darwin" ]; then
+                install_name_tool -add_rpath "${INSTALL_DIR}/bin" "${INSTALL_DIR}/bin/llama-server" 2>/dev/null || true
+            fi
+            echo -e "  ${GREEN}✔ Installed llama-server (${LLAMA_BUILD}) with shared libraries${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ Archive extracted but llama-server binary not found inside. Will fall back to system binary.${NC}"
+        fi
+        rm -rf "${TEMP_ARCHIVE}" "${TEMP_EXTRACT}"
+    else
+        echo -e "  ${YELLOW}⚠ Download failed. Will fall back to system llama-server if available.${NC}"
+        rm -f "${TEMP_ARCHIVE}"
     fi
 
     # Ensure a robust fallback llama-server binary exists in bin

@@ -97,7 +97,15 @@ func handleReadTaskOutputResource(ctx context.Context, req *mcp.ReadResourceRequ
 		}
 	}
 
-	payload, err := json.Marshal(nodes)
+	// ADR-0055: Build structured response with optional result envelope
+	respMap := map[string]interface{}{
+		"nodes": nodes,
+	}
+	if envelope := extractEnvelopeResult(nodes); envelope != nil {
+		respMap["result"] = envelope
+	}
+
+	payload, err := json.Marshal(respMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal node states: %w", err)
 	}

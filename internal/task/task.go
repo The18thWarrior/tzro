@@ -473,13 +473,13 @@ When the request involves analyzing, aggregating, filtering, counting, grouping,
 8. TOOL CONFORMANCE (CRITICAL): You MUST only reference tools from the Available Tool Inventory above. Do NOT invent, hallucinate, or guess tool names that are not listed. If you need to analyze data, use an analyze node. If you are unsure whether a tool exists, use a probe or analyze node instead of guessing tool names. Any plan referencing non-existent tools will be rejected.
 9. PROBE-FIRST POLICY (LATENCY OPTIMIZATION): You are provided with only a SHALLOW directory tree. If the user request references specific files, functions, or deep paths not visible in the shallow map, you MUST plan a "probe" node to discover the exact paths rather than guessing them.
 
-### Code Generation Rules (ADR-0035):
+### Code Generation Rules (ADR-0035, ADR-0057):
 When the task involves generating or modifying ACTUAL SOURCE CODE files (.go, .ts, .py, etc.):
-1. Set "outputFormat": "source_code" on ALL nodes that produce code output (synthesis, action, or probe nodes in the code generation path).
-2. Set "outputLanguage" to the target programming language (e.g., "go", "typescript", "python") on those same nodes.
-3. For complex code generation requiring codebase exploration, use an action node with activationThreshold 0.7-0.8 and allowedTools ["read_file", "list_dir", "search_files"] instead of a probe node. The Edge Thought system will automatically spawn additional exploration if the initial context is insufficient.
-4. When a validate_code tool is available, add a downstream deterministic validation node with activationThreshold 0.7 to enable retry via Edge Thought if compilation fails.
-5. Do NOT emit type "probe" for code generation tasks (writing .go/.ts/.py files). Use action nodes with activationThreshold for exploration.
+1. You MUST emit an action node that calls the "tzro_code" tool with the "spec" (what to generate) and "filepath" (absolute path to the target file). The tzro_code tool handles compilation gates, repair loops, context gathering, and file writing automatically.
+2. Do NOT set "outputFormat": "source_code" on raw action nodes. Do NOT try to generate code directly through action nodes with write_file. Always delegate code generation to tzro_code.
+3. If the codegen task requires reading existing files for context first, plan an upstream probe node with allowedTools ["read_file", "list_dir", "search_files"], then a downstream action node calling tzro_code with dynamicBindings to pass discovered context into the spec.
+4. Do NOT emit type "probe" for code generation tasks (writing .go/.ts/.py files). Use action nodes calling tzro_code.
+5. For tasks that modify an existing file, set "mode": "diff" in the tzro_code arguments. For new files, omit mode or set "mode": "full".
 
 ### Documentation & Exploration Rules (CategoryDocgen):
 When the task involves generating documentation, function indexes, architecture summaries, or analyzing the codebase without writing implementation code:
@@ -678,13 +678,13 @@ When the request involves open-ended exploration where each step depends on what
 5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
 6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that procedural order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
 
-### Code Generation Rules (ADR-0035):
+### Code Generation Rules (ADR-0035, ADR-0057):
 When the task involves generating or modifying source code files:
-1. Set "outputFormat": "source_code" on ALL nodes that produce code output (synthesis, action, or probe nodes in the code generation path).
-2. Set "outputLanguage" to the target programming language (e.g., "go", "typescript", "python") on those same nodes.
-3. For complex code generation requiring codebase exploration, use an action node with activationThreshold 0.7-0.8 and allowedTools ["read_file", "list_dir", "search_files"] instead of a probe node. The Edge Thought system will automatically spawn additional exploration if the initial context is insufficient.
-4. When a validate_code tool is available, add a downstream deterministic validation node with activationThreshold 0.7 to enable retry via Edge Thought if compilation fails.
-5. Do NOT emit type "probe" for code generation tasks. Use action nodes with activationThreshold for exploration.
+1. You MUST emit an action node that calls the "tzro_code" tool with the "spec" (what to generate) and "filepath" (absolute path to the target file). The tzro_code tool handles compilation gates, repair loops, context gathering, and file writing automatically.
+2. Do NOT set "outputFormat": "source_code" on raw action nodes. Do NOT try to generate code directly through action nodes with write_file. Always delegate code generation to tzro_code.
+3. If the codegen task requires reading existing files for context first, plan an upstream probe node with allowedTools ["read_file", "list_dir", "search_files"], then a downstream action node calling tzro_code with dynamicBindings to pass discovered context into the spec.
+4. Do NOT emit type "probe" for code generation tasks. Use action nodes calling tzro_code.
+5. For tasks that modify an existing file, set "mode": "diff" in the tzro_code arguments. For new files, omit mode or set "mode": "full".
 `, toolsListStr, skillsListStr, repoMap, taskID)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")

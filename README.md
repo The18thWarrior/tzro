@@ -157,9 +157,9 @@ For more details, refer to the full **[MCP Setup Guide](docs/mcp-setup-guide.md)
 
 ---
 
-## 📡 MCP Tool Interface — 15 Tools
+## 📡 MCP Tool Interface — 16 Tools
 
-tzro exposes its OS capabilities as a lean set of 15 MCP tools over stdio, organized into three tiers:
+tzro exposes its OS capabilities as a lean set of 16 MCP tools over stdio, organized into three tiers:
 
 ### Tier 1: Core Execution (High-Frequency)
 
@@ -167,6 +167,7 @@ tzro exposes its OS capabilities as a lean set of 15 MCP tools over stdio, organ
 |:---|:---|
 | `tzro_run` | Plan, compile, and execute a durable DAG workflow from a natural language prompt |
 | `tzro_code` | Generate or update a single file via local LLM codegen (`full` or `diff` mode) |
+| `tzro_query_callgraph` | Traverse AST-extracted symbolic callgraphs, function declarations, callsites, and references |
 | `tzro_status` | Check execution status, node states, and outcomes of a task |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status |
 | `tzro_resume` | Resume a paused/interrupted workflow task |
@@ -206,14 +207,15 @@ For real-time observability, the MCP server exposes two URI templates for push n
 
 ---
 
-## 🆕 v1.0.1 Highlights
+## 🆕 v1.0.2 Highlights
 
-- **SQLite-Backed Query Cache & SQL Query Language for Cached Data (ADR-0048, ADR-0051)** — Replaces raw JQ querying with a disk-backed SQLite query cache (`introspect_cache`, `sql_cached_data`). Tabular tool outputs and CSV datasets are automatically profiled and loaded into SQLite tables for fast, structured SQL queries.
-- **Analyze Nodes & CompactPreserve Semantics (ADR-0049, ADR-0050, ADR-0052)** — Introduces dedicated Analyze Nodes with schema extraction, column/table keyword sanitization, and CompactPreserve compaction semantics. Query results and cache IDs are preserved across compaction cycles without data loss.
-- **Analytical Evidence Collection (ADR-0053)** — Captures query outputs and tabular evidence from analyze nodes, feeding structured context directly to downstream DAG nodes and recall tasks.
-- **Self-Contained Task Short-Circuiting & Lifecycle Tracking (ADR-0054)** — Bypasses redundant probe discovery loops for self-contained prompts, enables inline prompt context for direct synthesis when context files are omitted, and tracks task lifecycle states across SQLite execution tables.
-- **Structured Content-Aware Compaction Engine** — `internal/compactor/` applies content-type-aware strategies: code skeleton extraction (AST/regex-based, never LLM-compressed), JSON pruning, and line truncation. Compaction triggers every 3 steps as an architectural constant.
-- **Worker Sidecar Synthesis** — Terminal synthesis routes through `WorkerInference` (64K context worker model) for superior content generation quality, while the router sidecar handles step-level tool decisions.
+- **Spec Compliance Gate for Codegen (ADR-0061)** — Evaluates generated code against numbered spec requirements post-compilation via local GBNF compliance check, automatically triggering full-implementation code regeneration if requirements are missing.
+- **Symbolic Callgraph Traversal & Search (`tzro_query_callgraph`)** — Replaces legacy repomap utility with AST-driven symbolic callgraph extraction (`internal/symbols/callgraph.go`, `traverse.go`), enabling deep call-site analysis, function declaration lookups, and reference traversal.
+- **Probe Execution Resilience & Exploration Queue (ADR-0058)** — Deduplicated candidate traversal queue (`exploration_queue.go`) and inline SQL query extraction (`probe_sql_extract.go`) to prevent redundant probe loops during codebase exploration.
+- **Tiered Codegen Repair Escalation (ADR-0057)** — Structured repair loops with compilation-gated escalation, providing failure dampening and targeted error prompts for code generation tasks.
+- **Structured Execution Envelopes (ADR-0055)** — Captures and persists execution task metadata, token usage metrics, and node status details across MCP responses (`envelope_extract.go`).
+- **Append-Only Conversation Sliding Window (ADR-0056)** — Optimizes prompt context assembly with an append-only conversation sliding window to maximize KV cache reuse during multi-step probe execution.
+- **Task Cancellation Support** — Enables context-aware task cancellation across API, CLI, and MCP endpoints (`c4e5c3e`).
 
 ---
 
