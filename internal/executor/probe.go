@@ -204,6 +204,12 @@ func RunProbe(
 		compactEvery = 3
 	}
 
+	// ADR-0060: Inject GenerationGuard for all probe inference calls.
+	// Probes are the primary source of degenerate repetition (observed: 8,910
+	// lines, 131K tokens in update_add_method). The guard aborts streaming
+	// generation when it detects character-level or block-level repetition.
+	ctx = context.WithValue(ctx, inference.GenerationGuardKey, inference.NewRepetitionGuard())
+
 	// Build allowed tools set for validation
 	allowedToolSet := make(map[string]bool)
 	for _, t := range config.AllowedTools {

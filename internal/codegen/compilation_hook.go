@@ -40,6 +40,10 @@ type CompilationGateHook struct {
 	// lastCompilerErrors stores the most recent compiler error output,
 	// used for the complexity_exceeded response in Draft mode.
 	lastCompilerErrors string
+	// specComplianceAttempted tracks whether the Spec Compliance Gate has
+	// already attempted a regeneration for this hook instance. Prevents
+	// infinite loops (ADR-0061).
+	specComplianceAttempted bool
 }
 
 // MaxLocalRepairAttempts is the number of local repair attempts before
@@ -101,6 +105,44 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 		evidence.WriteString("PASSED\n")
 		// Reset failure count on success
 		h.localFailureCount = 0
+
+		// ADR-0061: Spec Compliance Gate — check functional completeness
+		// Only fires when: spec is present, compilation passed, and we haven't
+		// already attempted spec compliance (prevents infinite loops).
+		if h.Spec != "" && !h.specComplianceAttempted {
+			complianceResult := h.runSpecComplianceGate(ctx, cleanCode, taskID)
+			if complianceResult != nil && !complianceResult.Pass {
+				h.specComplianceAttempted = true
+				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Spec compliance FAILED for %s — %d missing requirements. Triggering regeneration.\n",
+					h.FilePath, len(complianceResult.MissingRequirements))
+
+				// Build regeneration prompt with missing requirements checklist
+				moduleCtx := DiscoverModuleContext(h.FilePath, h.Language)
+				regenPrompt := BuildRegenerationPrompt(h.Spec, complianceResult.Checklist, h.Language, 500, moduleCtx)
+
+				// Attempt local regeneration
+				regenCode, regenErr := h.attemptLocalRegeneration(ctx, regenPrompt, taskID)
+				if regenErr == nil && regenCode != "" {
+					// Write regenerated code and re-run compilation
+					if _, _, writeErr := WriteCodeFile(h.FilePath, regenCode, 0); writeErr == nil {
+						recheck := RunCompilationGate(h.Language, h.FilePath)
+						if recheck.Pass {
+							fmt.Fprintf(os.Stderr, "[CompilationGateHook] Spec compliance regeneration COMPILED for %s\n", h.FilePath)
+							cleanCode = regenCode
+							evidence.Reset()
+							evidence.WriteString("\n\n## Compilation Result\nPASSED\n")
+							evidence.WriteString("(Regenerated after spec compliance failure)\n")
+						} else {
+							fmt.Fprintf(os.Stderr, "[CompilationGateHook] Spec compliance regeneration FAILED compilation for %s: %s\n",
+								h.FilePath, recheck.Reason)
+							// Keep the original compiled code — it's at least compilable
+						}
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "[CompilationGateHook] Local regeneration failed for %s: %v\n", h.FilePath, regenErr)
+				}
+			}
+		}
 	} else {
 		h.localFailureCount++
 		h.lastCompilerErrors = compResult.Reason
@@ -261,6 +303,60 @@ Fix ALL compiler errors. Output the complete corrected file.`, brokenCode, compi
 		len(result), taskID)
 
 	return result, nil
+}
+
+// runSpecComplianceGate evaluates whether the generated code implements all
+// requirements from the spec. Uses the Local Model to produce a structured
+// IMPLEMENTED/MISSING checklist. Returns nil if evaluation fails or if no
+// spec is provided.
+//
+// ADR-0061: Spec Compliance Gate — post-compilation functional completeness check.
+func (h *CompilationGateHook) runSpecComplianceGate(ctx context.Context, generatedCode, taskID string) *SpecComplianceResult {
+	if h.Spec == "" {
+		return nil
+	}
+
+	evalPrompt := BuildComplianceEvalPrompt(generatedCode, h.Spec, h.Language)
+
+	messages := []inference.InferenceMessage{
+		{Role: "user", Content: evalPrompt},
+	}
+
+	result, err := inference.GlobalWorkerModel.CallLocalModel(ctx, messages, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[CompilationGateHook] Spec compliance evaluation failed for %s: %v\n", taskID, err)
+		return nil
+	}
+
+	compliance := ParseComplianceChecklist(result.Content)
+	fmt.Fprintf(os.Stderr, "[CompilationGateHook] Spec compliance: pass=%v, missing=%d for %s\n",
+		compliance.Pass, len(compliance.MissingRequirements), taskID)
+
+	return compliance
+}
+
+// attemptLocalRegeneration runs a full code regeneration using the local model
+// with the given prompt. Returns the generated code and any error.
+//
+// ADR-0061: Uses full regeneration (not targeted patching) because the failed
+// code's structure may be fundamentally incompatible with the missing requirements.
+func (h *CompilationGateHook) attemptLocalRegeneration(ctx context.Context, prompt, taskID string) (string, error) {
+	messages := []inference.InferenceMessage{
+		{Role: "user", Content: prompt},
+	}
+
+	result, err := inference.GlobalWorkerModel.CallLocalModel(ctx, messages, "")
+	if err != nil {
+		return "", fmt.Errorf("local regeneration inference failed: %w", err)
+	}
+
+	// Strip markdown fences from the response
+	code := StripMarkdownFences(result.Content)
+
+	fmt.Fprintf(os.Stderr, "[CompilationGateHook] Local regeneration: %d chars for task %s\n",
+		len(code), taskID)
+
+	return code, nil
 }
 
 // isCloudRepairBlocked returns true when cloud repair must not be attempted.

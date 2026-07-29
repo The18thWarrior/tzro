@@ -2,9 +2,48 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-07-28T22:15:00-07:00] tdd | Implement Run 6 Benchmark Fixes (ADR-0060, ADR-0061)
+
+- **Activity**: TDD implementation of 3 fixes designed during prior grill-with-docs session. 16 vertical test slices, all GREEN. Full regression (38 packages) clean.
+- **Files Created**:
+  - `internal/inference/generation_guard.go` — `GenerationGuard` interface, `RepetitionGuard` impl (character-level + block-level detection), context key, abort marker
+  - `internal/inference/generation_guard_test.go` — 7 tests across 6 TDD slices
+  - `internal/codegen/spec_compliance.go` — `SpecComplianceResult`, `BuildRegenerationPrompt`, `BuildComplianceEvalPrompt`, `ParseComplianceChecklist`
+  - `internal/codegen/spec_compliance_test.go` — 4 tests across 4 TDD slices
+  - `internal/compiler/breadth.go` — `DetectBreadthMode`, `ScaleStepBudget`, `BuildBreadthManifest`
+  - `internal/compiler/breadth_test.go` — 6 tests across 6 TDD slices
+- **Files Modified**:
+  - `internal/inference/local_model.go` — Wired `GenerationGuard` into `CallLocalModelStream` streaming loop (per-newline check + abort)
+  - `internal/inference/backend_remote.go` — Same guard wiring for remote OpenAI backend
+  - `internal/executor/recall.go` — Removed `stripTrailingRepetition` (superseded by GenerationGuard)
+  - `internal/executor/synthesis_guard_test.go` — Removed 4 legacy `TestStripTrailingRepetition_*` tests
+  - `internal/codegen/compilation_hook.go` — Added `specComplianceAttempted` field, `runSpecComplianceGate` + `attemptLocalRegeneration` methods, wired spec compliance gate after compilation passes
+  - `internal/compiler/sct_compiler.go` — Wired breadth detection into Kahn Compiler probe processing
+  - `docs/wiki/index.md` — Added ADR-0056 through ADR-0061 entries
+
+---
+
+## [2026-07-28T21:14:00-07:00] grill-with-docs | Run 6 Benchmark Fix Evaluation (ADR-0060, ADR-0061)
+
+- **Activity**: Grill-with-docs session stress-testing 5 proposed fixes from Run 6 benchmark analysis against the domain model, CONTEXT.md, and existing ADRs (0020, 0057, 0058). 10 design questions resolved. Collapsed 5 fixes to 4 by identifying subsumption. Skipped 1 (cache ID — needs investigation).
+- **Key Findings**:
+  1. **Repetition detection is at the wrong layer**: `stripTrailingRepetition` in `recall.go` runs post-synthesis — too late. The 8,910-line repetition loop in `update_add_method` consumed 131K tokens and 918s before detection. Needs to be at the Inference Backend streaming level.
+  2. **Cloud fix prompt already has the spec**: The original diagnosis ("widen cloud fix prompt to include spec") was wrong. `BuildRepairPrompt` already includes `## Original Spec`. The real problem is Rule 4 ("Do not add new features") actively prevents the repair model from adding missing functionality. Compilation repair and functional repair are distinct failure classes needing distinct mechanisms.
+  3. **Spec Compliance Gate subsumes language-specific linting**: The proposed P2 fix for mypy/pyflakes is unnecessary. `update_add_error_handling`'s runtime NameError bugs are spec compliance failures ("retry 3 times" — code doesn't do that), not syntax failures. One gate handles both `create_query_builder` and `update_add_error_handling`.
+  4. **Probe no-action burn rate is a symptom of breadth-vs-depth mismatch**: `internal_architecture` scored 2.25 because a breadth task (15 packages) was executed by a depth-optimized probe. The Kahn Compiler should detect breadth automatically and inject a shallow directory manifest + scale step budget.
+- **Decisions Made**:
+  1. **Generation Guard** (Q1–Q4): Streaming abort on Inference Backend. General `GenerationGuard` interface, `RepetitionGuard` as first impl. Dual-path: streaming abort (llama-server, OpenAI) + post-gen scan (harness callback). Character-level + block-level detection (10-line window, 3 consecutive hash matches). `stripTrailingRepetition` promoted from recall.go to Generation Guard fallback.
+  2. **Spec Compliance Gate** (Q5–Q7): Post-compilation functional completeness check. Hybrid evaluation (local 4B first, cloud escalation). Full regeneration, not targeted patching — quality over speed. Budget: 1 local regen + 1 cloud escalation. Separate from Compilation Gate (syntax) by design.
+  3. **Cache ID fix skipped** — needs investigation into whether it's a benchmark harness issue or DynamicBinding resolution failure.
+  4. **Breadth detection in Kahn Compiler** (Q9–Q10): Auto-detect breadth via subdirectory count >5 under PreloadPaths. Inject shallow directory manifest into probe system prompt. Scale step budget proportionally (`base + subdirs × 2`, max 60). Budget formula + cap configurable via Execution Policy.
+- **Glossary Updated**: Added **Generation Guard** and **Spec Compliance Gate** to CONTEXT.md.
+- **ADRs Created**: [ADR-0060](../adr/0060-generation-guard-on-inference-backend.md), [ADR-0061](../adr/0061-spec-compliance-gate-for-codegen.md)
+- **Wiki Updated**: index.md — added ADR-0056 through ADR-0061 entries.
+
 ---
 
 ## [2026-07-27T12:08:00-07:00] grill-with-docs | Codegen Quality & Analyze Node Reliability (ADR-0057)
+
 
 - **Activity**: Grill-with-docs session challenging the Task Envelope implementation plan against the domain model and existing ADRs. 8 design questions resolved. Pivoted from Task Envelope pre-flight classification to targeted infrastructure fixes.
 - **Key Findings**:

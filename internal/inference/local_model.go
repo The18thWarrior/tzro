@@ -1143,6 +1143,10 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	promptTokens := 0
 	completionTokens := 0
 
+	// ADR-0060: Extract GenerationGuard from context (opt-in)
+	guard := GetGenerationGuard(ctx)
+	generationAborted := false
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -1191,6 +1195,17 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 					Type:     "token",
 					Content:  contentDelta,
 				})
+
+				// ADR-0060: Check GenerationGuard on newlines
+				if guard != nil && strings.Contains(contentDelta, "\n") {
+					if guard.OnChunk(accumulatedContent.String()) == GuardAbort {
+						fmt.Fprintf(os.Stderr, "[GenerationGuard] Degenerate output detected — aborting generation (accumulated %d chars)\n",
+							accumulatedContent.Len())
+						accumulatedContent.WriteString(GenerationAbortedMarker)
+						generationAborted = true
+						break
+					}
+				}
 			}
 		}
 
@@ -1198,6 +1213,11 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 			promptTokens = chunk.Usage.PromptTokens
 			completionTokens = chunk.Usage.CompletionTokens
 		}
+	}
+
+	// If generation was aborted, close the response body to cancel the stream
+	if generationAborted {
+		resp.Body.Close()
 	}
 
 	duration := time.Since(startTime).Seconds()

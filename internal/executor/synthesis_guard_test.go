@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -111,51 +110,6 @@ func TestStripControlTokens_BareToken(t *testing.T) {
 	}
 }
 
-func TestStripTrailingRepetition_BacktickSpacePairs(t *testing.T) {
-	// Reproduce exact pattern from bug report: valid content followed by
-	// hundreds of "` " backtick-space pairs.
-	meaningful := `{"synthesis":"This is valid content with code blocks and analysis."}`
-	// Build ~500 chars of "` " repetition (250 pairs)
-	var padding strings.Builder
-	padding.WriteString("</json>")
-	for i := 0; i < 250; i++ {
-		padding.WriteString("` ")
-	}
-	input := meaningful + padding.String()
-
-	result := stripTrailingRepetition(input)
-	// Should strip all the backtick padding, keeping only the meaningful content
-	if strings.Contains(result, "` ` ` `") {
-		t.Errorf("expected backtick padding to be stripped, got trailing: ...%q", result[len(result)-50:])
-	}
-	if !strings.Contains(result, "synthesis") {
-		t.Errorf("expected meaningful content preserved, got: %q", result[:50])
-	}
-}
-
-func TestStripTrailingRepetition_ShortStringUnchanged(t *testing.T) {
-	input := "Short valid output"
-	result := stripTrailingRepetition(input)
-	if result != input {
-		t.Errorf("short string should be unchanged, got: %q", result)
-	}
-}
-
-func TestStripTrailingRepetition_NormalContentUnchanged(t *testing.T) {
-	// Normal synthesis output with diverse characters should be unchanged
-	input := strings.Repeat("This is a normal paragraph with diverse content. ", 20)
-	result := stripTrailingRepetition(input)
-	if result != input {
-		t.Errorf("normal content should be unchanged, len diff: %d", len(input)-len(result))
-	}
-}
-
-func TestStripTrailingRepetition_DotFill(t *testing.T) {
-	meaningful := "Valid analysis content here"
-	padding := strings.Repeat(".", 300)
-	input := meaningful + padding
-	result := stripTrailingRepetition(input)
-	if strings.HasSuffix(result, "....") {
-		t.Errorf("expected dot padding stripped, got trailing: ...%q", result[len(result)-20:])
-	}
-}
+// NOTE: TestStripTrailingRepetition_* tests removed (ADR-0060).
+// Character-level degeneration detection is now handled by the GenerationGuard
+// at the Inference Backend layer. See internal/inference/generation_guard_test.go.

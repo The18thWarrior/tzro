@@ -541,6 +541,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		NodeID:   node.ID,
 	}
 
+	// ADR-0060: Inject GenerationGuard into context for streaming inference.
+	// RepetitionGuard detects degenerate repetition during generation and
+	// aborts early, preventing 100K+ token waste on loops.
+	ctx = context.WithValue(ctx, inference.GenerationGuardKey, inference.NewRepetitionGuard())
+
 	// 1. Pre-flight Variable Interpolation
 	interpolatedPrompt := InterpolateVariables(node.Instructions, taskID)
 	fmt.Fprintf(os.Stderr, "[Executor] Interpolated instruction: %s\n", interpolatedPrompt)
