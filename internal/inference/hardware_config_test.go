@@ -158,3 +158,29 @@ func TestGetWorkerParallelSlots(t *testing.T) {
 		})
 	}
 }
+
+// --- getRouterContextSize: memory-gated router context window ---
+
+func TestGetRouterContextSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		memoryGB int
+		expected int
+	}{
+		{"8GB system gets 16K context", 8, 16384},
+		{"15GB system gets 16K context", 15, 16384},
+		{"16GB system gets 64K context", 16, 65536},
+		{"24GB system gets 64K context", 24, 65536},
+		{"32GB system gets 64K context", 32, 65536},
+		{"64GB system gets 64K context", 64, 65536},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getRouterContextSize(tt.memoryGB)
+			if got != tt.expected {
+				t.Errorf("getRouterContextSize(%d) = %d, want %d", tt.memoryGB, got, tt.expected)
+			}
+		})
+	}
+}

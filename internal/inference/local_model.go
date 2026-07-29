@@ -378,12 +378,15 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Vision projector loaded: %s\n", mmProjPath)
 	}
 
-	// Router sidecar overrides: smaller context, no speculative decoding, no vision
+	// Router sidecar overrides: memory-gated context, no speculative decoding, no vision
 	if m.Role == "router" {
-		// Override ctx-size to 16384 for router (smaller than worker's 32K but enough for probe chains)
+		// Memory-gated router context: 64K on ≥16GB (eliminates probe HTTP 400
+		// from analyze prompts exceeding 16K), 16K on <16GB to conserve memory.
+		// Router model (1B) natively supports 131K — 64K is well within bounds.
+		routerCtxSize := getRouterContextSize(getSystemMemoryGB())
 		for i, a := range args {
 			if a == "--ctx-size" && i+1 < len(args) {
-				args[i+1] = "16384"
+				args[i+1] = strconv.Itoa(routerCtxSize)
 			}
 			if a == "--n-predict" && i+1 < len(args) {
 				args[i+1] = "4096" // Router outputs: compaction can produce longer reasoning summaries
@@ -862,6 +865,18 @@ func getWorkerParallelSlots(memoryGB int) int {
 	return 1
 }
 
+// getRouterContextSize returns the context window size for the router sidecar,
+// based on system memory. The 1B router model supports 131K context natively.
+// ≥16GB → 65536 (matches worker context, eliminates probe HTTP 400 from
+//         analyze system prompts exceeding the 16K limit with CSV tool output)
+// <16GB → 16384 (preserve current behavior, lower memory footprint)
+func getRouterContextSize(memoryGB int) int {
+	if memoryGB >= 16 {
+		return 65536
+	}
+	return 16384
+}
+
 // allocateRandomPort asks the OS for a random free port by briefly binding to :0,
 // then immediately releasing it for llama-server to use.
 func allocateRandomPort() (int, error) {
@@ -896,6 +911,60 @@ func releaseFileLock(f *os.File) {
 	}
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	_ = f.Close()
+}
+
+// TokenizeContent calls the sidecar's /tokenize endpoint to get an exact token
+// count for the given content. Returns the number of tokens. Used by the probe
+// pre-flight check to detect context overflow before sending inference requests.
+// The llama.cpp server natively exposes /tokenize.
+func (m *LocalModelManager) TokenizeContent(content string) (int, error) {
+	if m.Status != "Active" || m.ActivePort == 0 {
+		// Fallback to heuristic: ~4 chars per token
+		return len(content) / 4, nil
+	}
+
+	reqBody := map[string]interface{}{
+		"content": content,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	url := fmt.Sprintf("http://localhost:%d/tokenize", m.ActivePort)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return len(content) / 4, nil // Fallback
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.getInferenceClient().Do(req)
+	if err != nil {
+		return len(content) / 4, nil // Fallback
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return len(content) / 4, nil // Fallback
+	}
+
+	var result struct {
+		Tokens []int `json:"tokens"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return len(content) / 4, nil // Fallback
+	}
+
+	return len(result.Tokens), nil
+}
+
+// GetActiveContextSize returns the n_ctx the sidecar was launched with.
+// Used by the probe pre-flight check to compare against tokenized prompt size.
+func (m *LocalModelManager) GetActiveContextSize() int {
+	if m.Role == "router" {
+		return getRouterContextSize(getSystemMemoryGB())
+	}
+	return config.GetContextSize()
 }
 
 // CallLocalModel handles the local structured JSON inference call.

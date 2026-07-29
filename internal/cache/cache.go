@@ -766,6 +766,41 @@ func createCacheEnvelope(payload string) (string, CacheEnvelope) {
 	// which fails because the column is actually Target_Account_ in SQLite.
 	envelope = sanitizeEnvelopeFieldNames(envelope)
 
+	// Truncate long values in sample record and enum values to reduce envelope size.
+	// Wide CSVs with 30+ columns and long text fields can produce 10K+ char envelopes
+	// that overflow the router's context window when injected as tool output.
+	envelope = truncateEnvelopeValues(envelope)
+
 	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
 	return string(envJSON), envelope
+}
+
+// truncateEnvelopeValues caps sample record string values at maxSampleValueLen
+// and limits enum value entries to maxEnumEntries per field. This reduces the
+// envelope size for wide CSVs without losing schema discovery value.
+func truncateEnvelopeValues(env CacheEnvelope) CacheEnvelope {
+	const maxSampleValueLen = 100
+	const maxEnumEntries = 3
+
+	// Truncate sample record values
+	for k, v := range env.SampleRecord {
+		if s, ok := v.(string); ok && len(s) > maxSampleValueLen {
+			env.SampleRecord[k] = s[:maxSampleValueLen] + "..."
+		}
+	}
+
+	// Cap enum value lists
+	for k, vals := range env.EnumValues {
+		if len(vals) > maxEnumEntries {
+			env.EnumValues[k] = vals[:maxEnumEntries]
+		}
+		// Also truncate individual enum values
+		for i, v := range env.EnumValues[k] {
+			if len(v) > maxSampleValueLen {
+				env.EnumValues[k][i] = v[:maxSampleValueLen] + "..."
+			}
+		}
+	}
+
+	return env
 }

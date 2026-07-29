@@ -1588,10 +1588,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// to extract values by key name rather than re-parsing them from prose.
 	accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 
-	// Schema enrichment for cache bridge nodes: inject introspect_cache output
-	// so the model sees the actual data shape (flat JSON array) rather than
-	// assuming the dataProfile envelope structure from upstream output.
-	if isCacheExploration && node.Action == "sql_cached_data" {
+	// Schema enrichment: inject introspect_cache output and table names into
+	// accumulated context for ALL action nodes that reference cached data.
+	// Previously gated on node.Action == "sql_cached_data" (cache bridge only),
+	// which caused action nodes like group_and_aggregate to generate FROM data
+	// instead of FROM cache_<id> — the model couldn't find the table name.
+	if isCacheExploration {
 		accumulatedCtx = enrichCacheBridgeContext(ctx, accumulatedCtx, interpolatedPrompt)
 	}
 

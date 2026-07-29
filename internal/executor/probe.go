@@ -461,9 +461,16 @@ func RunProbe(
 	// prompt; probe nodes get the codebase exploration prompt.
 
 	// Cap upstream context before baking into system prompt (ADR-0059).
+	// Analyze nodes use a tighter cap (12K) because the cacheId is extracted
+	// deterministically — the raw upstream text is supplementary context.
+	// Probe nodes keep 24K for richer codebase exploration context.
 	var cappedUpstreamCtx string
 	if config.UpstreamContext != "" {
-		const maxUpstreamContextChars = 24576 // ~6K tokens
+		isAnalyze := isAnalyzeConfig(config.AllowedTools)
+		maxUpstreamContextChars := 24576 // ~6K tokens (probes)
+		if isAnalyze {
+			maxUpstreamContextChars = 12288 // ~3K tokens (analyze — cacheId extracted separately)
+		}
 		cappedUpstreamCtx = config.UpstreamContext
 		if len(cappedUpstreamCtx) > maxUpstreamContextChars {
 			cappedUpstreamCtx = compactor.CompactContent(cappedUpstreamCtx, maxUpstreamContextChars)
@@ -500,8 +507,21 @@ func RunProbe(
 	var edgeEntries []EdgeEntry
 
 	// Context budget for lastToolOutput capping.
-	// Router has 16K tokens ≈ 64K chars. Reserve space for system prompt + breadcrumbs + query.
-	contextBudgetChars := 64000 - len(systemPrompt) - 600 // 600 chars for breadcrumbs + step query
+	// Use exact tokenization when available, fallback to char heuristic.
+	// The router context size is memory-gated (64K on ≥16GB, 16K on <16GB).
+	routerCtxSize := inference.GlobalRouterModel.GetActiveContextSize()
+
+	// Tokenize the system prompt once (it's static across all steps).
+	systemPromptTokens, _ := inference.GlobalRouterModel.TokenizeContent(systemPrompt)
+	// Reserve 10% of context for generation output + safety margin.
+	maxPromptTokens := int(float64(routerCtxSize) * 0.90)
+	availableForUser := maxPromptTokens - systemPromptTokens
+	if availableForUser < 1024 {
+		availableForUser = 1024 // Minimum viable user message budget
+	}
+	// Convert token budget to approximate char budget for pre-capping.
+	// Use 4:1 as a conservative estimate (actual ratio may be lower for CSV data).
+	contextBudgetChars := availableForUser * 4
 
 	// ADR-0058: No-action retry counter. Steps without an <ACTION> tag
 	// are protocol violations — we retry with a corrective prompt instead
@@ -541,6 +561,33 @@ func RunProbe(
 		stepMessages := []inference.InferenceMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: stepContent.String()},
+		}
+
+		// Pre-flight token check: verify the assembled prompt fits within n_ctx.
+		// If it would exceed 90% of the context window, re-truncate lastToolOutput.
+		userTokens, _ := inference.GlobalRouterModel.TokenizeContent(stepContent.String())
+		totalPromptTokens := systemPromptTokens + userTokens
+		if totalPromptTokens > maxPromptTokens {
+			// Re-truncate: shrink the user message to fit
+			excessTokens := totalPromptTokens - maxPromptTokens
+			excessChars := excessTokens * 4 // Conservative char estimate
+			newMaxOutput := len(stepContent.String()) - excessChars - 200
+			if newMaxOutput < 500 {
+				newMaxOutput = 500
+			}
+			// Rebuild step content with tighter output cap
+			var rebuiltContent strings.Builder
+			if breadcrumbs != "" {
+				rebuiltContent.WriteString(breadcrumbs)
+				rebuiltContent.WriteString("\n")
+			}
+			if lastToolOutput != "" {
+				cappedOutput := compactor.CompactContent(lastToolOutput, newMaxOutput)
+				rebuiltContent.WriteString(fmt.Sprintf("## Last Tool Output\n```\n%s\n```\n\n", cappedOutput))
+			}
+			rebuiltContent.WriteString(fmt.Sprintf("Step %d: What should we do next?", step))
+			stepMessages[1].Content = rebuiltContent.String()
+			fmt.Fprintf(os.Stderr, "[Probe] Pre-flight truncation: %d tokens exceeded %d limit, re-capped output for step %d\n", totalPromptTokens, maxPromptTokens, step)
 		}
 
 		// Call Local Model WITHOUT constraint. Probe steps are routing decisions
