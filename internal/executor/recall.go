@@ -256,7 +256,6 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 		}
 	}
 
-
 	// Strip any leaked control tokens from the output
 	synthesis = stripControlTokens(synthesis)
 	return synthesis, nil
@@ -435,7 +434,6 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 
 	return ""
 }
-
 
 // stripControlTokens removes internal control signals from user-facing output.
 func stripControlTokens(output string) string {

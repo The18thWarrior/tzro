@@ -242,4 +242,3 @@ func TestExecutionEngine_DispatchAccumulator(t *testing.T) {
 		t.Errorf("expected 0 dispatches for nonexistent task, got %d", len(empty))
 	}
 }
-

@@ -93,7 +93,6 @@ func TestValidateSynthesisOutput_AnalyzeNode_StillCatchesDegenerate(t *testing.T
 	}
 }
 
-
 func TestStripControlTokens(t *testing.T) {
 	input := "Here is the result <SYNTHESIZE_READY>\nMore content <ACTION>test</ACTION>"
 	result := stripControlTokens(input)

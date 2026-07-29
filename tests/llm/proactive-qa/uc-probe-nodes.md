@@ -50,6 +50,9 @@ A local AI coding agent wants to explore an unfamiliar codebase or perform high-
 - [ ] Content-aware truncation detects tabular data (markdown tables, CSV) and retains header rows plus sample data rows.
 - [ ] Content-aware truncation applies middle-out elision for prose content, preserving beginning and end while summarizing the middle.
 - [ ] Truncation enforces a configurable character budget (default 160K for synthesis context).
+- [ ] Symbolic callgraph extractor traverses function declarations, callsites, and references across multi-language codebases (Go, Python, TypeScript, JavaScript, Rust, Java).
+- [ ] Exploration queue handles candidate traversal locations with deduplication to ensure resilient probe execution.
+- [ ] SQL query extractor parses inline SQL queries and table references during code exploration.
 
 ## Edge Cases to Probe
 

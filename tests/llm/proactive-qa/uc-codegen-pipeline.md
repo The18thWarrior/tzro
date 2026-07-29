@@ -37,6 +37,8 @@ An AI coding agent wants to generate or modify a single source file by providing
 - [ ] Hot-swappable model management allows the engine to temporarily swap to a code-specialized GGUF model for generation, then lazily restore the default model after completion.
 - [ ] Model swap is transparent to the caller — `tzro_code` returns generated code regardless of which model served the request.
 - [ ] If the code-specialized model fails to load, generation falls back to the current active model without error.
+- [ ] Spec compliance gate evaluates compiled code against spec requirements after compilation pass.
+- [ ] If compliance evaluation finds missing requirements, regeneration prompt instructs full implementation of all requirements.
 
 ## Edge Cases to Probe
 

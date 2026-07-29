@@ -9,7 +9,7 @@ import (
 
 const (
 	defaultMaxChars     = 24000 // 24KB target for assembled context
-	defaultMaxFunctions = 30   // Maximum functions to include
+	defaultMaxFunctions = 30    // Maximum functions to include
 )
 
 // TraverseSubgraph performs bidirectional N-hop BFS from entry points,

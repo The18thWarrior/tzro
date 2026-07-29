@@ -41,7 +41,7 @@ type Symbol struct {
 	DocComment string     `json:"docComment,omitempty"` // First line of the doc comment preceding the declaration
 	File       string     `json:"file"`
 	Line       int        `json:"line"`
-	EndLine    int        `json:"endLine"`              // Last line of the declaration (1-indexed)
+	EndLine    int        `json:"endLine"` // Last line of the declaration (1-indexed)
 	Exported   bool       `json:"exported"`
 }
 

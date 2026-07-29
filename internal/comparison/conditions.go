@@ -1133,4 +1133,3 @@ func waitForSidecarHealth(label string, model *inference.LocalModelManager) erro
 	}
 	return fmt.Errorf("%s sidecar health check timed out after %ds on port %d", label, maxAttempts, activePort)
 }
-
