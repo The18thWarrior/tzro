@@ -40,7 +40,14 @@ func NewRemoteOpenAIBackend(cfg config.BackendConfig, publisher telemetry.EventP
 		url = "http://localhost:11434/v1" // Fallback to Ollama default
 	}
 	if !strings.HasSuffix(url, "/chat/completions") {
-		url = strings.TrimSuffix(url, "/") + "/chat/completions"
+		trimmed := strings.TrimSuffix(url, "/")
+		// If the URL already includes a versioned path (e.g. /v1), append directly.
+		// Otherwise, add the standard /v1 prefix for OpenAI-compatible APIs.
+		if strings.Contains(trimmed, "/v1") || strings.Contains(trimmed, "/v2") {
+			url = trimmed + "/chat/completions"
+		} else {
+			url = trimmed + "/v1/chat/completions"
+		}
 	}
 
 	model := cfg.Model
@@ -79,10 +86,8 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 		Temperature: 1.0,
 	}
 
-	// Read max_tokens from context (ADR-0043: prevent runaway generation on probe steps)
-	if maxTokens, ok := ctx.Value(MaxTokensKey).(int); ok && maxTokens > 0 {
-		reqBody.MaxTokens = &maxTokens
-	}
+	// NOTE: We intentionally do NOT send max_tokens to remote backends.
+	// See CallModelStream comment for rationale.
 
 	if jsonSchema != "" {
 		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)
@@ -139,7 +144,9 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 	if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
 		if choice, ok := choices[0].(map[string]interface{}); ok {
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
-				if content, ok := msg["content"].(string); ok {
+				content, _ := msg["content"].(string)
+
+				if content != "" {
 					if tracker, ok := GetTokenTracker(ctx); ok {
 						tracker.Record(false, promptTokens, completionTokens, duration, speed)
 					}
@@ -194,10 +201,11 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		},
 	}
 
-	// Read max_tokens from context (ADR-0043: prevent runaway generation on probe steps)
-	if maxTokens, ok := ctx.Value(MaxTokensKey).(int); ok && maxTokens > 0 {
-		reqBody.MaxTokens = &maxTokens
-	}
+	// NOTE: We intentionally do NOT send max_tokens to remote backends.
+	// The local engine sets very high values (65536) assuming a local sidecar
+	// that self-limits at n_ctx. Remote servers (especially thinking models)
+	// silently return empty when max_tokens + prompt_tokens exceeds context.
+	// Omitting max_tokens lets the server auto-calculate available space.
 
 	if jsonSchema != "" {
 		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)
@@ -228,6 +236,7 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("remote model stream HTTP server returned status %s: %s", resp.Status, string(respBody))
 	}
+
 
 	reader := bufio.NewReader(resp.Body)
 	var accumulatedContent strings.Builder
@@ -261,7 +270,8 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Usage *struct {
@@ -275,6 +285,10 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		}
 
 		if len(chunk.Choices) > 0 {
+			// Thinking/reasoning models stream chain-of-thought in
+			// reasoning_content and the final answer in content.
+			// Only accumulate content — reasoning_content is internal CoT
+			// that should not appear in the output.
 			contentDelta := chunk.Choices[0].Delta.Content
 			if contentDelta != "" {
 				accumulatedContent.WriteString(contentDelta)

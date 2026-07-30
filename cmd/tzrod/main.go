@@ -81,7 +81,13 @@ func main() {
 	if cfg.SidecarEnabled || cfg.InferenceBackend.Type != "" {
 		fmt.Println("[Init] Pre-warming active inference backend in background thread...")
 		go func() {
-			_ = inference.ActiveBackend.Start(context.Background())
+			// StartActive starts both the worker (or ActiveBackend) and the
+			// router sidecar in parallel. Previously only ActiveBackend.Start()
+			// was called here, which is a no-op for remote backends, leaving
+			// the router sidecar dead and collapsing dual-sidecar routing.
+			if err := inference.StartActive(context.Background()); err != nil {
+				fmt.Fprintf(os.Stderr, "[Init] Inference backend pre-warm failed: %v\n", err)
+			}
 		}()
 	}
 

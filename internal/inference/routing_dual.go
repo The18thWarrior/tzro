@@ -59,12 +59,29 @@ func CallWorkerStream(ctx context.Context, messages []InferenceMessage, jsonSche
 // thought generation, parameter extraction, branch evaluation, binding resolution.
 //
 // Falls back to the worker sidecar transparently if the router is unavailable.
+//
+// IMPORTANT: This dispatches via CallRouter/CallRouterStream (which target
+// GlobalRouterModel directly) rather than GlobalRouterModel.ExecuteStructured(),
+// because ExecuteStructured checks the package-level ActiveBackend and would
+// route all calls through the remote inference backend instead of the local
+// router sidecar.
 func ExecuteRouterStructured(ctx context.Context, req StructuredInferenceRequest) (string, error) {
-	if isRouterAvailable() {
-		return GlobalRouterModel.ExecuteStructured(ctx, req)
+	var res *InferenceResult
+	var err error
+
+	if req.StreamMeta != nil {
+		res, err = CallRouterStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta)
+	} else {
+		res, err = CallRouter(ctx, req.Messages, req.JSONSchema)
 	}
-	fmt.Fprintln(os.Stderr, "[Inference] Router sidecar unavailable, falling back to worker for structured call")
-	return ExecuteWorkerStructured(ctx, req)
+
+	if err != nil {
+		return "", err
+	}
+	if res == nil {
+		return "", fmt.Errorf("router returned nil result")
+	}
+	return res.Content, nil
 }
 
 // ExecuteWorkerStructured routes a StructuredInferenceRequest through the worker

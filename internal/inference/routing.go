@@ -290,6 +290,8 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			var localRes *InferenceResult
 			var err error
 
+
+
 			if ActiveBackend != nil {
 				if req.StreamMeta != nil {
 					localRes, err = ActiveBackend.CallModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta)
