@@ -98,6 +98,7 @@ type ExecutionGraph struct {
 	MaxCycles      int             `json:"maxCycles"`
 	CreatedAt      int64           `json:"createdAt"`
 	MutationBudget *MutationBudget `json:"mutationBudget,omitempty"` // ADR-0024: per-task spawn budget
+	IsForeground   bool            `json:"isForeground,omitempty"`   // ADR-0063: foreground tasks get compute priority
 }
 
 // MutationBudget bounds dynamic graph expansion at runtime (ADR-0024).

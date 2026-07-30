@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 	"tzro/internal/config"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 	"tzro/internal/telemetry"
 )
@@ -120,6 +121,21 @@ var GlobalRouterModel = &LocalModelManager{
 // GlobalLocalModel is a backward-compatibility alias for GlobalWorkerModel.
 // Deprecated: Use GlobalWorkerModel or GlobalRouterModel directly.
 var GlobalLocalModel = GlobalWorkerModel
+
+// init registers foreground preemption hooks with the proactivity system.
+// When a foreground task registers, the sidecar's KV cache is saved and cleared.
+// When all foreground tasks complete, the cache is restored.
+func init() {
+	proactivity.RegisterPreemptionCallback(func() {
+		// Save background KV cache state to disk so foreground gets a clean slot.
+		_ = GlobalWorkerModel.PreemptForChat(context.Background())
+	})
+
+	proactivity.RegisterResumeCallback(func() {
+		// Restore background KV cache state after foreground completes.
+		_ = GlobalWorkerModel.RestoreAfterChat(context.Background())
+	})
+}
 
 // sidecarFilePrefix returns the filesystem prefix for this sidecar's lock/port files.
 // Router: .llama-router  Worker: .llama-server (backward compatible)

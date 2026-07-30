@@ -1,6 +1,7 @@
 package proactivity
 
 import (
+	"context"
 	"sync"
 )
 
@@ -11,6 +12,11 @@ var (
 	preemptionCallbacks []func()
 	resumeCallbacks     []func()
 	callbacksMutex      sync.Mutex
+
+	// foregroundCond is broadcast when the foreground registry empties.
+	// Background callers block on this to wait for foreground to clear.
+	foregroundCond = sync.NewCond(&foregroundCondMu)
+	foregroundCondMu sync.Mutex
 )
 
 // RegisterActiveUserTask registers a task ID as a running user-initiated task.
@@ -28,7 +34,8 @@ func RegisterActiveUserTask(taskID string) {
 }
 
 // DeregisterActiveUserTask unregisters a user-initiated task ID upon completion or failure.
-// When the foreground registry becomes empty, resume callbacks are triggered.
+// When the foreground registry becomes empty, resume callbacks are triggered and
+// blocked background callers are woken via the foreground condition variable.
 func DeregisterActiveUserTask(taskID string) {
 	if taskID == "" {
 		return
@@ -39,6 +46,8 @@ func DeregisterActiveUserTask(taskID string) {
 	registryMutex.Unlock()
 
 	if empty {
+		// Wake all blocked background callers waiting for foreground to clear.
+		foregroundCond.Broadcast()
 		triggerResumeCallbacks()
 	}
 }
@@ -69,6 +78,45 @@ func TriggerPreemption() {
 			cb()
 		}
 	}
+}
+
+// ActiveForegroundCount returns the number of currently active foreground tasks.
+func ActiveForegroundCount() int {
+	registryMutex.RLock()
+	defer registryMutex.RUnlock()
+	return len(activeUserTasks)
+}
+
+// WaitForForegroundClear blocks the calling goroutine until no foreground tasks
+// are active, or the context is cancelled. Used by background task execution and
+// inference paths to yield compute to foreground tasks.
+//
+// Returns nil when foreground clears, or ctx.Err() if cancelled.
+func WaitForForegroundClear(ctx context.Context) error {
+	foregroundCondMu.Lock()
+	defer foregroundCondMu.Unlock()
+
+	for IsForegroundActive() {
+		// Wait with context cancellation support.
+		// sync.Cond doesn't support context natively, so we use a goroutine
+		// that cancels the wait when the context is done.
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				foregroundCond.Broadcast() // unblock the Wait()
+			case <-done:
+			}
+		}()
+
+		foregroundCond.Wait()
+		close(done)
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 // ClearActiveTasks clears the active user-initiated task map (mostly for testing).

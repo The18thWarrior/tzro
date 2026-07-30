@@ -183,6 +183,17 @@ func (s *SentinelAgent) Stop() {
 
 // evaluateHeartbeat runs the retrieval-grounded synthesis pipeline.
 func (s *SentinelAgent) evaluateHeartbeat(ctx context.Context) {
+	// ADR-0063: Foreground guard — defer the ENTIRE heartbeat cycle if a user task
+	// is running. This prevents workspace scanning, semantic search, and LLM
+	// synthesis from consuming I/O, CPU, and sidecar compute during active tasks.
+	if proactivity.IsForegroundActive() {
+		s.mu.Lock()
+		s.deferredHeartbeat = true
+		s.mu.Unlock()
+		fmt.Fprintf(os.Stderr, "[Sentinel] Foreground active — deferring full heartbeat\n")
+		return
+	}
+
 	fmt.Fprintf(os.Stderr, "[Sentinel] Heartbeat tick — gathering context...\n")
 
 	// 1. Gather context: workspace changes + activity reports
@@ -199,12 +210,12 @@ func (s *SentinelAgent) evaluateHeartbeat(ctx context.Context) {
 		return
 	}
 
-	// 3. Foreground guard: defer LLM synthesis if a user task is running
+	// 3. Re-check foreground before LLM synthesis (may have started during gather/retrieve)
 	if proactivity.IsForegroundActive() {
 		s.mu.Lock()
 		s.deferredHeartbeat = true
 		s.mu.Unlock()
-		fmt.Fprintf(os.Stderr, "[Sentinel] Foreground active — deferring synthesis\n")
+		fmt.Fprintf(os.Stderr, "[Sentinel] Foreground became active during retrieval — deferring synthesis\n")
 		return
 	}
 

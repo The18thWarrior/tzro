@@ -1818,7 +1818,8 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt        string `json:"prompt"`
 		TaskID        string `json:"taskId"`
-		SelfContained bool   `json:"selfContained"` // ADR-0054
+		SelfContained bool   `json:"selfContained"`  // ADR-0054
+		IsForeground  *bool  `json:"isForeground"`   // ADR-0063: defaults to true for CLI-initiated tasks
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1833,10 +1834,17 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 		req.TaskID = fmt.Sprintf("task_%d", time.Now().Unix())
 	}
 
+	// ADR-0063: CLI/REST-submitted tasks are foreground by default (user-initiated).
+	// Only mark as background if explicitly requested via isForeground: false.
+	isForeground := true
+	if req.IsForeground != nil {
+		isForeground = *req.IsForeground
+	}
+
 	execOpts := task.ExecuteOptions{
 		TaskID:        req.TaskID,
 		IntentType:    "workflow",
-		IsForeground:  false,
+		IsForeground:  isForeground,
 		SelfContained: req.SelfContained,
 	}
 

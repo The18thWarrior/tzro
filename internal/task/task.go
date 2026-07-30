@@ -115,6 +115,9 @@ func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler
 
 	_ = memory.DB.UpdateTaskStatus(opts.TaskID, "running", "")
 
+	// ADR-0063: Propagate foreground priority to the graph for executor gating
+	graph.IsForeground = opts.IsForeground
+
 	// 2. Kahn topological sorting -> levels
 	levels, err := compiler.CompileAndSort(graph)
 	if err != nil {
@@ -140,6 +143,9 @@ func ExecuteStatic(ctx context.Context, graph *compiler.ExecutionGraph, opts Exe
 		proactivity.RegisterActiveUserTask(opts.TaskID)
 		defer proactivity.DeregisterActiveUserTask(opts.TaskID)
 	}
+
+	// ADR-0063: Propagate foreground priority to the graph for executor gating
+	graph.IsForeground = opts.IsForeground
 
 	levels, err := compiler.CompileAndSort(graph)
 	if err != nil {
