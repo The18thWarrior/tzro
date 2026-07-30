@@ -19,11 +19,12 @@ import (
 
 // RemoteOpenAIBackend targets an arbitrary OpenAI-compatible model endpoint.
 type RemoteOpenAIBackend struct {
-	url       string
-	model     string
-	apiKey    string
-	client    *http.Client
-	publisher telemetry.EventPublisher
+	url          string
+	model        string
+	apiKey       string
+	schemaFormat string // "json_object" (default) | "json_schema" (OpenAI API)
+	client       *http.Client
+	publisher    telemetry.EventPublisher
 }
 
 // NewRemoteOpenAIBackend creates a new RemoteOpenAIBackend.
@@ -47,12 +48,18 @@ func NewRemoteOpenAIBackend(cfg config.BackendConfig, publisher telemetry.EventP
 		model = "qwen3.5:latest"
 	}
 
+	schemaFormat := cfg.SchemaFormat
+	if schemaFormat == "" {
+		schemaFormat = "json_object" // Default: Ollama/LMStudio convention
+	}
+
 	return &RemoteOpenAIBackend{
-		url:       url,
-		model:     model,
-		apiKey:    apiKey,
-		client:    &http.Client{}, // No fixed timeout for inference calls (relies on ctx)
-		publisher: publisher,
+		url:          url,
+		model:        model,
+		apiKey:       apiKey,
+		schemaFormat: schemaFormat,
+		client:       &http.Client{}, // No fixed timeout for inference calls (relies on ctx)
+		publisher:    publisher,
 	}
 }
 
@@ -62,6 +69,7 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 		Model          string                   `json:"model"`
 		Messages       []map[string]interface{} `json:"messages"`
 		Temperature    float64                  `json:"temperature"`
+		MaxTokens      *int                     `json:"max_tokens,omitempty"`
 		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
 	}
 
@@ -71,14 +79,13 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 		Temperature: 1.0,
 	}
 
+	// Read max_tokens from context (ADR-0043: prevent runaway generation on probe steps)
+	if maxTokens, ok := ctx.Value(MaxTokensKey).(int); ok && maxTokens > 0 {
+		reqBody.MaxTokens = &maxTokens
+	}
+
 	if jsonSchema != "" {
-		var schemaObj map[string]interface{}
-		if json.Unmarshal([]byte(jsonSchema), &schemaObj) == nil {
-			reqBody.ResponseFormat = map[string]interface{}{
-				"type":   "json_object",
-				"schema": schemaObj,
-			}
-		}
+		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -171,6 +178,7 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		Model          string                   `json:"model"`
 		Messages       []map[string]interface{} `json:"messages"`
 		Temperature    float64                  `json:"temperature"`
+		MaxTokens      *int                     `json:"max_tokens,omitempty"`
 		Stream         bool                     `json:"stream"`
 		StreamOptions  *StreamOptionsStruct     `json:"stream_options,omitempty"`
 		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
@@ -186,14 +194,13 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		},
 	}
 
+	// Read max_tokens from context (ADR-0043: prevent runaway generation on probe steps)
+	if maxTokens, ok := ctx.Value(MaxTokensKey).(int); ok && maxTokens > 0 {
+		reqBody.MaxTokens = &maxTokens
+	}
+
 	if jsonSchema != "" {
-		var schemaObj map[string]interface{}
-		if json.Unmarshal([]byte(jsonSchema), &schemaObj) == nil {
-			reqBody.ResponseFormat = map[string]interface{}{
-				"type":   "json_object",
-				"schema": schemaObj,
-			}
-		}
+		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -391,4 +398,31 @@ func (b *RemoteOpenAIBackend) getPublisher() telemetry.EventPublisher {
 		return b.publisher
 	}
 	return telemetry.Default
+}
+
+// buildResponseFormat constructs the response_format payload based on the
+// configured schemaFormat. Supports two conventions:
+//   - "json_object": Ollama/LMStudio format — { type: "json_object", schema: {...} }
+//   - "json_schema": OpenAI API format — { type: "json_schema", json_schema: { name: "response", schema: {...} } }
+func (b *RemoteOpenAIBackend) buildResponseFormat(jsonSchema string) map[string]interface{} {
+	var schemaObj map[string]interface{}
+	if json.Unmarshal([]byte(jsonSchema), &schemaObj) != nil {
+		return nil
+	}
+
+	switch b.schemaFormat {
+	case "json_schema":
+		return map[string]interface{}{
+			"type": "json_schema",
+			"json_schema": map[string]interface{}{
+				"name":   "response",
+				"schema": schemaObj,
+			},
+		}
+	default: // "json_object" or empty
+		return map[string]interface{}{
+			"type":   "json_object",
+			"schema": schemaObj,
+		}
+	}
 }

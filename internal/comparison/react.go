@@ -85,6 +85,17 @@ const reactSystemPrompt = `You are a documentation generator. You have access to
 
 const reactDatanalSystemPrompt = `You are a data analyst. You have access to filesystem tools (read_file, list_dir, search_files) to read and analyze structured data files. Read the specified data file, parse it as CSV/tabular data, and answer the question precisely. When analyzing CSV data: pay attention to column headers in the first row, handle empty/blank values explicitly, and count/group/filter as requested. Show your work — state the total record count and intermediate calculations before giving your final answer.`
 
+const reactResearchSystemPrompt = `You are a web researcher with access to web_search and web_browse tools. Your job is to find, verify, and synthesize information from the internet.
+
+IMPORTANT instructions:
+- Use web_search to find relevant sources for the research topic
+- Use web_browse to read full page content from the most promising URLs returned by search
+- Cross-reference information across multiple sources for accuracy
+- Always cite your sources with the actual URLs you visited
+- Do NOT fabricate or hallucinate URLs — only cite URLs you actually browsed
+- Synthesize findings into a coherent, well-structured analysis
+- When you have gathered enough information, output the final research synthesis as markdown`
+
 // buildReActTools creates the OpenAI-compatible tool definitions and a dispatch map.
 func buildReActTools() ([]reactToolDef, map[string]*tools.BaseAgentTool) {
 	// Create a path validator rooted at the project directory
@@ -110,6 +121,32 @@ func buildReActTools() ([]reactToolDef, map[string]*tools.BaseAgentTool) {
 		def := reactToolDef{Type: "function"}
 		def.Function.Name = name
 		def.Function.Description = getToolDescription(name)
+		def.Function.Parameters = params
+		defs = append(defs, def)
+	}
+
+	return defs, dispatch
+}
+
+// buildResearchReActTools creates tools for web research tasks: web_search and web_browse.
+func buildResearchReActTools() ([]reactToolDef, map[string]*tools.BaseAgentTool) {
+	webSearch := tools.NewWebSearchTool()
+	webBrowse := tools.NewWebBrowseTool()
+
+	dispatch := map[string]*tools.BaseAgentTool{
+		"web_search": webSearch,
+		"web_browse": webBrowse,
+	}
+
+	var defs []reactToolDef
+	for name, tool := range dispatch {
+		schema, _ := tool.GetSchema()
+		var params interface{}
+		_ = json.Unmarshal([]byte(schema), &params)
+
+		def := reactToolDef{Type: "function"}
+		def.Function.Name = name
+		def.Function.Description = getResearchToolDescription(name)
 		def.Function.Parameters = params
 		defs = append(defs, def)
 	}
@@ -161,6 +198,17 @@ func getToolDescription(name string) string {
 	}
 }
 
+func getResearchToolDescription(name string) string {
+	switch name {
+	case "web_search":
+		return "Search the web for current information. Returns a list of results with titles, URLs, and snippets."
+	case "web_browse":
+		return "Fetch a web page URL and return its text content. Use after web_search to read full page content from a search result URL."
+	default:
+		return ""
+	}
+}
+
 // RunReAct executes a ReAct loop for a single task, returning the result.
 // The loop sends messages to the cloud API, executes filesystem tools on
 // tool_call responses, appends raw uncompacted tool results, and repeats until
@@ -176,10 +224,13 @@ func RunReActWithEndpoint(ctx context.Context, task ComparisonTask, pricing Pric
 
 	toolDefs, dispatch := buildReActTools()
 
-	// Select system prompt based on task category
+	// Select system prompt and tools based on task category
 	sysPrompt := reactSystemPrompt
 	if task.Category == CategoryDatanal {
 		sysPrompt = reactDatanalSystemPrompt
+	} else if task.Category == CategoryResearch {
+		sysPrompt = reactResearchSystemPrompt
+		toolDefs, dispatch = buildResearchReActTools()
 	}
 
 	messages := []reactMessage{

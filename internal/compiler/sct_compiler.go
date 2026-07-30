@@ -110,6 +110,21 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
+				// Research tool propagation: ensure web tools reach probe nodes
+				// whose instructions indicate web research intent, even if the
+				// planner omitted them from allowedTools. Mirrors the cache tool
+				// auto-injection pattern above.
+				if node.Type == "probe" && looksLikeResearchNode(node.Instructions) {
+					webTools := []string{"web_search", "web_browse"}
+					if !hasWebToolsInAllowed(node.AllowedTools) {
+						node.AllowedTools = append(node.AllowedTools, webTools...)
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] Research tool propagation: injected web tools into %s\n", node.ID)
+					}
+					if node.ProbeConfig != nil && !hasWebToolsInAllowed(node.ProbeConfig.AllowedTools) {
+						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, webTools...)
+					}
+				}
+
 				if node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
 					node.ProbeConfig.CompactionLevel = CompactPreserve
 				}
@@ -460,4 +475,43 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 	}
 
 	return sctNodes, sctEdges
+}
+
+// researchPatterns are phrases that indicate a probe node is intended for
+// web research rather than codebase exploration.
+var researchPatterns = []string{
+	"web_search",
+	"web_browse",
+	"search the web",
+	"internet",
+	"find sources",
+	"web research",
+	"online",
+	"authoritative sources",
+	"urls",
+	"search for",
+	"browse",
+	"websites",
+}
+
+// looksLikeResearchNode returns true if the node's instructions indicate
+// web research intent rather than codebase exploration.
+func looksLikeResearchNode(instructions string) bool {
+	lower := strings.ToLower(instructions)
+	for _, pattern := range researchPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWebToolsInAllowed returns true if any of the tools are web research tools.
+func hasWebToolsInAllowed(tools []string) bool {
+	for _, tool := range tools {
+		if tool == "web_search" || tool == "web_browse" {
+			return true
+		}
+	}
+	return false
 }

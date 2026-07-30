@@ -269,7 +269,10 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 			// ADR-0040: Low-stakes requests (like validators) bypass thermal escalation
 			// to avoid burning cloud tokens on simple structured extraction.
-			if !req.IsLowStakes {
+			// Remote backends skip thermal checks entirely — local thermal state is
+			// irrelevant when inference runs on a different machine.
+			isRemoteBackend := cfg.InferenceBackend.Type == "openai-compatible"
+			if !req.IsLowStakes && !isRemoteBackend {
 				proceed, escalateToCloud := CheckThermalPressure(req.TaskID, nodeID, m)
 				if !proceed {
 					if escalateToCloud && cfg.ModelMode == "cooperative" {

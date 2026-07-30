@@ -137,6 +137,66 @@ const ThoughtChainStepSchema = `{
 	"required": ["action", "nextThought", "confidence"]
 }`
 
+// gbnfRescueActionSchema is the targeted GBNF schema for the rescue pass.
+// Intentionally minimal — just tool + arguments — to maximize extraction
+// success on the 1B router model with a tiny prompt.
+const gbnfRescueActionSchema = `{
+	"type": "object",
+	"properties": {
+		"tool": { "type": "string" },
+		"arguments": { "type": "object" }
+	},
+	"required": ["tool", "arguments"]
+}`
+
+// gbnfRescueAction attempts to extract a structured tool call from free-form
+// reasoning text using GBNF-constrained refinement. This is the two-pass rescue
+// path when Pass 1 (free-form inference) produces reasoning without an <ACTION>
+// tag. Mirrors the executor's Pass 1 → Pass 2 pattern (executor.go:694).
+//
+// Uses the router model (1B, ~1-2s) with a minimal schema for speed.
+// Returns the parsed tool name and arguments, or empty string if rescue fails.
+func gbnfRescueAction(ctx context.Context, engine ProbeInferenceEngine, rawReasoning string, allowedTools []string) (string, map[string]interface{}, error) {
+	// Truncate reasoning to keep the rescue prompt small and focused
+	reasoning := rawReasoning
+	if len(reasoning) > 1500 {
+		reasoning = reasoning[:1500]
+	}
+
+	toolList := strings.Join(allowedTools, ", ")
+	systemPrompt := "You are a precise format converter. Extract the tool call from the reasoning text. " +
+		"Output ONLY a JSON object with \"tool\" (one of the allowed tools) and \"arguments\" (the parameters)."
+	userPrompt := fmt.Sprintf("Allowed tools: [%s]\n\nReasoning text:\n%s\n\n"+
+		"Extract the intended tool call as JSON.", toolList, reasoning)
+
+	rescueMessages := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	// Use a tight max_tokens and the GBNF schema to constrain output
+	rescueCtx := context.WithValue(ctx, inference.MaxTokensKey, 512)
+	result, err := engine.InferMessages(rescueCtx, rescueMessages, gbnfRescueActionSchema)
+	if err != nil {
+		return "", nil, fmt.Errorf("gbnf rescue inference failed: %w", err)
+	}
+
+	// Parse the GBNF-constrained output
+	var parsed struct {
+		Tool      string                 `json:"tool"`
+		Arguments map[string]interface{} `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		return "", nil, fmt.Errorf("gbnf rescue parse failed: %w", err)
+	}
+
+	if parsed.Tool == "" {
+		return "", nil, fmt.Errorf("gbnf rescue produced empty tool name")
+	}
+
+	return parsed.Tool, parsed.Arguments, nil
+}
+
 // RunProbe executes a Probe Node's Thought Chain loop.
 //
 // Each step:
@@ -523,12 +583,10 @@ func RunProbe(
 	// Use 4:1 as a conservative estimate (actual ratio may be lower for CSV data).
 	contextBudgetChars := availableForUser * 4
 
-	// ADR-0058: No-action retry counter. Steps without an <ACTION> tag
-	// are protocol violations — we retry with a corrective prompt instead
-	// of burning a step slot. Capped at 1 retry to avoid 3x slowdown when
-	// the model enters a degenerate rambling state (observed in results-full-5).
-	const maxNoActionRetries = 1
-	noActionRetries := 0
+	// GBNF rescue tracking: count consecutive rescue failures to avoid
+	// infinite rescue loops. Reset on any successful action.
+	gbnfRescueFailures := 0
+	const maxGBNFRescueFailures = 2 // After 2 consecutive failures, burn steps directly
 
 	for step := 1; step <= stepBudget; step++ {
 		// ADR-0059: Build fixed-context-window prompt per step.
@@ -947,26 +1005,33 @@ func RunProbe(
 				}
 			} else {
 				lastToolOutput = toolOutput
-				noActionRetries = 0 // Reset on valid action
+				gbnfRescueFailures = 0 // Reset on valid action
 			}
 		} else if isSynthesisReady {
 			lastToolOutput = "Synthesis readiness signaled."
-			noActionRetries = 0 // Reset on valid action
+			gbnfRescueFailures = 0 // Reset on valid action
 		} else {
-			// ADR-0058: No-action retry. "Reasoning without acting" is not a
-			// valid Thought Chain execution pattern. The contract is think → act → observe.
-			noActionRetries++
+			// No-action detected: the model produced reasoning without an <ACTION> tag.
+			// Instead of re-prompting with a corrective text hint (ADR-0058 original),
+			// run a GBNF-constrained rescue pass to extract a structured tool call
+			// from the reasoning text. This is the two-pass pattern from executor.go:694.
 
 			// Rambling guard: if the response length suggests the model hit max_tokens,
-			// it's in a degenerate state (observed: 2048 tokens of reasoning without
-			// ACTION tag). Retrying just 3x's the step cost (~100s × 3 = ~300s per step).
-			// Skip retries entirely and burn the step immediately.
+			// it's in a degenerate state. Skip rescue entirely and burn the step.
 			maxTokens := cfgpkg.GetProbeStepMaxTokens()
 			isRambling := len(rawResponse) >= maxTokens*3 // conservative: 3+ chars/token average
 
-			if !isRambling && noActionRetries <= maxNoActionRetries {
-				// ADR-0058: For Analyze Nodes, attempt SQL auto-extraction from
-				// the model's reasoning text before falling back to corrective prompt.
+			if isRambling {
+				fmt.Fprintf(os.Stderr, "[Probe] No-action + rambling detected at step %d (response %d chars, max_tokens %d) — burning step\n", step, len(rawResponse), maxTokens)
+				lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
+			} else if gbnfRescueFailures >= maxGBNFRescueFailures {
+				// Too many consecutive rescue failures — the model is stuck in a
+				// non-actionable reasoning loop. Burn and move on.
+				fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue failures exhausted (%d) at step %d — burning step\n", gbnfRescueFailures, step)
+				lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
+			} else {
+				// ADR-0058: For Analyze Nodes, attempt SQL auto-extraction first
+				// (cheaper than GBNF rescue, and scoped to the closed sql_cached_data surface).
 				if isAnalyze {
 					if sql, cacheTable := extractSQLFromText(cleanedResponse); sql != "" {
 						fmt.Fprintf(os.Stderr, "[Probe] Auto-extracted SQL from reasoning text: %s (table: %s)\n", truncate(sql, 100), cacheTable)
@@ -975,7 +1040,7 @@ func RunProbe(
 						result, err := tools.Call(extractCtx, "sql_cached_data", extractArgs)
 						if err == nil {
 							lastToolOutput = result
-							noActionRetries = 0
+							gbnfRescueFailures = 0
 							// Don't decrement step — this was a successful auto-extraction
 							toolName = "sql_cached_data"
 							toolArgsStr = sql
@@ -986,32 +1051,70 @@ func RunProbe(
 					}
 				}
 
-				// Don't burn the step — decrement so the for-loop re-increment
-				// lands us at the same step position.
-				step--
-				// Build corrective prompt with available tools and the model's text
-				preview := cleanedResponse
-				if len(preview) > 300 {
-					preview = preview[:300] + "..."
+				// GBNF rescue pass: extract a structured tool call from the reasoning
+				fmt.Fprintf(os.Stderr, "[Probe] No-action at step %d — attempting GBNF rescue pass\n", step)
+				rescuedTool, rescuedArgs, rescueErr := gbnfRescueAction(ctx, engine, cleanedResponse, config.AllowedTools)
+				if rescueErr == nil && rescuedTool != "" {
+					// Rescue succeeded — validate tool is allowed and use it
+					if !allowedToolSet[rescuedTool] {
+						sanitized := sanitizeToolName(rescuedTool, allowedToolSet)
+						if sanitized != "" {
+							fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue sanitized tool: '%s' -> '%s'\n", rescuedTool, sanitized)
+							rescuedTool = sanitized
+						}
+					}
+
+					if allowedToolSet[rescuedTool] {
+						fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue succeeded at step %d: tool=%s\n", step, rescuedTool)
+						toolName = rescuedTool
+						chainStep.Action = "tool_call"
+						chainStep.Tool = rescuedTool
+						if rescuedArgs == nil {
+							rescuedArgs = map[string]interface{}{}
+						}
+						chainStep.Arguments = rescuedArgs
+						gbnfRescueFailures = 0
+
+						// Execute the rescued tool call (mirrors the normal tool dispatch path)
+						args := normalizeToolArguments(toolName, rescuedArgs)
+						args = rescueEmptyPathFromThought(toolName, args, chainStep.NextThought)
+						toolCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
+						argsJSON, _ := json.Marshal(args)
+						toolArgsStr = string(argsJSON)
+
+						result, err := tools.Call(toolCtx, toolName, args)
+						if err != nil {
+							toolOutput = fmt.Sprintf("Error: %v", err)
+							consecutiveErrors++
+							failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: toolOutput})
+						} else {
+							toolOutput = result
+							if isToolError(result) {
+								consecutiveErrors++
+								failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: truncate(result, 200)})
+							} else {
+								consecutiveErrors = 0
+								successfulToolCalls++
+								edgeEntries = append(edgeEntries, NewEdgeEntry(step, toolName, toolArgsStr, result))
+								if recorder, ok := ctx.Value(DispatchRecorderKey).(func(string, map[string]interface{})); ok {
+									recorder(toolName, args)
+								}
+								if toolName == "sql_cached_data" {
+									analyticalCallCount++
+								}
+							}
+						}
+						lastToolOutput = toolOutput
+						goto persistStep
+					}
+					// Rescued tool not in allowed set — fall through to burn
+					fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue tool '%s' not in allowed set — burning step\n", rescuedTool)
+				} else {
+					fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue failed at step %d: %v\n", step, rescueErr)
 				}
-				availableTools := strings.Join(config.AllowedTools, ", ")
-				lastToolOutput = fmt.Sprintf(
-					"NO ACTION DETECTED (retry %d/%d): Your response contained analysis but no <ACTION> tag. "+
-						"Available tools: [%s]. Reformat as a tool call using <ACTION>{\"tool\":\"...\",\"arguments\":{...}}</ACTION>, "+
-						"or output <SYNTHESIZE_READY> if done.\nYour previous response: %s",
-					noActionRetries, maxNoActionRetries, availableTools, preview)
-				fmt.Fprintf(os.Stderr, "[Probe] No-action retry %d/%d for step %d — injecting corrective prompt\n", noActionRetries, maxNoActionRetries, step+1)
-				// Don't persist this as a ThoughtStep — it's not a valid step
-				continue
+				gbnfRescueFailures++
+				lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
 			}
-			// Retries exhausted or rambling detected — burn the step
-			if isRambling {
-				fmt.Fprintf(os.Stderr, "[Probe] No-action + rambling detected at step %d (response %d chars, max_tokens %d) — skipping retry, burning step\n", step, len(rawResponse), maxTokens)
-			} else {
-				fmt.Fprintf(os.Stderr, "[Probe] No-action retries exhausted at step %d — burning step\n", step)
-			}
-			lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
-			noActionRetries = 0
 		}
 
 	persistStep:

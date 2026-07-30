@@ -146,6 +146,17 @@ type TzroModelSetArgs struct {
 }
 
 func handleTzroModelSet(ctx context.Context, req *mcp.CallToolRequest, args TzroModelSetArgs) (*mcp.CallToolResult, any, error) {
+	// Guard: model management is not available when the worker is a remote backend
+	cfg := config.Get()
+	if cfg.InferenceBackend.Type == "openai-compatible" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "Worker is configured as a remote inference backend. Model management is only available for the local llama-server sidecar."}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	// Validate: exactly one input mode
 	modes := 0
 	if args.ModelID != "" {
@@ -175,7 +186,7 @@ func handleTzroModelSet(ctx context.Context, req *mcp.CallToolRequest, args Tzro
 	}
 
 	modelsDir := config.GetModelsDir()
-	cfg := config.Get()
+	cfg = config.Get()
 	oldModelPath := cfg.GGUFModelPath
 
 	var newModelPath string

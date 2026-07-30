@@ -221,3 +221,185 @@ func TestComputeTimeBudget_UnknownType(t *testing.T) {
 		t.Errorf("expected %s for unknown type, got %s", expected, budget)
 	}
 }
+
+func TestLooksLikeResearchNode(t *testing.T) {
+	tests := []struct {
+		instructions string
+		want         bool
+	}{
+		{"Search the web for the latest AI orchestration frameworks", true},
+		{"Use web_search to find authoritative sources on Go CVEs", true},
+		{"Browse the official documentation and extract pricing info", true},
+		{"Find sources discussing GGUF quantization techniques online", true},
+		{"Search for market trends in local-first inference on the internet", true},
+		{"Read the codebase and summarize the architecture", false},
+		{"Explore the directory structure and list all Go files", false},
+		{"Analyze the CSV data and compute averages", false},
+		{"Write a function that calculates compound interest", false},
+	}
+
+	for _, tt := range tests {
+		got := looksLikeResearchNode(tt.instructions)
+		if got != tt.want {
+			preview := tt.instructions
+			if len(preview) > 50 {
+				preview = preview[:50]
+			}
+			t.Errorf("looksLikeResearchNode(%q) = %v, want %v", preview, got, tt.want)
+		}
+	}
+}
+
+func TestHasWebToolsInAllowed(t *testing.T) {
+	if !hasWebToolsInAllowed([]string{"read_file", "web_search"}) {
+		t.Error("should detect web_search")
+	}
+	if !hasWebToolsInAllowed([]string{"web_browse", "list_dir"}) {
+		t.Error("should detect web_browse")
+	}
+	if hasWebToolsInAllowed([]string{"read_file", "list_dir", "search_files"}) {
+		t.Error("should not match codebase tools")
+	}
+	if hasWebToolsInAllowed([]string{}) {
+		t.Error("should not match empty list")
+	}
+}
+
+func TestResearchToolPropagation_InjectsWebTools(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_research_propagation",
+		Nodes: []GraphNode{
+			{
+				ID:           "search_frameworks",
+				Type:         "probe",
+				Instructions: "Search the web for the top 3 LLM orchestration frameworks and find authoritative sources.",
+				AllowedTools: []string{"read_file", "list_dir"}, // Planner forgot web tools
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Search the web for LLM frameworks",
+					AllowedTools: []string{"read_file", "list_dir"},
+					StepBudget:   15,
+					CompactEvery: 3,
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Find the probe node in the expanded graph
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "search_frameworks" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found in expanded graph")
+	}
+
+	// Verify web tools were injected into AllowedTools
+	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("expected web tools in AllowedTools, got: %v", probeNode.AllowedTools)
+	}
+
+	// Verify web tools were injected into ProbeConfig.AllowedTools
+	if probeNode.ProbeConfig == nil {
+		t.Fatal("ProbeConfig should not be nil")
+	}
+	if !hasWebToolsInAllowed(probeNode.ProbeConfig.AllowedTools) {
+		t.Errorf("expected web tools in ProbeConfig.AllowedTools, got: %v", probeNode.ProbeConfig.AllowedTools)
+	}
+}
+
+func TestResearchToolPropagation_DoesNotInjectForCodebaseProbe(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_no_research_propagation",
+		Nodes: []GraphNode{
+			{
+				ID:           "explore_codebase",
+				Type:         "probe",
+				Instructions: "Read the codebase and explain the architecture of the executor package.",
+				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Explore the executor package",
+					AllowedTools: []string{"read_file", "list_dir", "search_files"},
+					StepBudget:   20,
+					CompactEvery: 3,
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "explore_codebase" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Should NOT have web tools injected
+	if hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("web tools should NOT be injected for codebase exploration, got: %v", probeNode.AllowedTools)
+	}
+}
+
+func TestResearchToolPropagation_NoDoubleInjection(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_no_double_injection",
+		Nodes: []GraphNode{
+			{
+				ID:           "search_node",
+				Type:         "probe",
+				Instructions: "Search the web for Go security vulnerabilities",
+				AllowedTools: []string{"web_search", "web_browse"}, // Already has web tools
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Search for Go CVEs",
+					AllowedTools: []string{"web_search", "web_browse"},
+					StepBudget:   15,
+					CompactEvery: 3,
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "search_node" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Count web_search occurrences — should be exactly 1 (no double injection)
+	count := 0
+	for _, tool := range probeNode.AllowedTools {
+		if tool == "web_search" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 web_search in AllowedTools, got %d (tools: %v)", count, probeNode.AllowedTools)
+	}
+}
+

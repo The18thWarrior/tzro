@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -19,6 +20,9 @@ var codegenTaskDataFS embed.FS
 
 //go:embed testdata/datanal_tasks.json
 var datanalTaskDataFS embed.FS
+
+//go:embed testdata/research_tasks.json
+var researchTaskDataFS embed.FS
 
 //go:embed testdata/codegen_seeds/*
 var codegenSeedsFS embed.FS
@@ -41,6 +45,8 @@ func LoadTasksByCategory(category string, tierFilter int) ([]ComparisonTask, err
 		data, err = codegenTaskDataFS.ReadFile("testdata/codegen_tasks.json")
 	case CategoryDatanal:
 		data, err = datanalTaskDataFS.ReadFile("testdata/datanal_tasks.json")
+	case CategoryResearch:
+		data, err = researchTaskDataFS.ReadFile("testdata/research_tasks.json")
 	case CategoryDocgen, "":
 		data, err = docgenTaskDataFS.ReadFile("testdata/docgen_tasks.json")
 	default:
@@ -113,6 +119,9 @@ func conditionsForCategory(category, conditionOverride string) []string {
 	if category == CategoryDatanal {
 		return DatanalConditions()
 	}
+	if category == CategoryResearch {
+		return ResearchConditions()
+	}
 	return AllConditions()
 }
 
@@ -149,7 +158,7 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 	switch opts.Category {
 	case CategoryAll:
 		// Run both categories with their respective condition sets
-		for _, cat := range []string{CategoryDocgen, CategoryCodegen, CategoryDatanal} {
+		for _, cat := range []string{CategoryDocgen, CategoryCodegen, CategoryDatanal, CategoryResearch} {
 			tasks, err := LoadTasksByCategory(cat, opts.Tier)
 			if err != nil {
 				// If a category has no tasks for this tier, skip it rather than failing
@@ -310,6 +319,14 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 	if opts.OutputDir != "" {
 		if err := GenerateReport(allResults, opts.OutputDir); err != nil {
 			fmt.Fprintf(os.Stderr, "[Comparison] Report generation failed: %v\n", err)
+		}
+
+		// Clean up the test_outputs directory now that all results have been
+		// captured and the report generated. These intermediate files (DAG
+		// outputs, codegen artifacts, etc.) are no longer needed.
+		testOutputsDir := filepath.Join(opts.OutputDir, "test_outputs")
+		if err := os.RemoveAll(testOutputsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "[Comparison] Failed to clean up test_outputs: %v\n", err)
 		}
 	}
 

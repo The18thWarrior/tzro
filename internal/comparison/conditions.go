@@ -270,6 +270,12 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		fmt.Fprintf(os.Stderr, "[Comparison] Codegen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
 	} else if t.Category == CategoryDocgen {
 		fmt.Fprintf(os.Stderr, "[Comparison] Docgen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
+	} else if t.Category == CategoryResearch {
+		// Research tasks use web_search and web_browse for internet research.
+		// Register these tools so the DAG planner can include them.
+		tools.Register(tools.NewWebSearchTool())
+		tools.Register(tools.NewWebBrowseTool())
+		fmt.Fprintf(os.Stderr, "[Comparison] Research task %s: web_search + web_browse registered\n", t.ID)
 	}
 
 	// Initialize inference backend for Probe Node execution.
@@ -336,6 +342,9 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	} else if t.Category == CategoryDatanal {
 		// For datanal tasks, the CSV file is at helpers/LeadSuccess.csv relative to the project root.
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: The data file is located in the project directory at: %s/helpers/LeadSuccess.csv", taskPrompt, projectRoot)
+	} else if t.Category == CategoryResearch {
+		// For research tasks, instruct the model to use web tools and cite sources.
+		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: You have access to web_search and web_browse tools. Use web_search to find relevant sources, then use web_browse to read full page content from the most promising URLs. Always cite your sources with the actual URLs you visited. Do not fabricate or hallucinate URLs.", taskPrompt)
 	}
 
 	startTime := time.Now()

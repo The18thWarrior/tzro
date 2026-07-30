@@ -26,7 +26,7 @@ var (
 var compareCmd = &cobra.Command{
 	Use:   "compare",
 	Short: "Run comparison benchmark: Cloud ReAct vs tzro hybrid execution",
-	Long:  `Measure cloud token consumption, dollar cost, wall-clock time, and output quality across execution conditions using documentation generation (docgen), code generation (codegen), and data analysis (datanal) tasks. By default runs all three task suites.`,
+	Long:  `Measure cloud token consumption, dollar cost, wall-clock time, and output quality across execution conditions using documentation generation (docgen), code generation (codegen), data analysis (datanal), and web research (research) tasks. By default runs all four task suites.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 
@@ -52,6 +52,9 @@ var compareCmd = &cobra.Command{
 				seen[c] = true
 			}
 			for _, c := range comparison.DatanalConditions() {
+				seen[c] = true
+			}
+			for _, c := range comparison.ResearchConditions() {
 				seen[c] = true
 			}
 			if seen[compareCondition] {
@@ -83,7 +86,7 @@ var compareCmd = &cobra.Command{
 		if compareCategory != "" {
 			fmt.Fprintf(out, "Category:   %s only\n", compareCategory)
 		} else {
-			fmt.Fprintf(out, "Category:   All (docgen + codegen + datanal)\n")
+			fmt.Fprintf(out, "Category:   All (docgen + codegen + datanal + research)\n")
 		}
 		if compareTier > 0 {
 			fmt.Fprintf(out, "Tier:       T%d only\n", compareTier)
@@ -176,7 +179,7 @@ func init() {
 	defaultPricing := comparison.DefaultPricing()
 
 	compareCmd.Flags().StringVarP(&compareOutputDir, "output", "o", "", "Output directory for results (required)")
-	compareCmd.Flags().StringVar(&compareCategory, "category", "", "Task category: docgen, codegen, datanal, or empty for all (default: all)")
+	compareCmd.Flags().StringVar(&compareCategory, "category", "", "Task category: docgen, codegen, datanal, research, or empty for all (default: all)")
 	compareCmd.Flags().IntVarP(&compareTier, "tier", "t", 0, "Run a specific tier (1-5), or 0 for all")
 	compareCmd.Flags().StringVarP(&compareCondition, "condition", "c", "", "Run a specific condition (cloud_react, local_react, cloud_dag, local_only, cooperative, tzro_code, cloud_code)")
 	compareCmd.Flags().StringVar(&compareTask, "task", "", "Run a specific task ID")

@@ -13,7 +13,8 @@
     "type": "",
     "url": "",
     "model": "",
-    "apiKey": ""
+    "apiKey": "",
+    "schemaFormat": ""
   },
   "confidenceThreshold": 3,
   "executorNodeDelayMs": 800,

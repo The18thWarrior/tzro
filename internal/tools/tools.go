@@ -234,6 +234,7 @@ func Init(configPath string) error {
 
 	Register(&ListToolsTool{})
 	Register(NewWebSearchTool())
+	Register(NewWebBrowseTool())
 	Register(NewSearchKBTool())
 	Register(NewQueryKGTool())
 	Register(NewIngestKGTool())

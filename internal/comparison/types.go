@@ -16,10 +16,11 @@ const (
 
 // Task category constants.
 const (
-	CategoryAll     = "" // Run both docgen and codegen
-	CategoryDocgen  = "docgen"
-	CategoryCodegen = "codegen"
-	CategoryDatanal = "datanal"
+	CategoryAll      = "" // Run all categories
+	CategoryDocgen   = "docgen"
+	CategoryCodegen  = "codegen"
+	CategoryDatanal  = "datanal"
+	CategoryResearch = "research"
 )
 
 // AllConditions returns the canonical ordered list of condition IDs
@@ -35,6 +36,11 @@ func CodegenConditions() []string {
 
 // DatanalConditions returns all conditions applicable to data analysis benchmarks.
 func DatanalConditions() []string {
+	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
+}
+
+// ResearchConditions returns all conditions applicable to web research benchmarks.
+func ResearchConditions() []string {
 	return []string{ConditionCloudReAct, ConditionCloudDAGRaw, ConditionCloudDAG, ConditionLocalOnly, ConditionCooperative}
 }
 

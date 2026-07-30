@@ -128,10 +128,11 @@ type EngineConfig struct {
 }
 
 type BackendConfig struct {
-	Type   string `json:"type"`   // "llama-server" | "openai-compatible"
-	URL    string `json:"url"`    // Remote endpoint URL
-	Model  string `json:"model"`  // Model name/ID
-	APIKey string `json:"apiKey"` // Optional, supports $VAR
+	Type         string `json:"type"`                   // "llama-server" | "openai-compatible"
+	URL          string `json:"url"`                    // Remote endpoint URL
+	Model        string `json:"model"`                  // Model name/ID
+	APIKey       string `json:"apiKey"`                 // Optional, supports $VAR
+	SchemaFormat string `json:"schemaFormat,omitempty"` // "json_object" (default, Ollama/LMStudio) | "json_schema" (OpenAI API)
 }
 
 func detectTzroDir() string {
