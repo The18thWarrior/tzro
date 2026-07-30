@@ -403,3 +403,131 @@ func TestResearchToolPropagation_NoDoubleInjection(t *testing.T) {
 	}
 }
 
+func TestSourceHint_WebInjectsTools(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_source_hint_web",
+		Nodes: []GraphNode{
+			{
+				ID:           "web_research",
+				Type:         "probe",
+				Instructions: "Research AI frameworks", // Generic — no web keywords
+				AllowedTools: []string{"read_file"},    // No web tools
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Research AI frameworks",
+					AllowedTools: []string{"read_file"},
+					StepBudget:   15,
+					CompactEvery: 3,
+					SourceHint:   "web", // Declarative web hint
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "web_research" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// SourceHint=web should inject web tools even without research keywords
+	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("expected web tools from SourceHint=web, got: %v", probeNode.AllowedTools)
+	}
+	if !hasWebToolsInAllowed(probeNode.ProbeConfig.AllowedTools) {
+		t.Errorf("expected web tools in ProbeConfig.AllowedTools from SourceHint=web, got: %v", probeNode.ProbeConfig.AllowedTools)
+	}
+}
+
+func TestSourceHint_FilesystemDefault(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_source_hint_filesystem",
+		Nodes: []GraphNode{
+			{
+				ID:           "explore_code",
+				Type:         "probe",
+				Instructions: "Explore the project structure",
+				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Explore the project",
+					AllowedTools: []string{"read_file", "list_dir", "search_files"},
+					StepBudget:   20,
+					CompactEvery: 3,
+					SourceHint:   "filesystem", // Explicit filesystem hint
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "explore_code" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Filesystem hint should NOT inject web tools
+	if hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("filesystem SourceHint should NOT inject web tools, got: %v", probeNode.AllowedTools)
+	}
+}
+
+func TestSourceHint_EmptyFallsBackToHeuristic(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_source_hint_empty",
+		Nodes: []GraphNode{
+			{
+				ID:           "search_implicit",
+				Type:         "probe",
+				Instructions: "Search the web for Go security best practices and find authoritative sources",
+				AllowedTools: []string{"read_file"},
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Search for security best practices",
+					AllowedTools: []string{"read_file"},
+					StepBudget:   15,
+					CompactEvery: 3,
+					// No SourceHint — should fall back to heuristic
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "search_implicit" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Without SourceHint, the heuristic should still detect research intent
+	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("expected heuristic fallback to inject web tools, got: %v", probeNode.AllowedTools)
+	}
+}

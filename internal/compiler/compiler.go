@@ -81,6 +81,14 @@ type ProbeConfig struct {
 	//   "focused"   — Call Graph Index, entry-point traversal, deep
 	//   "aggregate" — Content aggregation, map-reduce if needed
 	SubstrateMode string `json:"substrateMode,omitempty"`
+
+	// SourceHint controls declarative tool provisioning at the compiler level.
+	// The Kahn Compiler uses this to auto-inject the appropriate tools and
+	// select system prompt flavor for the probe.
+	//   "web"        — inject web_search, web_browse for internet research
+	//   "filesystem" — inject read_file, list_dir, search_files (default if omitted)
+	//   "cache"      — reserved for analyze nodes (not used by SourceHint dispatch)
+	SourceHint string `json:"sourceHint,omitempty"`
 }
 
 type GraphEdge struct {

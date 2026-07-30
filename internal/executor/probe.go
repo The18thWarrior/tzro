@@ -785,6 +785,11 @@ func RunProbe(
 				// goal-compress large outputs (ADR-0019 extension).
 				toolCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
 
+				// Inject ExtractedHolder so content extraction can pass
+				// rich content (images, vision descriptions) through the
+				// tool serialization boundary.
+				toolCtx, extractedHolder := tools.NewExtractedCtx(toolCtx)
+
 				// Diagnostic logging for cache tools — helps diagnose SQL generation issues
 				if toolName == "sql_cached_data" || toolName == "introspect_cache" {
 					if argsJSON, err := json.Marshal(args); err == nil {
@@ -803,6 +808,19 @@ func RunProbe(
 					}
 				} else {
 					toolOutput = result
+
+					// If the tool produced extracted content (images, PDFs, office docs),
+					// enrich the tool output with the human-readable text + image descriptions
+					// so the probe model can "see" the content.
+					if extractedHolder.Content != nil {
+						ec := extractedHolder.Content
+						if ec.Text != "" {
+							// Prepend extracted text to the JSON tool output so the model
+							// gets both the structured data AND the vision/text extraction.
+							toolOutput = fmt.Sprintf("[Extracted Content]\n%s\n\n[Tool Output]\n%s", ec.Text, result)
+						}
+					}
+
 					// Detect tool-level errors: tools return JSON with "success":false
 					// for validation failures, nonexistent paths, etc. (no Go error).
 					if isToolError(result) {

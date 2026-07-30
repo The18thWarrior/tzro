@@ -519,6 +519,9 @@ func detectDelimiter(filePath string) string {
 	for scanner.Scan() && len(lines) < 5 {
 		lines = append(lines, scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		return ","
+	}
 
 	if len(lines) == 0 {
 		return ","
@@ -652,6 +655,9 @@ func ShouldProfileJSON(filePath string) bool {
 		if lineCount > 200 {
 			return true
 		}
+	}
+	if scanner.Err() != nil {
+		return false
 	}
 	return false
 }

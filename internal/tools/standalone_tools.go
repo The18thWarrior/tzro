@@ -53,6 +53,15 @@ func (b *BaseAgentTool) Call(ctx context.Context, args map[string]interface{}) (
 		return string(b), nil
 	}
 
+	// Store Extracted content on the context-based side-channel before
+	// serialization drops it (json:"-"). The probe loop reads this via
+	// ExtractedFromCtx() after Call returns.
+	if res.Extracted != nil {
+		if holder := extractedHolderFromCtx(ctx); holder != nil {
+			holder.Content = res.Extracted
+		}
+	}
+
 	resBytes, err := json.Marshal(res)
 	if err != nil {
 		return "", err
@@ -1289,6 +1298,9 @@ func NewQueryTool() *BaseAgentTool {
 					}
 					resultList = append(resultList, rowMap)
 				}
+			}
+			if err := rows.Err(); err != nil {
+				return ToolError("rows iteration error: " + err.Error()), nil
 			}
 
 			return ToolSuccess(resultList), nil

@@ -123,7 +123,7 @@ func BuildBreadcrumbs(entries []EdgeEntry, stepBudget int, isAnalyze bool) strin
 		sb.WriteString(fmt.Sprintf("## Analysis Progress (%d/%d steps, %d successful)\n",
 			len(entries), stepBudget, successCount))
 		if len(introspected) > 0 {
-			sb.WriteString("Schema inspected: " + strings.Join(introspected, ", ") + "\n")
+			fmt.Fprintf(&sb, "Schema inspected: %s\n", strings.Join(introspected, ", "))
 		}
 		if queryCount > 0 {
 			sb.WriteString(fmt.Sprintf("Queries run: %d\n", queryCount))
@@ -139,7 +139,7 @@ func BuildBreadcrumbs(entries []EdgeEntry, stepBudget int, isAnalyze bool) strin
 				sb.WriteString(fmt.Sprintf("Files read: %s (+%d more)\n",
 					strings.Join(display, ", "), len(filesRead)-15))
 			} else {
-				sb.WriteString("Files read: " + strings.Join(display, ", ") + "\n")
+				fmt.Fprintf(&sb, "Files read: %s\n", strings.Join(display, ", "))
 			}
 		}
 		if dirsListed > 0 {

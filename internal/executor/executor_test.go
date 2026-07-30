@@ -511,7 +511,7 @@ func TestKahnLevelBranchPruningAndSkipPropagation(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fmt.Sprintf(`{
+		_, _ = w.Write(fmt.Appendf(nil, `{
 			"choices": [{
 				"message": {
 					"role": "assistant",
@@ -522,7 +522,7 @@ func TestKahnLevelBranchPruningAndSkipPropagation(t *testing.T) {
 				"prompt_tokens": 5,
 				"completion_tokens": 2
 			}
-		}`, satisfied)))
+		}`, satisfied))
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

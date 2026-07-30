@@ -26,7 +26,7 @@ func setupFilesystemTestFixtures(t *testing.T) (string, *PathValidator) {
 	// Use a simpler approach — write numbered lines
 	var content strings.Builder
 	for i := 1; i <= 600; i++ {
-		content.WriteString("line " + intToStr(i) + "\n")
+		fmt.Fprintf(&content, "line %s\n", intToStr(i))
 	}
 	if err := os.WriteFile(manyLinesPath, []byte(content.String()), 0644); err != nil {
 		t.Fatalf("failed to create many_lines.txt: %v", err)

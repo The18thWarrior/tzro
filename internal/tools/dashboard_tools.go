@@ -149,6 +149,9 @@ func (g *GatherTasksTool) Call(ctx context.Context, args map[string]interface{})
 					spotlightCandidates = append(spotlightCandidates, tid)
 				}
 			}
+			if err := rows.Err(); err != nil {
+				fmt.Fprintf(os.Stderr, "[Dashboard] rows iteration error: %v\n", err)
+			}
 		}
 	}
 

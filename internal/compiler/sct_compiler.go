@@ -110,15 +110,28 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
-				// Research tool propagation: ensure web tools reach probe nodes
-				// whose instructions indicate web research intent, even if the
-				// planner omitted them from allowedTools. Mirrors the cache tool
-				// auto-injection pattern above.
+				// SourceHint-driven tool provisioning (primary): the planner sets
+				// sourceHint on probe nodes to declaratively control tool injection.
+				if node.Type == "probe" && node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "web" {
+					webTools := []string{"web_search", "web_browse"}
+					if !hasWebToolsInAllowed(node.AllowedTools) {
+						node.AllowedTools = append(node.AllowedTools, webTools...)
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] SourceHint=web: injected web tools into %s\n", node.ID)
+					}
+					if !hasWebToolsInAllowed(node.ProbeConfig.AllowedTools) {
+						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, webTools...)
+					}
+				}
+
+				// Research tool propagation (fallback heuristic): ensure web tools reach
+				// probe nodes whose instructions indicate web research intent, even when
+				// the planner omitted sourceHint. Mirrors the cache tool auto-injection
+				// pattern above.
 				if node.Type == "probe" && looksLikeResearchNode(node.Instructions) {
 					webTools := []string{"web_search", "web_browse"}
 					if !hasWebToolsInAllowed(node.AllowedTools) {
 						node.AllowedTools = append(node.AllowedTools, webTools...)
-						fmt.Fprintf(os.Stderr, "[KahnCompiler] Research tool propagation: injected web tools into %s\n", node.ID)
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] Research heuristic fallback: injected web tools into %s\n", node.ID)
 					}
 					if node.ProbeConfig != nil && !hasWebToolsInAllowed(node.ProbeConfig.AllowedTools) {
 						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, webTools...)
