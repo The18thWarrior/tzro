@@ -281,7 +281,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	// Initialize inference backend for Probe Node execution.
 	// Without this, probe nodes fail with "no active inference backend".
 	oldBackend := inference.ActiveBackend
-	inference.ActiveBackend = inference.NewLlamaServerBackend(inference.GlobalLocalModel, telemetry.Default)
+	inference.ActiveBackend = inference.NewBackend(config.GlobalConfig.InferenceBackend, telemetry.Default)
 	defer func() {
 		inference.ActiveBackend = oldBackend
 	}()
@@ -620,7 +620,7 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 
 	// Initialize inference backend
 	oldBackend := inference.ActiveBackend
-	inference.ActiveBackend = inference.NewLlamaServerBackend(inference.GlobalLocalModel, telemetry.Default)
+	inference.ActiveBackend = inference.NewBackend(config.GlobalConfig.InferenceBackend, telemetry.Default)
 	defer func() {
 		inference.ActiveBackend = oldBackend
 	}()
