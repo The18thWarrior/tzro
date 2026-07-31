@@ -18,6 +18,11 @@ type CompactEngine interface {
 	// CompactReasoning compresses a chunk of model reasoning text
 	// into its key conclusion. Chunks are typically ≤500 chars.
 	CompactReasoning(ctx context.Context, chunk string) (string, error)
+
+	// CompactToolOutput summarizes web/text tool output into a bulleted
+	// fact list. Used by the Recall Node Refinement Pass (ADR-0064).
+	// Code segments are never sent here — they use deterministic skeletons.
+	CompactToolOutput(ctx context.Context, content string) (string, error)
 }
 
 // RouterEngine uses the 1B router model for reasoning compression.
@@ -52,6 +57,32 @@ func (r *RouterEngine) CompactReasoning(ctx context.Context, chunk string) (stri
 	return result.Content, nil
 }
 
+// CompactToolOutput summarizes web/text tool output into a bulleted fact list.
+// Uses the router model with a fact-extraction prompt (ADR-0064).
+func (r *RouterEngine) CompactToolOutput(ctx context.Context, content string) (string, error) {
+	messages := []inference.InferenceMessage{
+		{
+			Role:    "system",
+			Content: "Extract all factual claims, statistics, names, comparisons, and URLs from this text. Output as a bulleted list of facts. Omit opinions, navigation text, and boilerplate.",
+		},
+		{
+			Role:    "user",
+			Content: content,
+		},
+	}
+
+	// Cap generation: fact list should be much shorter than source
+	cappedCtx := context.WithValue(ctx, inference.MaxTokensKey, 512)
+	result, err := inference.CallRouter(cappedCtx, messages, "")
+	if err != nil {
+		return "", err
+	}
+	if result == nil {
+		return content, nil
+	}
+	return result.Content, nil
+}
+
 // PassthroughEngine returns input unchanged. Used for tests and
 // deterministic-only compaction mode.
 type PassthroughEngine struct{}
@@ -59,4 +90,9 @@ type PassthroughEngine struct{}
 // CompactReasoning returns the chunk unchanged.
 func (p *PassthroughEngine) CompactReasoning(_ context.Context, chunk string) (string, error) {
 	return chunk, nil
+}
+
+// CompactToolOutput returns the content unchanged.
+func (p *PassthroughEngine) CompactToolOutput(_ context.Context, content string) (string, error) {
+	return content, nil
 }

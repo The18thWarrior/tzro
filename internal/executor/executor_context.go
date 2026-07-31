@@ -187,18 +187,69 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 	if isSynthesis {
 		// Synthesis path (ADR-0044 Mechanism A):
 		// - Validator (action nodes with _validator suffix or any action) and recall nodes: untruncated
-		// - Deterministic nodes: capped at 256 chars
+		// - Deterministic nodes: capped at 256 chars (when recall/probe nodes exist)
 		// - No global ceiling
-		for i, cn := range completed {
+		//
+		// Flat-DAG detection: when no recall or probe nodes completed, the
+		// deterministic exec nodes ARE the primary data carriers (e.g., web_browse
+		// results). Capping them at 256 chars destroys the research data before
+		// synthesis ever sees it. In this case, give exec nodes a proportional
+		// budget based on their output size within a shared ceiling.
+		hasRecallOrProbe := false
+		for _, cn := range completed {
 			ntype := nodeTypeMap[cn.nodeID]
-			switch ntype {
-			case "recall":
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // untruncated
-			case "deterministic":
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, 256}
-			default:
-				// action, probe, synthesis, etc. — untruncated for synthesis caller
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+			if ntype == "recall" || ntype == "probe" || ntype == "analyze" {
+				hasRecallOrProbe = true
+				break
+			}
+		}
+
+		if !hasRecallOrProbe {
+			// Flat DAG: proportional budgets for deterministic exec nodes.
+			// Ceiling: min(nodeCount * 4096, 32000) — same formula as standard path.
+			flatCeiling := len(completed) * 4096
+			if flatCeiling > 32000 {
+				flatCeiling = 32000
+			}
+			// Sum total output size of deterministic nodes for proportional split
+			totalDetSize := 0
+			for _, cn := range completed {
+				if nodeTypeMap[cn.nodeID] == "deterministic" {
+					totalDetSize += len(cn.output)
+				}
+			}
+			for i, cn := range completed {
+				ntype := nodeTypeMap[cn.nodeID]
+				switch ntype {
+				case "deterministic":
+					if totalDetSize > 0 {
+						proportional := (len(cn.output) * flatCeiling) / totalDetSize
+						if proportional < 512 {
+							proportional = 512 // floor: enough for meaningful content
+						}
+						budgeted[i] = budgetEntry{cn.nodeID, cn.output, proportional}
+					} else {
+						budgeted[i] = budgetEntry{cn.nodeID, cn.output, 256}
+					}
+				default:
+					// action, recall, probe, synthesis — untruncated
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				}
+			}
+		} else {
+			// Standard synthesis: recall/probe nodes carry the data;
+			// exec nodes are passthrough and can be aggressively compacted.
+			for i, cn := range completed {
+				ntype := nodeTypeMap[cn.nodeID]
+				switch ntype {
+				case "recall":
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // untruncated
+				case "deterministic":
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, 256}
+				default:
+					// action, probe, synthesis, etc. — untruncated for synthesis caller
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				}
 			}
 		}
 	} else {

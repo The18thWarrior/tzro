@@ -467,6 +467,7 @@ When the request involves open-ended exploration where each step depends on what
 
 ### Analyze Node Guidance:
 When the request involves analyzing, aggregating, filtering, counting, grouping, ranking, or summarizing data from a file or upstream data source, you MUST emit a node of type "analyze" instead of guessing tool names for data operations. The analyze node runs an internal data exploration loop and handles data access automatically. Set the "instructions" field to describe the analysis goal in natural language (e.g., "Count leads by country, return top 5 sorted by count"). Do NOT specify allowedTools or probeConfig for analyze nodes — the execution engine provisions them automatically. For analyze tasks that require reading a file first, plan an upstream action node with read_file, then an analyze node downstream.
+IMPORTANT: The "analyze" node type is ONLY for structured/tabular data operations (CSV files, database tables, cached data profiles with a cacheId). Do NOT use "analyze" for synthesizing, comparing, or reasoning about web search results, web page content, or textual research findings. For those, use a "synthesis" node or include the reasoning step in the probe's instructions. If the upstream nodes use web_search or web_browse, the downstream reasoning step MUST NOT be an analyze node.
 
 ## Design Rules:
 1. Strategy only: You NEVER execute tools yourself. Plan the steps logically.

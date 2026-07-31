@@ -417,7 +417,7 @@ func (b *RemoteOpenAIBackend) getPublisher() telemetry.EventPublisher {
 // buildResponseFormat constructs the response_format payload based on the
 // configured schemaFormat. Supports two conventions:
 //   - "json_object": Ollama/LMStudio format — { type: "json_object", schema: {...} }
-//   - "json_schema": OpenAI API format — { type: "json_schema", json_schema: { name: "response", schema: {...} } }
+//   - "json_schema" (default): OpenAI/Google/Anthropic API format — { type: "json_schema", json_schema: { name: "response", schema: {...} } }
 func (b *RemoteOpenAIBackend) buildResponseFormat(jsonSchema string) map[string]interface{} {
 	var schemaObj map[string]interface{}
 	if json.Unmarshal([]byte(jsonSchema), &schemaObj) != nil {
@@ -425,18 +425,18 @@ func (b *RemoteOpenAIBackend) buildResponseFormat(jsonSchema string) map[string]
 	}
 
 	switch b.schemaFormat {
-	case "json_schema":
+	case "json_object":
+		return map[string]interface{}{
+			"type":   "json_object",
+			"schema": schemaObj,
+		}
+	default: // "json_schema" or empty — standard OpenAI/Google/Anthropic format
 		return map[string]interface{}{
 			"type": "json_schema",
 			"json_schema": map[string]interface{}{
 				"name":   "response",
 				"schema": schemaObj,
 			},
-		}
-	default: // "json_object" or empty
-		return map[string]interface{}{
-			"type":   "json_object",
-			"schema": schemaObj,
 		}
 	}
 }

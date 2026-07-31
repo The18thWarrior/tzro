@@ -2,12 +2,10 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
-	"tzro/internal/cache"
 	"tzro/internal/compactor"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
@@ -15,13 +13,26 @@ import (
 	"tzro/internal/symbols"
 )
 
-// RunRecall executes a Recall Node loop (ADR-0038).
+// RunRecall executes a Recall Node loop (ADR-0038, ADR-0064).
 // It traverses the execution history of specified upstream nodes to align and synthesize discoveries.
+//
+// ADR-0064 Loop Inversion: builds a deterministic baseline context from
+// compacted upstream ThoughtSteps BEFORE the agentic loop. The loop is now
+// a Refinement Pass that optionally enhances the baseline, not a mandatory
+// discovery pass.
 func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID string, upstreamNodeIDs []string, goal string, engine ProbeInferenceEngine) (string, error) {
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s starting for task %s (Upstream: %v)\n", recallNodeID, taskID, upstreamNodeIDs)
 
 	maxSteps := 8
 	step := 0
+
+	// ADR-0064 Mechanism C: Build deterministic baseline context BEFORE the loop.
+	// This guarantees a quality floor even if the agentic loop adds nothing.
+	compactEngine := &compactor.PassthroughEngine{} // Use passthrough for tests; RouterEngine for production
+	baselineContext, err := buildCompactedRecallContext(ctx, taskID, upstreamNodeIDs, compactEngine)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Recall] Warning: baseline compaction failed: %v\n", err)
+	}
 
 	// 1. Build initial manifest of discoveries (metadata + synthesis outputs)
 	manifest := ""
@@ -29,14 +40,11 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 		manifest += fmt.Sprintf("### Node: %s\n", nodeID)
 
 		// Include the upstream node's completed synthesis output first.
-		// This is the high-quality, already-synthesized result from the
-		// probe/analyze node — much more useful than raw step previews.
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok && state.RawOutput != "" {
 			manifest += fmt.Sprintf("#### Synthesis Output:\n%s\n\n", state.RawOutput)
 		}
 
 		// Fix 2 (Cache ID Pinning): Surface the correct cacheId explicitly
-		// so the model doesn't need to "discover" it from abbreviated context.
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
 			cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
 			combined := state.Output + "\n" + state.RawOutput
@@ -61,34 +69,42 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 		}
 	}
 
-	systemPrompt := fmt.Sprintf(`You are a Recall Node (Map Phase). Your goal is to align and synthesize discoveries from previous nodes.
+	// ADR-0064: Pre-populate refinedContext with the baseline (loop inversion).
+	// The agentic loop adds to this, never replaces it.
+	refinedContext := baselineContext
+
+	// ADR-0064: Updated prompt reflects Refinement Pass role (not discovery).
+	systemPrompt := fmt.Sprintf(`You are a Recall Node (Refinement Pass). Your goal is to review and refine the baseline summary of upstream discoveries.
 Target Goal: %s
 
-## Discovery Manifest (Tool Outputs from Upstream Nodes)
+## Baseline Summary (Auto-Compacted)
 %s
 
-You can use these tools to examine specific results in detail or record key facts:
+## Discovery Manifest (Metadata)
+%s
+
+You can use these tools to examine specific results in detail or add key facts:
 - <ACTION>{"tool": "fetch_details", "arguments": {"node_id": "id", "step_index": 0}}</ACTION>
 - <ACTION>{"tool": "update_refined_context", "arguments": {"fact": "key fact or signature found"}}</ACTION>
 
 On each step:
-1. Reason about which discovery metadata suggests a high-signal result.
-2. Fetch details for high-signal steps.
-3. Record critical findings using 'update_refined_context'.
-4. When you have aligned all necessary information and your 'Refined Discovery Context' is sufficient, output <SYNTHESIZE_READY>.
+1. Review the baseline summary. If it is sufficient, output <SYNTHESIZE_READY>.
+2. If the manifest shows high-signal steps not captured in the baseline, fetch details.
+3. Record additional critical findings using 'update_refined_context'.
+4. When the refined context is sufficient, output <SYNTHESIZE_READY>.
 
-You have a maximum of %d steps.`, goal, manifest, maxSteps)
+You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 
-	lastResult := "Manifest loaded."
-	refinedContext := ""
+	lastResult := "Baseline context loaded. Review it and determine if refinement is needed."
+
+	// Allowed tools for the Recall loop (for two-pass extraction)
+	recallTools := []string{"fetch_details", "update_refined_context"}
 
 	for step < maxSteps {
 		step++
 
-		// 1. Infer next action
-		// Include refinedContext in the prompt if not empty
 		currentPrompt := systemPrompt
-		if refinedContext != "" {
+		if refinedContext != "" && refinedContext != baselineContext {
 			currentPrompt += fmt.Sprintf("\n\n## Current Refined Discovery Context:\n%s", refinedContext)
 		}
 
@@ -97,17 +113,25 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 			return "", fmt.Errorf("recall inference failed at step %d: %w", step, err)
 		}
 
-		if strings.Contains(rawResponse, "<SYNTHESIZE_READY>") {
+		// ADR-0064: Two-Pass Tool Extraction for Recall loop
+		extractedAction, extractedTool, extractedArgs, extractErr := extractToolAction(
+			ctx, engine, rawResponse, recallTools,
+		)
+
+		if extractErr != nil {
+			lastResult = fmt.Sprintf("Action extraction failed: %v", extractErr)
+			continue
+		}
+
+		if extractedAction == "synthesize" {
 			fmt.Fprintf(os.Stderr, "[Recall] Node %s signaled synthesis readiness at step %d\n", recallNodeID, step)
 			break
 		}
 
-		// 2. Extract and execute tool call
-		action, args := extractAction(rawResponse)
-		switch action {
+		switch extractedTool {
 		case "fetch_details":
-			nodeID, _ := args["node_id"].(string)
-			stepIdx, _ := args["step_index"].(float64)
+			nodeID, _ := extractedArgs["node_id"].(string)
+			stepIdx, _ := extractedArgs["step_index"].(float64)
 
 			stepData, err := memory.DB.GetThoughtStepByProbeAndIndex(taskID+"_"+nodeID, int(stepIdx))
 			if err != nil {
@@ -116,7 +140,7 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 				lastResult = fmt.Sprintf("### Details for %s Step %d\nTool: %s\nOutput:\n%s", nodeID, int(stepIdx), stepData.ToolName, stepData.ToolOutput)
 			}
 		case "update_refined_context":
-			fact, _ := args["fact"].(string)
+			fact, _ := extractedArgs["fact"].(string)
 			if refinedContext != "" {
 				refinedContext += "\n"
 			}
@@ -132,7 +156,7 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 				}
 			}
 		default:
-			lastResult = "No valid ACTION found. Use fetch_details, update_refined_context, or SYNTHESIZE_READY."
+			lastResult = "No valid action found. Use fetch_details, update_refined_context, or signal synthesis readiness."
 		}
 
 		// Publish progress
@@ -170,15 +194,9 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 		symbolRefBlock = sb.String()
 	}
 
-	// Fix 1 (Recall Context Injection): When refinedContext is empty (the local
-	// model short-circuited to SYNTHESIZE_READY without calling update_refined_context),
-	// build an enriched fallback from actual tool outputs instead of the bare manifest
-	// which only has 100-char previews of each step.
+	// ADR-0064: The refinedContext is always populated (deterministic baseline).
+	// No need for the old buildEnrichedRecallFallback.
 	synthesisInput := refinedContext
-	if strings.TrimSpace(synthesisInput) == "" {
-		synthesisInput = buildEnrichedRecallFallback(taskID, upstreamNodeIDs, manifest)
-		fmt.Fprintf(os.Stderr, "[Recall] Node %s: enriched fallback context (%d chars)\n", recallNodeID, len(synthesisInput))
-	}
 
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
@@ -261,20 +279,7 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 	return synthesis, nil
 }
 
-func extractAction(response string) (string, map[string]interface{}) {
-	actionRe := regexp.MustCompile("(?s)<ACTION>(.*?)</ACTION>")
-	matches := actionRe.FindStringSubmatch(response)
-	if len(matches) > 1 {
-		var parsed struct {
-			Tool      string                 `json:"tool"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}
-		if err := json.Unmarshal([]byte(matches[1]), &parsed); err == nil {
-			return parsed.Tool, parsed.Arguments
-		}
-	}
-	return "", nil
-}
+
 
 func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, refinedCtx, goal string, engine ProbeInferenceEngine) (string, error) {
 	// Use the structured compactor for content-aware fact compaction.
@@ -292,61 +297,7 @@ func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, refinedCtx,
 	return result.Output, nil
 }
 
-// buildEnrichedRecallFallback constructs a rich fallback context when the Recall
-// loop's refinedContext is empty (the local model short-circuited to SYNTHESIZE_READY
-// without calling update_refined_context). Instead of falling back to the bare
-// manifest (which only has 100-char step previews), this function includes:
-//   - The upstream probe's synthesis output (from manifest)
-//   - Full tool outputs from successful probe steps (capped at 2000 chars each)
-//   - Cache introspection data if a cacheId is present
-//
-// This directly addresses the root cause of 4/5 benchmark failures where the
-// Recall node produced empty/degenerate synthesis from insufficient context.
-func buildEnrichedRecallFallback(taskID string, upstreamNodeIDs []string, manifest string) string {
-	var enriched strings.Builder
 
-	// Start with the manifest (contains synthesis output + step metadata)
-	enriched.WriteString(manifest)
-	enriched.WriteString("\n\n## Enriched Tool Outputs (Full Data)\n")
-
-	cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
-	maxOutputLen := 2000
-
-	for _, nodeID := range upstreamNodeIDs {
-		steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID)
-		if err != nil {
-			continue
-		}
-
-		for _, s := range steps {
-			if s.ToolName == "" || s.ToolOutput == "" {
-				continue
-			}
-			// Only include steps with substantive output (not error messages)
-			if strings.HasPrefix(s.ToolOutput, "Error") || strings.HasPrefix(s.ToolOutput, "No valid") {
-				continue
-			}
-			output := s.ToolOutput
-			if len(output) > maxOutputLen {
-				output = output[:maxOutputLen] + "\n... (truncated)"
-			}
-			enriched.WriteString(fmt.Sprintf("\n### Step %d: %s\nArguments: %s\nOutput:\n%s\n", s.StepIndex, s.ToolName, s.ToolArgs, output))
-		}
-
-		// Include cache introspection if available
-		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
-			combined := state.Output + "\n" + state.RawOutput
-			if cacheId := cacheIdRe.FindString(combined); cacheId != "" {
-				schema := cache.DefaultStore.Introspect(context.Background(), cacheId)
-				if schema != "" && !strings.HasPrefix(schema, "Error:") {
-					enriched.WriteString(fmt.Sprintf("\n### Cache Data Schema for %s\n%s\n", cacheId, truncate(schema, 3000)))
-				}
-			}
-		}
-	}
-
-	return enriched.String()
-}
 
 // controlTokens are internal control signals that should never appear in user-facing output.
 var controlTokens = []string{

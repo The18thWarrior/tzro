@@ -2,6 +2,23 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-07-31T10:53:00-07:00] grill-with-docs | Two-Pass Extraction, Recall Compaction, and Recall Inversion (ADR-0064)
+
+- **Activity**: Grill-with-docs session stress-testing 3 interconnected fixes to Probe and Recall execution quality, motivated by DAG shape analysis of benchmark runs 3–5 (research category). 13 design questions resolved. Produced ADR-0064.
+- **Key Findings**:
+  1. **Two-Pass Tool Extraction**: Thought Chain steps always generate free-text reasoning (Pass 1, worker) then GBNF-constrained action extraction (Pass 2, router). Eliminates the dual-path `<ACTION>` tag parsing / GBNF rescue fallback. GBNF pass uses targeted extraction (when `<ACTION>` tags exist) or full reasoning output. Schema: `{"action": "tool_call" | "synthesize", "tool": string, "arguments": object}`.
+  2. **Content-Aware Recall Compaction**: Recall fallback uses existing Compactor segmentation with new router LLM summarization for text segments ("fact-extraction" prompt). Code → skeleton, tabular → sample rows, text → bulleted facts. Analyze Node evidence exempt. Budget: 32K chars default, configurable. Failure cascade: router fact-extraction → `TruncateTextMiddleOut` → hard truncation.
+  3. **Recall Loop Inversion**: Deterministic compaction builds baseline `refinedContext` before agentic loop. Model cooperation is additive, not required. Role shifts from "Map-Reduce discovery" to "Refinement Pass." Two-pass pattern applied to Recall loop's `fetch_details`/`update_refined_context` tools.
+- **Design Decisions**:
+  - Always run GBNF pass, even when `<ACTION>` tags are valid (validation layer, ~1-2s overhead acceptable)
+  - Router summarization over hard truncation for text tool outputs (preserves information density)
+  - LLM summarization surface scoped to web/text content only; "code is never LLM-compressed" invariant preserved
+  - One ADR covering all 3 fixes (interconnected, same root cause)
+- **Docs Updated**: CONTEXT.md (Recall Node → Refinement Pass, Thought Chain → Two-Pass, Structured Compactor → Fact Extraction surface). ADR-0064 created.
+- **Supersedes**: GBNF Rescue fallback (ADR-0058 Mechanism C), Map-Reduce Recall terminology (ADR-0037).
+
+---
+
 ## [2026-07-28T22:15:00-07:00] tdd | Implement Run 6 Benchmark Fixes (ADR-0060, ADR-0061)
 
 - **Activity**: TDD implementation of 3 fixes designed during prior grill-with-docs session. 16 vertical test slices, all GREEN. Full regression (38 packages) clean.

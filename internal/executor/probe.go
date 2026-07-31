@@ -137,65 +137,7 @@ const ThoughtChainStepSchema = `{
 	"required": ["action", "nextThought", "confidence"]
 }`
 
-// gbnfRescueActionSchema is the targeted GBNF schema for the rescue pass.
-// Intentionally minimal — just tool + arguments — to maximize extraction
-// success on the 1B router model with a tiny prompt.
-const gbnfRescueActionSchema = `{
-	"type": "object",
-	"properties": {
-		"tool": { "type": "string" },
-		"arguments": { "type": "object" }
-	},
-	"required": ["tool", "arguments"]
-}`
 
-// gbnfRescueAction attempts to extract a structured tool call from free-form
-// reasoning text using GBNF-constrained refinement. This is the two-pass rescue
-// path when Pass 1 (free-form inference) produces reasoning without an <ACTION>
-// tag. Mirrors the executor's Pass 1 → Pass 2 pattern (executor.go:694).
-//
-// Uses the router model (1B, ~1-2s) with a minimal schema for speed.
-// Returns the parsed tool name and arguments, or empty string if rescue fails.
-func gbnfRescueAction(ctx context.Context, engine ProbeInferenceEngine, rawReasoning string, allowedTools []string) (string, map[string]interface{}, error) {
-	// Truncate reasoning to keep the rescue prompt small and focused
-	reasoning := rawReasoning
-	if len(reasoning) > 1500 {
-		reasoning = reasoning[:1500]
-	}
-
-	toolList := strings.Join(allowedTools, ", ")
-	systemPrompt := "You are a precise format converter. Extract the tool call from the reasoning text. " +
-		"Output ONLY a JSON object with \"tool\" (one of the allowed tools) and \"arguments\" (the parameters)."
-	userPrompt := fmt.Sprintf("Allowed tools: [%s]\n\nReasoning text:\n%s\n\n"+
-		"Extract the intended tool call as JSON.", toolList, reasoning)
-
-	rescueMessages := []inference.InferenceMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userPrompt},
-	}
-
-	// Use a tight max_tokens and the GBNF schema to constrain output
-	rescueCtx := context.WithValue(ctx, inference.MaxTokensKey, 512)
-	result, err := engine.InferMessages(rescueCtx, rescueMessages, gbnfRescueActionSchema)
-	if err != nil {
-		return "", nil, fmt.Errorf("gbnf rescue inference failed: %w", err)
-	}
-
-	// Parse the GBNF-constrained output
-	var parsed struct {
-		Tool      string                 `json:"tool"`
-		Arguments map[string]interface{} `json:"arguments"`
-	}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		return "", nil, fmt.Errorf("gbnf rescue parse failed: %w", err)
-	}
-
-	if parsed.Tool == "" {
-		return "", nil, fmt.Errorf("gbnf rescue produced empty tool name")
-	}
-
-	return parsed.Tool, parsed.Arguments, nil
-}
 
 // RunProbe executes a Probe Node's Thought Chain loop.
 //
@@ -583,10 +525,6 @@ func RunProbe(
 	// Use 4:1 as a conservative estimate (actual ratio may be lower for CSV data).
 	contextBudgetChars := availableForUser * 4
 
-	// GBNF rescue tracking: count consecutive rescue failures to avoid
-	// infinite rescue loops. Reset on any successful action.
-	gbnfRescueFailures := 0
-	const maxGBNFRescueFailures = 2 // After 2 consecutive failures, burn steps directly
 
 	for step := 1; step <= stepBudget; step++ {
 		// ADR-0059: Build fixed-context-window prompt per step.
@@ -674,25 +612,35 @@ func RunProbe(
 		var chainStep ThoughtChainStep
 		chainStep.NextThought = rawResponse // preserve full response including thinking for logs
 
-		if strings.Contains(cleanedResponse, "<SYNTHESIZE_READY>") {
+		// ADR-0064: Two-Pass Tool Extraction (Pass 2).
+		// Pass 1 (unconstrained reasoning) was the InferMessages call above.
+		// Pass 2 (GBNF-constrained extraction) determines the action.
+		extractedAction, extractedTool, extractedArgs, extractErr := extractToolAction(
+			ctx, engine, cleanedResponse, config.AllowedTools,
+		)
+
+		if extractErr != nil {
+			// GBNF extraction failed — burn the step
+			fmt.Fprintf(os.Stderr, "[Probe] Two-pass extraction failed at step %d: %v\n", step, extractErr)
+			toolOutput = fmt.Sprintf("Action extraction failed: %v. Include a clear <ACTION> tag or signal synthesis readiness.", extractErr)
+		} else if extractedAction == "synthesize" {
 			// Adaptive minimum: allow early synthesis if the probe has made
 			// substantial successful progress (successfulToolCalls >= minStepBudget - 2).
-			// This prevents forcing counter-productive extra exploration when
-			// the model has already gathered enough data.
 			adaptiveMinMet := successfulToolCalls >= minStepBudget-2 && successfulToolCalls > 0
 
 			// Phase gate (ADR-0053): analyze nodes must have at least
 			// minAnalyticalCalls successful sql_cached_data calls before
-			// synthesis is allowed. A single sampling query is insufficient.
-			phaseGateBlocked := isAnalyze && analyticalCallCount < minAnalyticalCalls
+			// synthesis is allowed.
+			cacheFutile := isAnalyze && analyticalCallCount == 0 && consecutiveErrors >= maxConsecutiveErrors
+			phaseGateBlocked := isAnalyze && analyticalCallCount < minAnalyticalCalls && !cacheFutile
+			if cacheFutile {
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s: cache-futility bypass — %d consecutive errors, 0 successful analytical calls. Allowing synthesis.\n", probeID, consecutiveErrors)
+			}
 
 			if step < minStepBudget && !adaptiveMinMet {
 				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but minimum is %d (successful calls: %d) — continuing exploration\n", probeID, step, minStepBudget, successfulToolCalls)
-				// Treat as a no-op thought step; continue the loop
 				chainStep.Action = "tool_call"
-				chainStep.NextThought = rawResponse
 				lastToolOutput = fmt.Sprintf("Synthesis signal ignored: minimum step budget is %d, currently at step %d. Continue exploring.", minStepBudget, step)
-				// Persist the thought step before continuing
 				thoughtStep := memory.ThoughtStep{
 					ID:         fmt.Sprintf("%s_step_%d", probeID, step),
 					ProbeID:    probeID,
@@ -710,9 +658,6 @@ func RunProbe(
 			if phaseGateBlocked {
 				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but phase gate blocked — only %d/%d required sql_cached_data calls. Continuing exploration.\n", probeID, step, analyticalCallCount, minAnalyticalCalls)
 				chainStep.Action = "tool_call"
-				chainStep.NextThought = rawResponse
-				// Adaptive feedback: extraction goals need SELECT with specific columns;
-				// aggregation goals need GROUP BY / COUNT.
 				var phaseGateFeedback string
 				if isExtractionGoal {
 					phaseGateFeedback = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Your goal asks for specific records/fields — run sql_cached_data queries that SELECT the actual columns mentioned in the goal (e.g., SELECT name, email FROM table WHERE condition). Do NOT just run COUNT(*) — retrieve the actual data rows the goal asks for.", analyticalCallCount, minAnalyticalCalls)
@@ -740,24 +685,11 @@ func RunProbe(
 			fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis readiness at step %d\n", probeID, step)
 			isSynthesisReady = true
 			chainStep.Action = "synthesize"
-		} else {
-			// Extract <ACTION> tag from cleaned response (think-tags already stripped)
-			actionRe := regexp.MustCompile("(?s)<ACTION>(.*?)</ACTION>")
-			matches := actionRe.FindStringSubmatch(cleanedResponse)
-			if len(matches) > 1 {
-				var parsed struct {
-					Tool      string                 `json:"tool"`
-					Arguments map[string]interface{} `json:"arguments"`
-				}
-				if err := json.Unmarshal([]byte(matches[1]), &parsed); err == nil {
-					toolName = parsed.Tool
-					chainStep.Action = "tool_call"
-					chainStep.Tool = parsed.Tool
-					chainStep.Arguments = parsed.Arguments
-				} else {
-					toolOutput = fmt.Sprintf("Error: Failed to parse ACTION JSON: %v", err)
-				}
-			}
+		} else if extractedAction == "tool_call" && extractedTool != "" {
+			toolName = extractedTool
+			chainStep.Action = "tool_call"
+			chainStep.Tool = extractedTool
+			chainStep.Arguments = extractedArgs
 		}
 
 		if chainStep.Action == "tool_call" && toolName != "" {
@@ -1023,119 +955,18 @@ func RunProbe(
 				}
 			} else {
 				lastToolOutput = toolOutput
-				gbnfRescueFailures = 0 // Reset on valid action
 			}
 		} else if isSynthesisReady {
 			lastToolOutput = "Synthesis readiness signaled."
-			gbnfRescueFailures = 0 // Reset on valid action
 		} else {
-			// No-action detected: the model produced reasoning without an <ACTION> tag.
-			// Instead of re-prompting with a corrective text hint (ADR-0058 original),
-			// run a GBNF-constrained rescue pass to extract a structured tool call
-			// from the reasoning text. This is the two-pass pattern from executor.go:694.
-
-			// Rambling guard: if the response length suggests the model hit max_tokens,
-			// it's in a degenerate state. Skip rescue entirely and burn the step.
-			maxTokens := cfgpkg.GetProbeStepMaxTokens()
-			isRambling := len(rawResponse) >= maxTokens*3 // conservative: 3+ chars/token average
-
-			if isRambling {
-				fmt.Fprintf(os.Stderr, "[Probe] No-action + rambling detected at step %d (response %d chars, max_tokens %d) — burning step\n", step, len(rawResponse), maxTokens)
-				lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
-			} else if gbnfRescueFailures >= maxGBNFRescueFailures {
-				// Too many consecutive rescue failures — the model is stuck in a
-				// non-actionable reasoning loop. Burn and move on.
-				fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue failures exhausted (%d) at step %d — burning step\n", gbnfRescueFailures, step)
-				lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
-			} else {
-				// ADR-0058: For Analyze Nodes, attempt SQL auto-extraction first
-				// (cheaper than GBNF rescue, and scoped to the closed sql_cached_data surface).
-				if isAnalyze {
-					if sql, cacheTable := extractSQLFromText(cleanedResponse); sql != "" {
-						fmt.Fprintf(os.Stderr, "[Probe] Auto-extracted SQL from reasoning text: %s (table: %s)\n", truncate(sql, 100), cacheTable)
-						extractArgs := map[string]interface{}{"sql": sql}
-						extractCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
-						result, err := tools.Call(extractCtx, "sql_cached_data", extractArgs)
-						if err == nil {
-							lastToolOutput = result
-							gbnfRescueFailures = 0
-							// Don't decrement step — this was a successful auto-extraction
-							toolName = "sql_cached_data"
-							toolArgsStr = sql
-							toolOutput = result
-							goto persistStep
-						}
-						fmt.Fprintf(os.Stderr, "[Probe] Auto-extracted SQL failed: %v\n", err)
-					}
-				}
-
-				// GBNF rescue pass: extract a structured tool call from the reasoning
-				fmt.Fprintf(os.Stderr, "[Probe] No-action at step %d — attempting GBNF rescue pass\n", step)
-				rescuedTool, rescuedArgs, rescueErr := gbnfRescueAction(ctx, engine, cleanedResponse, config.AllowedTools)
-				if rescueErr == nil && rescuedTool != "" {
-					// Rescue succeeded — validate tool is allowed and use it
-					if !allowedToolSet[rescuedTool] {
-						sanitized := sanitizeToolName(rescuedTool, allowedToolSet)
-						if sanitized != "" {
-							fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue sanitized tool: '%s' -> '%s'\n", rescuedTool, sanitized)
-							rescuedTool = sanitized
-						}
-					}
-
-					if allowedToolSet[rescuedTool] {
-						fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue succeeded at step %d: tool=%s\n", step, rescuedTool)
-						toolName = rescuedTool
-						chainStep.Action = "tool_call"
-						chainStep.Tool = rescuedTool
-						if rescuedArgs == nil {
-							rescuedArgs = map[string]interface{}{}
-						}
-						chainStep.Arguments = rescuedArgs
-						gbnfRescueFailures = 0
-
-						// Execute the rescued tool call (mirrors the normal tool dispatch path)
-						args := normalizeToolArguments(toolName, rescuedArgs)
-						args = rescueEmptyPathFromThought(toolName, args, chainStep.NextThought)
-						toolCtx := context.WithValue(ctx, tools.FileReadGoalKey, config.Goal)
-						argsJSON, _ := json.Marshal(args)
-						toolArgsStr = string(argsJSON)
-
-						result, err := tools.Call(toolCtx, toolName, args)
-						if err != nil {
-							toolOutput = fmt.Sprintf("Error: %v", err)
-							consecutiveErrors++
-							failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: toolOutput})
-						} else {
-							toolOutput = result
-							if isToolError(result) {
-								consecutiveErrors++
-								failedToolDetails = append(failedToolDetails, failedDetail{step: step, tool: toolName, errMsg: truncate(result, 200)})
-							} else {
-								consecutiveErrors = 0
-								successfulToolCalls++
-								edgeEntries = append(edgeEntries, NewEdgeEntry(step, toolName, toolArgsStr, result))
-								if recorder, ok := ctx.Value(DispatchRecorderKey).(func(string, map[string]interface{})); ok {
-									recorder(toolName, args)
-								}
-								if toolName == "sql_cached_data" {
-									analyticalCallCount++
-								}
-							}
-						}
-						lastToolOutput = toolOutput
-						goto persistStep
-					}
-					// Rescued tool not in allowed set — fall through to burn
-					fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue tool '%s' not in allowed set — burning step\n", rescuedTool)
-				} else {
-					fmt.Fprintf(os.Stderr, "[Probe] GBNF rescue failed at step %d: %v\n", step, rescueErr)
-				}
-				gbnfRescueFailures++
-				lastToolOutput = "No valid <ACTION> tag found. You must either output <ACTION>...</ACTION> or <SYNTHESIZE_READY>."
+			// Two-pass extraction returned no actionable result — burn the step
+			if toolOutput == "" {
+				toolOutput = "No valid action extracted from reasoning."
 			}
+			lastToolOutput = toolOutput
 		}
 
-	persistStep:
+
 		thoughtStep := memory.ThoughtStep{
 			ID:         fmt.Sprintf("%s_step_%d", probeID, step),
 			ProbeID:    probeID,
@@ -1254,7 +1085,21 @@ You have completed your exploration. Review the findings and produce a comprehen
 	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
 	result, err := engine.Infer(synthCtx, systemPrompt, contextStr, synthSchema)
 	if err != nil {
-		return "Synthesis inference failed: " + err.Error(), nil
+		fmt.Fprintf(os.Stderr, "[Probe] Primary synthesis engine failed: %v. Attempting cloud escalation.\n", err)
+		if !isCloudEscalationBlocked() {
+			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: contextStr},
+			}, synthSchema, taskID)
+			if cloudErr == nil {
+				fmt.Fprintf(os.Stderr, "[Probe] Cloud escalation succeeded for synthesis after engine failure (%d chars)\n", len(cloudResult))
+				result = cloudResult
+			} else {
+				return "Synthesis inference failed (primary: " + err.Error() + "; cloud fallback: " + cloudErr.Error() + ")", nil
+			}
+		} else {
+			return "Synthesis inference failed: " + err.Error(), nil
+		}
 	}
 
 	// Fix 3 (Synthesis Generation Guard): Validate probe synthesis output.
@@ -1988,6 +1833,8 @@ func sanitizeToolName(garbled string, allowedTools map[string]bool) string {
 	}
 	return bestMatch
 }
+
+
 
 // isToolError checks if a tool result string indicates a tool-level error.
 // Tools return JSON with "success":false for validation failures, nonexistent

@@ -103,6 +103,12 @@ type EngineConfig struct {
 	// output stays in SQLite). Default 16000. Set to 0 to use the default.
 	AccumulatedContextMaxChars int `json:"accumulatedContextMaxChars,omitempty"`
 
+	// RecallCompactionBudgetChars caps the total characters of compacted
+	// ThoughtStep tool outputs in the Recall Node Refinement Pass (ADR-0064).
+	// The Recall baseline context is compacted to fit within this budget.
+	// Default 32000. Set to 0 to use the default.
+	RecallCompactionBudgetChars int `json:"recallCompactionBudgetChars,omitempty"`
+
 	// Multi-Branch Edge Thought Evaluation (ADR-0045)
 	// MCTSMaxDepth caps the recursive AGoT spawn depth. Default 3.
 	MCTSMaxDepth int `json:"mctsMaxDepth,omitempty"`
@@ -282,6 +288,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.ThreadCount = cfg.ThreadCount
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.RecallCompactionBudgetChars = cfg.RecallCompactionBudgetChars
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
@@ -327,6 +334,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.ThreadCount = cfg.ThreadCount
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.RecallCompactionBudgetChars = cfg.RecallCompactionBudgetChars
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
@@ -690,6 +698,20 @@ func GetAccumulatedContextMaxChars() int {
 
 	if v <= 0 {
 		return 16000
+	}
+	return v
+}
+
+// GetRecallCompactionBudgetChars returns the configured max total characters for
+// the Recall Node Refinement Pass baseline context (ADR-0064).
+// Defaults to 32000 if not explicitly configured or set to a non-positive value.
+func GetRecallCompactionBudgetChars() int {
+	configMutex.RLock()
+	v := GlobalConfig.RecallCompactionBudgetChars
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 32000
 	}
 	return v
 }

@@ -53,9 +53,13 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 		Role    string      `json:"role"`
 		Content interface{} `json:"content"` // string or []ContentPart
 	}
+	type JSONSchemaWrapper struct {
+		Name   string                 `json:"name"`
+		Schema map[string]interface{} `json:"schema"`
+	}
 	type ResponseFormatStruct struct {
-		Type   string                 `json:"type"`
-		Schema map[string]interface{} `json:"schema,omitempty"`
+		Type       string             `json:"type"`
+		JSONSchema *JSONSchemaWrapper `json:"json_schema,omitempty"`
 	}
 	type CompletionRequest struct {
 		Model          string                `json:"model"`
@@ -86,7 +90,11 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 		var schemaObj map[string]interface{}
 		if json.Unmarshal([]byte(schemaStr), &schemaObj) == nil {
 			reqBody.ResponseFormat = &ResponseFormatStruct{
-				Type: "json_object",
+				Type: "json_schema",
+				JSONSchema: &JSONSchemaWrapper{
+					Name:   "response",
+					Schema: schemaObj,
+				},
 			}
 		}
 	}
@@ -187,9 +195,13 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 		IncludeUsage bool `json:"include_usage"`
 	}
 
+	type JSONSchemaWrapper struct {
+		Name   string                 `json:"name"`
+		Schema map[string]interface{} `json:"schema"`
+	}
 	type ResponseFormatStruct struct {
-		Type   string                 `json:"type"`
-		Schema map[string]interface{} `json:"schema,omitempty"`
+		Type       string             `json:"type"`
+		JSONSchema *JSONSchemaWrapper `json:"json_schema,omitempty"`
 	}
 
 	type CompletionRequest struct {
@@ -227,7 +239,11 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 		var schemaObj map[string]interface{}
 		if json.Unmarshal([]byte(schemaStr), &schemaObj) == nil {
 			reqBody.ResponseFormat = &ResponseFormatStruct{
-				Type: "json_object",
+				Type: "json_schema",
+				JSONSchema: &JSONSchemaWrapper{
+					Name:   "response",
+					Schema: schemaObj,
+				},
 			}
 		}
 	}
