@@ -277,6 +277,7 @@ func RunProbe(
 	// (regardless of which tool/args), lower the minimum step budget to allow
 	// immediate synthesis instead of burning through the budget on failing calls.
 	var consecutiveErrors int
+	var emptyQueryCount int // tracks empty web_search query extractions for seeding logic
 	const maxConsecutiveErrors = 3
 
 	// Futility detection: if ALL of the first N steps return errors with zero
@@ -311,7 +312,11 @@ func RunProbe(
 	const minAnalyticalCalls = 2
 	var analyticalCallCount int
 	isAnalyze := isAnalyzeConfig(config.AllowedTools)
-	isExtractionGoal := isAnalyze && goalImpliesExtraction(config.Goal)
+	// Phase gate only applies when sql_cached_data is actually available.
+	// Research probes that happen to have introspect_cache but no sql_cached_data
+	// should not be blocked by the analytical call requirement.
+	phaseGateApplies := isAnalyze && containsTool(config.AllowedTools, "sql_cached_data")
+	isExtractionGoal := phaseGateApplies && goalImpliesExtraction(config.Goal)
 
 	// Analytical Evidence (ADR-0053): structured raw data from successful
 	// sql_cached_data calls, materialized into the task result alongside synthesis.
@@ -616,7 +621,7 @@ func RunProbe(
 		// Pass 1 (unconstrained reasoning) was the InferMessages call above.
 		// Pass 2 (GBNF-constrained extraction) determines the action.
 		extractedAction, extractedTool, extractedArgs, extractErr := extractToolAction(
-			ctx, engine, cleanedResponse, config.AllowedTools,
+			ctx, engine, cleanedResponse, config.AllowedTools, config.Goal,
 		)
 
 		if extractErr != nil {
@@ -631,8 +636,8 @@ func RunProbe(
 			// Phase gate (ADR-0053): analyze nodes must have at least
 			// minAnalyticalCalls successful sql_cached_data calls before
 			// synthesis is allowed.
-			cacheFutile := isAnalyze && analyticalCallCount == 0 && consecutiveErrors >= maxConsecutiveErrors
-			phaseGateBlocked := isAnalyze && analyticalCallCount < minAnalyticalCalls && !cacheFutile
+			cacheFutile := phaseGateApplies && analyticalCallCount == 0 && consecutiveErrors >= maxConsecutiveErrors
+			phaseGateBlocked := phaseGateApplies && analyticalCallCount < minAnalyticalCalls && !cacheFutile
 			if cacheFutile {
 				fmt.Fprintf(os.Stderr, "[Probe] Node %s: cache-futility bypass — %d consecutive errors, 0 successful analytical calls. Allowing synthesis.\n", probeID, consecutiveErrors)
 			}
@@ -690,6 +695,78 @@ func RunProbe(
 			chainStep.Action = "tool_call"
 			chainStep.Tool = extractedTool
 			chainStep.Arguments = extractedArgs
+
+			// Fix 2 (ADR-0064 regression): Post-extraction argument validation.
+			// The GBNF schema requires arguments but the router may emit empty
+			// values (e.g., {"query": ""} or {}). Reject and inject corrective
+			// feedback with the goal context so the model can generate proper args.
+			if extractedTool == "web_search" {
+				q, _ := extractedArgs["query"].(string)
+				if q == "" {
+					// Argument seeding: on the first empty-query occurrence,
+					// auto-seed from the probe goal instead of burning the step.
+					// On subsequent empties, reject with corrective feedback.
+					emptyQueryCount++
+					if emptyQueryCount <= 2 {
+						// Auto-seed: extract a search query from the goal text
+						fallbackQuery := extractSearchQueryFromGoal(config.Goal)
+						fmt.Fprintf(os.Stderr, "[Probe] Auto-seeded web_search query from goal at step %d: %s\n", step, truncate(fallbackQuery, 80))
+						if chainStep.Arguments == nil {
+							chainStep.Arguments = make(map[string]interface{})
+						}
+						chainStep.Arguments["query"] = fallbackQuery
+					} else {
+						fmt.Fprintf(os.Stderr, "[Probe] Rejected web_search with empty query at step %d (attempt %d) — injecting goal-derived hint\n", step, emptyQueryCount)
+						toolOutput = fmt.Sprintf("REJECTED: web_search requires a non-empty 'query' argument. "+
+							"Your task goal is: %s. Generate a specific search query based on this goal.",
+							truncate(config.Goal, 300))
+						toolName = ""
+						chainStep.Action = ""
+					}
+				}
+			}
+			if extractedTool == "web_browse" {
+				u, _ := extractedArgs["url"].(string)
+				if u == "" {
+					fmt.Fprintf(os.Stderr, "[Probe] Rejected web_browse with empty url at step %d — injecting corrective hint\n", step)
+					toolOutput = fmt.Sprintf("REJECTED: web_browse requires a non-empty 'url' argument. "+
+						"Provide a specific URL to browse, or use web_search first to find relevant URLs.")
+					toolName = ""
+					chainStep.Action = ""
+				}
+			}
+
+			// Fix 3 (ADR-0064 regression): Restore SQL auto-extraction for analyze nodes.
+			// If the extraction returned sql_cached_data/introspect_cache with empty args,
+			// attempt to extract SQL from the Pass 1 reasoning text (regex-based, zero cost).
+			if isAnalyze && (extractedTool == "sql_cached_data" || extractedTool == "introspect_cache") {
+				if extractedTool == "sql_cached_data" {
+					sqlArg, _ := extractedArgs["sql"].(string)
+					if sqlArg == "" {
+						if autoSQL, cacheTable := extractSQLFromText(cleanedResponse); autoSQL != "" {
+							fmt.Fprintf(os.Stderr, "[Probe] SQL auto-extraction enriched empty args: %s (table: %s)\n", truncate(autoSQL, 100), cacheTable)
+							if chainStep.Arguments == nil {
+								chainStep.Arguments = make(map[string]interface{})
+							}
+							chainStep.Arguments["sql"] = autoSQL
+						}
+					}
+				}
+				if extractedTool == "introspect_cache" {
+					cacheID, _ := extractedArgs["cacheId"].(string)
+					if cacheID == "" {
+						// Try to extract cache ID from reasoning text
+						cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
+						if match := cacheIdRe.FindString(cleanedResponse); match != "" {
+							fmt.Fprintf(os.Stderr, "[Probe] Cache ID auto-extraction enriched empty args: %s\n", match)
+							if chainStep.Arguments == nil {
+								chainStep.Arguments = make(map[string]interface{})
+							}
+							chainStep.Arguments["cacheId"] = match
+						}
+					}
+				}
+			}
 		}
 
 		if chainStep.Action == "tool_call" && toolName != "" {
@@ -1118,9 +1195,20 @@ You have completed your exploration. Review the findings and produce a comprehen
 				{Role: "system", Content: systemPrompt},
 				{Role: "user", Content: contextStr},
 			}, synthSchema, taskID)
-			if cloudErr == nil && validateSynthesisOutput(cloudResult, validationOpts...) == "" {
+		if cloudErr == nil && validateSynthesisOutput(cloudResult, validationOpts...) == "" {
 				fmt.Fprintf(os.Stderr, "[Probe] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
 				result = cloudResult
+				// Record escalation as a thought step so downstream Recall nodes
+				// can detect that local synthesis was insufficient and default to cloud.
+				escalationStep := memory.ThoughtStep{
+					ID:        fmt.Sprintf("%s_synthesis_escalation", probeID),
+					ProbeID:   probeID,
+					TaskID:    taskID,
+					StepIndex: -1, // sentinel: not a regular step
+					ToolName:  "_cloud_synthesis_escalation",
+					CreatedAt: time.Now().Unix(),
+				}
+				_ = memory.DB.AddThoughtStep(escalationStep)
 			}
 		}
 	}
@@ -1258,6 +1346,51 @@ func isAnalyzeConfig(allowedTools []string) bool {
 		}
 	}
 	return false
+}
+
+// containsTool checks if a specific tool name is in the allowed tools list.
+func containsTool(allowedTools []string, tool string) bool {
+	for _, t := range allowedTools {
+		if t == tool {
+			return true
+		}
+	}
+	return false
+}
+
+// extractSearchQueryFromGoal derives a web search query from the probe goal text.
+// Extracts the first meaningful sentence/clause (up to 100 chars), stripping
+// common instruction prefixes like "Search for", "Find", "Research".
+// Used as a fallback when the GBNF extraction fails to populate the query field.
+func extractSearchQueryFromGoal(goal string) string {
+	q := goal
+	// Strip common instruction prefixes
+	prefixes := []string{
+		"Search for ", "search for ",
+		"Find ", "find ",
+		"Research ", "research ",
+		"Look up ", "look up ",
+		"Investigate ", "investigate ",
+		"Explore ", "explore ",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(q, p) {
+			q = q[len(p):]
+			break
+		}
+	}
+	// Take the first sentence (up to period, newline, or 100 chars)
+	for i, c := range q {
+		if c == '.' || c == '\n' {
+			q = q[:i]
+			break
+		}
+		if i >= 100 {
+			q = q[:i]
+			break
+		}
+	}
+	return strings.TrimSpace(q)
 }
 
 // goalImpliesExtraction returns true when the goal text suggests the user

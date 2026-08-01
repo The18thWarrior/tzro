@@ -34,7 +34,7 @@ const TwoPassActionSchema = `{
 		"tool": { "type": "string" },
 		"arguments": { "type": "object" }
 	},
-	"required": ["action"]
+	"required": ["action", "tool", "arguments"]
 }`
 
 // extractToolAction runs the GBNF-constrained extraction pass (Pass 2) on
@@ -52,6 +52,7 @@ func extractToolAction(
 	engine ProbeInferenceEngine,
 	reasoning string,
 	allowedTools []string,
+	goal ...string,
 ) (action string, toolName string, args map[string]interface{}, err error) {
 
 	// Build the GBNF extraction prompt
@@ -60,11 +61,24 @@ func extractToolAction(
 	// Check for complete <ACTION> tags — use targeted extraction if present
 	extractionInput := buildExtractionInput(reasoning)
 
+	// Inject goal context when available so the router can derive
+	// meaningful arguments (e.g., search queries) from the task intent.
+	var goalCtx string
+	if len(goal) > 0 && goal[0] != "" {
+		// Truncate goal to keep extraction prompt compact
+		g := goal[0]
+		if len(g) > 500 {
+			g = g[:500]
+		}
+		goalCtx = fmt.Sprintf(" The task goal is: %s.", g)
+	}
+
 	systemPrompt := fmt.Sprintf(
-		"You are a precise action extractor. Given the reasoning below, determine the action: "+
-			"either 'tool_call' (with a tool name from [%s] and its arguments) or 'synthesize' "+
-			"(if the reasoning indicates all information has been gathered). "+
-			"Output ONLY the JSON object.", toolList)
+		"You are a precise action extractor.%s Given the reasoning below, determine the action: "+
+			"either 'tool_call' (with a tool name from [%s] and its SPECIFIC arguments — "+
+			"do NOT leave arguments empty, extract the actual parameters from the reasoning) "+
+			"or 'synthesize' (if the reasoning indicates all information has been gathered). "+
+			"Output ONLY the JSON object.", goalCtx, toolList)
 
 	messages := []inference.InferenceMessage{
 		{Role: "system", Content: systemPrompt},

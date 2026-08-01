@@ -207,9 +207,49 @@ Goal: %s
 Review the gathered facts and produce a comprehensive, structured final answer.
 IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.`, goal, synthesisInput, symbolRefBlock)
 
-	synthesis, err := engine.Infer(ctx, synthPrompt, lastResult, "")
-	if err != nil {
-		return "", err
+	// Synthesis escalation policy: if any upstream probe had its synthesis
+	// escalated to cloud (local model produced invalid/repetitive output),
+	// the Recall node should also use cloud for its synthesis. The local model
+	// already proved insufficient for this content type.
+	upstreamSynthEscalated := false
+	for _, nodeID := range upstreamNodeIDs {
+		steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID)
+		if err != nil {
+			continue
+		}
+		for _, s := range steps {
+			if s.ToolName == "_cloud_synthesis_escalation" {
+				upstreamSynthEscalated = true
+				break
+			}
+		}
+		if upstreamSynthEscalated {
+			break
+		}
+	}
+
+	var synthesis string
+	if upstreamSynthEscalated && !isCloudEscalationBlocked() {
+		fmt.Fprintf(os.Stderr, "[Recall] Upstream probe synthesis was escalated to cloud — using cloud for Recall synthesis\n")
+		cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+			{Role: "system", Content: synthPrompt},
+			{Role: "user", Content: lastResult},
+		}, "", taskID)
+		if cloudErr != nil {
+			// Cloud failed — fall back to local
+			fmt.Fprintf(os.Stderr, "[Recall] Cloud synthesis failed (%v), falling back to local engine\n", cloudErr)
+			synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "")
+			if err != nil {
+				return "", err
+			}
+		} else {
+			synthesis = cloudResult
+		}
+	} else {
+		synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "")
+		if err != nil {
+			return "", err
+		}
 	}
 
 	// Symbol Anchor Check (ADR-0047): verify synthesis references against Index

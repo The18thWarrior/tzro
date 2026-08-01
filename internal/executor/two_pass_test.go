@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"tzro/internal/inference"
 )
@@ -36,6 +37,7 @@ func (m *MockTwoPassEngine) InferMessages(ctx context.Context, messages []infere
 	})
 
 	// If GBNF schema is provided (Pass 2), return structured JSON
+	// with all required fields (action, tool, arguments) populated
 	if jsonSchema != "" {
 		return `{"action":"tool_call","tool":"web_search","arguments":{"query":"test"}}`, nil
 	}
@@ -155,6 +157,7 @@ func (s *synthMockEngine) Infer(ctx context.Context, systemPrompt, userPrompt, j
 
 func (s *synthMockEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
 	if jsonSchema != "" {
+		// All three fields are required now; synthesize action sets tool/arguments to empty
 		return `{"action":"synthesize","tool":"","arguments":{}}`, nil
 	}
 	return "I've gathered enough information.", nil
@@ -180,4 +183,53 @@ func TestTwoPassActionSchema_ValidJSON(t *testing.T) {
 	if _, ok := props["arguments"]; !ok {
 		t.Error("schema missing 'arguments' field")
 	}
+	// Verify required includes all three fields
+	reqRaw, ok := schema["required"]
+	if !ok {
+		t.Fatal("schema missing 'required' field")
+	}
+	reqSlice, ok := reqRaw.([]interface{})
+	if !ok {
+		t.Fatal("'required' is not an array")
+	}
+	reqSet := make(map[string]bool)
+	for _, r := range reqSlice {
+		reqSet[r.(string)] = true
+	}
+	for _, field := range []string{"action", "tool", "arguments"} {
+		if !reqSet[field] {
+			t.Errorf("required field %q missing from schema", field)
+		}
+	}
+}
+
+// --- Test: extractToolAction passes goal context to extraction prompt ---
+
+func TestExtractToolAction_GoalContext(t *testing.T) {
+	engine := &MockTwoPassEngine{}
+	reasoning := "I need to search for something."
+
+	_, _, _, err := extractToolAction(
+		context.Background(), engine, reasoning,
+		[]string{"web_search"}, "Find the latest AI orchestration frameworks",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The system prompt in the GBNF pass should contain the goal
+	if len(engine.Calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(engine.Calls))
+	}
+	sysMsg := engine.Calls[0].Messages[0].Content
+	if !strings.Contains(sysMsg, "AI orchestration frameworks") {
+		t.Errorf("expected goal in system prompt, got: %s", sysMsg[:min(len(sysMsg), 200)])
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
