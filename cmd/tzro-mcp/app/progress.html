@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>tzro Task Progress</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #16161e;
+      --surface-hover: #1e1e2a;
+      --border: #27273a;
+      --text: #e4e4e7;
+      --text-muted: #71717a;
+      --accent: #a78bfa;
+      --accent-dim: rgba(167,139,250,0.15);
+      --green: #34d399;
+      --green-dim: rgba(52,211,153,0.15);
+      --red: #f87171;
+      --red-dim: rgba(248,113,113,0.15);
+      --yellow: #fbbf24;
+      --yellow-dim: rgba(251,191,36,0.15);
+      --blue: #60a5fa;
+      --blue-dim: rgba(96,165,250,0.15);
+      --gray: #52525b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      gap: 12px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -0.5px;
+    }
+    .task-id {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      background: var(--surface);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .status-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .status-pending { background: var(--accent-dim); color: var(--accent); }
+    .status-running { background: var(--blue-dim); color: var(--blue); }
+    .status-completed { background: var(--green-dim); color: var(--green); }
+    .status-failed { background: var(--red-dim); color: var(--red); }
+
+    /* Progress Bar */
+    .progress-section {
+      margin-bottom: 16px;
+    }
+    .progress-bar-container {
+      width: 100%;
+      height: 6px;
+      background: var(--surface);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+      background: linear-gradient(90deg, var(--accent), var(--blue));
+    }
+    .progress-bar-fill.done { background: linear-gradient(90deg, var(--green), #10b981); }
+    .progress-bar-fill.error { background: linear-gradient(90deg, var(--red), #ef4444); }
+    .progress-stats {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* DAG Graph */
+    .dag-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .dag-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+    .dag-layers {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+    }
+    .dag-layer {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .dag-node {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      font-size: 12px;
+      min-width: 120px;
+      transition: all 0.2s ease;
+    }
+    .dag-node:hover { border-color: var(--accent); }
+    .dag-node.pending { border-left: 3px solid var(--gray); }
+    .dag-node.running { border-left: 3px solid var(--blue); background: var(--blue-dim); }
+    .dag-node.completed { border-left: 3px solid var(--green); }
+    .dag-node.failed { border-left: 3px solid var(--red); background: var(--red-dim); }
+    .dag-node.skipped { border-left: 3px solid var(--gray); opacity: 0.5; }
+    .node-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .node-dot.pending { background: var(--gray); }
+    .node-dot.running { background: var(--blue); animation: pulse 1.5s infinite; }
+    .node-dot.completed { background: var(--green); }
+    .node-dot.failed { background: var(--red); }
+    .node-dot.skipped { background: var(--gray); }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .node-label {
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
+    }
+    .node-type {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .dag-arrow {
+      color: var(--gray);
+      font-size: 14px;
+      text-align: center;
+    }
+
+    /* Timing */
+    .timing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .timing-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .timing-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+    .timing-value {
+      font-size: 16px;
+      font-weight: 600;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    /* Synthesis */
+    .synthesis-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .synthesis-section h3 {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .synthesis-content {
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    /* Cancel */
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-cancel {
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid rgba(248,113,113,0.3);
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-cancel:hover { background: rgba(248,113,113,0.25); }
+    .btn-cancel:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Loading */
+    .loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 200px;
+      gap: 12px;
+      color: var(--text-muted);
+    }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Error */
+    .error-msg {
+      background: var(--red-dim);
+      border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: var(--red);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="loading">
+      <div class="spinner"></div>
+      <p>Connecting to execution engine...</p>
+    </div>
+  </div>
+
+  <script>
+    const app = document.getElementById('app');
+    let taskData = null;
+    let eventSource = null;
+    let startTime = null;
+    let timerInterval = null;
+
+    // Configuration — daemon port from env or default
+    const DAEMON_PORT = window.__TZRO_DAEMON_PORT__ || '8080';
+    const DAEMON_URL = `http://localhost:${DAEMON_PORT}`;
+
+    // Extract taskId from tool result or URL params
+    function getTaskId() {
+      // From URL params (testing)
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('taskId')) return params.get('taskId');
+      // Will be set by MCP App ontoolresult callback
+      return window.__TZRO_TASK_ID__ || null;
+    }
+
+    // Fetch initial task data
+    async function fetchTask(taskId) {
+      try {
+        const resp = await fetch(`${DAEMON_URL}/api/tasks?taskId=${taskId}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        // /api/tasks returns an array; find our task
+        const tasks = Array.isArray(data) ? data : [data];
+        return tasks.find(t => t.taskId === taskId) || tasks[0] || null;
+      } catch (e) {
+        console.error('Failed to fetch task:', e);
+        return null;
+      }
+    }
+
+    // Topologically sort nodes into layers for rendering
+    function topoLayers(nodes, edges) {
+      if (!nodes || !nodes.length) return [];
+      const idSet = new Set(nodes.map(n => n.id));
+      const inDegree = {};
+      const adj = {};
+      nodes.forEach(n => { inDegree[n.id] = 0; adj[n.id] = []; });
+      (edges || []).forEach(e => {
+        if (idSet.has(e.sourceId) && idSet.has(e.targetId)) {
+          inDegree[e.targetId] = (inDegree[e.targetId] || 0) + 1;
+          adj[e.sourceId].push(e.targetId);
+        }
+      });
+      const layers = [];
+      let frontier = nodes.filter(n => inDegree[n.id] === 0).map(n => n.id);
+      const visited = new Set();
+      while (frontier.length > 0) {
+        layers.push(frontier);
+        const next = [];
+        frontier.forEach(id => {
+          visited.add(id);
+          (adj[id] || []).forEach(tid => {
+            inDegree[tid]--;
+            if (inDegree[tid] === 0 && !visited.has(tid)) next.push(tid);
+          });
+        });
+        frontier = next;
+      }
+      // Add any remaining (cycles, disconnected)
+      const remaining = nodes.filter(n => !visited.has(n.id)).map(n => n.id);
+      if (remaining.length) layers.push(remaining);
+      return layers;
+    }
+
+    // Get node status from states map
+    function nodeStatus(nodeId, states) {
+      if (!states) return 'pending';
+      const s = states[nodeId];
+      if (!s) return 'pending';
+      return (typeof s === 'string' ? s : s.status) || 'pending';
+    }
+
+    // Format duration
+    function fmtDuration(ms) {
+      if (ms < 1000) return `${ms}ms`;
+      const s = Math.floor(ms / 1000);
+      if (s < 60) return `${s}s`;
+      const m = Math.floor(s / 60);
+      return `${m}m ${s % 60}s`;
+    }
+
+    // Render the full UI
+    function render(task) {
+      if (!task) {
+        app.innerHTML = '<div class="error-msg">Task not found. Check daemon connection.</div>';
+        return;
+      }
+
+      const graph = task.graph || {};
+      const nodes = graph.nodes || [];
+      const edges = graph.edges || [];
+      const states = task.states || {};
+      const status = task.status || 'pending';
+
+      // Count node states
+      let completed = 0, running = 0, failed = 0, pending = 0;
+      nodes.forEach(n => {
+        const s = nodeStatus(n.id, states);
+        if (s === 'completed') completed++;
+        else if (s === 'running') running++;
+        else if (s === 'failed') failed++;
+        else pending++;
+      });
+      const total = nodes.length;
+      const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+      // Elapsed time
+      if (!startTime && task.createdAt) startTime = task.createdAt * 1000;
+      const elapsed = startTime ? Date.now() - startTime : 0;
+
+      // Layers for DAG
+      const layers = topoLayers(nodes, edges);
+      const nodeMap = {};
+      nodes.forEach(n => { nodeMap[n.id] = n; });
+
+      // Find synthesis output
+      let synthesis = '';
+      Object.values(states).forEach(s => {
+        if (s && s.output && nodeMap[s.nodeId]?.type === 'synthesis') {
+          synthesis = s.output;
+        }
+      });
+
+      const barClass = status === 'failed' ? 'error' : status === 'completed' ? 'done' : '';
+      const isActive = status === 'running' || status === 'pending';
+
+      app.innerHTML = `
+        <div class="header">
+          <div class="header-left">
+            <span class="logo">tzro</span>
+            <span class="task-id">${task.taskId?.substring(0, 8) || '—'}</span>
+            <span class="status-badge status-${status}">${status}</span>
+          </div>
+          <div class="actions">
+            ${isActive ? `<button class="btn-cancel" onclick="cancelTask()">Cancel</button>` : ''}
+          </div>
+        </div>
+
+        <div class="progress-section">
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill ${barClass}" style="width: ${pct}%"></div>
+          </div>
+          <div class="progress-stats">
+            <span>${completed}/${total} nodes complete</span>
+            <span>${fmtDuration(elapsed)}</span>
+          </div>
+        </div>
+
+        <div class="timing-grid">
+          <div class="timing-card">
+            <div class="timing-label">Nodes</div>
+            <div class="timing-value">${total}</div>
+          </div>
+          <div class="timing-card">
+            <div class="timing-label">Running</div>
+            <div class="timing-value" style="color:var(--blue)">${running}</div>
+          </div>
+          <div class="timing-card">
+            <div class="timing-label">Completed</div>
+            <div class="timing-value" style="color:var(--green)">${completed}</div>
+          </div>
+          <div class="timing-card">
+            <div class="timing-label">Failed</div>
+            <div class="timing-value" style="color:${failed > 0 ? 'var(--red)' : 'var(--text-muted)'}">${failed}</div>
+          </div>
+        </div>
+
+        <div class="dag-container">
+          <div class="dag-title">Execution Graph</div>
+          <div class="dag-layers">
+            ${layers.map((layer, i) => `
+              ${i > 0 ? '<div class="dag-arrow">↓</div>' : ''}
+              <div class="dag-layer">
+                ${layer.map(id => {
+                  const node = nodeMap[id] || { id, type: '?', action: id };
+                  const s = nodeStatus(id, states);
+                  const label = node.action || node.id;
+                  return `
+                    <div class="dag-node ${s}" title="${node.instructions || label}">
+                      <div class="node-dot ${s}"></div>
+                      <span class="node-label">${label}</span>
+                      <span class="node-type">${node.type || ''}</span>
+                    </div>`;
+                }).join('')}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        ${synthesis ? `
+        <div class="synthesis-section">
+          <h3>Synthesis Output</h3>
+          <div class="synthesis-content">${escapeHtml(synthesis)}</div>
+        </div>` : ''}
+      `;
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // Cancel task
+    async function cancelTask() {
+      const taskId = getTaskId();
+      if (!taskId) return;
+      const btn = document.querySelector('.btn-cancel');
+      if (btn) { btn.disabled = true; btn.textContent = 'Cancelling...'; }
+      try {
+        await fetch(`${DAEMON_URL}/api/tasks/cancel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId })
+        });
+      } catch (e) {
+        console.error('Cancel failed:', e);
+      }
+    }
+    window.cancelTask = cancelTask;
+
+    // Connect to SSE for live updates
+    function connectSSE(taskId) {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource(`${DAEMON_URL}/api/tasks/events?taskId=${taskId}`);
+      eventSource.onmessage = async (e) => {
+        try {
+          const chunk = JSON.parse(e.data);
+          // Re-fetch task data on each event to get updated states
+          const task = await fetchTask(taskId);
+          if (task) {
+            taskData = task;
+            render(task);
+          }
+          // Stop SSE on terminal events
+          if (chunk.type === 'task_completed' || chunk.type === 'task_failed' || chunk.type === 'task_cancelled') {
+            if (eventSource) eventSource.close();
+            if (timerInterval) clearInterval(timerInterval);
+          }
+        } catch (err) { /* ignore parse errors */ }
+      };
+      eventSource.onerror = () => {
+        // Reconnect after brief delay on error
+        setTimeout(() => connectSSE(taskId), 3000);
+      };
+    }
+
+    // Initialize
+    async function init() {
+      const taskId = getTaskId();
+      if (!taskId) {
+        // No taskId yet — show loading state and start discovery loop.
+        // The taskId arrives either via postMessage (fast) or daemon polling (fallback).
+        app.innerHTML = `<div class="loading">
+          <div class="spinner"></div>
+          <p>Connecting to task...</p>
+        </div>`;
+        discoverTask();
+        return;
+      }
+
+      taskData = await fetchTask(taskId);
+      render(taskData);
+
+      // Start SSE for live updates
+      connectSSE(taskId);
+
+      // Update elapsed timer every second
+      timerInterval = setInterval(() => {
+        if (taskData && (taskData.status === 'running' || taskData.status === 'pending')) {
+          render(taskData);
+        }
+      }, 1000);
+    }
+
+    // Discover the active task by polling the daemon API.
+    // Used when the host doesn't provide the taskId via postMessage.
+    async function discoverTask() {
+      const maxAttempts = 30; // 60s total at 2s intervals
+      for (let i = 0; i < maxAttempts; i++) {
+        // If postMessage delivered the taskId while we were polling, use it
+        if (window.__TZRO_TASK_ID__) {
+          init();
+          return;
+        }
+        try {
+          const resp = await fetch(`${DAEMON_URL}/api/tasks`);
+          if (resp.ok) {
+            const tasks = await resp.json();
+            // Find the most recently created running/pending task
+            const active = tasks
+              .filter(t => t.status === 'running' || t.status === 'pending')
+              .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            if (active.length > 0) {
+              window.__TZRO_TASK_ID__ = active[0].taskId;
+              init();
+              return;
+            }
+          }
+        } catch { /* daemon not ready yet */ }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      app.innerHTML = '<div class="error-msg">Could not discover active task. Check that the daemon is running.</div>';
+    }
+
+    // MCP App integration — receive taskId from tool result
+    if (typeof window !== 'undefined') {
+      // If loaded as MCP App, the host will call postMessage with tool result
+      window.addEventListener('message', (e) => {
+        try {
+          const msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+          // Extract taskId from tool result content
+          if (msg.type === 'tool_result' || msg.method === 'ui/toolResult') {
+            const content = msg.params?.result?.content || msg.result?.content || [];
+            for (const c of content) {
+              if (c.type === 'text' && c.text) {
+                try {
+                  const parsed = JSON.parse(c.text);
+                  if (parsed.taskId) {
+                    window.__TZRO_TASK_ID__ = parsed.taskId;
+                    if (parsed.daemonPort) window.__TZRO_DAEMON_PORT__ = parsed.daemonPort;
+                    init();
+                    return;
+                  }
+                } catch { /* not JSON */ }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      });
+    }
+
+    // Auto-init if taskId is available (direct testing or URL param)
+    init();
+  </script>
+</body>
+</html>
+

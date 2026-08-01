@@ -50,31 +50,26 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 	}
 
 	taskID := uuid.New().String()
-	timeoutSec := args.Timeout
-	if timeoutSec <= 0 {
-		timeoutSec = 60
-	}
 
 	// Start SubagentChannel for real-time event delivery to the harness.
 	// Node count is unknown at this point (planning hasn't started), so pass 0.
+	// Channel lifecycle is managed by the background goroutine, not this handler.
 	ch := startSubagentChannel(req, mcpServer, taskID, 0)
 	if ch != nil {
-		defer ch.Close()
 		// v2: Register channel for bidirectional tool dispatch.
 		// ChannelToolHook will intercept client-tool nodes and dispatch via sampling.
 		channel.GlobalChannelToolHook.RegisterChannel(taskID, ch)
-		defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
 	}
 
-	type execResult struct {
-		nodes []memory.NodeState
-		err   error
-	}
-
-	doneChan := make(chan execResult, 1)
-
-	// Execute task in a background goroutine to allow fallback to async mode if it times out
+	// Execute task in a background goroutine. The handler returns immediately
+	// so the MCP App UI can connect to the task via SSE using the taskId.
 	go func() {
+		// Manage channel lifecycle within the goroutine scope.
+		if ch != nil {
+			defer ch.Close()
+			defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
+		}
+
 		if isDaemonRunning() {
 			type RunRequest struct {
 				Prompt        string `json:"prompt"`
@@ -88,7 +83,7 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 			}
 			_, err := proxyToDaemon("/api/tasks/run", "POST", reqBody)
 			if err != nil {
-				doneChan <- execResult{err: fmt.Errorf("daemon task run initiation failed: %w", err)}
+				fmt.Printf("[tzro-mcp] daemon task run initiation failed for %s: %v\n", taskID, err)
 				return
 			}
 
@@ -97,15 +92,13 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 
 			resp, err := http.Get(url)
 			if err != nil {
-				doneChan <- execResult{err: fmt.Errorf("failed to connect to daemon event stream: %w", err)}
+				fmt.Printf("[tzro-mcp] failed to connect to daemon event stream for %s: %v\n", taskID, err)
 				return
 			}
 			defer resp.Body.Close()
 
 			reader := bufio.NewReader(resp.Body)
 			var currentEventType string
-			var taskErr error
-			var finalStatus string
 
 			for {
 				line, err := reader.ReadString('\n')
@@ -134,21 +127,12 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 							_ = ch.EmitEvent(event)
 						}
 
-						if event.Type == channel.EventTaskCompleted {
-							finalStatus = "completed"
-						} else if event.Type == channel.EventTaskFailed {
-							finalStatus = "failed"
-							taskErr = fmt.Errorf("%s", event.Message)
+						if event.Type == channel.EventTaskCompleted || event.Type == channel.EventTaskFailed {
+							break
 						}
 					}
 				}
 			}
-
-			nodes := memory.DB.GetAllNodeStates(taskID)
-			if finalStatus == "failed" && taskErr == nil {
-				taskErr = fmt.Errorf("task failed")
-			}
-			doneChan <- execResult{nodes: nodes, err: taskErr}
 		} else {
 			execOpts := task.ExecuteOptions{
 				TaskID:        taskID,
@@ -157,113 +141,25 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 				SelfContained: args.SelfContained,
 			}
 			_, _, err := task.Execute(context.Background(), args.Prompt, execOpts)
-			nodes := memory.DB.GetAllNodeStates(taskID)
-			doneChan <- execResult{nodes: nodes, err: err}
+			if err != nil {
+				fmt.Printf("[tzro-mcp] task execution failed for %s: %v\n", taskID, err)
+			}
 		}
 	}()
 
-	select {
-	case res := <-doneChan:
-		status := "completed"
-		var errMsg string
-		if res.err != nil {
-			status = "failed"
-			errMsg = res.err.Error()
-		}
-
-		respMap := map[string]interface{}{
-			"taskId": taskID,
-			"status": status,
-			"nodes":  res.nodes,
-		}
-		if errMsg != "" {
-			respMap["error"] = errMsg
-		}
-		// ADR-0055: Hoist Execution Envelope to top-level result
-		if envelope := extractEnvelopeResult(res.nodes); envelope != nil {
-			respMap["result"] = envelope
-		}
-
-		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: string(respBytes)},
-			},
-		}, nil, nil
-
-	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		// Timeout hit: check if the graph was persisted to SQLite by querying node_states.
-		// If nodes exist, the executor is running and the task ID is safe to return.
-		// If no nodes exist, planning is still in progress or failed — give a brief grace period.
-		nodes := memory.DB.GetAllNodeStates(taskID)
-		if len(nodes) == 0 {
-			// Brief grace: wait up to 5 more seconds for planning to complete
-			graceTimer := time.After(5 * time.Second)
-			graceTicker := time.NewTicker(500 * time.Millisecond)
-			defer graceTicker.Stop()
-
-		graceLoop:
-			for {
-				select {
-				case res := <-doneChan:
-					// Task finished during grace period
-					status := "completed"
-					var errMsg string
-					if res.err != nil {
-						status = "failed"
-						errMsg = res.err.Error()
-					}
-					respMap := map[string]interface{}{
-						"taskId": taskID,
-						"status": status,
-						"nodes":  res.nodes,
-					}
-					if errMsg != "" {
-						respMap["error"] = errMsg
-					}
-					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-					return &mcp.CallToolResult{
-						Content: []mcp.Content{
-							&mcp.TextContent{Text: string(respBytes)},
-						},
-					}, nil, nil
-
-				case <-graceTicker.C:
-					nodes = memory.DB.GetAllNodeStates(taskID)
-					if len(nodes) > 0 {
-						break graceLoop
-					}
-
-				case <-graceTimer:
-					// Grace period exhausted — return "planning" status
-					respMap := map[string]interface{}{
-						"taskId": taskID,
-						"status": "planning",
-						"message": "Task is still being planned. The graph has not been compiled yet. " +
-							"Check tzro_status after a delay — the task may not appear until planning completes.",
-					}
-					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-					return &mcp.CallToolResult{
-						Content: []mcp.Content{
-							&mcp.TextContent{Text: string(respBytes)},
-						},
-					}, nil, nil
-				}
-			}
-		}
-
-		// Nodes exist — graph is persisted and execution is in progress
-		respMap := map[string]interface{}{
-			"taskId": taskID,
-			"status": "running",
-		}
-		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: string(respBytes)},
-			},
-		}, nil, nil
+	// Return immediately with the taskId. The agent polls tzro_status for
+	// completion; the MCP App UI connects via SSE to the daemon for live updates.
+	respMap := map[string]interface{}{
+		"taskId":     taskID,
+		"status":     "accepted",
+		"daemonPort": getDaemonPort(),
 	}
+	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
 }
 
 // tzro_code tool definition
@@ -1824,6 +1720,17 @@ func runDelegationHint() string {
 	}
 }
 
+// getDaemonPort returns the daemon port string for inclusion in tool results,
+// allowing the MCP App UI to connect to the correct daemon instance.
+func getDaemonPort() string {
+	daemonURL := config.GetDaemonURL()
+	// Extract port from URL like "http://127.0.0.1:8080"
+	if idx := strings.LastIndex(daemonURL, ":"); idx != -1 {
+		return daemonURL[idx+1:]
+	}
+	return "8080"
+}
+
 // registerTools registers all tools with the MCP server.
 // tzro_activity_report tool definition
 
@@ -2752,11 +2659,13 @@ func registerTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
 		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt." + runDelegationHint(),
+		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURI}},
 	}, handleTzroRun)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_code",
 		Description: "Generate or update a single file via local LLM codegen. Supports two modes: 'full' (whole-file rewrite, default for new/small files) and 'diff' (structured hunk edits, default for files >200 lines). Files >500 lines MUST use diff mode. Pass a spec/JSDoc and filepath.",
+		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURI}},
 	}, handleTzroCode)
 
 	mcp.AddTool(server, &mcp.Tool{

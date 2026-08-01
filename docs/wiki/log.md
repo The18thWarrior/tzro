@@ -2,6 +2,19 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-07-31T18:46:00-07:00] wayfinder | MCP Subscriptions Upgrade (Go SDK v1.6.1 → v1.7.0)
+
+- **Activity**: Charted a wayfinder map for upgrading the MCP server to support the 2026-07-28 `subscriptions/listen` protocol pattern. Goal: real-time execution visibility for IDE agents without `tzro_status` polling.
+- **Key Findings**:
+  1. **SDK v1.7.0 is backward compatible**: `SubscribeHandler`, `UnsubscribeHandler`, and `server.ResourceUpdated()` all work unchanged. The SDK handles `subscriptions/listen` protocol internally.
+  2. **Full protocol migration**: v1.7.0 replaces `initialize` with `server/discover`, removes `resources/subscribe`/`resources/unsubscribe` on 2026-07-28 revision, removes `ping` and `logging/setLevel`. SDK auto-negotiates version.
+  3. **Data-bearing notifications are the key design question**: `ResourceUpdated()` only sends URI pings. Rich inline payloads need a different mechanism — custom notification methods, extended params, or enriched `resources/read` responses.
+- **Map**: `.scratch/mcp-subscriptions-upgrade/MAP.md`
+- **Frontier tickets**: 5 tickets created (01 resolved, 02-05 open). Research ticket 01 completed.
+- **Relates to**: ADR-0017 (MCP Resource Subscriptions), ADR-0009 (StreamBus)
+
+---
+
 ## [2026-07-31T10:53:00-07:00] grill-with-docs | Two-Pass Extraction, Recall Compaction, and Recall Inversion (ADR-0064)
 
 - **Activity**: Grill-with-docs session stress-testing 3 interconnected fixes to Probe and Recall execution quality, motivated by DAG shape analysis of benchmark runs 3–5 (research category). 13 design questions resolved. Produced ADR-0064.

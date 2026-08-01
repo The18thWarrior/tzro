@@ -280,6 +280,14 @@ func RunProbe(
 	var emptyQueryCount int // tracks empty web_search query extractions for seeding logic
 	const maxConsecutiveErrors = 3
 
+	// P0 (URL Pre-Extraction): When web_search succeeds, deterministically
+	// extract all URLs from the JSON result. When web_browse is called with
+	// an empty URL, auto-populate from this list instead of injecting a text
+	// hint the 4B model ignores (benchmark run 8: 40 empty-URL rejections).
+	var discoveredURLs []string
+	visitedURLs := make(map[string]bool)
+	var emptyURLCount int // tracks consecutive empty web_browse URL extractions
+
 	// Futility detection: if ALL of the first N steps return errors with zero
 	// successful calls, abort the probe immediately. This prevents burning the
 	// entire step budget (15-20 steps × ~10s each) when the probe can't even
@@ -728,11 +736,45 @@ func RunProbe(
 			if extractedTool == "web_browse" {
 				u, _ := extractedArgs["url"].(string)
 				if u == "" {
-					fmt.Fprintf(os.Stderr, "[Probe] Rejected web_browse with empty url at step %d — injecting corrective hint\n", step)
-					toolOutput = fmt.Sprintf("REJECTED: web_browse requires a non-empty 'url' argument. "+
-						"Provide a specific URL to browse, or use web_search first to find relevant URLs.")
-					toolName = ""
-					chainStep.Action = ""
+					// P0: Auto-populate URL from pre-extracted web_search results
+					// instead of injecting a text hint the model ignores.
+					autoURL := ""
+					for _, candidate := range discoveredURLs {
+						if !visitedURLs[candidate] {
+							autoURL = candidate
+							break
+						}
+					}
+					if autoURL != "" {
+						emptyURLCount++
+						fmt.Fprintf(os.Stderr, "[Probe] Auto-populated web_browse URL from discovered list at step %d: %s\n", step, truncate(autoURL, 80))
+						if chainStep.Arguments == nil {
+							chainStep.Arguments = make(map[string]interface{})
+						}
+						chainStep.Arguments["url"] = autoURL
+						visitedURLs[autoURL] = true
+					} else {
+						emptyURLCount++
+						fmt.Fprintf(os.Stderr, "[Probe] Rejected web_browse with empty url at step %d (no unvisited URLs remain) — injecting corrective hint\n", step)
+						var visitedList string
+						for url := range visitedURLs {
+							if visitedList != "" {
+								visitedList += ", "
+							}
+							visitedList += url
+						}
+						if visitedList != "" {
+							toolOutput = fmt.Sprintf("REJECTED: web_browse requires a non-empty 'url' argument. "+
+								"All discovered URLs have been visited: [%s]. "+
+								"Use web_search with a different query to find new URLs, or synthesize your findings.",
+								truncate(visitedList, 300))
+						} else {
+							toolOutput = fmt.Sprintf("REJECTED: web_browse requires a non-empty 'url' argument. "+
+								"Use web_search first to find relevant URLs, then call web_browse with a specific URL.")
+						}
+						toolName = ""
+						chainStep.Action = ""
+					}
 				}
 			}
 
@@ -845,6 +887,28 @@ func RunProbe(
 
 						// ADR-0059: Accumulate Edge Entry with tool-type-aware truncation.
 						edgeEntries = append(edgeEntries, NewEdgeEntry(step, toolName, toolArgsStr, result))
+
+						// P0: Extract URLs from successful web_search results.
+						// Deterministic extraction — the 4B model cannot reliably
+						// parse URLs from search result prose (run 8: 40 failures).
+						if toolName == "web_search" {
+							extractedURLs := extractURLsFromWebSearch(result)
+							if len(extractedURLs) > 0 {
+								for _, u := range extractedURLs {
+									if !visitedURLs[u] && !containsString(discoveredURLs, u) {
+										discoveredURLs = append(discoveredURLs, u)
+									}
+								}
+								fmt.Fprintf(os.Stderr, "[Probe] Extracted %d URLs from web_search results at step %d (total discovered: %d)\n", len(extractedURLs), step, len(discoveredURLs))
+							}
+						}
+
+						// Mark browsed URLs as visited for P0 deduplication.
+						if toolName == "web_browse" {
+							if browsedURL, ok := args["url"].(string); ok && browsedURL != "" {
+								visitedURLs[browsedURL] = true
+							}
+						}
 
 						// ADR-0055: Record tool dispatch for Execution Envelope
 						if recorder, ok := ctx.Value(DispatchRecorderKey).(func(string, map[string]interface{})); ok {
@@ -1088,6 +1152,13 @@ func RunProbe(
 	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, edgeEntries, preloadedContent, isAnalyze)
 }
 
+// hybridSynthesisThreshold returns the configured context size (in chars) above
+// which synthesis uses a two-phase approach: local outline + cloud polish.
+// Reads from config.json ("hybridSynthesisThresholdChars"), defaults to 50000.
+func hybridSynthesisThreshold() int {
+	return cfgpkg.GetHybridSynthesisThresholdChars()
+}
+
 func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, edgeEntries []EdgeEntry, preloadedContent string, isAnalyze bool) (string, error) {
 	// ADR-0059: Synthesis reads from the Edge Entry log accumulated during the
 	// Thought Chain loop. No more reading compaction summaries or raw thought
@@ -1160,7 +1231,75 @@ You have completed your exploration. Review the findings and produce a comprehen
 	// Synthesis needs more output tokens than regular probe steps.
 	// The default 2048 truncates content-heavy outputs (e.g., ADR logs).
 	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
-	result, err := engine.Infer(synthCtx, systemPrompt, contextStr, synthSchema)
+
+	// P1: Hybrid Synthesis — when context is large, local synthesis reliably
+	// fails with repetitive content (benchmark run 8: 100% failure rate).
+	// Use a two-phase approach: local model generates a structured outline,
+	// cloud model expands it into polished prose.
+	if len(contextStr) > hybridSynthesisThreshold() && !isCloudEscalationBlocked() {
+		fmt.Fprintf(os.Stderr, "[Probe] Hybrid synthesis triggered: context=%d chars exceeds threshold=%d\n", len(contextStr), hybridSynthesisThreshold())
+
+		// Phase 1: Local outline — the local model is good at organizing
+		// and extracting facts, even from large contexts.
+		outlinePrompt := fmt.Sprintf(`You are a structured note-taker. Your goal was: %s
+
+Given the exploration findings below, produce a CONCISE STRUCTURED OUTLINE with:
+- Section headers for each major topic
+- Key bullet points with specific data values, names, and numbers
+- Source URLs where available
+- NO prose paragraphs — bullet points ONLY
+- Include ALL relevant facts discovered during exploration`, goal)
+
+		outline, outlineErr := engine.Infer(synthCtx, outlinePrompt, contextStr, "")
+		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
+			fmt.Fprintf(os.Stderr, "[Probe] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
+
+			// Phase 2: Cloud expansion — cloud model expands the outline
+			// into polished prose. Low token cost (~500-1K tokens).
+			expandPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Probe Node.
+Goal: %s
+
+Expand the structured outline below into a comprehensive, well-cited final answer.
+Preserve all data values, names, and numbers from the outline.
+Add proper prose transitions and paragraph structure.
+Include source citations where the outline references URLs.%s`, goal, extractionHint)
+
+			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+				{Role: "system", Content: expandPrompt},
+				{Role: "user", Content: outline},
+			}, synthSchema, taskID)
+
+			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+				fmt.Fprintf(os.Stderr, "[Probe] Hybrid synthesis succeeded: outline=%d chars, expansion=%d chars\n", len(outline), len(cloudResult))
+				result := stripControlTokens(cloudResult)
+				if len(bindingKeys) > 0 {
+					var check map[string]interface{}
+					if json.Unmarshal([]byte(result), &check) == nil {
+						return result, nil
+					}
+				}
+				var parsed struct {
+					Synthesis string `json:"synthesis"`
+				}
+				if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+					return result, nil
+				}
+				return parsed.Synthesis, nil
+			}
+			fmt.Fprintf(os.Stderr, "[Probe] Hybrid Phase 2 (cloud expansion) failed or invalid, falling through to standard synthesis\n")
+		} else {
+			if outlineErr != nil {
+				fmt.Fprintf(os.Stderr, "[Probe] Hybrid Phase 1 (local outline) failed: %v, falling through to standard synthesis\n", outlineErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "[Probe] Hybrid Phase 1 produced degenerate outline (%d chars), falling through to standard synthesis\n", len(strings.TrimSpace(outline)))
+			}
+		}
+	}
+
+	// Standard synthesis path (local-try → cloud-fallback on repetition)
+	var result string
+	var err error
+	result, err = engine.Infer(synthCtx, systemPrompt, contextStr, synthSchema)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[Probe] Primary synthesis engine failed: %v. Attempting cloud escalation.\n", err)
 		if !isCloudEscalationBlocked() {
@@ -2185,4 +2324,67 @@ func extractAndPersistSymbols(probeID, taskID, resolvedPath string) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[Probe] Extracted %d symbols from %s\n", len(syms), resolvedPath)
+}
+
+// extractURLsFromWebSearch parses web_search JSON output and returns discovered URLs.
+// Uses structured JSON parsing first (for the ToolSuccess envelope format), then
+// falls back to regex extraction for non-standard output formats.
+//
+// P0 fix: The 4B local model cannot reliably extract URLs from search result
+// prose to pass as web_browse arguments (benchmark run 8: 40 empty-URL rejections).
+// This function deterministically extracts URLs so the probe can auto-populate
+// web_browse calls without requiring model-side URL parsing.
+func extractURLsFromWebSearch(toolOutput string) []string {
+	// Primary: parse the ToolSuccess JSON envelope
+	// Format: {"success":true,"data":{"results":[{"title":"...","url":"...","snippet":"..."}],...}}
+	var envelope struct {
+		Data struct {
+			Results []struct {
+				URL string `json:"url"`
+			} `json:"results"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(toolOutput), &envelope) == nil && len(envelope.Data.Results) > 0 {
+		var urls []string
+		for _, r := range envelope.Data.Results {
+			if r.URL != "" {
+				urls = append(urls, r.URL)
+			}
+		}
+		if len(urls) > 0 {
+			return urls
+		}
+	}
+
+	// Secondary: try flat results array (raw SearchResult format)
+	var flat struct {
+		Results []struct {
+			URL string `json:"url"`
+		} `json:"results"`
+	}
+	if json.Unmarshal([]byte(toolOutput), &flat) == nil && len(flat.Results) > 0 {
+		var urls []string
+		for _, r := range flat.Results {
+			if r.URL != "" {
+				urls = append(urls, r.URL)
+			}
+		}
+		if len(urls) > 0 {
+			return urls
+		}
+	}
+
+	// Fallback: regex extraction for non-standard formats
+	urlRe := regexp.MustCompile(`https?://[^\s"',\]}>]+`)
+	matches := urlRe.FindAllString(toolOutput, 20)
+	// Deduplicate
+	seen := make(map[string]bool)
+	var unique []string
+	for _, u := range matches {
+		if !seen[u] {
+			seen[u] = true
+			unique = append(unique, u)
+		}
+	}
+	return unique
 }

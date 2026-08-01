@@ -64,6 +64,9 @@ func registerResources(server *mcp.Server) {
 		Description: "Proactive insight alerts from the Sentinel Agent, filtered by status.",
 	}, handleReadSentinelAlertsResource)
 
+	// Register the MCP App progress visualization resource
+	registerApp(server)
+
 	// Start the background event bridge to trigger client updates
 	startEventBridge(server)
 }
@@ -97,9 +100,15 @@ func handleReadTaskOutputResource(ctx context.Context, req *mcp.ReadResourceRequ
 		}
 	}
 
+	// Compute progress from node states
+	progress := computeProgress(nodes)
+
 	// ADR-0055: Build structured response with optional result envelope
 	respMap := map[string]interface{}{
-		"nodes": nodes,
+		"status":       progress.Status,
+		"progress":     progress,
+		"nodes":        nodes,
+		"recentEvents": taskEventBuffer.Recent(taskID, 20),
 	}
 	if envelope := extractEnvelopeResult(nodes); envelope != nil {
 		respMap["result"] = envelope
@@ -202,6 +211,9 @@ func startLocalBridge(ctx context.Context, server *mcp.Server) {
 			if !ok {
 				return
 			}
+			// Record event in buffer for enriched resources/read responses
+			recordChunkEvent(chunk)
+
 			// Sentinel alert chunks trigger the sentinel resource update
 			if chunk.Source == "sentinel" && chunk.Type == "sentinel_alert" {
 				notifySentinelResourceUpdate(server)
@@ -241,13 +253,11 @@ func startSSEBridge(ctx context.Context, server *mcp.Server, daemonURL string) e
 		}
 
 		data := strings.TrimPrefix(line, "data: ")
-		var chunk struct {
-			TaskID string `json:"taskId"`
-			NodeID string `json:"nodeId"`
-			Source string `json:"source"`
-			Type   string `json:"type"`
-		}
+		var chunk stream.StreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err == nil {
+			// Record event in buffer for enriched resources/read responses
+			recordChunkEvent(chunk)
+
 			if chunk.Source == "sentinel" && chunk.Type == "sentinel_alert" {
 				notifySentinelResourceUpdate(server)
 			}

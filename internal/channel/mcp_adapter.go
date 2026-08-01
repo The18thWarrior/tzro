@@ -79,8 +79,84 @@ func (ch *MCPSubagentChannel) EmitEvent(event ExecutionEvent) error {
 }
 
 func (ch *MCPSubagentChannel) emitProgress(event ExecutionEvent) error {
-	message := fmt.Sprintf("[%s] %s", event.Type, event.Message)
+	message := formatProgressMessage(event)
 	return ch.notifier.NotifyProgress(ch.progressToken, message, ch.completed, ch.nodeCount)
+}
+
+// formatProgressMessage produces clean, concise progress text suitable for
+// IDE rendering. Raw probe output and node content are truncated — the full
+// data is available via resources/read for agents that need it.
+func formatProgressMessage(event ExecutionEvent) string {
+	switch event.Type {
+	case EventTaskStarted:
+		return "⚡ Task started"
+	case EventTaskCompleted:
+		return "✅ Task completed"
+	case EventTaskFailed:
+		return fmt.Sprintf("❌ Task failed: %s", truncate(event.Message, 120))
+	case "task_cancelled":
+		return "🚫 Task cancelled"
+	case EventNodeStarted:
+		label := event.NodeID
+		if label == "" {
+			label = "node"
+		}
+		return fmt.Sprintf("▶ %s started", label)
+	case EventNodeCompleted:
+		label := event.NodeID
+		if label == "" {
+			label = "node"
+		}
+		return fmt.Sprintf("✓ %s completed", label)
+	case EventNodeFailed:
+		label := event.NodeID
+		if label == "" {
+			label = "node"
+		}
+		return fmt.Sprintf("✗ %s failed: %s", label, truncate(event.Message, 80))
+	case EventNodeSkipped:
+		return fmt.Sprintf("⊘ %s skipped", event.NodeID)
+	case EventNodeProgress:
+		return formatNodeProgress(event)
+	case EventEdgeThought:
+		return fmt.Sprintf("💭 %s", truncate(event.Message, 100))
+	default:
+		return fmt.Sprintf("[%s] %s", event.Type, truncate(event.Message, 80))
+	}
+}
+
+// formatNodeProgress extracts a human-readable summary from node_state JSON content.
+// Content is typically {"status":"running","output":"..."} or a tool/cache message.
+func formatNodeProgress(event ExecutionEvent) string {
+	label := event.NodeID
+	if label == "" {
+		label = "node"
+	}
+	// Try to parse the JSON content for a status field
+	var parsed struct {
+		Status string `json:"status"`
+		Output string `json:"output"`
+	}
+	if json.Unmarshal([]byte(event.Message), &parsed) == nil && parsed.Status != "" {
+		if parsed.Output != "" {
+			return fmt.Sprintf("⟳ %s: %s", label, truncate(parsed.Output, 80))
+		}
+		return fmt.Sprintf("⟳ %s: %s", label, parsed.Status)
+	}
+	// Fallback: show truncated raw message
+	return fmt.Sprintf("⟳ %s: %s", label, truncate(event.Message, 80))
+}
+
+// truncate shortens a string to maxLen, appending "…" if truncated.
+// Returns the original string if it's within the limit.
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen < 4 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-1] + "…"
 }
 
 func (ch *MCPSubagentChannel) emitResourceUpdated(event ExecutionEvent) error {

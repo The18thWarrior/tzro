@@ -28,7 +28,7 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 
 	// ADR-0064 Mechanism C: Build deterministic baseline context BEFORE the loop.
 	// This guarantees a quality floor even if the agentic loop adds nothing.
-	compactEngine := &compactor.PassthroughEngine{} // Use passthrough for tests; RouterEngine for production
+	compactEngine := &compactor.RouterEngine{}
 	baselineContext, err := buildCompactedRecallContext(ctx, taskID, upstreamNodeIDs, compactEngine)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[Recall] Warning: baseline compaction failed: %v\n", err)
@@ -229,6 +229,49 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 	}
 
 	var synthesis string
+	// P1: Hybrid Synthesis for Recall — when the synthesis input is large,
+	// use local outline + cloud expansion instead of sending the full context
+	// to the local model (which reliably produces repetitive output).
+	if len(synthesisInput) > hybridSynthesisThreshold() && !isCloudEscalationBlocked() && !upstreamSynthEscalated {
+		fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis triggered: synthesisInput=%d chars exceeds threshold=%d\n", len(synthesisInput), hybridSynthesisThreshold())
+
+		outlinePrompt := fmt.Sprintf(`You are a structured note-taker. Your goal was: %s
+
+Given the refined discovery context below, produce a CONCISE STRUCTURED OUTLINE with:
+- Section headers for each major topic
+- Key bullet points with specific data values, names, and numbers
+- Source references where available
+- NO prose paragraphs — bullet points ONLY
+- Include ALL relevant facts from the discovery context`, goal)
+
+		outline, outlineErr := engine.Infer(ctx, outlinePrompt, synthesisInput, "")
+		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
+
+			expandPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
+Goal: %s
+
+Expand the structured outline below into a comprehensive, well-cited final answer.
+Preserve all data values, names, and numbers from the outline.
+Add proper prose transitions and paragraph structure.
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y].%s`, goal, symbolRefBlock)
+
+			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+				{Role: "system", Content: expandPrompt},
+				{Role: "user", Content: outline},
+			}, "", taskID)
+
+			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+				fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis succeeded: outline=%d chars, expansion=%d chars\n", len(outline), len(cloudResult))
+				synthesis = cloudResult
+				goto postSynthesis
+			}
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 2 (cloud expansion) failed, falling through to standard synthesis\n")
+		} else if outlineErr != nil {
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline) failed: %v, falling through to standard synthesis\n", outlineErr)
+		}
+	}
+
 	if upstreamSynthEscalated && !isCloudEscalationBlocked() {
 		fmt.Fprintf(os.Stderr, "[Recall] Upstream probe synthesis was escalated to cloud — using cloud for Recall synthesis\n")
 		cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
@@ -251,6 +294,8 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 			return "", err
 		}
 	}
+
+postSynthesis:
 
 	// Symbol Anchor Check (ADR-0047): verify synthesis references against Index
 	if len(symbolIndex) > 0 {

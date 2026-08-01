@@ -109,6 +109,12 @@ type EngineConfig struct {
 	// Default 32000. Set to 0 to use the default.
 	RecallCompactionBudgetChars int `json:"recallCompactionBudgetChars,omitempty"`
 
+	// HybridSynthesisThresholdChars is the context size (in chars) above which
+	// synthesis uses a two-phase approach: local outline + cloud polish.
+	// Below this threshold, the standard local-try → cloud-fallback is used.
+	// Default 50000 (~12.5K tokens). Set to 0 to use the default.
+	HybridSynthesisThresholdChars int `json:"hybridSynthesisThresholdChars,omitempty"`
+
 	// Multi-Branch Edge Thought Evaluation (ADR-0045)
 	// MCTSMaxDepth caps the recursive AGoT spawn depth. Default 3.
 	MCTSMaxDepth int `json:"mctsMaxDepth,omitempty"`
@@ -289,6 +295,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
 	GlobalConfig.RecallCompactionBudgetChars = cfg.RecallCompactionBudgetChars
+	GlobalConfig.HybridSynthesisThresholdChars = cfg.HybridSynthesisThresholdChars
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
@@ -335,6 +342,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
 	GlobalConfig.RecallCompactionBudgetChars = cfg.RecallCompactionBudgetChars
+	GlobalConfig.HybridSynthesisThresholdChars = cfg.HybridSynthesisThresholdChars
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
@@ -712,6 +720,20 @@ func GetRecallCompactionBudgetChars() int {
 
 	if v <= 0 {
 		return 32000
+	}
+	return v
+}
+
+// GetHybridSynthesisThresholdChars returns the context size (in chars) above which
+// synthesis uses a two-phase approach: local outline + cloud polish.
+// Defaults to 50000 if not explicitly configured or set to a non-positive value.
+func GetHybridSynthesisThresholdChars() int {
+	configMutex.RLock()
+	v := GlobalConfig.HybridSynthesisThresholdChars
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 50000
 	}
 	return v
 }
