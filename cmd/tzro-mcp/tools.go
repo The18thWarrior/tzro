@@ -149,10 +149,13 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 
 	// Return immediately with the taskId. The agent polls tzro_status for
 	// completion; the MCP App UI connects via SSE to the daemon for live updates.
+	daemonPort := getDaemonPort()
+	setLastTask(taskID, daemonPort)
+
 	respMap := map[string]interface{}{
 		"taskId":     taskID,
 		"status":     "accepted",
-		"daemonPort": getDaemonPort(),
+		"daemonPort": daemonPort,
 	}
 	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 	return &mcp.CallToolResult{

@@ -141,6 +141,7 @@
       font-size: 12px;
       min-width: 120px;
       transition: all 0.2s ease;
+      flex-wrap: wrap;
     }
     .dag-node:hover { border-color: var(--accent); }
     .dag-node.pending { border-left: 3px solid var(--gray); }
@@ -175,6 +176,30 @@
       color: var(--text-muted);
       margin-left: auto;
       flex-shrink: 0;
+    }
+    .node-step {
+      width: 100%;
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .step-label {
+      display: block;
+      margin-bottom: 3px;
+      font-family: monospace;
+      font-size: 10px;
+    }
+    .step-bar {
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .step-fill {
+      height: 100%;
+      background: var(--blue);
+      border-radius: 2px;
+      transition: width 0.3s ease;
     }
     .dag-arrow {
       color: var(--gray);
@@ -367,6 +392,19 @@
       return (typeof s === 'string' ? s : s.status) || 'pending';
     }
 
+    // Extract step progress from node state output (e.g., "Step 5/15: read_file")
+    function nodeStepDetail(nodeId, states) {
+      if (!states) return null;
+      const s = states[nodeId];
+      if (!s || typeof s === 'string') return null;
+      const output = s.output || '';
+      const m = output.match(/^Step (\d+)\/(\d+): (.+)$/);
+      if (m) return { step: parseInt(m[1]), total: parseInt(m[2]), tool: m[3] };
+      const syn = output.match(/^Synthesizing \((\d+) findings\)$/);
+      if (syn) return { synthesizing: true, findings: parseInt(syn[1]) };
+      return null;
+    }
+
     // Format duration
     function fmtDuration(ms) {
       if (ms < 1000) return `${ms}ms`;
@@ -471,12 +509,24 @@
                 ${layer.map(id => {
                   const node = nodeMap[id] || { id, type: '?', action: id };
                   const s = nodeStatus(id, states);
+                  const detail = nodeStepDetail(id, states);
                   const label = node.action || node.id;
+                  let stepInfo = '';
+                  if (detail && detail.synthesizing) {
+                    stepInfo = `<div class="node-step">✨ Synthesizing (${detail.findings} findings)</div>`;
+                  } else if (detail) {
+                    const pct = Math.round((detail.step / detail.total) * 100);
+                    stepInfo = `<div class="node-step">
+                      <span class="step-label">${detail.step}/${detail.total}: ${detail.tool}</span>
+                      <div class="step-bar"><div class="step-fill" style="width:${pct}%"></div></div>
+                    </div>`;
+                  }
                   return `
                     <div class="dag-node ${s}" title="${node.instructions || label}">
                       <div class="node-dot ${s}"></div>
                       <span class="node-label">${label}</span>
                       <span class="node-type">${node.type || ''}</span>
+                      ${stepInfo}
                     </div>`;
                 }).join('')}
               </div>
@@ -545,7 +595,6 @@
       const taskId = getTaskId();
       if (!taskId) {
         // No taskId yet — show loading state and start discovery loop.
-        // The taskId arrives either via postMessage (fast) or daemon polling (fallback).
         app.innerHTML = `<div class="loading">
           <div class="spinner"></div>
           <p>Connecting to task...</p>
@@ -554,18 +603,80 @@
         return;
       }
 
-      taskData = await fetchTask(taskId);
+      // Show loading while waiting for task compilation
+      app.innerHTML = `<div class="loading">
+        <div class="spinner"></div>
+        <p>Task accepted — compiling DAG...</p>
+      </div>`;
+
+      // Poll until task has nodes (compilation complete) or terminal state
+      const maxWait = 30;
+      for (let i = 0; i < maxWait; i++) {
+        taskData = await fetchTask(taskId);
+        if (!taskData) {
+          renderAccepted(taskId);
+          return;
+        }
+        const nodes = taskData.graph?.nodes || [];
+        const status = taskData.status;
+        if (nodes.length > 0 || status === 'completed' || status === 'failed') {
+          break;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
       render(taskData);
 
       // Start SSE for live updates
       connectSSE(taskId);
 
-      // Update elapsed timer every second
-      timerInterval = setInterval(() => {
-        if (taskData && (taskData.status === 'running' || taskData.status === 'pending')) {
-          render(taskData);
+      // Also poll every 2s as backup (SSE may miss events or task may complete
+      // between SSE connect and first event)
+      timerInterval = setInterval(async () => {
+        if (taskData && (taskData.status === 'completed' || taskData.status === 'failed' || taskData.status === 'cancelled')) {
+          clearInterval(timerInterval);
+          return;
         }
-      }, 1000);
+        const fresh = await fetchTask(taskId);
+        if (fresh) {
+          taskData = fresh;
+          render(fresh);
+        }
+      }, 2000);
+    }
+
+    // Render a minimal accepted status when daemon is not reachable (sandboxed iframe)
+    function renderAccepted(taskId) {
+      const shortId = taskId.substring(0, 8);
+      app.innerHTML = `
+        <div class="header">
+          <div class="header-left">
+            <div class="logo">⚡</div>
+            <div>
+              <div class="title">tzro Task</div>
+              <div class="task-id">${shortId}…</div>
+            </div>
+          </div>
+          <span class="badge badge-running">accepted</span>
+        </div>
+        <div class="progress-container">
+          <div class="progress-bar" style="width: 5%"></div>
+        </div>
+        <div class="stats">
+          <div class="stat-item">
+            <div class="stat-label">Status</div>
+            <div class="stat-value">Task accepted — executing in background</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Task ID</div>
+            <div class="stat-value" style="font-family: monospace; font-size: 11px">${taskId}</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-label">Next Step</div>
+            <div class="stat-value">Use <code>tzro_status</code> to check progress</div>
+          </div>
+        </div>
+      `;
     }
 
     // Discover the active task by polling the daemon API.

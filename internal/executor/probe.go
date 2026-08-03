@@ -15,6 +15,7 @@ import (
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/symbols"
+	"tzro/internal/telemetry"
 	"tzro/internal/tools"
 )
 
@@ -1123,6 +1124,19 @@ func RunProbe(
 			fmt.Fprintf(os.Stderr, "[Probe Error] Failed to add thought step: %v\n", err)
 		}
 
+		// Emit probe step event for real-time progress tracking in the UI.
+		// Uses a compact JSON payload: step index, budget, tool name, and confidence.
+		stepPayload := fmt.Sprintf(`{"step":%d,"total":%d,"action":"%s","tool":"%s","confidence":%.2f}`,
+			step, stepBudget, chainStep.Action, toolName, chainStep.Confidence)
+		telemetry.Default.PublishEvent("probe_step", taskID, probeID, stepPayload)
+
+		// Update node state with step progress so the /api/tasks poll path
+		// also reflects real-time activity (belt-and-suspenders with SSE).
+		stepStatus := fmt.Sprintf("Step %d/%d: %s", step, stepBudget, toolName)
+		if toolName != "" {
+			_ = memory.DB.SetNodeState(taskID, nodeIDFromProbeID(probeID, taskID), "running", stepStatus)
+		}
+
 		if isSynthesisReady {
 			break
 		}
@@ -1149,6 +1163,13 @@ func RunProbe(
 
 	// Pass 2: Structured Synthesis (ADR-0059: reads from Edge Entry log)
 	fmt.Fprintf(os.Stderr, "[Probe] Node %s executing Pass 2 Synthesis (%d edge entries).\n", probeID, len(edgeEntries))
+
+	// Emit synthesis event so the progress UI can show the transition
+	telemetry.Default.PublishEvent("probe_synthesis", taskID, probeID,
+		fmt.Sprintf(`{"edgeEntries":%d}`, len(edgeEntries)))
+	_ = memory.DB.SetNodeState(taskID, nodeIDFromProbeID(probeID, taskID), "running",
+		fmt.Sprintf("Synthesizing (%d findings)", len(edgeEntries)))
+
 	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, edgeEntries, preloadedContent, isAnalyze)
 }
 
@@ -2387,4 +2408,15 @@ func extractURLsFromWebSearch(toolOutput string) []string {
 		}
 	}
 	return unique
+}
+
+// nodeIDFromProbeID extracts the original node ID from the probe's composite ID.
+// Probe IDs follow the pattern taskID + "_" + nodeID (set in executor.go).
+// Falls back to probeID if the prefix doesn't match.
+func nodeIDFromProbeID(probeID, taskID string) string {
+	prefix := taskID + "_"
+	if strings.HasPrefix(probeID, prefix) {
+		return strings.TrimPrefix(probeID, prefix)
+	}
+	return probeID
 }
