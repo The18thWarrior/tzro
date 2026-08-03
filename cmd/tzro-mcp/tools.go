@@ -159,6 +159,7 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 	}
 	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
 	return &mcp.CallToolResult{
+		Meta: mcp.Meta{"ui": map[string]any{"resourceUri": buildAppResourceURI(taskID, daemonPort)}},
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: string(respBytes)},
 		},
@@ -2662,13 +2663,13 @@ func registerTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
 		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt." + runDelegationHint(),
-		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURI}},
+		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURIBase}},
 	}, handleTzroRun)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_code",
 		Description: "Generate or update a single file via local LLM codegen. Supports two modes: 'full' (whole-file rewrite, default for new/small files) and 'diff' (structured hunk edits, default for files >200 lines). Files >500 lines MUST use diff mode. Pass a spec/JSDoc and filepath.",
-		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURI}},
+		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURIBase}},
 	}, handleTzroCode)
 
 	mcp.AddTool(server, &mcp.Tool{
