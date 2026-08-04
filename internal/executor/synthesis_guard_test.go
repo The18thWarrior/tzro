@@ -169,4 +169,57 @@ func TestValidateSynthesisOutput_MetaCommentary_SkippedForAnalyzeNode(t *testing
 	}
 }
 
+func TestValidateSynthesisOutput_TrailingMetaCommentary(t *testing.T) {
+	// Reproduces R16 market_analysis_local_ai regression: ~2000 chars of valid
+	// analysis followed by a degenerate tail of meta-commentary sentences.
+	// The overall ratio check misses this because the valid preamble dilutes
+	// the meta percentage below 40%.
+	validPreamble := "The exploration identified four dominant local-first AI inference engines: " +
+		"Ollama, llama.cpp, vLLM, and Apple MLX. They are evaluated across supported model formats, " +
+		"hardware requirements, performance benchmarks, and business models. " +
+		"Key findings: Ollama emphasizes ease of use and broad compatibility. " +
+		"llama.cpp provides low-level flexibility and quantization support. " +
+		"vLLM excels in production throughput and paged attention. " +
+		"MLX targets Apple Silicon with native Metal acceleration. " +
+		"All are open-source with no restrictive licensing barriers. " +
+		"Performance varies by hardware: NVIDIA GPUs are optimal for Ollama and vLLM. " +
+		"Quantization formats like GGUF and GPTQ are critical for consumer hardware. " +
+		"The engines serve different use cases from personal AI to production deployment. " +
+		"The landscape is dynamic with ongoing improvements in quantization and hardware acceleration. "
 
+	degenerateTail := "The synthesis is ready for delivery. The final answer is provided below. " +
+		"The analysis is complete. The output is ready. " +
+		"The synthesis is done. The answer is complete. " +
+		"The final answer is ready. The synthesis is complete. " +
+		"The answer is ready. The synthesis is done. " +
+		"The answer is complete. The synthesis is finished."
+
+	output := validPreamble + degenerateTail
+	reason := validateSynthesisOutput(output)
+	if reason == "" {
+		t.Error("expected validation failure for trailing meta-commentary degeneration")
+	}
+	if !strings.Contains(reason, "trailing meta-commentary") {
+		t.Errorf("expected trailing meta-commentary reason, got: %s", reason)
+	}
+}
+
+func TestValidateSynthesisOutput_TrailingMeta_NotFlaggedWhenClean(t *testing.T) {
+	// A clean output with one closing meta sentence at the very end should NOT
+	// be flagged — only flag when the tail is dominated by meta-commentary.
+	output := "The GGUF format evolved from GGML in August 2023. " +
+		"It introduced structured metadata embedded directly in the binary file. " +
+		"The layout consists of three sections: magic header, metadata block, and tensor data. " +
+		"Q4_K_M is recommended for consumer hardware with 8GB VRAM. " +
+		"It reduces memory usage by 72% with minimal quality loss. " +
+		"The format supports mixed-precision quantization per tensor. " +
+		"llama.cpp provides the primary inference engine for GGUF files. " +
+		"Ollama wraps llama.cpp with a user-friendly CLI interface. " +
+		"LM Studio offers a desktop GUI for loading quantized models. " +
+		"Hugging Face hosts most models as GGUF variants. " +
+		"The analysis is complete."
+	reason := validateSynthesisOutput(output)
+	if reason != "" {
+		t.Errorf("expected valid output with clean tail, got reason: %s", reason)
+	}
+}

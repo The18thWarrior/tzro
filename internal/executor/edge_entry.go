@@ -263,3 +263,109 @@ func containsString(slice []string, val string) bool {
 	}
 	return false
 }
+
+// PruneEdgeContext builds a budget-aware enriched context from edge entry
+// FullResults for cloud retry escalation. Unlike CompileEdgeLog (which uses
+// pre-truncated ResultSnippets), this uses the full uncompacted tool outputs
+// so the cloud model gets actual factual data (URLs, CVE details, search results)
+// instead of the lossy snippets that cause hallucination.
+//
+// Strategy: most-recent-first with proportional per-entry budgets.
+//   - Total budget is divided equally among entries (minimum 500 chars each).
+//   - Each entry's FullResult is compacted to its per-entry budget.
+//   - Entries are assembled newest-first; oldest are dropped if budget is exhausted.
+//   - A header notes how many entries were included vs. dropped.
+//
+// Typical usage: inject the returned string as supplementary context in the
+// cloud retry messages to prevent hallucination from thin context.
+func PruneEdgeContext(entries []EdgeEntry, budgetChars int) string {
+	if len(entries) == 0 || budgetChars <= 0 {
+		return ""
+	}
+
+	// Reserve space for headers and framing
+	const headerReserve = 200
+	availableBudget := budgetChars - headerReserve
+	if availableBudget < 500 {
+		availableBudget = 500
+	}
+
+	// Calculate per-entry budget. Minimum 500 chars to keep entries useful.
+	perEntryBudget := availableBudget / len(entries)
+	if perEntryBudget < 500 {
+		perEntryBudget = 500
+	}
+
+	// Build from most recent first — newest findings are highest value
+	type prunedEntry struct {
+		stepIndex int
+		toolName  string
+		toolArgs  string
+		content   string
+	}
+
+	var pruned []prunedEntry
+	totalChars := 0
+
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+
+		// Use FullResult when available, fall back to ResultSnippet
+		source := e.FullResult
+		if source == "" {
+			source = e.ResultSnippet
+		}
+		if source == "" {
+			continue
+		}
+
+		// Compact to per-entry budget
+		content := source
+		if len(content) > perEntryBudget {
+			content = compactor.CompactContent(content, perEntryBudget)
+		}
+
+		// Check total budget
+		entryOverhead := len(fmt.Sprintf("### Step %d: %s\nArgs: %s\n", e.StepIndex, e.ToolName, e.ToolArgs))
+		if totalChars+len(content)+entryOverhead > availableBudget {
+			break
+		}
+
+		pruned = append(pruned, prunedEntry{
+			stepIndex: e.StepIndex,
+			toolName:  e.ToolName,
+			toolArgs:  e.ToolArgs,
+			content:   content,
+		})
+		totalChars += len(content) + entryOverhead
+	}
+
+	if len(pruned) == 0 {
+		return ""
+	}
+
+	// Reverse to restore chronological order
+	for i, j := 0, len(pruned)-1; i < j; i, j = i+1, j-1 {
+		pruned[i], pruned[j] = pruned[j], pruned[i]
+	}
+
+	// Build output
+	var sb strings.Builder
+	dropped := len(entries) - len(pruned)
+	if dropped > 0 {
+		sb.WriteString(fmt.Sprintf("## Exploration Evidence (%d/%d steps, %d earliest omitted)\n\n", len(pruned), len(entries), dropped))
+	} else {
+		sb.WriteString(fmt.Sprintf("## Exploration Evidence (%d steps)\n\n", len(pruned)))
+	}
+
+	for _, p := range pruned {
+		sb.WriteString(fmt.Sprintf("### Step %d: %s\n", p.stepIndex, p.toolName))
+		if p.toolArgs != "" {
+			sb.WriteString(fmt.Sprintf("Args: %s\n", p.toolArgs))
+		}
+		sb.WriteString(p.content)
+		sb.WriteString("\n\n")
+	}
+
+	return sb.String()
+}

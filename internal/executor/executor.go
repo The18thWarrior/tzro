@@ -695,7 +695,19 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		// Take the raw XML output and convert it to schema-valid JSON using grammar
 		// constraints. The prompt is small (just the XML + schema) so it's fast.
 		// Falls back to deterministic XML parsing if GBNF refinement fails.
-		if schemaStr != "" {
+		//
+		// Guard: Skip GBNF refinement when Pass 1 output exceeds 4K chars.
+		// GBNF refinement is designed for short parameter extraction (path, query,
+		// count, etc.) — not for passing multi-kilobyte content blobs verbatim.
+		// The 4B router model will summarize large content instead of preserving it,
+		// destroying probe synthesis output. The deterministic XML parser handles
+		// large content correctly.
+		const maxGBNFRefinementInputChars = 4096
+		skipGBNFRefinement := len(xmlResult) > maxGBNFRefinementInputChars
+		if skipGBNFRefinement {
+			fmt.Fprintf(os.Stderr, "[Executor] Skipping GBNF refinement for %s — Pass 1 output too large (%d chars > %d limit), using XML parser\n", node.ID, len(xmlResult), maxGBNFRefinementInputChars)
+		}
+		if schemaStr != "" && !skipGBNFRefinement {
 			refinementSystem := "You are a precise data format converter. Convert the provided XML tool arguments into a valid JSON object matching the schema. " +
 				"Preserve all values exactly as they appear in the XML. Do NOT add, remove, or modify any values."
 

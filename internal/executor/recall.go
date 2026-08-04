@@ -518,6 +518,35 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 			if metaRatio > 0.4 && metaCount >= 5 {
 				return fmt.Sprintf("meta-commentary degeneration detected (%d/%d sentences are vacuous completion phrases, ratio=%.0f%%)", metaCount, len(sentences), metaRatio*100)
 			}
+
+			// Trailing concentration check: the 4B model often produces
+			// valid content followed by a degenerate tail. The overall ratio
+			// check above misses this because the valid preamble dilutes
+			// the percentage. Check the last 30% of sentences independently.
+			tailStart := len(sentences) - len(sentences)*30/100
+			if tailStart < 0 {
+				tailStart = 0
+			}
+			tailSentences := sentences[tailStart:]
+			if len(tailSentences) >= 4 {
+				tailMetaCount := 0
+				for _, sentence := range tailSentences {
+					trimmedSent := strings.TrimSpace(sentence)
+					if trimmedSent == "" {
+						continue
+					}
+					for _, pattern := range metaPatterns {
+						if strings.Contains(trimmedSent, pattern) {
+							tailMetaCount++
+							break
+						}
+					}
+				}
+				tailRatio := float64(tailMetaCount) / float64(len(tailSentences))
+				if tailRatio > 0.6 && tailMetaCount >= 3 {
+					return fmt.Sprintf("trailing meta-commentary degeneration detected (%d/%d tail sentences are vacuous, ratio=%.0f%%)", tailMetaCount, len(tailSentences), tailRatio*100)
+				}
+			}
 		}
 	}
 

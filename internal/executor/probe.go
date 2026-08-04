@@ -1417,6 +1417,29 @@ Include source citations where the outline references URLs.%s`, goal, extraction
 		}
 	}
 
+	// Build pruned edge evidence for cloud escalation. This uses FullResult
+	// (uncompacted web search JSON, full browse content) instead of the truncated
+	// ResultSnippets in contextStr. Injected as supplementary context so the cloud
+	// model has actual factual data to prevent hallucination.
+	const cloudEvidenceBudgetChars = 12288 // ~3K tokens, fits comfortably in cloud context
+	prunedEvidence := PruneEdgeContext(edgeEntries, cloudEvidenceBudgetChars)
+
+	// Helper: build cloud retry messages with optional pruned evidence injection.
+	buildCloudMessages := func() []inference.InferenceMessage {
+		msgs := []inference.InferenceMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: contextStr},
+		}
+		if prunedEvidence != "" {
+			msgs = append(msgs, inference.InferenceMessage{
+				Role:    "user",
+				Content: "IMPORTANT: The following is the full exploration evidence from the probe. Use ONLY the facts, URLs, and data below. Do NOT invent or hallucinate any details not present in this evidence.\n\n" + prunedEvidence,
+			})
+			fmt.Fprintf(os.Stderr, "[Probe] Injecting %d chars of pruned edge evidence into cloud escalation\n", len(prunedEvidence))
+		}
+		return msgs
+	}
+
 	// Standard synthesis path (local-try → cloud-fallback on repetition)
 	var result string
 	var err error
@@ -1424,10 +1447,7 @@ Include source citations where the outline references URLs.%s`, goal, extraction
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[Probe] Primary synthesis engine failed: %v. Attempting cloud escalation.\n", err)
 		if !isCloudEscalationBlocked() {
-			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: contextStr},
-			}, synthSchema, taskID)
+			cloudResult, cloudErr := retryWithCloud(ctx, buildCloudMessages(), synthSchema, taskID)
 			if cloudErr == nil {
 				fmt.Fprintf(os.Stderr, "[Probe] Cloud escalation succeeded for synthesis after engine failure (%d chars)\n", len(cloudResult))
 				result = cloudResult
@@ -1451,10 +1471,7 @@ Include source citations where the outline references URLs.%s`, goal, extraction
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "[Probe] Synthesis output invalid (%s), escalating to cloud\n", reason)
 		if !isCloudEscalationBlocked() {
-			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: contextStr},
-			}, synthSchema, taskID)
+			cloudResult, cloudErr := retryWithCloud(ctx, buildCloudMessages(), synthSchema, taskID)
 		if cloudErr == nil && validateSynthesisOutput(cloudResult, validationOpts...) == "" {
 				fmt.Fprintf(os.Stderr, "[Probe] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
 				result = cloudResult
