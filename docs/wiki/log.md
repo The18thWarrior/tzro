@@ -2,6 +2,25 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-03T20:25:00-07:00] grill-with-docs | Probe Pass 1 Worker Routing (ADR-0065)
+
+- **Activity**: Grill-with-docs session analyzing router/worker task breakdown, triggered by benchmark results-research-10 showing catastrophic probe navigation failure. 7 design questions resolved.
+- **Key Findings**:
+  1. **1B router cannot navigate probe steps**: Across 5 research tasks, the router signaled "synthesize" at every step, produced 0 successful tool calls through 8-step probes, and all synthesis outputs were repetitive or hallucinatory.
+  2. **Three failure modes identified**: (a) premature synthesis / navigation collapse, (b) Pass 2 GBNF extraction truncation at 512 tokens, (c) synthesis degeneration from the 4B worker.
+  3. **CONTEXT.md was stale**: Glossary described Pass 1 on worker, but code had it on router. Now corrected to match new design.
+- **Resolved terms**: Updated "Thought Chain" in CONTEXT.md to describe schema-based model routing (ADR-0065).
+- **Decisions**:
+  - Pass 1 (unconstrained reasoning) → worker model for navigation quality
+  - Pass 2 (GBNF extraction) → stays on router for speed
+  - Schema-based routing in `DefaultProbeInference`: empty schema → worker, non-empty → router
+  - Pass 2 token cap increased 512 → 1024 to prevent JSON truncation
+  - Hardcoded (no config knob) — benchmark evidence is conclusive
+- **ADR created**: [ADR-0065: Probe Pass 1 Worker Routing](../adr/0065-probe-pass1-worker-routing.md)
+- **Files changed**: `internal/executor/probe.go`, `internal/executor/two_pass.go`, `CONTEXT.md`
+
+---
+
 ## [2026-07-31T18:46:00-07:00] wayfinder | MCP Subscriptions Upgrade (Go SDK v1.6.1 → v1.7.0)
 
 - **Activity**: Charted a wayfinder map for upgrading the MCP server to support the 2026-07-28 `subscriptions/listen` protocol pattern. Goal: real-time execution visibility for IDE agents without `tzro_status` polling.

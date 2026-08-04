@@ -81,20 +81,10 @@ func StartActive(ctx context.Context) error {
 		}
 	}()
 
-	// When ActiveBackend is a remote endpoint, also start the local worker
-	// sidecar so it's warm and available as a fallback. Without this, a
-	// remote backend failure leaves no local inference path.
-	if ActiveBackend != nil {
-		if _, isLocal := ActiveBackend.(*LlamaServerBackend); !isLocal {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if startErr := GlobalWorkerModel.Start(ctx); startErr != nil {
-					fmt.Fprintf(os.Stderr, "[Inference] Local worker sidecar failed to start alongside remote backend: %v\n", startErr)
-				}
-			}()
-		}
-	}
+	// NOTE: When ActiveBackend is a remote endpoint, we intentionally do NOT
+	// start the local worker sidecar. CallWorker() already routes through
+	// ActiveBackend, so a local worker would waste memory and GPU. The router
+	// sidecar alone handles local classification/navigation needs.
 
 	// Start router if configured
 	routerPath := config.GetRouterModelPath()

@@ -33,13 +33,22 @@ type ProbeInferenceEngine interface {
 	InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error)
 }
 
-// DefaultProbeInference wraps the router sidecar for production Probe steps.
-// Probe Thought Chain steps are navigation decisions (tool selection, short outputs)
-// that benefit from the router model's speed over the worker's quality.
+// DefaultProbeInference uses schema-based routing for Probe Thought Chain steps (ADR-0065).
+// Unconstrained reasoning (empty schema) → Worker sidecar (4B, quality-sensitive navigation).
+// GBNF-constrained extraction (non-empty schema) → Router sidecar (1B, fast structured output).
+// The 1B router cannot navigate probe steps — benchmark evidence showed 0 successful tool
+// calls across 5 research tasks when Pass 1 ran on the router.
 type DefaultProbeInference struct{}
 
 func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
-	result, err := inference.CallRouter(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
+	messages := []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}
+	var result *inference.InferenceResult
+	var err error
+	if jsonSchema == "" {
+		result, err = inference.CallWorker(ctx, messages, jsonSchema)
+	} else {
+		result, err = inference.CallRouter(ctx, messages, jsonSchema)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -47,8 +56,15 @@ func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPro
 }
 
 // InferMessages sends a pre-segmented message array to maximize KV cache prefix reuse.
+// Routes based on schema presence: empty schema → worker, non-empty → router.
 func (d *DefaultProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
-	result, err := inference.CallRouter(ctx, messages, jsonSchema)
+	var result *inference.InferenceResult
+	var err error
+	if jsonSchema == "" {
+		result, err = inference.CallWorker(ctx, messages, jsonSchema)
+	} else {
+		result, err = inference.CallRouter(ctx, messages, jsonSchema)
+	}
 	if err != nil {
 		return "", err
 	}

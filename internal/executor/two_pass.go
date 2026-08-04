@@ -1,11 +1,11 @@
 package executor
 
-// two_pass.go — Two-Pass Tool Extraction for Thought Chain steps (ADR-0064).
+// two_pass.go — Two-Pass Tool Extraction for Thought Chain steps (ADR-0064, ADR-0065).
 //
 // Every Thought Chain step (Probe and Recall loops) executes two inference passes:
-//   - Pass 1 (Worker, unconstrained): Generate free-text reasoning.
-//     Done BEFORE calling extractToolAction.
-//   - Pass 2 (Router, GBNF-constrained): Extract the structured action.
+//   - Pass 1 (Worker, unconstrained): Generate free-text reasoning on the 4B worker model.
+//     Done BEFORE calling extractToolAction. Uses worker for navigation quality (ADR-0065).
+//   - Pass 2 (Router, GBNF-constrained): Extract the structured action on the 1B router model.
 //     This is what extractToolAction does.
 //
 // The GBNF pass always runs — it doubles as a validation layer for malformed
@@ -85,8 +85,9 @@ func extractToolAction(
 		{Role: "user", Content: extractionInput},
 	}
 
-	// GBNF-constrained inference on the router
-	gbnfCtx := context.WithValue(ctx, inference.MaxTokensKey, 512)
+	// GBNF-constrained inference on the router (ADR-0065: cap increased from 512→1024
+	// to prevent JSON truncation causing parse failures in benchmark results-research-10).
+	gbnfCtx := context.WithValue(ctx, inference.MaxTokensKey, 1024)
 	result, err := engine.InferMessages(gbnfCtx, messages, TwoPassActionSchema)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("two-pass extraction failed: %w", err)

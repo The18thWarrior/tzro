@@ -119,6 +119,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0059: Incremental Edge Entry Accumulation](../adr/0059-incremental-edge-entry-accumulation.md) - Incremental edge entry accumulation within Probe Node Thought Chains.
 - [ADR-0060: Generation Guard on Inference Backend](../adr/0060-generation-guard-on-inference-backend.md) - Streaming/post-generation quality gate on the Inference Backend detecting character-level and block-level repetition. Subsumes legacy `stripTrailingRepetition`.
 - [ADR-0061: Spec Compliance Gate for Codegen](../adr/0061-spec-compliance-gate-for-codegen.md) - Post-compilation functional completeness check against original task spec. Full regeneration on failure. Subsumes language-specific linting.
+- [ADR-0065: Probe Pass 1 Worker Routing](../adr/0065-probe-pass1-worker-routing.md) - Routes Probe Thought Chain Pass 1 through worker model for navigation quality. Schema-based routing: empty schema → worker, non-empty → router. Benchmark-driven reversal of original router-for-everything design.
 
 ## Ingested Sources
 

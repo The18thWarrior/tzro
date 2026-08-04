@@ -160,7 +160,11 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	}
 
 	cfg := config.Get()
-	m.GGUFModelPath = cfg.GGUFModelPath
+	// Only read from global config if the caller hasn't already set a model path
+	// (e.g., StartActive sets routerPath before calling Start on the router sidecar).
+	if m.GGUFModelPath == "" {
+		m.GGUFModelPath = cfg.GGUFModelPath
+	}
 	if m.GGUFModelPath != "" && !filepath.IsAbs(m.GGUFModelPath) {
 		m.GGUFModelPath = filepath.Join(config.GetModelsDir(), filepath.Base(m.GGUFModelPath))
 	}

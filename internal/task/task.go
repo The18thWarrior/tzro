@@ -327,6 +327,19 @@ func buildSelfContainedGraph(taskID, prompt string) *compiler.ExecutionGraph {
 }
 
 // collectToolNames gathers all registered tool names from MCP daemons and the global tool registry.
+// internalDashboardTools are tools used exclusively by the hardcoded
+// "generate system dashboard spec" graph (line 168). They must never appear
+// in the planner's tool inventory for user-facing tasks — exposing them
+// causes the local model to misroute code generation to compose_layout.
+var internalDashboardTools = map[string]bool{
+	"compose_layout":     true,
+	"gather_metrics":     true,
+	"gather_tasks":       true,
+	"gather_config":      true,
+	"gather_workflows":   true,
+	"terminal_synthesis": true,
+}
+
 func collectToolNames() []string {
 	daemons := mcp.GlobalRegistry.GetList()
 	var names []string
@@ -334,6 +347,9 @@ func collectToolNames() []string {
 		names = append(names, k)
 	}
 	for _, t := range tools.GetList() {
+		if internalDashboardTools[t.Name()] {
+			continue
+		}
 		names = append(names, t.Name())
 	}
 	return names
@@ -367,10 +383,10 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 	// Ingest globally registered tools (including dynamic benchmark mock tools and standalone tools)
 	for _, t := range tools.GetList() {
 		name := t.Name()
-		if !isBenchmark && name == "list_tools" {
+		if name == "list_tools" {
 			continue
 		}
-		if isBenchmark && name == "list_tools" {
+		if internalDashboardTools[name] {
 			continue
 		}
 
@@ -588,10 +604,10 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 	// Ingest globally registered tools (including dynamic benchmark mock tools and standalone tools)
 	for _, t := range tools.GetList() {
 		name := t.Name()
-		if !isBenchmark && name == "list_tools" {
+		if name == "list_tools" {
 			continue
 		}
-		if isBenchmark && name == "list_tools" {
+		if internalDashboardTools[name] {
 			continue
 		}
 
