@@ -1269,6 +1269,23 @@ You have completed your exploration. Review the findings and produce a comprehen
 	// The default 2048 truncates content-heavy outputs (e.g., ADR logs).
 	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
 
+	// DRY (Don't Repeat Yourself) sampling for synthesis: the 4B model reliably
+	// degenerates into repetitive phrase loops during synthesis (benchmark runs
+	// 10-11: 4-5/5 tasks hit repetitive content detection, e.g., "Consider Using
+	// a Security Toolchain" ×115). DRY is sequence-aware — it detects repeated
+	// multi-token sequences and applies exponential penalties based on match
+	// length. This directly targets phrase-level repetition without degrading
+	// code quality or structured output the way frequency_penalty would.
+	// Values: multiplier=0.8 (community default), base=1.75, allowed_length=2,
+	// full-context lookback (-1), markdown-aware sequence breakers.
+	synthCtx = context.WithValue(synthCtx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+		Multiplier:       0.8,
+		Base:             1.75,
+		AllowedLength:    2,
+		PenaltyLastN:     -1,
+		SequenceBreakers: []string{"\n", ":", "\"", "*"},
+	})
+
 	// P1: Hybrid Synthesis — when context is large, local synthesis reliably
 	// fails with repetitive content (benchmark run 8: 100% failure rate).
 	// Use a two-phase approach: local model generates a structured outline,

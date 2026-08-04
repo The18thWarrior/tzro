@@ -43,6 +43,30 @@ type maxTokensContextKey struct{}
 // generation. Use context.WithValue(ctx, MaxTokensKey, 2048).
 var MaxTokensKey = maxTokensContextKey{}
 
+// drySamplingContextKey is a private type for the DRY sampling context key.
+type drySamplingContextKey struct{}
+
+// DRYSamplingConfig holds parameters for DRY (Don't Repeat Yourself) sampling.
+// DRY is sequence-aware: it detects repeated token sequences and applies an
+// exponential penalty based on match length, unlike frequency_penalty which
+// only penalizes individual tokens and degrades structured output quality.
+type DRYSamplingConfig struct {
+	Multiplier       float64  `json:"dry_multiplier"`                 // Main strength (0.0 = disabled, 0.8 = recommended)
+	Base             float64  `json:"dry_base"`                       // Escalation for longer repeats (default: 1.75)
+	AllowedLength    int      `json:"dry_allowed_length"`             // Min sequence length before penalty (default: 2)
+	PenaltyLastN     int      `json:"dry_penalty_last_n"`             // Lookback window (-1 = full context)
+	SequenceBreakers []string `json:"dry_sequence_breakers,omitempty"` // Tokens that reset detection
+}
+
+// DRYSamplingKey is a context key that callers set to enable DRY sampling
+// during inference. When present with a DRYSamplingConfig value, the local
+// model includes DRY parameters in the completion request.
+// Primarily used for synthesis passes where the 4B model degenerates into
+// repetitive phrase loops (e.g., "Consider Using a Security Toolchain" ×115).
+// DRY is preferred over frequency_penalty because it targets sequence-level
+// repetition without degrading code or structured output quality.
+var DRYSamplingKey = drySamplingContextKey{}
+
 // InferenceResult holds the model output along with token-level metrics from the server.
 type InferenceResult struct {
 	Content          string  `json:"content"`
@@ -999,6 +1023,11 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
 		MaxTokens          *int                     `json:"max_tokens,omitempty"`
+		DRYMultiplier      *float64                 `json:"dry_multiplier,omitempty"`
+		DRYBase            *float64                 `json:"dry_base,omitempty"`
+		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
+		DRYPenaltyLastN    *int                     `json:"dry_penalty_last_n,omitempty"`
+		DRYSequenceBreakers []string                `json:"dry_sequence_breakers,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
 		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
@@ -1033,6 +1062,20 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		maxTok = overrideTok
 	}
 	reqBody.MaxTokens = &maxTok
+
+	// DRY (Don't Repeat Yourself) sampling via context key — detects and penalizes
+	// repeated token sequences, preventing phrase-level repetition loops during
+	// synthesis. Unlike frequency_penalty (individual tokens), DRY is sequence-aware
+	// and won't degrade code or structured output quality.
+	if dry, ok := ctx.Value(DRYSamplingKey).(DRYSamplingConfig); ok && dry.Multiplier > 0 {
+		reqBody.DRYMultiplier = &dry.Multiplier
+		reqBody.DRYBase = &dry.Base
+		reqBody.DRYAllowedLength = &dry.AllowedLength
+		reqBody.DRYPenaltyLastN = &dry.PenaltyLastN
+		if len(dry.SequenceBreakers) > 0 {
+			reqBody.DRYSequenceBreakers = dry.SequenceBreakers
+		}
+	}
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}
@@ -1215,6 +1258,11 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
 		MaxTokens          *int                     `json:"max_tokens,omitempty"`
+		DRYMultiplier      *float64                 `json:"dry_multiplier,omitempty"`
+		DRYBase            *float64                 `json:"dry_base,omitempty"`
+		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
+		DRYPenaltyLastN    *int                     `json:"dry_penalty_last_n,omitempty"`
+		DRYSequenceBreakers []string                `json:"dry_sequence_breakers,omitempty"`
 		Stream             bool                     `json:"stream"`
 		StreamOptions      *StreamOptionsStruct     `json:"stream_options,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
@@ -1252,6 +1300,17 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		maxTok = overrideTok
 	}
 	reqBody.MaxTokens = &maxTok
+
+	// DRY sampling via context key (same as CallLocalModel)
+	if dry, ok := ctx.Value(DRYSamplingKey).(DRYSamplingConfig); ok && dry.Multiplier > 0 {
+		reqBody.DRYMultiplier = &dry.Multiplier
+		reqBody.DRYBase = &dry.Base
+		reqBody.DRYAllowedLength = &dry.AllowedLength
+		reqBody.DRYPenaltyLastN = &dry.PenaltyLastN
+		if len(dry.SequenceBreakers) > 0 {
+			reqBody.DRYSequenceBreakers = dry.SequenceBreakers
+		}
+	}
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}
