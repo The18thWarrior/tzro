@@ -1089,8 +1089,15 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		// "docs/adr/") and resolves them against the project root. Only existing
 		// directories are added. This universal mechanism gives every probe
 		// pre-loaded context without requiring the planner to know about PreloadPaths.
-		if len(probeConfig.PreloadPaths) == 0 {
+		//
+		// Skip for web-only probes: when allowedTools is exclusively web tools
+		// (web_search, web_browse), injecting local directory content contaminates
+		// the synthesis context and causes degenerate output (benchmark R14:
+		// technical_deep_dive_gguf 4.75→1.00 regression from preloading docs/).
+		if len(probeConfig.PreloadPaths) == 0 && !isWebOnlyProbe(probeConfig.AllowedTools) {
 			probeConfig.PreloadPaths = detectPreloadPaths(probeConfig.Goal, probeConfig.TaskContext)
+		} else if isWebOnlyProbe(probeConfig.AllowedTools) {
+			fmt.Fprintf(os.Stderr, "[Probe] Skipping PreloadPaths auto-detection for web-only probe %s (allowedTools: %v)\n", node.ID, probeConfig.AllowedTools)
 		}
 
 		// Collect binding keys that downstream nodes need from this probe's output.
@@ -1117,12 +1124,14 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: downstream binding keys: %v\n", node.ID, downstreamBindingKeys)
 		}
 
-		probeEngine := ProbeInferenceEngine(&DefaultProbeInference{})
+		probeEngine := ProbeInferenceEngine(&ProbeInference{})
 		if config.GetProbeUseWorkerModel() {
 			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: using worker model for step inference (probeUseWorkerModel=true)\n", node.ID)
-			probeEngine = &WorkerInference{}
+			// When probeUseWorkerModel is set, we still use ProbeInference — the call sites
+			// control routing via ModelTarget. The config flag is vestigial; TargetAuto already
+			// routes unconstrained calls to worker.
 		}
-		synthesisEngine := &WorkerInference{}
+		synthesisEngine := &ProbeInference{}
 		// ADR-0055: Inject dispatch recorder so probe tool calls are captured
 		probeCtx := context.WithValue(ctx, DispatchRecorderKey, func(toolName string, args map[string]interface{}) {
 			e.RecordDispatch(taskID, toolName, args)
@@ -1261,7 +1270,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 		findProbes(node.ID)
 
-		recallEngine := &WorkerInference{}
+		recallEngine := &ProbeInference{}
 		synthesis, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())

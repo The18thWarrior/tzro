@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -38,10 +39,11 @@ func TestValidateSynthesisOutput_DegenerateOutput(t *testing.T) {
 }
 
 func TestValidateSynthesisOutput_RepetitiveContent(t *testing.T) {
-	// Repetitive content should fail
-	output := "Let me run a query to see the data. " +
-		"Let me run a query to see the data. " +
-		"Let me run a query to see the data. " +
+	// Repetitive content should fail — need 4+ repetitions with 5-gram threshold.
+	output := "Let me run a query to see the data and results. " +
+		"Let me run a query to see the data and results. " +
+		"Let me run a query to see the data and results. " +
+		"Let me run a query to see the data and results. " +
 		"And then check the results after that."
 	reason := validateSynthesisOutput(output)
 	if reason == "" {
@@ -63,21 +65,22 @@ func TestValidateSynthesisOutput_PlaceholderTemplates(t *testing.T) {
 }
 
 func TestValidateSynthesisOutput_AnalyzeNode_AllowsTabularRepetition(t *testing.T) {
-	// Tabular data that naturally repeats column headers across rows —
-	// this is the exact pattern that caused lead_source_by_owner to fail.
+	// Tabular data that naturally repeats column headers across rows.
+	// ADR-0066: With 5-gram + scaled threshold, short tabular data (~50 words)
+	// is no longer flagged as repetitive even WITHOUT WithAnalyzeNode().
 	output := "Analysis of leads by source:\n" +
 		"- Account_Owner: John Smith\n  leads\n - Distinct Lead_Sources: Web, Referral\n  Total: 45\n" +
 		"- Account_Owner: Jane Doe\n  leads\n - Distinct Lead_Sources: Event, Web\n  Total: 32\n" +
 		"- Account_Owner: Bob Wilson\n  leads\n - Distinct Lead_Sources: Partner, Web\n  Total: 28\n" +
 		"Overall the dataset contains 105 leads across 3 owners."
 
-	// Without WithAnalyzeNode — should detect repetition
+	// With the new threshold, this short tabular data should pass even without WithAnalyzeNode
 	reason := validateSynthesisOutput(output)
-	if reason == "" {
-		t.Error("expected repetition detection WITHOUT WithAnalyzeNode()")
+	if reason != "" {
+		t.Errorf("expected valid output for short tabular data, got reason: %s", reason)
 	}
 
-	// With WithAnalyzeNode — should pass (tabular repetition is valid)
+	// With WithAnalyzeNode — should also pass
 	reason = validateSynthesisOutput(output, WithAnalyzeNode())
 	if reason != "" {
 		t.Errorf("expected valid output WITH WithAnalyzeNode(), got reason: %s", reason)
@@ -112,3 +115,58 @@ func TestStripControlTokens_BareToken(t *testing.T) {
 // NOTE: TestStripTrailingRepetition_* tests removed (ADR-0060).
 // Character-level degeneration detection is now handled by the GenerationGuard
 // at the Inference Backend layer. See internal/inference/generation_guard_test.go.
+
+func TestValidateSynthesisOutput_MetaCommentaryDegeneration(t *testing.T) {
+	// Reproduces the R14 benchmark regression: the 4B model generates
+	// varied-but-vacuous sentences about task completion instead of content.
+	// Each sentence is unique, so n-gram detection misses it.
+	output := "GGUF specification, migration reasons. " +
+		"The synthesis is complete. The final answer is ready for use. " +
+		"The engine is done. The synthesis is final. The answer is complete. " +
+		"The engine has completed its task. The synthesis is over. " +
+		"The final answer is set. The engine has stopped. " +
+		"The synthesis is terminated. The final answer is done. " +
+		"The engine has ceased. The synthesis is completed. " +
+		"The final answer is finished. The engine has ended. " +
+		"The synthesis is wrapped. The final answer is sealed."
+	reason := validateSynthesisOutput(output)
+	if reason == "" {
+		t.Error("expected validation failure for meta-commentary degeneration")
+	}
+	if !strings.Contains(reason, "meta-commentary degeneration") {
+		t.Errorf("expected meta-commentary reason, got: %s", reason)
+	}
+}
+
+func TestValidateSynthesisOutput_LegitimateWithMinorMeta(t *testing.T) {
+	// Legitimate synthesis that happens to contain a couple of meta sentences
+	// should NOT be flagged. Only flag when >40% of sentences match.
+	output := "The GGUF format evolved from GGML in August 2023. " +
+		"It introduced structured Key-Value metadata embedded directly in the file. " +
+		"The binary layout consists of three sections: magic header, metadata block, and tensor data. " +
+		"Q4_K_M is the recommended quantization for most consumer hardware. " +
+		"It reduces VRAM usage by 72% with minimal quality loss. " +
+		"The format supports mixed-precision quantization per tensor. " +
+		"llama.cpp provides the primary inference engine for GGUF files. " +
+		"Ollama wraps llama.cpp with a user-friendly CLI interface. " +
+		"In conclusion, this synthesis is complete."
+	reason := validateSynthesisOutput(output)
+	if reason != "" {
+		t.Errorf("expected valid output for legitimate synthesis with minor meta, got reason: %s", reason)
+	}
+}
+
+func TestValidateSynthesisOutput_MetaCommentary_SkippedForAnalyzeNode(t *testing.T) {
+	// Analyze nodes should skip the meta-commentary check
+	output := "The synthesis is complete. The final answer is ready for use. " +
+		"The engine is done. The synthesis is final. The answer is complete. " +
+		"The engine has completed its task. The synthesis is over. " +
+		"The final answer is set. The engine has stopped. " +
+		"The synthesis is terminated. The final answer is done."
+	reason := validateSynthesisOutput(output, WithAnalyzeNode())
+	if reason != "" {
+		t.Errorf("expected meta-commentary check skipped for analyze node, got reason: %s", reason)
+	}
+}
+
+

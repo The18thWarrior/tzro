@@ -37,8 +37,33 @@ const TwoPassActionSchema = `{
 	"required": ["action", "tool", "arguments"]
 }`
 
+// TwoPassToolOnlySchema constrains the extraction to only produce "tool_call".
+// Used when the probe has not met its minimum step budget — the 1B Router
+// physically cannot output "synthesize" under this grammar, forcing it to
+// extract a tool call (which the auto-seed mechanism will populate if args
+// are empty). This fixes the ADR-0065 regression where the Router
+// over-classified Worker reasoning as "synthesize" (R-12: 0 edge entries
+// across all 5 tasks vs R-9: 63 edge entries when both passes ran on Worker).
+const TwoPassToolOnlySchema = `{
+	"type": "object",
+	"properties": {
+		"action": {
+			"type": "string",
+			"enum": ["tool_call"]
+		},
+		"tool": { "type": "string" },
+		"arguments": { "type": "object" }
+	},
+	"required": ["action", "tool", "arguments"]
+}`
+
 // extractToolAction runs the GBNF-constrained extraction pass (Pass 2) on
 // reasoning output from Pass 1. It determines: call a tool, or synthesize?
+//
+// When forceTool is true, the GBNF grammar only allows "tool_call" — the model
+// cannot output "synthesize". This is used when the probe hasn't met its
+// minimum step budget, preventing the 1B Router from prematurely terminating
+// exploration.
 //
 // Input handling:
 //   - If reasoning contains complete <ACTION>...</ACTION> tags: targeted extraction
@@ -52,6 +77,7 @@ func extractToolAction(
 	engine ProbeInferenceEngine,
 	reasoning string,
 	allowedTools []string,
+	forceTool bool,
 	goal ...string,
 ) (action string, toolName string, args map[string]interface{}, err error) {
 
@@ -73,12 +99,23 @@ func extractToolAction(
 		goalCtx = fmt.Sprintf(" The task goal is: %s.", g)
 	}
 
-	systemPrompt := fmt.Sprintf(
-		"You are a precise action extractor.%s Given the reasoning below, determine the action: "+
-			"either 'tool_call' (with a tool name from [%s] and its SPECIFIC arguments — "+
-			"do NOT leave arguments empty, extract the actual parameters from the reasoning) "+
-			"or 'synthesize' (if the reasoning indicates all information has been gathered). "+
-			"Output ONLY the JSON object.", goalCtx, toolList)
+	// Select schema and prompt based on forceTool mode.
+	var systemPrompt, schema string
+	if forceTool {
+		systemPrompt = fmt.Sprintf(
+			"You are a precise action extractor.%s Given the reasoning below, extract the tool call: "+
+				"select a tool from [%s] and extract its SPECIFIC arguments from the reasoning. "+
+				"Do NOT leave arguments empty. Output ONLY the JSON object.", goalCtx, toolList)
+		schema = TwoPassToolOnlySchema
+	} else {
+		systemPrompt = fmt.Sprintf(
+			"You are a precise action extractor.%s Given the reasoning below, determine the action: "+
+				"either 'tool_call' (with a tool name from [%s] and its SPECIFIC arguments — "+
+				"do NOT leave arguments empty, extract the actual parameters from the reasoning) "+
+				"or 'synthesize' (if the reasoning indicates all information has been gathered). "+
+				"Output ONLY the JSON object.", goalCtx, toolList)
+		schema = TwoPassActionSchema
+	}
 
 	messages := []inference.InferenceMessage{
 		{Role: "system", Content: systemPrompt},
@@ -88,7 +125,7 @@ func extractToolAction(
 	// GBNF-constrained inference on the router (ADR-0065: cap increased from 512→1024
 	// to prevent JSON truncation causing parse failures in benchmark results-research-10).
 	gbnfCtx := context.WithValue(ctx, inference.MaxTokensKey, 1024)
-	result, err := engine.InferMessages(gbnfCtx, messages, TwoPassActionSchema)
+	result, err := engine.InferMessages(gbnfCtx, messages, schema, TargetAuto)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("two-pass extraction failed: %w", err)
 	}

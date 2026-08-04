@@ -108,14 +108,14 @@ You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 			currentPrompt += fmt.Sprintf("\n\n## Current Refined Discovery Context:\n%s", refinedContext)
 		}
 
-		rawResponse, err := engine.Infer(ctx, currentPrompt, lastResult, "")
+		rawResponse, err := engine.Infer(ctx, currentPrompt, lastResult, "", TargetWorker)
 		if err != nil {
 			return "", fmt.Errorf("recall inference failed at step %d: %w", step, err)
 		}
 
 		// ADR-0064: Two-Pass Tool Extraction for Recall loop
 		extractedAction, extractedTool, extractedArgs, extractErr := extractToolAction(
-			ctx, engine, rawResponse, recallTools,
+			ctx, engine, rawResponse, recallTools, false,
 		)
 
 		if extractErr != nil {
@@ -244,7 +244,7 @@ Given the refined discovery context below, produce a CONCISE STRUCTURED OUTLINE 
 - NO prose paragraphs — bullet points ONLY
 - Include ALL relevant facts from the discovery context`, goal)
 
-		outline, outlineErr := engine.Infer(ctx, outlinePrompt, synthesisInput, "")
+		outline, outlineErr := engine.Infer(ctx, outlinePrompt, synthesisInput, "", TargetWorker)
 		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
 			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
 
@@ -281,7 +281,7 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 		if cloudErr != nil {
 			// Cloud failed — fall back to local
 			fmt.Fprintf(os.Stderr, "[Recall] Cloud synthesis failed (%v), falling back to local engine\n", cloudErr)
-			synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "")
+			synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
 			if err != nil {
 				return "", err
 			}
@@ -289,7 +289,7 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 			synthesis = cloudResult
 		}
 	} else {
-		synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "")
+		synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
 		if err != nil {
 			return "", err
 		}
@@ -306,7 +306,7 @@ postSynthesis:
 		if anchorResult.NeedsCorrection {
 			fmt.Fprintf(os.Stderr, "[Recall] Hallucination threshold exceeded — running targeted correction pass.\n")
 			correctionPrompt := symbols.BuildCorrectionPrompt(synthesis, anchorResult.Unanchored, symbolIndex)
-			corrected, corrErr := engine.Infer(ctx, "You are a code documentation editor. Fix hallucinated symbol names.", correctionPrompt, "")
+			corrected, corrErr := engine.Infer(ctx, "You are a code documentation editor. Fix hallucinated symbol names.", correctionPrompt, "", TargetWorker)
 			if corrErr == nil && corrected != "" {
 				synthesis = corrected
 				fmt.Fprintf(os.Stderr, "[Recall] Correction pass complete. Re-checking...\n")
@@ -443,19 +443,25 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 		}
 	}
 
-	// Check for repetitive content: detect 3+ occurrences of any 4-word sequence.
+	// Check for repetitive content: detect N+ occurrences of any 5-word sequence.
+	// Threshold scales with output length to avoid false positives on structural
+	// markdown repetition (e.g., repeated section headers in longer documents).
 	// ADR-0058: Skip for Analyze Nodes — tabular data naturally repeats column
-	// headers and structural patterns (e.g., "leads\n - Distinct Lead_Sources:"
-	// across data rows). These are valid output, not degeneration.
+	// headers and structural patterns. ADR-0066: 4-gram→5-gram, 3x→scaled.
 	if !cfg.isAnalyzeNode {
 		words := strings.Fields(cleaned)
-		if len(words) >= 12 { // Need at least 12 words to detect 3x repetition of 4-word sequences
+		ngramSize := 5
+		threshold := len(words) / 250
+		if threshold < 4 {
+			threshold = 4
+		}
+		if len(words) >= ngramSize*threshold {
 			ngramCounts := make(map[string]int)
-			for i := 0; i <= len(words)-4; i++ {
-				ngram := strings.Join(words[i:i+4], " ")
+			for i := 0; i <= len(words)-ngramSize; i++ {
+				ngram := strings.Join(words[i:i+ngramSize], " ")
 				ngramCounts[ngram]++
-				if ngramCounts[ngram] >= 3 {
-					return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 40), ngramCounts[ngram])
+				if ngramCounts[ngram] >= threshold {
+					return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 50), ngramCounts[ngram])
 				}
 			}
 		}
@@ -466,6 +472,53 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 	placeholders := placeholderRe.FindAllString(output, -1)
 	if len(placeholders) >= 3 {
 		return fmt.Sprintf("output contains %d template placeholders", len(placeholders))
+	}
+
+	// Check for meta-commentary degeneration (benchmark R14 regression):
+	// The 4B model sometimes produces varied-but-vacuous sentences like
+	// "The synthesis is complete. The final answer is ready. The engine is done."
+	// These dodge n-gram detection because each sentence is a unique variant.
+	// Detect by counting sentences that match meta-completion patterns and
+	// flagging when they dominate the output (>40% of sentences).
+	if !cfg.isAnalyzeNode {
+		metaPatterns := []string{
+			"synthesis is complete", "synthesis is done", "synthesis is final",
+			"synthesis is finished", "synthesis is closed", "synthesis is ended",
+			"synthesis is over", "synthesis is sealed", "synthesis is wrapped",
+			"synthesis is terminated", "synthesis is concluded", "synthesis is capped",
+			"answer is complete", "answer is done", "answer is final",
+			"answer is ready", "answer is finished", "answer is closed",
+			"answer is sealed", "answer is set", "answer is confirmed",
+			"engine is done", "engine is complete", "engine is finished",
+			"engine is closed", "engine is ended", "engine is sealed",
+			"engine has completed", "engine has finished", "engine has concluded",
+			"engine has succeeded", "engine has stopped", "engine has ceased",
+			"task is complete", "task is done", "task is finished",
+			"goal has been achieved", "goal has been fulfilled", "goal has been met",
+			"ready for use", "ready for integration",
+		}
+		lowerCleaned := strings.ToLower(cleaned)
+		// Split into sentences (rough: split on ". ")
+		sentences := strings.Split(lowerCleaned, ". ")
+		if len(sentences) >= 5 {
+			metaCount := 0
+			for _, sentence := range sentences {
+				trimmed := strings.TrimSpace(sentence)
+				if trimmed == "" {
+					continue
+				}
+				for _, pattern := range metaPatterns {
+					if strings.Contains(trimmed, pattern) {
+						metaCount++
+						break
+					}
+				}
+			}
+			metaRatio := float64(metaCount) / float64(len(sentences))
+			if metaRatio > 0.4 && metaCount >= 5 {
+				return fmt.Sprintf("meta-commentary degeneration detected (%d/%d sentences are vacuous completion phrases, ratio=%.0f%%)", metaCount, len(sentences), metaRatio*100)
+			}
+		}
 	}
 
 	return ""

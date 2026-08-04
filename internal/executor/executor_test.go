@@ -458,6 +458,10 @@ func (m *MockTool) Name() string {
 	return m.ToolName
 }
 
+func (m *MockTool) Description() string {
+	return ""
+}
+
 func (m *MockTool) GetSchema() (string, error) {
 	return m.ToolSchema, nil
 }

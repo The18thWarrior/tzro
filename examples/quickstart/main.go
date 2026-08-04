@@ -21,6 +21,10 @@ func (c *CustomMathTool) Name() string {
 	return "custom_math_tool"
 }
 
+func (c *CustomMathTool) Description() string {
+	return "Add two numbers together."
+}
+
 func (c *CustomMathTool) GetSchema() (string, error) {
 	return `{
 		"type": "object",
@@ -58,6 +62,10 @@ type CustomSlackTool struct{}
 
 func (c *CustomSlackTool) Name() string {
 	return "slack_message"
+}
+
+func (c *CustomSlackTool) Description() string {
+	return "Send a message to a Slack channel."
 }
 
 func (c *CustomSlackTool) GetSchema() (string, error) {

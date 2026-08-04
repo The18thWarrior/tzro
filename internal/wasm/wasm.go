@@ -50,6 +50,11 @@ func (w *WasmToolAdapter) Name() string {
 	return w.name
 }
 
+// Description returns an empty string; WASM tools don't carry descriptions.
+func (w *WasmToolAdapter) Description() string {
+	return ""
+}
+
 // GetSchema returns the GBNF-enforcing JSON schema.
 func (w *WasmToolAdapter) GetSchema() (string, error) {
 	if w.schemaPath == "" {

@@ -19,74 +19,54 @@ import (
 	"tzro/internal/tools"
 )
 
+// ModelTarget controls which inference sidecar a probe step routes to.
+type ModelTarget int
+
+const (
+	TargetAuto   ModelTarget = iota // schema → router, no schema → worker
+	TargetWorker                    // explicitly use 4B worker
+	TargetRouter                    // explicitly use 1B router
+)
+
 // ProbeInferenceEngine abstracts the inference call for testability.
 // In production, this wraps InferenceBackend.CallModel. In tests,
 // a mock returns canned GBNF-constrained JSON responses.
 type ProbeInferenceEngine interface {
-	Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error)
+	Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, target ModelTarget) (string, error)
 	// InferMessages sends a pre-segmented message array to the model.
 	// This enables KV cache prefix sharing: the system prompt + tool schemas
 	// (segment 1) stay identical across probe steps, so the llama-server's
 	// --cache-reuse window can skip re-processing those tokens on every step.
-	// Returns (content, error). Callers that don't implement this get a
-	// default fallback that extracts system+user from the messages slice.
-	InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error)
+	// Returns (content, error).
+	InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, target ModelTarget) (string, error)
 }
 
-// DefaultProbeInference uses schema-based routing for Probe Thought Chain steps (ADR-0065).
-// Unconstrained reasoning (empty schema) → Worker sidecar (4B, quality-sensitive navigation).
-// GBNF-constrained extraction (non-empty schema) → Router sidecar (1B, fast structured output).
-// The 1B router cannot navigate probe steps — benchmark evidence showed 0 successful tool
-// calls across 5 research tasks when Pass 1 ran on the router.
-type DefaultProbeInference struct{}
+// ProbeInference unifies worker/router routing into a single implementation.
+// TargetAuto: schema → router (1B), no schema → worker (4B).
+// TargetWorker: always worker (4B). Used for synthesis, compaction, recall.
+// TargetRouter: always router (1B). Used for fast structured extraction.
+type ProbeInference struct{}
 
-func (d *DefaultProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+func (p *ProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, target ModelTarget) (string, error) {
 	messages := []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}
+	return p.InferMessages(ctx, messages, jsonSchema, target)
+}
+
+func (p *ProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, target ModelTarget) (string, error) {
 	var result *inference.InferenceResult
 	var err error
-	if jsonSchema == "" {
+	switch target {
+	case TargetWorker:
 		result, err = inference.CallWorker(ctx, messages, jsonSchema)
-	} else {
+	case TargetRouter:
 		result, err = inference.CallRouter(ctx, messages, jsonSchema)
+	default: // TargetAuto
+		if jsonSchema == "" {
+			result, err = inference.CallWorker(ctx, messages, jsonSchema)
+		} else {
+			result, err = inference.CallRouter(ctx, messages, jsonSchema)
+		}
 	}
-	if err != nil {
-		return "", err
-	}
-	return result.Content, nil
-}
-
-// InferMessages sends a pre-segmented message array to maximize KV cache prefix reuse.
-// Routes based on schema presence: empty schema → worker, non-empty → router.
-func (d *DefaultProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
-	var result *inference.InferenceResult
-	var err error
-	if jsonSchema == "" {
-		result, err = inference.CallWorker(ctx, messages, jsonSchema)
-	} else {
-		result, err = inference.CallRouter(ctx, messages, jsonSchema)
-	}
-	if err != nil {
-		return "", err
-	}
-	return result.Content, nil
-}
-
-// WorkerInference wraps the worker sidecar for quality-sensitive operations.
-// Used for Probe synthesis, Recall map/reduce, and compaction — tasks that
-// require the worker model's larger context window (64K vs 16K) and superior
-// content generation quality over the 1B router.
-type WorkerInference struct{}
-
-func (w *WorkerInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
-	result, err := inference.CallWorker(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, jsonSchema)
-	if err != nil {
-		return "", err
-	}
-	return result.Content, nil
-}
-
-func (w *WorkerInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
-	result, err := inference.CallWorker(ctx, messages, jsonSchema)
 	if err != nil {
 		return "", err
 	}
@@ -154,6 +134,23 @@ const ThoughtChainStepSchema = `{
 	"required": ["action", "nextThought", "confidence"]
 }`
 
+// SynthesisValidationSchema is the GBNF constraint for the Pass 3
+// Synthesis Validation Gate. The Worker model evaluates whether the
+// Router's synthesis signal is premature and can request more steps.
+const SynthesisValidationSchema = `{"type":"object","properties":{"ready":{"type":"boolean"},"reason":{"type":"string"},"additionalSteps":{"type":"integer"}},"required":["ready"]}`
+
+// computeUnusedTools returns tool names from allowedTools that are NOT
+// present in usedToolSet. Used by the Synthesis Validation Gate to
+// inform the Worker about unexplored capabilities.
+func computeUnusedTools(allowedTools []string, usedToolSet map[string]bool) []string {
+	var unused []string
+	for _, t := range allowedTools {
+		if !usedToolSet[t] {
+			unused = append(unused, t)
+		}
+	}
+	return unused
+}
 
 
 // RunProbe executes a Probe Node's Thought Chain loop.
@@ -250,7 +247,7 @@ func RunProbe(
 		systemPrompt := fmt.Sprintf("You are a precise technical writer and systems architect. Your goal: %s\n\nRead the pre-compiled context below and produce a comprehensive, accurate response.", config.Goal)
 		userPrompt := fmt.Sprintf("Pre-compiled context:\n%s", contextContent)
 		ctxWithLimit := context.WithValue(ctx, inference.MaxTokensKey, 4096)
-		result, err := synthesisEngine.Infer(ctxWithLimit, systemPrompt, userPrompt, "")
+		result, err := synthesisEngine.Infer(ctxWithLimit, systemPrompt, userPrompt, "", TargetWorker)
 		if err != nil {
 			return "", fmt.Errorf("Direct Synthesis failed: %w", err)
 		}
@@ -329,6 +326,14 @@ func RunProbe(
 	// (calls that returned actual content, not errors). Used to adaptively
 	// lower the minimum step budget when the probe has made substantial progress.
 	var successfulToolCalls int
+
+	// Pass 3 Synthesis Validation Gate state (ADR-0066):
+	// usedToolSet tracks which tool names have been called during exploration.
+	// synthesisRejections counts how many times the Worker has overridden the
+	// Router's premature synthesis signal. Capped at maxSynthesisRejections.
+	usedToolSet := make(map[string]bool)
+	var synthesisRejections int
+	const maxSynthesisRejections = 2
 
 	// Phase gate for analyze nodes (ADR-0053): synthesis requires at least
 	// minAnalyticalCalls successful sql_cached_data calls. A single sampling
@@ -625,7 +630,7 @@ func RunProbe(
 		// (observed: 16K tokens in a single step collapsed all subsequent calls
 		// to 0.1 t/s). Synthesis calls remain uncapped.
 		stepCtx := context.WithValue(ctx, inference.MaxTokensKey, cfgpkg.GetProbeStepMaxTokens())
-		rawResponse, err := engine.InferMessages(stepCtx, stepMessages, "")
+		rawResponse, err := engine.InferMessages(stepCtx, stepMessages, "", TargetAuto)
 		if err != nil {
 			return "", fmt.Errorf("probe inference failed at step %d: %w", step, err)
 		}
@@ -645,8 +650,17 @@ func RunProbe(
 		// ADR-0064: Two-Pass Tool Extraction (Pass 2).
 		// Pass 1 (unconstrained reasoning) was the InferMessages call above.
 		// Pass 2 (GBNF-constrained extraction) determines the action.
+		//
+		// Grammar-level synthesis gate: when the probe hasn't met its minimum
+		// step budget, remove "synthesize" from the GBNF enum entirely. The 1B
+		// Router physically cannot output "synthesize" — it must extract a
+		// tool_call (which auto-seed will populate if args are empty).
+		// This fixes the ADR-0065 regression: the Router over-classified Worker
+		// reasoning as "synthesize", collapsing edge entries from 63 (R-9) to 0 (R-12).
+		adaptiveMinMet := successfulToolCalls >= minStepBudget-2 && successfulToolCalls > 0
+		forceTool := step < minStepBudget && !adaptiveMinMet
 		extractedAction, extractedTool, extractedArgs, extractErr := extractToolAction(
-			ctx, engine, cleanedResponse, config.AllowedTools, config.Goal,
+			ctx, engine, cleanedResponse, config.AllowedTools, forceTool, config.Goal,
 		)
 
 		if extractErr != nil {
@@ -656,7 +670,7 @@ func RunProbe(
 		} else if extractedAction == "synthesize" {
 			// Adaptive minimum: allow early synthesis if the probe has made
 			// substantial successful progress (successfulToolCalls >= minStepBudget - 2).
-			adaptiveMinMet := successfulToolCalls >= minStepBudget-2 && successfulToolCalls > 0
+			// Note: adaptiveMinMet is computed above (line 655) for forceTool gating.
 
 			// Phase gate (ADR-0053): analyze nodes must have at least
 			// minAnalyticalCalls successful sql_cached_data calls before
@@ -712,6 +726,58 @@ func RunProbe(
 			if adaptiveMinMet && step < minStepBudget {
 				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d — adaptive minimum met (%d successful calls ≥ %d threshold)\n", probeID, step, successfulToolCalls, minStepBudget-2)
 			}
+
+			// Pass 3: Synthesis Validation Gate (ADR-0066)
+			// The 1B Router signals synthesis prematurely because it can't
+			// judge information completeness. Send the context to the 4B Worker
+			// with a GBNF-constrained validation schema to get a second opinion.
+			if synthesisRejections < maxSynthesisRejections {
+				unusedTools := computeUnusedTools(config.AllowedTools, usedToolSet)
+				validationSuffix := fmt.Sprintf(
+					"\n\nSYNTHESIS VALIDATION: Router signaled synthesis at step %d/%d. "+
+						"Successful calls: %d. Tools never used: [%s]. "+
+						"Is the exploration complete enough for a comprehensive answer? "+
+						"Output {\"ready\": true} to proceed or {\"ready\": false, \"reason\": \"...\", \"additionalSteps\": N} to continue.",
+					step, stepBudget, successfulToolCalls, strings.Join(unusedTools, ", "),
+				)
+				// Use TargetWorker: the 4B model judges completeness better than the 1B router
+				validationCtx := context.WithValue(ctx, inference.MaxTokensKey, 256)
+				valResult, valErr := engine.Infer(validationCtx, systemPrompt, stepContent.String()+validationSuffix, SynthesisValidationSchema, TargetWorker)
+				if valErr == nil {
+					var valParsed struct {
+						Ready           bool   `json:"ready"`
+						Reason          string `json:"reason"`
+						AdditionalSteps int    `json:"additionalSteps"`
+					}
+					if parseErr := json.Unmarshal([]byte(valResult), &valParsed); parseErr == nil && !valParsed.Ready {
+						synthesisRejections++
+						additionalSteps := valParsed.AdditionalSteps
+						if additionalSteps <= 0 || additionalSteps > 4 {
+							additionalSteps = 3 // safe default
+						}
+						minStepBudget = step + additionalSteps
+						fmt.Fprintf(os.Stderr, "[Probe] Synthesis Validation Gate REJECTED at step %d (rejection %d/%d): %s. Extended budget by %d steps.\n",
+							step, synthesisRejections, maxSynthesisRejections, valParsed.Reason, additionalSteps)
+						lastToolOutput = fmt.Sprintf("Synthesis rejected by validation gate: %s. Extended budget by %d steps. Continue exploring.", valParsed.Reason, additionalSteps)
+						thoughtStep := memory.ThoughtStep{
+							ID:        fmt.Sprintf("%s_step_%d", probeID, step),
+							ProbeID:   probeID,
+							TaskID:    taskID,
+							StepIndex: step,
+							Thought:   chainStep.NextThought,
+							ToolOutput: lastToolOutput,
+							CreatedAt: time.Now().Unix(),
+						}
+						if err := memory.DB.AddThoughtStep(thoughtStep); err != nil {
+							fmt.Fprintf(os.Stderr, "[Probe Error] Failed to add thought step: %v\n", err)
+						}
+						continue
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "[Probe] Synthesis Validation Gate inference failed: %v — proceeding with synthesis\n", valErr)
+				}
+			}
+
 			fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis readiness at step %d\n", probeID, step)
 			isSynthesisReady = true
 			chainStep.Action = "synthesize"
@@ -901,6 +967,7 @@ func RunProbe(
 					} else {
 						consecutiveErrors = 0 // reset on success
 						successfulToolCalls++
+						usedToolSet[toolName] = true // Pass 3 gate tracking
 
 						// ADR-0059: Accumulate Edge Entry with tool-type-aware truncation.
 						edgeEntries = append(edgeEntries, NewEdgeEntry(step, toolName, toolArgsStr, result))
@@ -1304,7 +1371,7 @@ Given the exploration findings below, produce a CONCISE STRUCTURED OUTLINE with:
 - NO prose paragraphs — bullet points ONLY
 - Include ALL relevant facts discovered during exploration`, goal)
 
-		outline, outlineErr := engine.Infer(synthCtx, outlinePrompt, contextStr, "")
+		outline, outlineErr := engine.Infer(synthCtx, outlinePrompt, contextStr, "", TargetWorker)
 		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
 			fmt.Fprintf(os.Stderr, "[Probe] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
 
@@ -1353,7 +1420,7 @@ Include source citations where the outline references URLs.%s`, goal, extraction
 	// Standard synthesis path (local-try → cloud-fallback on repetition)
 	var result string
 	var err error
-	result, err = engine.Infer(synthCtx, systemPrompt, contextStr, synthSchema)
+	result, err = engine.Infer(synthCtx, systemPrompt, contextStr, synthSchema, TargetWorker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[Probe] Primary synthesis engine failed: %v. Attempting cloud escalation.\n", err)
 		if !isCloudEscalationBlocked() {
@@ -1831,6 +1898,14 @@ func buildToolSchemaReference(allowedTools []string) string {
 		}
 
 		sb.WriteString(fmt.Sprintf("### %s\n", toolName))
+		// Include tool description (capped at 100 chars) for semantic context
+		desc := t.Description()
+		if desc != "" {
+			if len(desc) > 100 {
+				desc = desc[:97] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("_%s_\n", desc))
+		}
 		for paramName, paramVal := range innerProps {
 			paramMap, _ := paramVal.(map[string]interface{})
 			paramType := "string"

@@ -21,6 +21,10 @@ func (q *QueryCallgraphTool) Name() string {
 	return "query_callgraph"
 }
 
+func (q *QueryCallgraphTool) Description() string {
+	return "Query the static call graph for function relationships."
+}
+
 func (q *QueryCallgraphTool) GetSchema() (string, error) {
 	schema := map[string]interface{}{
 		"type": "object",

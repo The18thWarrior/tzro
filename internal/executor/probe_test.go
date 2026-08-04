@@ -28,12 +28,21 @@ type MockProbeInference struct {
 	lastResponse string // Track last reasoning for GBNF extraction
 }
 
-func (m *MockProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+func (m *MockProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, _ ModelTarget) (string, error) {
 	// Two-pass GBNF extraction (Pass 2): detect by checking for the specific
-	// TwoPassActionSchema content. Other schemas (synthesis, etc.) should
-	// consume from Responses normally.
-	if jsonSchema != "" && strings.Contains(jsonSchema, `"tool_call"`) && strings.Contains(jsonSchema, `"synthesize"`) {
-		return m.extractAction(), nil
+	// TwoPassActionSchema or TwoPassToolOnlySchema content.
+	if jsonSchema != "" && strings.Contains(jsonSchema, `"tool_call"`) {
+		if strings.Contains(jsonSchema, `"synthesize"`) {
+			// Full schema: extract action normally from reasoning
+			return m.extractAction(), nil
+		}
+		// Tool-only schema (forceTool=true): grammar physically prevents synthesize.
+		// Always extract a tool_call, mirroring real GBNF constraint behavior.
+		return m.extractToolCallOnly(), nil
+	}
+	// Pass 3 Synthesis Validation Gate: always approve synthesis in tests.
+	if jsonSchema != "" && strings.Contains(jsonSchema, `"ready"`) {
+		return `{"ready": true}`, nil
 	}
 	// Pass 1 (or synthesis): consume from Responses queue
 	if m.CallCount >= len(m.Responses) {
@@ -46,7 +55,7 @@ func (m *MockProbeInference) Infer(ctx context.Context, systemPrompt, userPrompt
 	return response, nil
 }
 
-func (m *MockProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+func (m *MockProbeInference) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
 	// Delegate to Infer by extracting system and user messages
 	var sys, usr string
 	for _, msg := range messages {
@@ -56,7 +65,7 @@ func (m *MockProbeInference) InferMessages(ctx context.Context, messages []infer
 			usr = msg.Content
 		}
 	}
-	return m.Infer(ctx, sys, usr, jsonSchema)
+	return m.Infer(ctx, sys, usr, jsonSchema, TargetAuto)
 }
 
 // extractAction generates a structured GBNF response from the last reasoning output.
@@ -79,6 +88,28 @@ func (m *MockProbeInference) extractAction() string {
 	}
 	// Default: synthesize
 	return `{"action":"synthesize","tool":"","arguments":{}}`
+}
+
+// extractToolCallOnly generates a forced tool_call response, mimicking the
+// real GBNF constraint where only "tool_call" is in the enum. Extracts
+// from ACTION tags if present, otherwise defaults to web_search with empty
+// query (which the auto-seed mechanism in probe.go will populate).
+func (m *MockProbeInference) extractToolCallOnly() string {
+	// Look for ACTION tags and convert to structured format
+	actionRe := regexp.MustCompile(`(?s)<ACTION>(.*?)</ACTION>`)
+	matches := actionRe.FindStringSubmatch(m.lastResponse)
+	if len(matches) > 1 {
+		var parsed struct {
+			Tool      string                 `json:"tool"`
+			Arguments map[string]interface{} `json:"arguments"`
+		}
+		if json.Unmarshal([]byte(matches[1]), &parsed) == nil {
+			argsJSON, _ := json.Marshal(parsed.Arguments)
+			return fmt.Sprintf(`{"action":"tool_call","tool":"%s","arguments":%s}`, parsed.Tool, string(argsJSON))
+		}
+	}
+	// Default: forced tool_call with empty query (auto-seed will fill it)
+	return `{"action":"tool_call","tool":"web_search","arguments":{"query":""}}`
 }
 
 
@@ -707,7 +738,7 @@ type ContextCapturingMock struct {
 	lastResponse          string
 }
 
-func (m *ContextCapturingMock) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+func (m *ContextCapturingMock) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, _ ModelTarget) (string, error) {
 	// Two-pass GBNF detection
 	if jsonSchema != "" && strings.Contains(jsonSchema, `"tool_call"`) && strings.Contains(jsonSchema, `"synthesize"`) {
 		return m.extractAction(), nil
@@ -724,7 +755,7 @@ func (m *ContextCapturingMock) Infer(ctx context.Context, systemPrompt, userProm
 	return response, nil
 }
 
-func (m *ContextCapturingMock) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+func (m *ContextCapturingMock) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
 	// Two-pass GBNF detection
 	if jsonSchema != "" && strings.Contains(jsonSchema, `"tool_call"`) && strings.Contains(jsonSchema, `"synthesize"`) {
 		return m.extractAction(), nil

@@ -28,7 +28,7 @@ func MapReduceSynthesis(
 				"Read the content below and produce a comprehensive, accurate response.",
 			goal,
 		)
-		result, err := engine.Infer(ctx, systemPrompt, content, "")
+		result, err := engine.Infer(ctx, systemPrompt, content, "", TargetWorker)
 		if err != nil {
 			return "", fmt.Errorf("MapReduceSynthesis single-chunk failed: %w", err)
 		}
@@ -46,7 +46,7 @@ func MapReduceSynthesis(
 				"Produce a focused summary that captures the key information relevant to the goal.",
 			i+1, len(chunks), goal,
 		)
-		summary, err := engine.Infer(ctx, systemPrompt, chunk, "")
+		summary, err := engine.Infer(ctx, systemPrompt, chunk, "", TargetWorker)
 		if err != nil {
 			return "", fmt.Errorf("MapReduceSynthesis map phase chunk %d failed: %w", i+1, err)
 		}
@@ -61,7 +61,7 @@ func MapReduceSynthesis(
 			"Produce the final, unified response.",
 		len(subSummaries), goal,
 	)
-	result, err := engine.Infer(ctx, systemPrompt, combined, "")
+	result, err := engine.Infer(ctx, systemPrompt, combined, "", TargetWorker)
 	if err != nil {
 		return "", fmt.Errorf("MapReduceSynthesis reduce phase failed: %w", err)
 	}

@@ -27,7 +27,8 @@ type MetricItem struct {
 
 type GatherMetricsTool struct{}
 
-func (g *GatherMetricsTool) Name() string { return "gather_metrics" }
+func (g *GatherMetricsTool) Name() string        { return "gather_metrics" }
+func (g *GatherMetricsTool) Description() string { return "Collect system metrics for dashboard display." }
 func (g *GatherMetricsTool) GetSchema() (string, error) {
 	return GetToolGBNFSchema(map[string]interface{}{}, []string{}), nil
 }
@@ -125,7 +126,8 @@ func (g *GatherMetricsTool) Call(ctx context.Context, args map[string]interface{
 
 type GatherTasksTool struct{}
 
-func (g *GatherTasksTool) Name() string { return "gather_tasks" }
+func (g *GatherTasksTool) Name() string        { return "gather_tasks" }
+func (g *GatherTasksTool) Description() string { return "List recent tasks and their statuses." }
 func (g *GatherTasksTool) GetSchema() (string, error) {
 	return GetToolGBNFSchema(map[string]interface{}{}, []string{}), nil
 }
@@ -175,7 +177,8 @@ func (g *GatherTasksTool) Call(ctx context.Context, args map[string]interface{})
 
 type GatherConfigTool struct{}
 
-func (g *GatherConfigTool) Name() string { return "gather_config" }
+func (g *GatherConfigTool) Name() string        { return "gather_config" }
+func (g *GatherConfigTool) Description() string { return "Retrieve current system configuration." }
 func (g *GatherConfigTool) GetSchema() (string, error) {
 	return GetToolGBNFSchema(map[string]interface{}{}, []string{}), nil
 }
@@ -221,7 +224,8 @@ func (g *GatherConfigTool) Call(ctx context.Context, args map[string]interface{}
 
 type GatherWorkflowsTool struct{}
 
-func (g *GatherWorkflowsTool) Name() string { return "gather_workflows" }
+func (g *GatherWorkflowsTool) Name() string        { return "gather_workflows" }
+func (g *GatherWorkflowsTool) Description() string { return "List available workflow templates." }
 func (g *GatherWorkflowsTool) GetSchema() (string, error) {
 	return GetToolGBNFSchema(map[string]interface{}{}, []string{}), nil
 }
@@ -283,7 +287,8 @@ func (g *GatherWorkflowsTool) Call(ctx context.Context, args map[string]interfac
 
 type ComposeLayoutTool struct{}
 
-func (g *ComposeLayoutTool) Name() string { return "compose_layout" }
+func (g *ComposeLayoutTool) Name() string        { return "compose_layout" }
+func (g *ComposeLayoutTool) Description() string { return "Compose a dashboard layout from gathered data." }
 func (g *ComposeLayoutTool) GetSchema() (string, error) {
 	// Flat element descriptor — the model just picks component types and fills props.
 	// No nesting, no children arrays, no recursive depth.
@@ -474,7 +479,8 @@ func assembleDashboardSpec(args map[string]interface{}) map[string]interface{} {
 
 type TerminalSynthesisTool struct{}
 
-func (g *TerminalSynthesisTool) Name() string { return "terminal_synthesis" }
+func (g *TerminalSynthesisTool) Name() string        { return "terminal_synthesis" }
+func (g *TerminalSynthesisTool) Description() string { return "Produce final synthesized output from gathered data." }
 func (g *TerminalSynthesisTool) GetSchema() (string, error) {
 	return GetToolGBNFSchema(map[string]interface{}{
 		"spec": map[string]interface{}{"type": "object", "description": "The dashboard spec JSON to validate and persist"},

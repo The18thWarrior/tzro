@@ -17,6 +17,7 @@ import (
 // Tool represents a single tool definition that can be dynamically resolved and executed.
 type Tool interface {
 	Name() string
+	Description() string
 	GetSchema() (string, error)
 	Call(ctx context.Context, args map[string]interface{}) (string, error)
 }
@@ -66,6 +67,7 @@ type ClientToolAdapter struct {
 }
 
 func (c *ClientToolAdapter) Name() string               { return c.NameVal }
+func (c *ClientToolAdapter) Description() string         { return c.DescriptionVal }
 func (c *ClientToolAdapter) GetSchema() (string, error) { return c.SchemaVal, nil }
 func (c *ClientToolAdapter) Call(ctx context.Context, args map[string]interface{}) (string, error) {
 	return "", fmt.Errorf("client-side tool '%s' must be executed by client", c.NameVal)
@@ -155,6 +157,10 @@ func (m *MCPToolAdapter) Name() string {
 	return m.name
 }
 
+func (m *MCPToolAdapter) Description() string {
+	return m.description
+}
+
 func (m *MCPToolAdapter) GetSchema() (string, error) {
 	return mcp.GetGBNFSchema(m.inputSchema)
 }
@@ -208,6 +214,10 @@ type FunctionTool struct {
 
 func (f *FunctionTool) Name() string {
 	return f.NameVal
+}
+
+func (f *FunctionTool) Description() string {
+	return ""
 }
 
 func (f *FunctionTool) GetSchema() (string, error) {

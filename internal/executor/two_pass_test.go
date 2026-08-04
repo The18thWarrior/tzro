@@ -19,7 +19,7 @@ type MockInferCall struct {
 	Messages []inference.InferenceMessage
 }
 
-func (m *MockTwoPassEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+func (m *MockTwoPassEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, _ ModelTarget) (string, error) {
 	m.Calls = append(m.Calls, MockInferCall{
 		Schema: jsonSchema,
 		Messages: []inference.InferenceMessage{
@@ -30,7 +30,7 @@ func (m *MockTwoPassEngine) Infer(ctx context.Context, systemPrompt, userPrompt,
 	return "", nil
 }
 
-func (m *MockTwoPassEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+func (m *MockTwoPassEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
 	m.Calls = append(m.Calls, MockInferCall{
 		Schema:   jsonSchema,
 		Messages: messages,
@@ -53,7 +53,7 @@ func TestExtractToolAction_WithCompleteActionTag(t *testing.T) {
 This should give us good results.`
 
 	action, toolName, args, err := extractToolAction(
-		context.Background(), engine, reasoning, []string{"web_search", "read_file"},
+		context.Background(), engine, reasoning, []string{"web_search", "read_file"}, false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -87,7 +87,7 @@ func TestExtractToolAction_WithoutActionTag(t *testing.T) {
 	reasoning := "I should search for the latest AI orchestration trends to understand the market."
 
 	action, toolName, _, err := extractToolAction(
-		context.Background(), engine, reasoning, []string{"web_search", "read_file"},
+		context.Background(), engine, reasoning, []string{"web_search", "read_file"}, false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -131,7 +131,7 @@ func TestExtractToolAction_SynthesizeIntent(t *testing.T) {
 	// Create a custom engine that returns synthesize
 	engine := &synthMockEngine{}
 	action, toolName, args, err := extractToolAction(
-		context.Background(), engine, "I've gathered enough information, time to synthesize.", []string{"web_search"},
+		context.Background(), engine, "I've gathered enough information, time to synthesize.", []string{"web_search"}, false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -151,11 +151,11 @@ func TestExtractToolAction_SynthesizeIntent(t *testing.T) {
 // synthMockEngine always returns synthesize from the GBNF pass.
 type synthMockEngine struct{}
 
-func (s *synthMockEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+func (s *synthMockEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, _ ModelTarget) (string, error) {
 	return "", nil
 }
 
-func (s *synthMockEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+func (s *synthMockEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
 	if jsonSchema != "" {
 		// All three fields are required now; synthesize action sets tool/arguments to empty
 		return `{"action":"synthesize","tool":"","arguments":{}}`, nil
@@ -211,7 +211,7 @@ func TestExtractToolAction_GoalContext(t *testing.T) {
 
 	_, _, _, err := extractToolAction(
 		context.Background(), engine, reasoning,
-		[]string{"web_search"}, "Find the latest AI orchestration frameworks",
+		[]string{"web_search"}, false, "Find the latest AI orchestration frameworks",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -224,6 +224,99 @@ func TestExtractToolAction_GoalContext(t *testing.T) {
 	sysMsg := engine.Calls[0].Messages[0].Content
 	if !strings.Contains(sysMsg, "AI orchestration frameworks") {
 		t.Errorf("expected goal in system prompt, got: %s", sysMsg[:min(len(sysMsg), 200)])
+	}
+}
+
+// --- Test: forceTool=true prevents synthesize via grammar constraint ---
+
+func TestExtractToolAction_ForceToolPreventsSynthesize(t *testing.T) {
+	// forceToolMockEngine returns tool_call when the schema only allows it,
+	// simulating what happens when the 1B Router is constrained by TwoPassToolOnlySchema.
+	engine := &forceToolMockEngine{}
+
+	action, toolName, _, err := extractToolAction(
+		context.Background(), engine,
+		"I've gathered enough information, time to synthesize.",
+		[]string{"web_search"}, true,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if action != "tool_call" {
+		t.Errorf("expected action='tool_call' when forceTool=true, got %q", action)
+	}
+	if toolName != "web_search" {
+		t.Errorf("expected tool='web_search', got %q", toolName)
+	}
+
+	// Verify the GBNF pass received the tool-only schema
+	if len(engine.Calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(engine.Calls))
+	}
+	if !strings.Contains(engine.Calls[0].Schema, `"enum": ["tool_call"]`) {
+		t.Errorf("expected tool-only schema with single enum, got schema: %s", engine.Calls[0].Schema)
+	}
+	// System prompt should NOT mention 'synthesize'
+	sysMsg := engine.Calls[0].Messages[0].Content
+	if strings.Contains(sysMsg, "synthesize") {
+		t.Error("expected system prompt to NOT mention synthesize when forceTool=true")
+	}
+}
+
+// forceToolMockEngine respects the schema constraint: returns tool_call when
+// the schema only allows it, synthesize when allowed.
+type forceToolMockEngine struct {
+	Calls []struct {
+		Messages []inference.InferenceMessage
+		Schema   string
+	}
+}
+
+func (f *forceToolMockEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, _ ModelTarget) (string, error) {
+	return "", nil
+}
+
+func (f *forceToolMockEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
+	f.Calls = append(f.Calls, struct {
+		Messages []inference.InferenceMessage
+		Schema   string
+	}{Messages: messages, Schema: jsonSchema})
+	if jsonSchema != "" {
+		// If schema only allows tool_call, return tool_call
+		if strings.Contains(jsonSchema, `"enum": ["tool_call"]`) {
+			return `{"action":"tool_call","tool":"web_search","arguments":{"query":"test"}}`, nil
+		}
+		// Otherwise could return either — default to tool_call for the mock
+		return `{"action":"tool_call","tool":"web_search","arguments":{"query":"test"}}`, nil
+	}
+	return "reasoning output", nil
+}
+
+// --- Test: TwoPassToolOnlySchema is valid JSON with single enum ---
+
+func TestTwoPassToolOnlySchema_ValidJSON(t *testing.T) {
+	var schema map[string]interface{}
+	if err := json.Unmarshal([]byte(TwoPassToolOnlySchema), &schema); err != nil {
+		t.Fatalf("TwoPassToolOnlySchema is not valid JSON: %v", err)
+	}
+	props, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected properties in schema")
+	}
+	actionProp, ok := props["action"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected action property in schema")
+	}
+	enumRaw, ok := actionProp["enum"].([]interface{})
+	if !ok {
+		t.Fatal("expected enum in action property")
+	}
+	if len(enumRaw) != 1 {
+		t.Errorf("expected exactly 1 enum value in tool-only schema, got %d", len(enumRaw))
+	}
+	if enumRaw[0] != "tool_call" {
+		t.Errorf("expected enum value 'tool_call', got %q", enumRaw[0])
 	}
 }
 

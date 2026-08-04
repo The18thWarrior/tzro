@@ -555,6 +555,9 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 			}
 			if len(hints) > 0 {
 				result.Hint = strings.Join(hints, " ")
+			} else if len(items) > 0 {
+				// Default success-path hint: guide the probe to read relevant files
+				result.Hint = "Use read_file on files relevant to your goal. Use list_dir on subdirectories to explore deeper."
 			}
 
 			return result, nil

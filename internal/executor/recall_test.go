@@ -20,7 +20,7 @@ type mockRecallEngine struct {
 	lastResponse string
 }
 
-func (m *mockRecallEngine) Infer(ctx context.Context, systemPrompt, lastResult, jsonSchema string) (string, error) {
+func (m *mockRecallEngine) Infer(ctx context.Context, systemPrompt, lastResult, jsonSchema string, _ ModelTarget) (string, error) {
 	m.Calls = append(m.Calls, systemPrompt+"\nLAST_RESULT: "+lastResult)
 
 	// Two-pass GBNF detection
@@ -49,7 +49,7 @@ func (m *mockRecallEngine) Infer(ctx context.Context, systemPrompt, lastResult, 
 	return "Unexpected prompt", nil
 }
 
-func (m *mockRecallEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+func (m *mockRecallEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
 	var sys, usr string
 	for _, msg := range messages {
 		if msg.Role == "system" {
@@ -58,7 +58,7 @@ func (m *mockRecallEngine) InferMessages(ctx context.Context, messages []inferen
 			usr = msg.Content
 		}
 	}
-	return m.Infer(ctx, sys, usr, jsonSchema)
+	return m.Infer(ctx, sys, usr, jsonSchema, TargetAuto)
 }
 
 func (m *mockRecallEngine) extractAction() string {

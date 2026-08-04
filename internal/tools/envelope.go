@@ -33,22 +33,22 @@ type ToolResult struct {
 
 type ExecuteFn func(ctx context.Context, input json.RawMessage) (*ToolResult, error)
 
-type ErrorOption func(*ToolResult)
+type ResultOption func(*ToolResult)
 
-func WithHint(hint string) ErrorOption {
+func WithHint(hint string) ResultOption {
 	return func(r *ToolResult) {
 		r.Hint = hint
 	}
 }
 
-func WithRelatedTools(tools ...string) ErrorOption {
+func WithRelatedTools(tools ...string) ResultOption {
 	return func(r *ToolResult) {
 		r.RelatedTools = tools
 	}
 }
 
 // ToolError creates a standardised error result with navigational hints.
-func ToolError(msg string, opts ...ErrorOption) *ToolResult {
+func ToolError(msg string, opts ...ResultOption) *ToolResult {
 	r := &ToolResult{Success: false, Error: msg}
 	for _, opt := range opts {
 		opt(r)
@@ -56,9 +56,13 @@ func ToolError(msg string, opts ...ErrorOption) *ToolResult {
 	return r
 }
 
-// ToolSuccess creates a standardised success result.
-func ToolSuccess(data interface{}) *ToolResult {
-	return &ToolResult{Success: true, Data: data}
+// ToolSuccess creates a standardised success result with optional hints.
+func ToolSuccess(data interface{}, opts ...ResultOption) *ToolResult {
+	r := &ToolResult{Success: true, Data: data}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // WithToolMeta wraps an Execute function to inject timing metadata.

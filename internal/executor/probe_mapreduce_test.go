@@ -16,21 +16,21 @@ type mockMapReduceEngine struct {
 	callIndex int
 }
 
-func (m *mockMapReduceEngine) Infer(_ context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+func (m *mockMapReduceEngine) Infer(_ context.Context, systemPrompt, userPrompt, jsonSchema string, _ ModelTarget) (string, error) {
 	m.calls = append(m.calls, userPrompt)
 	resp := m.responses[m.callIndex]
 	m.callIndex++
 	return resp, nil
 }
 
-func (m *mockMapReduceEngine) InferMessages(_ context.Context, msgs []inference.InferenceMessage, jsonSchema string) (string, error) {
+func (m *mockMapReduceEngine) InferMessages(_ context.Context, msgs []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
 	userPrompt := ""
 	for _, msg := range msgs {
 		if msg.Role == "user" {
 			userPrompt = msg.Content
 		}
 	}
-	return m.Infer(context.Background(), "", userPrompt, jsonSchema)
+	return m.Infer(context.Background(), "", userPrompt, jsonSchema, TargetAuto)
 }
 
 // --- Slice 14: MapReduceSynthesis single-chunk passthrough ---

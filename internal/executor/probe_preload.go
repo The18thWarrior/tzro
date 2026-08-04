@@ -318,6 +318,30 @@ func formatExpr(expr ast.Expr) string {
 	}
 }
 
+// webOnlyTools lists tools that operate exclusively over the network.
+// Probes restricted to these tools should NOT auto-detect local PreloadPaths,
+// because injecting local directory content contaminates web research synthesis
+// (observed: technical_deep_dive_gguf 4.75→1.00 in benchmark run 14).
+var webOnlyTools = map[string]bool{
+	"web_search": true,
+	"web_browse": true,
+}
+
+// isWebOnlyProbe returns true when every tool in allowedTools is a web-only tool.
+// When true, the probe should skip local PreloadPaths auto-detection to avoid
+// contaminating web research context with irrelevant local files.
+func isWebOnlyProbe(allowedTools []string) bool {
+	if len(allowedTools) == 0 {
+		return false
+	}
+	for _, t := range allowedTools {
+		if !webOnlyTools[t] {
+			return false
+		}
+	}
+	return true
+}
+
 // pathPattern matches directory-like paths in text (e.g., "internal/cache/", "docs/adr/", "internal/inference/").
 // Requires at least one slash and a word character, optionally ending with a trailing slash.
 var pathPattern = regexp.MustCompile(`(?:^|\s|['"(])([a-zA-Z][a-zA-Z0-9_\-./]*/)`)
