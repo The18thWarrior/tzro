@@ -1895,3 +1895,12 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 - Design spec: [VTE design](docs/superpowers/specs/2026-08-04-verified-task-execution-design.md)
 - CONTEXT.md: 7 new terms added (Verified Task Execution, Verification Gate, Structural Pre-Check, Cloud Re-Synthesis, Verification Rubric, Verdict, updated Confidence Tier + Execution Envelope)
 
+
+## 2026-08-04 — Context Pruning: Root Cause Found
+
+**Finding**: The hallucinated cache ID `cache_1784607195509971000` (15 occurrences across benchmark runs) is **not a model hallucination** — it is a hardcoded example in the Analyze Node system prompt (`probe.go:1775`) that the 4B model copies verbatim when no real cache IDs are available from upstream context.
+
+**Fix**: Conditionally emit cache tool few-shot examples only when real cache IDs are extracted from upstream context. When no cache data exists, show generic ACTION format without cache-specific examples. Removed all instances of the hardcoded ID from runtime code paths.
+
+**Modified files**:
+- [MODIFY] [probe.go](internal/executor/probe.go) — conditional few-shot, generic fallback, updated cacheId handling guidance

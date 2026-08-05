@@ -1771,12 +1771,14 @@ func buildAnalyzeSystemPrompt(goal string, allowedTools []string, taskContext st
 	// The 4B model needs concrete examples of the exact <ACTION> XML format
 	// to reliably emit tool calls. Without these, it often generates reasoning
 	// text without valid tags (benchmark: 0/15 successful tool calls).
+	//
+	// IMPORTANT: Only show cache tool examples when real cache IDs are available.
+	// When no real IDs exist, omit these examples entirely — if there's no cache
+	// to query, showing examples teaches the model to hallucinate cache IDs.
 	var fewShotSection string
-	exampleCacheId := "cache_1784607195509971000" // generic fallback
 	if len(extractedCacheIds) > 0 {
-		exampleCacheId = extractedCacheIds[0] // use real cacheId for copy-paste accuracy
-	}
-	fewShotSection = fmt.Sprintf(`## MANDATORY: Tool Call Format — Follow These Examples EXACTLY
+		exampleCacheId := extractedCacheIds[0]
+		fewShotSection = fmt.Sprintf(`## MANDATORY: Tool Call Format — Follow These Examples EXACTLY
 
 Your FIRST action must be to inspect the cache schema. Output this EXACT format:
 
@@ -1795,6 +1797,18 @@ CRITICAL RULES:
 - Do NOT use markdown code blocks, do NOT describe what you would do — CALL THE TOOL
 - If you want data, you MUST call sql_cached_data. Do NOT try to count or aggregate manually from text.
 `, exampleCacheId, exampleCacheId, exampleCacheId, exampleCacheId, exampleCacheId)
+	} else {
+		// No cache data available — show generic ACTION format without cache-specific examples.
+		// This prevents the model from hallucinating cache IDs while still teaching the XML format.
+		fewShotSection = `## MANDATORY: Tool Call Format
+
+You MUST wrap every tool call in <ACTION>...</ACTION> tags — no other format works.
+You MUST use this exact JSON structure: {"tool": "tool_name", "arguments": {"key": "value"}}
+Do NOT use markdown code blocks, do NOT describe what you would do — CALL THE TOOL.
+
+No cached data is available for this task. Synthesize your analysis from the text data in the accumulated context above.
+`
+	}
 
 	// ADR-0059: Upstream context baked into system prompt.
 	var upstreamSection string
@@ -1827,12 +1841,10 @@ You analyze data from upstream nodes using a systematic approach:
 
 %s
 ## CRITICAL: cacheId Handling
-The cacheId is an OPAQUE STRING identifier like 'cache_1784607195509971000'.
-- You MUST copy the cacheId EXACTLY as it appears — do NOT round, truncate, or modify the digits
+The cacheId is an OPAQUE STRING identifier.
+- You MUST copy the cacheId EXACTLY as it appears in the examples or context — do NOT round, truncate, or modify the digits
 - The cacheId is NOT a number — it is a string. Copy it character-by-character
-- WRONG: cache_178460719550000000000000000000000 (truncated/rounded)
-- WRONG: cache_178 (too short)
-- RIGHT: cache_1784607195509971000 (exact copy from context)
+- Do NOT invent or guess a cacheId — only use IDs that appear in the context above
 
 ## SQLite SQL Dialect
 The query engine is SQLite. Use SQLite-compatible syntax ONLY:
