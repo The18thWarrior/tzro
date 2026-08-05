@@ -67,6 +67,20 @@ type DRYSamplingConfig struct {
 // repetition without degrading code or structured output quality.
 var DRYSamplingKey = drySamplingContextKey{}
 
+// temperatureContextKey is a private type for the temperature override context key.
+type temperatureContextKey struct{}
+
+// TemperatureKey is a context key that callers set to override the inference
+// temperature for a specific call. The cascade is:
+//
+//	hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
+//
+// When present with a float64 value > 0, the local model uses that temperature
+// instead of the config or hardcoded default.
+// Use context.WithValue(ctx, TemperatureKey, 0.7) for codegen,
+// context.WithValue(ctx, TemperatureKey, 0.6) for synthesis.
+var TemperatureKey = temperatureContextKey{}
+
 // InferenceResult holds the model output along with token-level metrics from the server.
 type InferenceResult struct {
 	Content          string  `json:"content"`
@@ -1048,10 +1062,19 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		templateKwargs["thinking_budget"] = budget
 	}
 
+	// Temperature cascade: hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
+	temperature := 1.0 // Q7: required for min_p to function; GBNF constrains output safety
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp > 0 && cfgTemp != 1.0 {
+		temperature = cfgTemp
+	}
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp > 0 {
+		temperature = ctxTemp
+	}
+
 	reqBody := CompletionRequest{
 		Model:              "Agents-A1-4B",
 		Messages:           MessagesToMaps(messages),
-		Temperature:        1.0, // Q7: required for min_p to function; GBNF constrains output safety
+		Temperature:        temperature,
 		MinP:               0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
 		ChatTemplateKwargs: templateKwargs,
 	}
@@ -1282,10 +1305,20 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		templateKwargs["thinking_budget"] = budget
 	}
 
+	// Temperature cascade (same logic as CallLocalModel):
+	// hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
+	temperature := 1.0
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp > 0 && cfgTemp != 1.0 {
+		temperature = cfgTemp
+	}
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp > 0 {
+		temperature = ctxTemp
+	}
+
 	reqBody := CompletionRequest{
 		Model:       "Agents-A1-4B",
 		Messages:    MessagesToMaps(messages),
-		Temperature: 1.0,
+		Temperature: temperature,
 		MinP:        0.1,
 		Stream:      true,
 		StreamOptions: &StreamOptionsStruct{

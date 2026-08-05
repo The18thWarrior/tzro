@@ -31,6 +31,10 @@ type RecallResult struct {
 func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID string, upstreamNodeIDs []string, goal string, engine ProbeInferenceEngine) (RecallResult, error) {
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s starting for task %s (Upstream: %v)\n", recallNodeID, taskID, upstreamNodeIDs)
 
+	// Temperature 0.6 for recall synthesis: sharper distribution reduces
+	// repetitive phrasing while min_p still provides dynamic token pruning.
+	ctx = context.WithValue(ctx, inference.TemperatureKey, 0.6)
+
 	maxSteps := 8
 	step := 0
 

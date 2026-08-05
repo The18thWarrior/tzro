@@ -265,6 +265,11 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	// inject a deterministic cache bridge node between it and its downstream targets.
 	sctNodes, sctEdges = injectCacheBridgeNodes(graph.Nodes, sctNodes, sctEdges, execNodeMap)
 
+	// ── Auto-inject Analyze Nodes ──
+	// For read_file action nodes referencing tabular files with no downstream
+	// analyze/probe node, inject an analyze node to reason about the data.
+	sctNodes, sctEdges = injectAnalyzeNodes(graph.Nodes, sctNodes, sctEdges, execNodeMap)
+
 	// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 	// A node is an endpoint if it is an execution node and has no outbound edges to other high-level steps.
 	isSourceMap := make(map[string]bool)
@@ -485,6 +490,132 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 		}
 
 		sctEdges = newEdges
+	}
+
+	return sctNodes, sctEdges
+}
+
+// injectAnalyzeNodes scans for read_file action nodes referencing tabular files
+// that have no downstream analyze or probe node. For each such node, injects
+// an analyze node with cache-prefixed instructions.
+//
+// The existing hasDownstreamCacheTools guard in injectCacheBridgeNodes prevents
+// cache bridge injection when the analyze node is already downstream — the
+// analyze node gets cache tools auto-provisioned by the SCT expander (lines 94-110).
+func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdges []GraphEdge, execNodeMap map[string]string) ([]GraphNode, []GraphEdge) {
+	for _, origNode := range originalNodes {
+		// Only target read_file action nodes referencing tabular files
+		if origNode.Type != "action" || origNode.Action != "read_file" {
+			continue
+		}
+		if !referencesTabularFile(origNode.Instructions) {
+			continue
+		}
+
+		// Resolve the exec node ID for this original node
+		execID, exists := execNodeMap[origNode.ID]
+		if !exists {
+			continue
+		}
+
+		// Check if any downstream node is already an analyze or probe
+		hasDownstreamAnalyze := false
+		for _, edge := range sctEdges {
+			if edge.SourceID == execID {
+				for _, node := range sctNodes {
+					if node.ID == edge.TargetID {
+						if node.Type == "analyze" || node.Type == "probe" {
+							hasDownstreamAnalyze = true
+							break
+						}
+					}
+				}
+			}
+			// Also check nodes reachable through cache bridges
+			if !hasDownstreamAnalyze {
+				for _, edge2 := range sctEdges {
+					if strings.HasPrefix(edge2.SourceID, "cache_bridge_") && edge.SourceID == execID && edge.TargetID == edge2.SourceID {
+						for _, node := range sctNodes {
+							if node.ID == edge2.TargetID && (node.Type == "analyze" || node.Type == "probe") {
+								hasDownstreamAnalyze = true
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+		if hasDownstreamAnalyze {
+			continue
+		}
+
+		// Inject analyze node
+		analyzeID := "analyze_" + origNode.ID
+		analyzeInstructions := fmt.Sprintf(
+			"Using the cached tabular data from the upstream node, answer: %s",
+			origNode.Instructions,
+		)
+		analyzeNode := GraphNode{
+			ID:           analyzeID,
+			Type:         "analyze",
+			Instructions: analyzeInstructions,
+			AllowedTools: append([]string{}, cacheTools...),
+			ProbeConfig: &ProbeConfig{
+				Goal:            analyzeInstructions,
+				AllowedTools:    append([]string{}, cacheTools...),
+				StepBudget:      15,
+				CompactEvery:    3,
+				CompactionLevel: CompactPreserve,
+			},
+			Status:              "pending",
+			ActivationThreshold: 0.0,
+		}
+		sctNodes = append(sctNodes, analyzeNode)
+
+		// Wire: find edges leaving execID (or its cache bridge) and re-route through analyze
+		// If execID has no outgoing edges (leaf node), just connect execID → analyze
+		var newEdges []GraphEdge
+		analyzeConnected := false
+
+		// Find the last node in the chain (either execID or its cache_bridge)
+		lastNodeID := execID
+		bridgeID := "cache_bridge_" + origNode.ID
+		for _, edge := range sctEdges {
+			if edge.SourceID == execID && edge.TargetID == bridgeID {
+				lastNodeID = bridgeID
+				break
+			}
+		}
+
+		for _, edge := range sctEdges {
+			if edge.SourceID == lastNodeID && edge.TargetID != analyzeID {
+				// Re-route through analyze
+				if !analyzeConnected {
+					newEdges = append(newEdges, GraphEdge{
+						SourceID: lastNodeID,
+						TargetID: analyzeID,
+					})
+					analyzeConnected = true
+				}
+				newEdges = append(newEdges, GraphEdge{
+					SourceID: analyzeID,
+					TargetID: edge.TargetID,
+				})
+			} else {
+				newEdges = append(newEdges, edge)
+			}
+		}
+
+		// If the last node had no outgoing edges (leaf), connect it to analyze
+		if !analyzeConnected {
+			newEdges = append(newEdges, GraphEdge{
+				SourceID: lastNodeID,
+				TargetID: analyzeID,
+			})
+		}
+
+		sctEdges = newEdges
+		fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-injected analyze node %s for tabular read_file %s\n", analyzeID, origNode.ID)
 	}
 
 	return sctNodes, sctEdges

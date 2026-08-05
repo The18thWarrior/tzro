@@ -874,6 +874,20 @@ func RunProbe(
 								chainStep.Arguments = make(map[string]interface{})
 							}
 							chainStep.Arguments["sql"] = autoSQL
+						} else {
+							// Fallback: if sql is still empty, generate a default query
+							// using the cacheId (from args or reasoning text).
+							cacheId, _ := extractedArgs["cacheId"].(string)
+							if cacheId == "" {
+								cacheId = extractCacheIdFromText(cleanedResponse)
+							}
+							if fallbackSQL := defaultSQLForCacheId(cacheId); fallbackSQL != "" {
+								fmt.Fprintf(os.Stderr, "[Probe] SQL fallback: empty sql, using default query for %s\n", cacheId)
+								if chainStep.Arguments == nil {
+									chainStep.Arguments = make(map[string]interface{})
+								}
+								chainStep.Arguments["sql"] = fallbackSQL
+							}
 						}
 					}
 				}
@@ -1335,6 +1349,10 @@ You have completed your exploration. Review the findings and produce a comprehen
 	// Synthesis needs more output tokens than regular probe steps.
 	// The default 2048 truncates content-heavy outputs (e.g., ADR logs).
 	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+
+	// Temperature 0.6 for synthesis: sharper distribution reduces repetitive
+	// phrasing while min_p 0.1 still provides dynamic token pruning.
+	synthCtx = context.WithValue(synthCtx, inference.TemperatureKey, 0.6)
 
 	// DRY (Don't Repeat Yourself) sampling for synthesis: the 4B model reliably
 	// degenerates into repetitive phrase loops during synthesis (benchmark runs

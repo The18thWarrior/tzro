@@ -137,6 +137,11 @@ type EngineConfig struct {
 	// Higher values use more memory for the prefix cache but eliminate redundant
 	// prefill computation. Default 0 (unlimited). Set to a positive value to limit.
 	CacheReuseTokens int `json:"cacheReuseTokens,omitempty"`
+
+	// DefaultTemperature overrides the hardcoded 1.0 temperature for inference.
+	// The cascade is: hardcoded 1.0 < config DefaultTemperature < context TemperatureKey.
+	// Set to 0 to use the hardcoded default (1.0).
+	DefaultTemperature float64 `json:"defaultTemperature,omitempty"`
 }
 
 type BackendConfig struct {
@@ -303,6 +308,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
+	GlobalConfig.DefaultTemperature = cfg.DefaultTemperature
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -350,6 +356,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
+	GlobalConfig.DefaultTemperature = cfg.DefaultTemperature
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -791,6 +798,20 @@ func GetProbeUseWorkerModel() bool {
 	configMutex.RLock()
 	v := GlobalConfig.ProbeUseWorkerModel
 	configMutex.RUnlock()
+	return v
+}
+
+// GetDefaultTemperature returns the configured default inference temperature.
+// Defaults to 1.0 (the llama-server requirement for min_p to function) if not
+// explicitly configured or set to a non-positive value.
+func GetDefaultTemperature() float64 {
+	configMutex.RLock()
+	v := GlobalConfig.DefaultTemperature
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 1.0
+	}
 	return v
 }
 

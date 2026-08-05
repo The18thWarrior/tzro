@@ -342,6 +342,22 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(running) failed for %s: %v\n", taskID, err)
 		}
 
+		// Temperature 0.7 for codegen: sharper than default 1.0, reduces noise
+		// in generated code while min_p 0.1 still provides dynamic token pruning.
+		codeCtxBg := context.WithValue(context.Background(), inference.TemperatureKey, 0.7)
+
+		// DRY (Don't Repeat Yourself) sampling for codegen: lighter than synthesis
+		// (0.6 vs 0.8 multiplier) with higher AllowedLength (3 vs 2) to allow
+		// repeated struct fields, test cases, and switch arms. Code-aware sequence
+		// breakers prevent penalty accumulation across structural boundaries.
+		codeCtxBg = context.WithValue(codeCtxBg, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+			Multiplier:       0.6,
+			Base:             1.75,
+			AllowedLength:    3,
+			PenaltyLastN:     -1,
+			SequenceBreakers: []string{"{", "}", ";", "(", ")", "\n"},
+		})
+
 		// Route via pseudo-code availability and complexity classification:
 		//   pseudocode provided → expansion DAG (any complexity)
 		//   no pseudocode, diff → edit loop (inline, no DAG)
@@ -351,7 +367,7 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			moduleContext := codegen.DiscoverModuleContext(args.Filepath, language)
 			editEngine := &codegen.DefaultEditLoopEngine{}
 			patchedContent, editErr := codegen.RunEditLoop(
-				context.Background(), editEngine, args.Spec, args.Filepath,
+				codeCtxBg, editEngine, args.Spec, args.Filepath,
 				codeCtx.ExistingContent, language, codeCtx.Siblings, moduleContext,
 			)
 			if editErr != nil {
@@ -377,6 +393,59 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			}
 
 			totalLines := strings.Count(patchedContent, "\n")
+
+			// Post-codegen compile gate: validate the edit_loop output compiles.
+			// If compilation fails, re-run edit loop with error feedback (max 2 retries).
+			compResult := codegen.RunCompilationGate(language, args.Filepath)
+			if !compResult.Pass {
+				const maxEditLoopRetries = 2
+				for retry := 0; retry < maxEditLoopRetries; retry++ {
+					fmt.Fprintf(os.Stderr, "[tzro_code] Compilation failed after edit_loop (attempt %d/%d): %s\n",
+						retry+1, maxEditLoopRetries, compResult.Reason)
+
+					// Build repair spec: original spec + compiler errors
+					repairSpec := fmt.Sprintf(
+						"%s\n\n## COMPILER ERRORS (must fix)\n%s\n\nFix ALL compiler errors. Preserve the existing implementation intent.",
+						args.Spec, compResult.Reason,
+					)
+
+					// Re-run edit loop with error-enriched spec
+					repairContent, repairErr := codegen.RunEditLoop(
+						codeCtxBg, editEngine, repairSpec, args.Filepath,
+						patchedContent, language, codeCtx.Siblings, moduleContext,
+					)
+					if repairErr != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] Repair edit loop failed: %v\n", repairErr)
+						break
+					}
+
+					// Write repaired file
+					if writeErr := os.WriteFile(args.Filepath, []byte(repairContent), 0644); writeErr != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] Repair file write failed: %v\n", writeErr)
+						break
+					}
+
+					patchedContent = repairContent
+					totalLines = strings.Count(patchedContent, "\n")
+					compResult = codegen.RunCompilationGate(language, args.Filepath)
+					if compResult.Pass {
+						fmt.Fprintf(os.Stderr, "[tzro_code] Compilation passed after repair attempt %d\n", retry+1)
+						break
+					}
+				}
+
+				// If still failing after all retries, report the error
+				if !compResult.Pass {
+					errMsg := fmt.Sprintf("compilation failed after %d repair attempts: %s", maxEditLoopRetries, compResult.Reason)
+					_ = memory.DB.SetNodeState(taskID, "edit_loop", "failed", errMsg)
+					if err := memory.DB.UpdateTaskStatus(taskID, "failed", errMsg); err != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+					}
+					fmt.Fprintf(os.Stderr, "[tzro_code] Edit loop compilation failed for %s: %s\n", args.Filepath, compResult.Reason)
+					return
+				}
+			}
+
 			outputMsg := fmt.Sprintf("Updated %s via edit_loop (%d lines)", args.Filepath, totalLines)
 			_ = memory.DB.SetNodeState(taskID, "edit_loop", "completed", outputMsg)
 			if err := memory.DB.UpdateTaskStatus(taskID, "completed", ""); err != nil {
@@ -412,7 +481,7 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			IntentType:   "codegen",
 			IsForeground: true,
 		}
-		_, execErr := task.ExecuteStatic(context.Background(), graph, execOpts)
+		_, execErr := task.ExecuteStatic(codeCtxBg, graph, execOpts)
 		_ = execErr
 		nodes := memory.DB.GetAllNodeStates(taskID)
 

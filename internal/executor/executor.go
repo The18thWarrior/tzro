@@ -2486,6 +2486,16 @@ func coerceStringArguments(args map[string]interface{}, instruction string, tool
 			continue
 		}
 
+		// cacheId arguments with cache_ prefix are dynamically generated identifiers
+		// (e.g., "cache_1785202015624") that are never present in the original
+		// instruction text. StringCoercion would treat them as "hallucinated"
+		// and corrupt them. Bypass unconditionally when the prefix matches.
+		if key == "cacheId" {
+			if strVal, ok := val.(string); ok && strings.HasPrefix(strVal, "cache_") {
+				continue
+			}
+		}
+
 		// Only coerce string arguments
 		strVal, isStr := val.(string)
 		if !isStr {
