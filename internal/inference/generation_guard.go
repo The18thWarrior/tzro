@@ -278,11 +278,19 @@ func (g *RepetitionGuard) checkBlockRepetition(s string) bool {
 // compresses dramatically better than non-repetitive text.
 //
 // Research finding: compression-ratio detection is deterministic, zero-cost,
-// and catches both exact and semantic repetition. A ratio below 0.30 for code
-// or 0.40 for prose indicates degeneration.
+// and catches both exact and semantic repetition. Valid Go/TS code with
+// Strategy patterns compresses to ~0.30-0.40; degenerate loops compress to
+// ~0.05-0.15.
 func (g *RepetitionGuard) checkCompressionRatio(s string) bool {
-	// Only check if enough new content has accumulated since last check
-	if len(s) < compressionWindowSize {
+	// Code mode requires more content before compression checks fire.
+	// Structured code (Go interfaces, Strategy patterns, repeated error
+	// handling) compresses well by nature — 2048 chars is insufficient
+	// signal to distinguish valid patterns from degenerate loops.
+	minLen := compressionWindowSize
+	if g.contentMode == ContentModeCode {
+		minLen = 4096
+	}
+	if len(s) < minLen {
 		return false
 	}
 	if len(s)-g.lastCheckLen < compressionCheckInterval {
@@ -299,8 +307,8 @@ func (g *RepetitionGuard) checkCompressionRatio(s string) bool {
 	ratio := compressionRatio(window)
 
 	// Select threshold based on content mode
-	threshold := 0.20 // code: stricter, but 0.20 avoids false positives on structured code
-	                   // (TypeScript interfaces, Go structs with repeated field types compress to ~0.25-0.30)
+	threshold := 0.35 // code: valid Go Strategy patterns / TS interfaces compress to ~0.30-0.40,
+	                   // degenerate repetition loops compress to ~0.05-0.15
 	switch g.contentMode {
 	case ContentModeProse:
 		threshold = 0.35 // prose: more lenient, valid prose compresses to ~0.45-0.60

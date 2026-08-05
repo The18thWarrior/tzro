@@ -130,6 +130,11 @@ type EngineConfig struct {
 	// Default false (use router). Set to true to use the worker model.
 	ProbeUseWorkerModel bool `json:"probeUseWorkerModel,omitempty"`
 
+	// UsePhaseRunner enables the Phase Runner state machine for probe, analyze,
+	// and research nodes. When true, these nodes dispatch to structured multi-phase
+	// pipelines instead of the flat Thought Chain loop. Default false.
+	UsePhaseRunner bool `json:"usePhaseRunner,omitempty"`
+
 	// CacheReuseTokens controls the --cache-reuse flag passed to llama-server.
 	// This determines how many tokens of the prompt prefix are checked for KV
 	// cache matches. 0 means unlimited (match the entire prefix), which enables
@@ -305,6 +310,7 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
+	GlobalConfig.UsePhaseRunner = cfg.UsePhaseRunner
 	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
@@ -353,6 +359,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
+	GlobalConfig.UsePhaseRunner = cfg.UsePhaseRunner
 	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
@@ -797,6 +804,15 @@ func GetMCTSSpeculationCeil() int {
 func GetProbeUseWorkerModel() bool {
 	configMutex.RLock()
 	v := GlobalConfig.ProbeUseWorkerModel
+	configMutex.RUnlock()
+	return v
+}
+
+// GetUsePhaseRunner returns whether the Phase Runner state machine should be
+// used for probe, analyze, and research nodes instead of the flat Thought Chain.
+func GetUsePhaseRunner() bool {
+	configMutex.RLock()
+	v := GlobalConfig.UsePhaseRunner
 	configMutex.RUnlock()
 	return v
 }

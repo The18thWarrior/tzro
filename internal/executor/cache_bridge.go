@@ -102,7 +102,7 @@ func (e *ExecutionEngine) maybeInjectCacheBridge(
 		Action: "sql_cached_data",
 		Instructions: "Query the cached tabular data from the upstream node's Data Profile. " +
 			"Use the cacheId from the upstream output. " +
-			"Execute: SELECT * FROM cache_<id> LIMIT 100 to return a representative sample.",
+			"Execute: SELECT * FROM cache_<id> LIMIT 5 to return a representative sample.",
 		AllowedTools:        cacheToolNames,
 		Status:              "pending",
 		ActivationThreshold: 0.0,

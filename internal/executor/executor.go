@@ -1185,7 +1185,43 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		probeCtx := context.WithValue(ctx, DispatchRecorderKey, func(toolName string, args map[string]interface{}) {
 			e.RecordDispatch(taskID, toolName, args)
 		})
-		synthesis, err := RunProbe(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+
+		var synthesis string
+		var err error
+
+		if config.GetUsePhaseRunner() {
+			// Phase Runner dispatch — route by SourceHint.
+			// When UsePhaseRunner=true, the entire RunProbe flat loop is bypassed.
+			// This structurally eliminates ~12 remediation mechanisms that compensated
+			// for the flat loop's structural limitations (see design spec §Deleted):
+			//   - Exploration Queue (→ Deep-Read phase artifacts)
+			//   - Duplicate call detection (→ phase step budgets)
+			//   - Phase gate for analyze (→ Schema-Orient → Query-Dev transition)
+			//   - SQL auto-extraction (→ Query-Dev phase scoping)
+			//   - Analyze repetition exemption (→ Synthesize phase clean input)
+			//   - web_browse URL auto-population (→ Rank phase output)
+			//   - URL Pre-Extraction (→ Search phase output)
+			//   - Empty query seeding (→ Search phase prompt)
+			//   - Empty URL rejection (→ Rank→Deep-Read transition)
+			//   - Visited URL tracking (→ Deep-Read internal state)
+			//   - Output fingerprint tracking (→ phase transition triggers)
+			//   - minStepBudget adaptive floor (→ per-phase step budgets)
+			switch probeConfig.SourceHint {
+			case "web":
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ResearchPhases (SourceHint=web)\n", node.ID)
+				synthesis, err = RunResearchPhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+			case "cache":
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to AnalyzePhases (SourceHint=cache)\n", node.ID)
+				synthesis, err = RunAnalyzePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+			default:
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases\n", node.ID)
+				synthesis, err = RunProbePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+			}
+		} else {
+			// Legacy flat Thought Chain loop
+			synthesis, err = RunProbe(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+		}
+
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
 			return fmt.Errorf("probe node %s execution failed: %w", node.ID, err)

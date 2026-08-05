@@ -27,12 +27,12 @@ func extractSQLFromText(text string) (string, string) {
 
 // defaultSQLForCacheId generates a safe fallback SQL query when the model
 // emits a sql_cached_data tool call with an empty sql argument but a valid cacheId.
-// Returns "SELECT * FROM {cacheId} LIMIT 50" or "" if cacheId is empty.
+// Returns "SELECT * FROM {cacheId} LIMIT 5" or "" if cacheId is empty.
 func defaultSQLForCacheId(cacheId string) string {
 	if cacheId == "" {
 		return ""
 	}
-	return "SELECT * FROM " + cacheId + " LIMIT 50"
+	return "SELECT * FROM " + cacheId + " LIMIT 5"
 }
 
 // extractCacheIdFromText regex-extracts a cache_\d{10,} identifier from

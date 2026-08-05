@@ -702,13 +702,13 @@ func RunProbe(
 				continue
 			}
 			if phaseGateBlocked {
-				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but phase gate blocked — only %d/%d required sql_cached_data calls. Continuing exploration.\n", probeID, step, analyticalCallCount, minAnalyticalCalls)
+				fmt.Fprintf(os.Stderr, "[Probe] Node %s signaled synthesis at step %d but phase gate blocked — only %d/%d required data query calls. Continuing exploration.\n", probeID, step, analyticalCallCount, minAnalyticalCalls)
 				chainStep.Action = "tool_call"
 				var phaseGateFeedback string
 				if isExtractionGoal {
-					phaseGateFeedback = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Your goal asks for specific records/fields — run sql_cached_data queries that SELECT the actual columns mentioned in the goal (e.g., SELECT name, email FROM table WHERE condition). Do NOT just run COUNT(*) — retrieve the actual data rows the goal asks for.", analyticalCallCount, minAnalyticalCalls)
+					phaseGateFeedback = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Your goal asks for specific records/fields — run data queries (sql_cached_data, count_by, group_by, filter_where, top_n) that retrieve the actual columns mentioned in the goal. Do NOT just run COUNT(*) — retrieve the actual data rows the goal asks for.", analyticalCallCount, minAnalyticalCalls)
 				} else {
-					phaseGateFeedback = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Run more sql_cached_data queries with aggregate functions (COUNT, GROUP BY, SUM) before synthesizing. Use introspect_cache first if you need to see the schema.", analyticalCallCount, minAnalyticalCalls)
+					phaseGateFeedback = fmt.Sprintf("Synthesis signal ignored: you have only completed %d of %d required data queries. Run more data queries (count_by, group_by, sql_cached_data) with aggregate functions before synthesizing. Use introspect_cache first if you need to see the schema.", analyticalCallCount, minAnalyticalCalls)
 				}
 				lastToolOutput = phaseGateFeedback
 				thoughtStep := memory.ThoughtStep{

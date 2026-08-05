@@ -1493,9 +1493,18 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		}
 	}
 
-	// If generation was aborted, close the response body to cancel the stream
+	// If generation was aborted, close the response body to cancel the stream.
+	// The SSE usage chunk arrives after content chunks, so closing the body
+	// before [DONE] means promptTokens/completionTokens stay at 0. Estimate
+	// from accumulated content so the tracker records actual work done.
 	if generationAborted {
 		resp.Body.Close()
+		if completionTokens == 0 && accumulatedContent.Len() > 0 {
+			// Rough estimate: ~4 chars per token for English/code
+			completionTokens = accumulatedContent.Len() / 4
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Guard abort: estimating %d completion tokens from %d chars\n",
+				completionTokens, accumulatedContent.Len())
+		}
 	}
 
 	duration := time.Since(startTime).Seconds()

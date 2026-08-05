@@ -793,13 +793,63 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 		outputText = extractTerminalSynthesis(graph, taskID)
 	}
 
-	// Run compilation gate (informational — logged for benchmark reporting)
+	// Run compilation gate — if it fails and the cloud model hasn't been
+	// used yet, attempt a single cloud repair pass. The in-DAG
+	// CompilationGateHook requires MaxLocalRepairAttempts (2) failures to
+	// escalate, but the codegen DAG only has one reason_code node, so the
+	// hook fires at most once and never reaches the threshold.
 	compResult := codegen.RunCompilationGate(language, targetPath)
 	if !compResult.Pass {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", conditionID, t.ID, compResult.Reason)
+
+		// Post-DAG cloud repair: only if no cloud tokens were used during
+		// the DAG execution (avoids double cloud cost when the hook already
+		// escalated). Uses the same narrow repair payload as the hook.
+		_, currentCloudUsage := tracker.GetUsage()
+		if currentCloudUsage.TotalTokens == 0 {
+			fmt.Fprintf(os.Stderr, "[Comparison] Attempting post-DAG cloud repair for %s/%s\n", conditionID, t.ID)
+
+			originalModelMode := config.GlobalConfig.ModelMode
+			config.GlobalConfig.ModelMode = "cloud"
+
+			moduleCtx := codegen.DiscoverModuleContext(targetPath, language)
+			repairTaskID := fmt.Sprintf("comparison_%s_repair_%s", conditionID, t.ID)
+			repairGraph := codegen.BuildRepairDAG(repairTaskID, outputText, compResult.Reason, spec, language, 500, moduleCtx)
+
+			repairErr := executor.GlobalEngine.ExecuteGraphReactive(ctx, repairGraph)
+			config.GlobalConfig.ModelMode = originalModelMode
+
+			if repairErr == nil {
+				repairedCode := extractLastSourceCodeOutput(repairTaskID, repairGraph)
+				if repairedCode != "" {
+					_, _, writeErr := codegen.WriteCodeFile(targetPath, repairedCode, 500)
+					if writeErr != nil {
+						fmt.Fprintf(os.Stderr, "[Comparison] Repair WriteCodeFile failed: %v\n", writeErr)
+					}
+				}
+
+				// Re-read and re-check compilation
+				if data, readErr := os.ReadFile(targetPath); readErr == nil {
+					outputText = string(data)
+				}
+				recheckResult := codegen.RunCompilationGate(language, targetPath)
+				if recheckResult.Pass {
+					fmt.Fprintf(os.Stderr, "[Comparison] Post-DAG cloud repair RESOLVED compilation for %s/%s\n", conditionID, t.ID)
+				} else {
+					fmt.Fprintf(os.Stderr, "[Comparison] Post-DAG cloud repair did NOT resolve compilation for %s/%s: %s\n",
+						conditionID, t.ID, recheckResult.Reason)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "[Comparison] Post-DAG cloud repair FAILED for %s/%s: %v\n", conditionID, t.ID, repairErr)
+			}
+		}
 	} else {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate PASSED for %s/%s\n", conditionID, t.ID)
 	}
+
+	// Re-read usage after potential cloud repair
+	wallClock = time.Since(startTime).Milliseconds()
+	localUsage, cloudUsage = tracker.GetUsage()
 
 	toolCallCount := countToolCalls(graph, taskID)
 

@@ -6,7 +6,7 @@ import (
 
 func TestDefaultSQLFallback_CacheIdPresent(t *testing.T) {
 	sql := defaultSQLForCacheId("cache_1785202015624")
-	expected := "SELECT * FROM cache_1785202015624 LIMIT 50"
+	expected := "SELECT * FROM cache_1785202015624 LIMIT 5"
 	if sql != expected {
 		t.Errorf("expected %q, got %q", expected, sql)
 	}

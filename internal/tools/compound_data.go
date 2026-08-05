@@ -225,7 +225,8 @@ func RegisterCompoundDataTools() {
 }
 
 // validateColumn checks if a column name exists in the cache schema.
-// Returns nil if the column is valid, or an error describing the issue.
+// Returns nil if the column is valid, or an error describing the issue
+// and listing the valid columns for the model to self-correct.
 func validateColumn(cacheID, column string) error {
 	if column == "" {
 		return fmt.Errorf("column name cannot be empty")
@@ -234,7 +235,56 @@ func validateColumn(cacheID, column string) error {
 	if strings.ContainsAny(column, ";'\"()[]{}") {
 		return fmt.Errorf("invalid column name: %s (contains special characters)", column)
 	}
+
+	// Check column exists in the materialized table schema.
+	// If the query DB or table is unavailable, fall through to
+	// execution-time errors rather than false-rejecting.
+	validCols := getCacheColumns(cacheID)
+	if len(validCols) > 0 {
+		found := false
+		for _, c := range validCols {
+			if strings.EqualFold(c, column) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("column '%s' does not exist in cache %s. Valid columns: %s",
+				column, cacheID, strings.Join(validCols, ", "))
+		}
+	}
 	return nil
+}
+
+// getCacheColumns returns the column names from a materialized cache table.
+// Returns nil if the table or query DB is unavailable (non-fatal).
+func getCacheColumns(cacheID string) []string {
+	db := cache.QueryDB()
+	if db == nil {
+		return nil
+	}
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info([%s])", cacheID))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var cid int
+		var name, dtype string
+		var notnull int
+		var dfltValue *string
+		var pk int
+		if err := rows.Scan(&cid, &name, &dtype, &notnull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		cols = append(cols, name)
+	}
+	if rows.Err() != nil {
+		return nil
+	}
+	return cols
 }
 
 // CompoundDataToolNames returns the names of all compound data tools.
