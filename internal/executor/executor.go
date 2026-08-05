@@ -62,6 +62,11 @@ type ExecutionEngine struct {
 	// Keyed by taskID. Populated at tool call sites, drained at task completion.
 	dispatches map[string][]ToolDispatch
 	dispatchMu sync.Mutex
+
+	// ADR-0067: In-memory VTE result stash for Execution Envelope population.
+	// Keyed by taskID. Populated after VerifyTaskOutput, drained at envelope assembly.
+	verificationResults map[string]*VerificationResult
+	verificationMu      sync.Mutex
 }
 
 // RecordDispatch appends a tool dispatch record for a task.
@@ -85,6 +90,29 @@ func (e *ExecutionEngine) DrainDispatches(taskID string) []ToolDispatch {
 	}
 	result := e.dispatches[taskID]
 	delete(e.dispatches, taskID)
+	return result
+}
+
+// stashVerificationResult stores the VTE result for later envelope assembly (ADR-0067).
+func (e *ExecutionEngine) stashVerificationResult(taskID string, result *VerificationResult) {
+	e.verificationMu.Lock()
+	defer e.verificationMu.Unlock()
+	if e.verificationResults == nil {
+		e.verificationResults = make(map[string]*VerificationResult)
+	}
+	e.verificationResults[taskID] = result
+}
+
+// DrainVerificationResult returns and removes the VTE result for a task.
+// Called at envelope assembly time.
+func (e *ExecutionEngine) DrainVerificationResult(taskID string) *VerificationResult {
+	e.verificationMu.Lock()
+	defer e.verificationMu.Unlock()
+	if e.verificationResults == nil {
+		return nil
+	}
+	result := e.verificationResults[taskID]
+	delete(e.verificationResults, taskID)
 	return result
 }
 
@@ -399,6 +427,12 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	// ADR-0055: Assemble and persist the Execution Envelope
 	dispatches := e.DrainDispatches(graph.TaskID)
 	envelope := AssembleEnvelope(graph, allCompletedStates, dispatches, startTime)
+
+	// ADR-0067: Populate verification rubric from VTE if available
+	if vResult := e.DrainVerificationResult(graph.TaskID); vResult != nil {
+		envelope.Verification = vResult
+	}
+
 	if envJSON, err := json.Marshal(envelope); err == nil {
 		// Find the effective terminal node to persist the envelope on
 		terminalNodeID := findTerminalNodeID(graph, allCompletedStates)
@@ -1283,10 +1317,32 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		findProbes(node.ID)
 
 		recallEngine := &ProbeInference{}
-		synthesis, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
+		recallResult, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
 		if err != nil {
 			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
 			return fmt.Errorf("recall node %s execution failed: %w", node.ID, err)
+		}
+
+		// ADR-0067: Verified Task Execution — evaluate and optionally re-synthesize
+		synthesis := recallResult.Synthesis
+		var verificationResult *VerificationResult
+		finalSynthesis, vResult, vErr := VerifyTaskOutput(
+			ctx,
+			&DefaultCloudVerifier{},
+			graph.GoalPrompt,
+			recallResult.Synthesis,
+			recallResult.RefinedContext,
+		)
+		if vErr == nil {
+			synthesis = finalSynthesis
+			verificationResult = vResult
+		} else {
+			fmt.Fprintf(os.Stderr, "[Recall] VTE error (non-fatal): %v\n", vErr)
+		}
+
+		// Stash verification result for envelope assembly
+		if verificationResult != nil {
+			e.stashVerificationResult(taskID, verificationResult)
 		}
 
 		// Run AfterNode hooks

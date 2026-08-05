@@ -1877,3 +1877,21 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
 
+
+## 2026-08-04 — Verified Task Execution & Context Pruning Wayfinder
+
+**Effort**: [VTE + Context Pruning Scoping](.scratch/vte-context-pruning/MAP.md)
+**Status**: Charted — research fired, 2 tickets on frontier
+
+Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and a new Deterministic Context Pruning idea are one unified feature or two independent features. VTE design spec is complete (pending approval). Context pruning was triggered by recurring `TOOL_ERROR` patterns (hallucinated cache IDs) poisoning downstream Accumulated Context.
+
+**Tickets**:
+- [Poisoned context taxonomy](.scratch/vte-context-pruning/issues/01-poisoned-context-taxonomy.md) (research, AFK, delegated to tzro_run)
+- [Intervention points vs VTE](.scratch/vte-context-pruning/issues/02-intervention-points-vs-vte.md) (grilling, HITL)
+- [Unified or independent?](.scratch/vte-context-pruning/issues/03-unified-or-independent.md) (grilling, HITL, blocked by 01+02)
+
+**Key artifacts**:
+- ADR: [0067-verified-task-execution](docs/adr/0067-verified-task-execution.md)
+- Design spec: [VTE design](docs/superpowers/specs/2026-08-04-verified-task-execution-design.md)
+- CONTEXT.md: 7 new terms added (Verified Task Execution, Verification Gate, Structural Pre-Check, Cloud Re-Synthesis, Verification Rubric, Verdict, updated Confidence Tier + Execution Envelope)
+

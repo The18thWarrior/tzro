@@ -114,7 +114,7 @@ func TestRunRecall_RefinedContext(t *testing.T) {
 		t.Fatalf("RunRecall failed: %v", err)
 	}
 
-	if !strings.Contains(result, "Final synthesis with fact") {
-		t.Errorf("Expected synthesis with fact, got: %s", result)
+	if !strings.Contains(result.Synthesis, "Final synthesis with fact") {
+		t.Errorf("Expected synthesis with fact, got: %s", result.Synthesis)
 	}
 }

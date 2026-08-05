@@ -26,18 +26,19 @@ type ToolDispatch struct {
 // Wraps the terminal synthesis text with structured execution metadata.
 // All fields are computed from graph state and tool dispatch history — no LLM generation.
 type ExecutionEnvelope struct {
-	Synthesis      string   `json:"synthesis"`
-	TaskID         string   `json:"taskId"`
-	GoalPrompt     string   `json:"goalPrompt"`
-	Status         string   `json:"status"`
-	ToolsUsed      []string `json:"toolsUsed"`
-	FilesRead      []string `json:"filesRead"`
-	FilesModified  []string `json:"filesModified"`
-	NodeCount      int      `json:"nodeCount"`
-	NodesCompleted int      `json:"nodesCompleted"`
-	NodesFailed    int      `json:"nodesFailed"`
-	NodesSkipped   int      `json:"nodesSkipped"`
-	DurationMs     int64    `json:"durationMs"`
+	Synthesis      string              `json:"synthesis"`
+	TaskID         string              `json:"taskId"`
+	GoalPrompt     string              `json:"goalPrompt"`
+	Status         string              `json:"status"`
+	ToolsUsed      []string            `json:"toolsUsed"`
+	FilesRead      []string            `json:"filesRead"`
+	FilesModified  []string            `json:"filesModified"`
+	NodeCount      int                 `json:"nodeCount"`
+	NodesCompleted int                 `json:"nodesCompleted"`
+	NodesFailed    int                 `json:"nodesFailed"`
+	NodesSkipped   int                 `json:"nodesSkipped"`
+	DurationMs     int64               `json:"durationMs"`
+	Verification   *VerificationResult `json:"verification,omitempty"` // ADR-0067: populated by Verification Gate
 }
 
 // fileReadTools are tool names whose "path" or "filepath" argument indicates a file was read.

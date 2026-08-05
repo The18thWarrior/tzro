@@ -13,6 +13,14 @@ import (
 	"tzro/internal/symbols"
 )
 
+// RecallResult holds both the final synthesis and the refinedContext
+// built during the recall loop. VTE (ADR-0067) uses the refinedContext
+// for the cloud Verification Gate without storage round-trips.
+type RecallResult struct {
+	Synthesis      string
+	RefinedContext string
+}
+
 // RunRecall executes a Recall Node loop (ADR-0038, ADR-0064).
 // It traverses the execution history of specified upstream nodes to align and synthesize discoveries.
 //
@@ -20,7 +28,7 @@ import (
 // compacted upstream ThoughtSteps BEFORE the agentic loop. The loop is now
 // a Refinement Pass that optionally enhances the baseline, not a mandatory
 // discovery pass.
-func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID string, upstreamNodeIDs []string, goal string, engine ProbeInferenceEngine) (string, error) {
+func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID string, upstreamNodeIDs []string, goal string, engine ProbeInferenceEngine) (RecallResult, error) {
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s starting for task %s (Upstream: %v)\n", recallNodeID, taskID, upstreamNodeIDs)
 
 	maxSteps := 8
@@ -110,7 +118,7 @@ You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 
 		rawResponse, err := engine.Infer(ctx, currentPrompt, lastResult, "", TargetWorker)
 		if err != nil {
-			return "", fmt.Errorf("recall inference failed at step %d: %w", step, err)
+			return RecallResult{}, fmt.Errorf("recall inference failed at step %d: %w", step, err)
 		}
 
 		// ADR-0064: Two-Pass Tool Extraction for Recall loop
@@ -283,7 +291,7 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 			fmt.Fprintf(os.Stderr, "[Recall] Cloud synthesis failed (%v), falling back to local engine\n", cloudErr)
 			synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
 			if err != nil {
-				return "", err
+				return RecallResult{}, err
 			}
 		} else {
 			synthesis = cloudResult
@@ -291,7 +299,7 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 	} else {
 		synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
 		if err != nil {
-			return "", err
+			return RecallResult{}, err
 		}
 	}
 
@@ -361,7 +369,7 @@ postSynthesis:
 
 	// Strip any leaked control tokens from the output
 	synthesis = stripControlTokens(synthesis)
-	return synthesis, nil
+	return RecallResult{Synthesis: synthesis, RefinedContext: refinedContext}, nil
 }
 
 
