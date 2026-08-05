@@ -99,6 +99,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 							StepBudget:      15,
 							CompactEvery:    3,
 							CompactionLevel: CompactPreserve,
+							SourceHint:      "cache", // Phase gate discriminator — only "cache" hint activates the sql_cached_data requirement
 						}
 					}
 					// Ensure cache tools are always present in AllowedTools
@@ -270,6 +271,11 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	// analyze/probe node, inject an analyze node to reason about the data.
 	sctNodes, sctEdges = injectAnalyzeNodes(graph.Nodes, sctNodes, sctEdges, execNodeMap)
 
+	// ── Enforce Analyze Node for data tasks (validation pass) ──
+	// Catches cases where the planner skips the Analyze Node for data tasks
+	// that don't come through read_file → tabular path (e.g., direct cacheId references).
+	sctNodes, sctEdges = ensureAnalyzeForDataTasks(graph.Nodes, sctNodes, sctEdges, execNodeMap, graph.GoalPrompt)
+
 	// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 	// A node is an endpoint if it is an execution node and has no outbound edges to other high-level steps.
 	isSourceMap := make(map[string]bool)
@@ -363,7 +369,12 @@ func isSynthesisGoal(instructions string) bool {
 }
 
 // cacheTools are the tools available to cache bridge and analyze nodes.
-var cacheTools = []string{"introspect_cache", "sql_cached_data"}
+// Includes both low-level SQL tools and compound data tools that translate
+// structured parameters to SQL (preventing 4B model syntax errors).
+var cacheTools = []string{
+	"introspect_cache", "sql_cached_data",
+	"count_by", "group_by", "filter_where", "top_n", "describe_cache",
+}
 
 // referencesTabularFile returns true if the instructions contain a tabular file extension.
 func referencesTabularFile(instructions string) bool {
@@ -495,7 +506,143 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 	return sctNodes, sctEdges
 }
 
-// injectAnalyzeNodes scans for read_file action nodes referencing tabular files
+// dataIntentPatterns are phrases that indicate the task involves data analysis
+// or aggregation. When matched AND no analyze node exists in the graph, the
+// compiler injects one to prevent raw data from entering the synthesis context.
+var dataIntentPatterns = []string{
+	"count by", "group by", "aggregate", "breakdown", "distribution",
+	"top n", "top 5", "top 10", "top 20",
+	"how many", "total number", "sum of",
+	"average", "median",
+	"filter by", "filter where",
+	"sort by", "order by", "rank",
+	"analyze the data", "analyze this data", "data analysis",
+	"sector breakdown", "by country", "by company", "by owner",
+	"lookup", "look up",
+}
+
+// ensureAnalyzeForDataTasks is a validation pass that fires after cache bridge
+// and analyze node injection. It checks if the task goal or any node instructions
+// indicate data analysis intent, and if so, verifies that at least one Analyze
+// Node exists in the compiled DAG. If not, injects one between the last
+// cache-related node and the terminal synthesis.
+func ensureAnalyzeForDataTasks(
+	originalNodes []GraphNode,
+	sctNodes []GraphNode,
+	sctEdges []GraphEdge,
+	execNodeMap map[string]string,
+	goalPrompt string,
+) ([]GraphNode, []GraphEdge) {
+	// Check 1: Does the task have data intent?
+	if !hasDataIntent(goalPrompt, originalNodes) {
+		return sctNodes, sctEdges
+	}
+
+	// Check 2: Does the graph already have an analyze node?
+	for _, node := range sctNodes {
+		if node.Type == "analyze" {
+			return sctNodes, sctEdges // already has one — no injection needed
+		}
+	}
+
+	// Check 3: Find the best node to attach the analyze node after.
+	// Priority: cache_bridge > read_file exec > any node with cache tools
+	var attachAfterID string
+	for _, node := range sctNodes {
+		if strings.HasPrefix(node.ID, "cache_bridge_") {
+			attachAfterID = node.ID
+			break
+		}
+	}
+	if attachAfterID == "" {
+		for _, node := range sctNodes {
+			if hasCacheToolsInAllowed(node.AllowedTools) {
+				attachAfterID = node.ID
+				break
+			}
+		}
+	}
+	if attachAfterID == "" {
+		// No cache-related node found — the planner may have a completely
+		// different graph structure. Don't inject blindly.
+		return sctNodes, sctEdges
+	}
+
+	// Inject analyze node
+	analyzeID := "analyze_enforced"
+	analyzeNode := GraphNode{
+		ID:           analyzeID,
+		Type:         "analyze",
+		Instructions: "Analyze the cached data to answer: " + goalPrompt,
+		AllowedTools: append([]string{}, cacheTools...),
+		ProbeConfig: &ProbeConfig{
+			Goal:            "Analyze the cached data to answer: " + goalPrompt,
+			AllowedTools:    append([]string{}, cacheTools...),
+			StepBudget:      15,
+			CompactEvery:    3,
+			CompactionLevel: CompactPreserve,
+			TaskContext:     goalPrompt,
+			SourceHint:      "cache",
+		},
+		Status:              "pending",
+		ActivationThreshold: 0.0,
+	}
+	sctNodes = append(sctNodes, analyzeNode)
+
+	// Re-wire edges: route edges leaving attachAfterID through the analyze node
+	var newEdges []GraphEdge
+	analyzeConnected := false
+	for _, edge := range sctEdges {
+		if edge.SourceID == attachAfterID {
+			if !analyzeConnected {
+				newEdges = append(newEdges, GraphEdge{
+					SourceID: attachAfterID,
+					TargetID: analyzeID,
+				})
+				analyzeConnected = true
+			}
+			newEdges = append(newEdges, GraphEdge{
+				SourceID: analyzeID,
+				TargetID: edge.TargetID,
+			})
+		} else {
+			newEdges = append(newEdges, edge)
+		}
+	}
+
+	if !analyzeConnected {
+		newEdges = append(newEdges, GraphEdge{
+			SourceID: attachAfterID,
+			TargetID: analyzeID,
+		})
+	}
+
+	fmt.Fprintf(os.Stderr, "[KahnCompiler] Enforced analyze node %s for data task (attached after %s)\n", analyzeID, attachAfterID)
+
+	return sctNodes, newEdges
+}
+
+// hasDataIntent returns true if the goal prompt or any node instructions
+// indicate the task involves data analysis or aggregation.
+func hasDataIntent(goalPrompt string, nodes []GraphNode) bool {
+	lower := strings.ToLower(goalPrompt)
+	for _, pattern := range dataIntentPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	for _, node := range nodes {
+		lower = strings.ToLower(node.Instructions)
+		for _, pattern := range dataIntentPatterns {
+			if strings.Contains(lower, pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+
 // that have no downstream analyze or probe node. For each such node, injects
 // an analyze node with cache-prefixed instructions.
 //
@@ -566,6 +713,7 @@ func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdge
 				StepBudget:      15,
 				CompactEvery:    3,
 				CompactionLevel: CompactPreserve,
+				SourceHint:      "cache",
 			},
 			Status:              "pending",
 			ActivationThreshold: 0.0,

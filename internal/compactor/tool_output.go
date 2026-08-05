@@ -27,6 +27,11 @@ type ToolOutputStep struct {
 var exemptTools = map[string]bool{
 	"sql_cached_data":  true,
 	"introspect_cache": true,
+	"count_by":         true,
+	"group_by":         true,
+	"filter_where":     true,
+	"top_n":            true,
+	"describe_cache":   true,
 }
 
 // CompactToolOutputs compacts a slice of ThoughtStep tool outputs using
@@ -90,7 +95,16 @@ func CompactToolOutputs(ctx context.Context, steps []ToolOutputStep, budget int,
 			continue
 		}
 
-		// Segment and compact
+		// Segment and compact — use web fact extraction for web_browse content
+		if s.ToolName == "web_browse" && engine != nil && utf8.RuneCountInString(output) > 200 {
+			facts, err := engine.ExtractWebFacts(ctx, output, s.ToolArgs)
+			if err == nil {
+				llmCalls++
+				parts = append(parts, header+facts)
+				continue
+			}
+			// Fall through to generic compaction on failure
+		}
 		compacted := compactToolOutput(ctx, output, perStepBudget, engine, &llmCalls)
 		parts = append(parts, header+compacted)
 	}

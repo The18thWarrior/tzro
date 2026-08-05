@@ -2,6 +2,20 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-04T23:59:00-07:00] wayfinder | Reliability Hardening (Research-Validated)
+
+- **Activity**: Charted a wayfinder map for reliability hardening based on a structured research investigation of all failure modes across 13+ benchmark runs. Research validated every observed failure as well-characterized in the literature.
+- **Map**: [.scratch/reliability-hardening/MAP.md](../../.scratch/reliability-hardening/MAP.md)
+- **Research source**: Research Findings report (conversation 97df0125)
+- **Key Findings**:
+  1. **Every failure mode is typical**: Text degeneration, synthesis leak, hallucination, codegen compilation, data retrieval, context pollution, GBNF truncation — all well-characterized for 4B-class models.
+  2. **Problems are systems engineering, not model capability**: The 4B model can produce 5.0 quality — the problem is variance, not a ceiling.
+  3. **Guardrail Paradox**: 9 accumulated compensatory mechanisms are adding failure surfaces faster than closing them. VTE as a single verification gate replaces 5-6 narrow heuristics.
+- **Tickets**: 11 tickets (01–11), 3 Tier 1 (temperature gap, compression detection, VTE always-on), 6 Tier 2 (Analyze Node enforcement, compound tools, extractive pipeline, error pruning, output prefix, StringCoercion fix), 2 checkpoints.
+- **Frontier**: Tickets 01-09 are unblocked and ready-for-agent. Tickets 10-11 are blocked by their prerequisites.
+
+---
+
 ## [2026-08-03T20:25:00-07:00] grill-with-docs | Probe Pass 1 Worker Routing (ADR-0065)
 
 - **Activity**: Grill-with-docs session analyzing router/worker task breakdown, triggered by benchmark results-research-10 showing catastrophic probe navigation failure. 7 design questions resolved.

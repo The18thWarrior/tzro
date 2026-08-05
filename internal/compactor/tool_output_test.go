@@ -43,6 +43,15 @@ func (c *CountingEngine) CompactToolOutput(_ context.Context, content string) (s
 	return content, nil
 }
 
+func (c *CountingEngine) ExtractWebFacts(_ context.Context, content string, _ string) (string, error) {
+	c.ToolOutputCalls++
+	// Simulate 4:1 compression for web content (structured fact extraction)
+	if len(content) > 200 {
+		return content[:len(content)/4], nil
+	}
+	return content, nil
+}
+
 func TestCompactToolOutputs_CodeGetsSkeletonNotLLM(t *testing.T) {
 	engine := &CountingEngine{}
 	steps := []ToolOutputStep{
@@ -137,6 +146,10 @@ func (f *FailingEngine) CompactReasoning(_ context.Context, chunk string) (strin
 }
 
 func (f *FailingEngine) CompactToolOutput(_ context.Context, content string) (string, error) {
+	return "", context.DeadlineExceeded
+}
+
+func (f *FailingEngine) ExtractWebFacts(_ context.Context, _ string, _ string) (string, error) {
 	return "", context.DeadlineExceeded
 }
 

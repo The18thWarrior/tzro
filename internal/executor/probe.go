@@ -332,6 +332,7 @@ func RunProbe(
 	// synthesisRejections counts how many times the Worker has overridden the
 	// Router's premature synthesis signal. Capped at maxSynthesisRejections.
 	usedToolSet := make(map[string]bool)
+	edgeToolFirstSeen := make(map[string]bool) // tracks first occurrence per tool for priority scoring
 	var synthesisRejections int
 	const maxSynthesisRejections = 2
 
@@ -342,10 +343,11 @@ func RunProbe(
 	const minAnalyticalCalls = 2
 	var analyticalCallCount int
 	isAnalyze := isAnalyzeConfig(config.AllowedTools)
-	// Phase gate only applies when sql_cached_data is actually available.
-	// Research probes that happen to have introspect_cache but no sql_cached_data
-	// should not be blocked by the analytical call requirement.
-	phaseGateApplies := isAnalyze && containsTool(config.AllowedTools, "sql_cached_data")
+	// Phase gate only applies to actual analyze nodes (SourceHint="cache"),
+	// NOT to regular probes that happen to have cache tools injected at runtime.
+	// Without this check, probes that encounter upstream cached data get blocked
+	// by the sql_cached_data requirement even though they're not data analysis tasks.
+	phaseGateApplies := isAnalyze && config.SourceHint == "cache" && containsTool(config.AllowedTools, "sql_cached_data")
 	isExtractionGoal := phaseGateApplies && goalImpliesExtraction(config.Goal)
 
 	// Analytical Evidence (ADR-0053): structured raw data from successful
@@ -984,7 +986,11 @@ func RunProbe(
 						usedToolSet[toolName] = true // Pass 3 gate tracking
 
 						// ADR-0059: Accumulate Edge Entry with tool-type-aware truncation.
-						edgeEntries = append(edgeEntries, NewEdgeEntry(step, toolName, toolArgsStr, result))
+						// Score priority for overflow eviction (Fix 2, Cluster 3).
+						edge := NewEdgeEntry(step, toolName, toolArgsStr, result)
+						edge.Priority = ScoreEdgeEntry(toolName, result, edgeToolFirstSeen)
+						edgeToolFirstSeen[toolName] = true
+						edgeEntries = append(edgeEntries, edge)
 
 						// P0: Extract URLs from successful web_search results.
 						// Deterministic extraction — the 4B model cannot reliably
@@ -1083,10 +1089,22 @@ func RunProbe(
 						}
 
 						// When enough exploration has occurred and outputs are repeating,
-						// lower minStepBudget to allow synthesis on the next step.
+						// either force synthesis (final quarter) or lower the floor (earlier).
 						if consecutiveDuplicateOutputs >= maxConsecutiveDuplicateOutputs &&
 							step >= minStepBudget &&
 							successfulToolCalls >= compactEvery*2 {
+
+							if step >= stepBudget*3/4 {
+								// Fix 4 (Cluster 3): Force synthesis in the final quarter.
+								// Information gain has plateaued and we're burning steps.
+								// Previously we only lowered minStepBudget, but the model
+								// kept choosing tool_call over synthesize.
+								fmt.Fprintf(os.Stderr, "[Probe] Node %s: FORCED synthesis at step %d — %d consecutive duplicate outputs in final quarter of budget (%d)\n",
+									probeID, step, consecutiveDuplicateOutputs, stepBudget)
+								isSynthesisReady = true
+								break
+							}
+							// In the first 75%, just lower the floor (existing behavior)
 							fmt.Fprintf(os.Stderr, "[Probe] Node %s: %d consecutive duplicate outputs detected at step %d. Lowering min step budget to allow synthesis.\n",
 								probeID, consecutiveDuplicateOutputs, step)
 							minStepBudget = step // Allow synthesis on the next step
@@ -1267,7 +1285,7 @@ func RunProbe(
 	_ = memory.DB.SetNodeState(taskID, nodeIDFromProbeID(probeID, taskID), "running",
 		fmt.Sprintf("Synthesizing (%d findings)", len(edgeEntries)))
 
-	return runSynthesisPass(ctx, probeID, taskID, config.Goal, synthesisEngine, downstreamBindingKeys, edgeEntries, preloadedContent, isAnalyze)
+	return runSynthesisPass(ctx, probeID, taskID, config.Goal, config.TaskContext, synthesisEngine, downstreamBindingKeys, edgeEntries, preloadedContent, isAnalyze)
 }
 
 // hybridSynthesisThreshold returns the configured context size (in chars) above
@@ -1277,7 +1295,7 @@ func hybridSynthesisThreshold() int {
 	return cfgpkg.GetHybridSynthesisThresholdChars()
 }
 
-func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine ProbeInferenceEngine, bindingKeys []string, edgeEntries []EdgeEntry, preloadedContent string, isAnalyze bool) (string, error) {
+func runSynthesisPass(ctx context.Context, probeID, taskID, goal, taskContext string, engine ProbeInferenceEngine, bindingKeys []string, edgeEntries []EdgeEntry, preloadedContent string, isAnalyze bool) (string, error) {
 	// ADR-0059: Synthesis reads from the Edge Entry log accumulated during the
 	// Thought Chain loop. No more reading compaction summaries or raw thought
 	// steps from SQLite — the edge log is the authoritative exploration record.
@@ -1341,14 +1359,30 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal string, engine 
 	// instead of falling through to the lossy semantic fallback.
 	synthSchema, extractionHint := buildSynthesisSchema(bindingKeys)
 
+	// Fix 1 (Cluster 3): Pin TaskContext into synthesis prompt so the model sees
+	// the full task specification at synthesis time, not just the short goal string.
+	// After 30+ exploration steps, the goal alone is too vague to produce specific output.
+	var taskReqSection string
+	if taskContext != "" {
+		taskReqSection = fmt.Sprintf("\n## Task Requirements (PRIORITY — your response MUST satisfy these)\n%s\n", taskContext)
+	}
 	systemPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Probe Node.
-Your goal was: %s
+%sYour goal was: %s
 
-You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.%s`, goal, extractionHint)
+You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.%s`, taskReqSection, goal, extractionHint)
 
 	// Synthesis needs more output tokens than regular probe steps.
 	// The default 2048 truncates content-heavy outputs (e.g., ADR logs).
 	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+
+	// Fix 3 (Cluster 3): Override RepetitionGuard to prose mode for synthesis.
+	// The probe loop correctly uses ContentModeCode for read_file outputs, but
+	// synthesis output is markdown/prose. The code-mode guard (0.20 threshold)
+	// was causing false-positive aborts on markdown tables and structured content.
+	// The guard auto-detects tabular content and promotes to ContentModeTabular
+	// if CSV/TSV/markdown-table patterns are found during generation.
+	synthCtx = context.WithValue(synthCtx, inference.GenerationGuardKey,
+		inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
 
 	// Temperature 0.6 for synthesis: sharper distribution reduces repetitive
 	// phrasing while min_p 0.1 still provides dynamic token pruning.
@@ -1380,14 +1414,15 @@ You have completed your exploration. Review the findings and produce a comprehen
 
 		// Phase 1: Local outline — the local model is good at organizing
 		// and extracting facts, even from large contexts.
-		outlinePrompt := fmt.Sprintf(`You are a structured note-taker. Your goal was: %s
+		outlinePrompt := fmt.Sprintf(`You are a structured note-taker.
+%sYour goal was: %s
 
 Given the exploration findings below, produce a CONCISE STRUCTURED OUTLINE with:
 - Section headers for each major topic
 - Key bullet points with specific data values, names, and numbers
 - Source URLs where available
 - NO prose paragraphs — bullet points ONLY
-- Include ALL relevant facts discovered during exploration`, goal)
+- Include ALL relevant facts discovered during exploration`, taskReqSection, goal)
 
 		outline, outlineErr := engine.Infer(synthCtx, outlinePrompt, contextStr, "", TargetWorker)
 		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
@@ -1396,12 +1431,12 @@ Given the exploration findings below, produce a CONCISE STRUCTURED OUTLINE with:
 			// Phase 2: Cloud expansion — cloud model expands the outline
 			// into polished prose. Low token cost (~500-1K tokens).
 			expandPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Probe Node.
-Goal: %s
+%sGoal: %s
 
 Expand the structured outline below into a comprehensive, well-cited final answer.
 Preserve all data values, names, and numbers from the outline.
 Add proper prose transitions and paragraph structure.
-Include source citations where the outline references URLs.%s`, goal, extractionHint)
+Include source citations where the outline references URLs.%s`, taskReqSection, goal, extractionHint)
 
 			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
 				{Role: "system", Content: expandPrompt},

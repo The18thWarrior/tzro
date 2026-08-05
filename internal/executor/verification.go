@@ -150,6 +150,11 @@ func (v *DefaultCloudVerifier) Verify(ctx context.Context, goal, synthesis, refi
 // On cloud errors, degrades gracefully: returns the original synthesis with
 // an error-indicating VerificationResult. Never returns an error to the caller.
 func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthesis, refinedContext string) (finalSynthesis string, result *VerificationResult, err error) {
+	// ADR-0067: Audit log — VTE activates for every recall node unconditionally.
+	// The only gate is privacy level (strict-local / local model mode).
+	fmt.Fprintf(os.Stderr, "[VTE] Activating (goal=%d chars, synthesis=%d chars, context=%d chars)\n",
+		len(goal), len(synthesis), len(refinedContext))
+
 	// Privacy Level gate (ADR-0067): strict-local skips cloud verification.
 	if isCloudEscalationBlocked() {
 		preCheckResult, preCheckReason := StructuralPreCheck(synthesis)

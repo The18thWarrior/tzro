@@ -10,6 +10,7 @@ package executor
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"tzro/internal/compactor"
@@ -24,6 +25,7 @@ type EdgeEntry struct {
 	ToolArgs      string
 	ResultSnippet string // Code Skeleton for read_file, full for compact tools
 	FullResult    string // stored for SQLite persistence, not used in prompt
+	Priority      int    // 0=throwaway, 1=low, 2=standard, 3=high-value (schema/discovery)
 }
 
 // maxReadFileSnippet is the character budget for read_file Edge Entry snippets.
@@ -48,7 +50,8 @@ func NewEdgeEntry(stepIndex int, toolName, toolArgs, toolOutput string) EdgeEntr
 		}
 	case "list_dir", "search_files":
 		// Already compact — keep full output
-	case "introspect_cache", "sql_cached_data":
+	case "introspect_cache", "sql_cached_data",
+		"count_by", "group_by", "filter_where", "top_n", "describe_cache":
 		// Evidence data — preserve for synthesis fidelity
 	default:
 		// Unknown tool — apply generic truncation
@@ -63,7 +66,147 @@ func NewEdgeEntry(stepIndex int, toolName, toolArgs, toolOutput string) EdgeEntr
 		ToolArgs:      toolArgs,
 		ResultSnippet: snippet,
 		FullResult:    toolOutput,
+		Priority:      EdgePriorityStandard, // default
 	}
+}
+
+// Edge priority levels for overflow eviction ordering.
+// Higher priority entries survive overflow; lower ones are evicted first.
+const (
+	EdgePriorityThrowaway = 0 // Errors, uninformative results — evict first
+	EdgePriorityLow       = 1 // Duplicate outputs, empty directories
+	EdgePriorityStandard  = 2 // Normal successful tool calls
+	EdgePriorityHigh      = 3 // Schema discovery, first successful queries, structure
+)
+
+// ScoreEdgeEntry computes a deterministic priority score for an edge entry based
+// on tool type, result content, and whether the output has been seen before.
+// This is Tier 1 scoring — zero inference cost, pure heuristic.
+func ScoreEdgeEntry(toolName, toolOutput string, isFirstOfTool map[string]bool) int {
+	// Errors are always throwaway
+	if strings.HasPrefix(toolOutput, "Error:") || strings.HasPrefix(toolOutput, "error:") {
+		return EdgePriorityThrowaway
+	}
+
+	switch toolName {
+	case "introspect_cache":
+		// Schema discovery is always high value
+		return EdgePriorityHigh
+	case "sql_cached_data", "count_by", "group_by", "filter_where", "top_n", "describe_cache":
+		// First analytical query is high value (establishes data shape),
+		// subsequent ones are standard
+		if !isFirstOfTool[toolName] {
+			return EdgePriorityHigh
+		}
+		return EdgePriorityStandard
+	case "list_dir":
+		// First list_dir establishes structure; subsequent ones are standard.
+		// Empty or near-empty directories are low value.
+		if len(toolOutput) < 50 {
+			return EdgePriorityLow
+		}
+		if !isFirstOfTool[toolName] {
+			return EdgePriorityHigh
+		}
+		return EdgePriorityStandard
+	case "web_search":
+		// Web search results with actual content are standard;
+		// empty/no-results are low
+		if len(toolOutput) < 100 {
+			return EdgePriorityLow
+		}
+		return EdgePriorityStandard
+	default:
+		return EdgePriorityStandard
+	}
+}
+
+// uninformativeErrorPatterns are substrings in error messages that indicate
+// a "not found" / "does not exist" failure. When combined with a hallucinated
+// parameter (one not present in any upstream context), these errors carry no
+// information and should be pruned to prevent context poisoning.
+var uninformativeErrorPatterns = []string{
+	"not found",
+	"does not exist",
+	"no such",
+	"table not found",
+	"unknown table",
+	"no rows",
+	"cache not found",
+	"invalid cache",
+}
+
+// IsUninformativeToolError classifies a TOOL_ERROR as uninformative (should be
+// pruned) or informative (should be preserved). A TOOL_ERROR is uninformative
+// when BOTH conditions are met:
+//  1. The error output matches a "not found" / "does not exist" pattern
+//  2. The key parameter (e.g., cacheId) was hallucinated — it does not appear
+//     anywhere in the upstream context
+//
+// Returns true if the error should be pruned (uninformative).
+// Returns false if the error should be kept (informative — the parameter was
+// real and the failure carries diagnostic value).
+func IsUninformativeToolError(toolName, toolArgs, errorOutput, upstreamContext string) bool {
+	// Only classify errors for tools that have ID-like parameters the model
+	// commonly hallucinates.
+	param := extractKeyParameter(toolName, toolArgs)
+	if param == "" {
+		return false // can't classify without a key parameter
+	}
+
+	// Check 1: Does the error match an uninformative pattern?
+	errorLower := strings.ToLower(errorOutput)
+	matchesPattern := false
+	for _, pattern := range uninformativeErrorPatterns {
+		if strings.Contains(errorLower, pattern) {
+			matchesPattern = true
+			break
+		}
+	}
+	if !matchesPattern {
+		return false // error is about something other than "not found" — keep it
+	}
+
+	// Check 2: Was the parameter hallucinated?
+	// If the parameter appears in the upstream context, the model had a
+	// legitimate basis for using it — the error is informative.
+	if strings.Contains(upstreamContext, param) {
+		return false // parameter was real — keep the error
+	}
+
+	return true // hallucinated parameter + not-found error → uninformative
+}
+
+// extractKeyParameter pulls the most important parameter value from tool args
+// for hallucination detection. Different tools have different key parameters.
+func extractKeyParameter(toolName, toolArgs string) string {
+	switch toolName {
+	case "introspect_cache", "sql_cached_data":
+		return extractCacheId(toolArgs)
+	case "read_file":
+		return extractPathFromArgs(toolArgs)
+	default:
+		return ""
+	}
+}
+
+// extractPathFromArgs pulls a file path from tool args JSON.
+func extractPathFromArgs(argsStr string) string {
+	idx := strings.Index(argsStr, `"path"`)
+	if idx < 0 {
+		return ""
+	}
+	rest := argsStr[idx+6:]
+	valStart := strings.IndexByte(rest, '"')
+	if valStart < 0 {
+		return ""
+	}
+	rest = rest[valStart+1:]
+	valEnd := strings.IndexByte(rest, '"')
+	if valEnd < 0 {
+		return ""
+	}
+	return rest[:valEnd]
 }
 
 // BuildBreadcrumbs generates a deterministic, tool-type-aware exploration progress
@@ -179,41 +322,75 @@ func CompileEdgeLog(entries []EdgeEntry) (string, bool) {
 	overflow := len(result) > maxEdgeLogChars
 
 	if overflow {
-		// Truncate from the beginning (oldest entries) to fit budget
-		// Keep the most recent entries that fit within the budget
-		result = truncateEdgeLogFromStart(entries, maxEdgeLogChars)
+		// Evict lowest-priority entries first, then oldest within same tier.
+		// Preserves high-value schema/discovery entries regardless of position.
+		result = truncateEdgeLogByPriority(entries, maxEdgeLogChars)
 	}
 
 	return result, overflow
 }
 
-// truncateEdgeLogFromStart builds the edge log from the most recent entries
-// that fit within the budget, discarding oldest entries first.
-func truncateEdgeLogFromStart(entries []EdgeEntry, budget int) string {
-	// Build from the end backwards to find where we can start
-	var chunks []string
-	totalLen := 0
+// truncateEdgeLogByPriority evicts lowest-priority entries first, then oldest
+// within the same priority tier. This preserves high-value schema discovery and
+// first-query entries while dropping errors and redundant re-reads.
+func truncateEdgeLogByPriority(entries []EdgeEntry, budget int) string {
 	headerLen := len("## Exploration Log\n\n")
 
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
+	// Build (index, priority) pairs and sort: lowest priority first,
+	// then oldest first within same priority (for eviction order).
+	type indexedEntry struct {
+		origIdx  int
+		priority int
+	}
+	sorted := make([]indexedEntry, len(entries))
+	for i, e := range entries {
+		sorted[i] = indexedEntry{origIdx: i, priority: e.Priority}
+	}
+	// Sort by priority ascending (evict first), then by index ascending (oldest first)
+	sort.Slice(sorted, func(a, b int) bool {
+		if sorted[a].priority != sorted[b].priority {
+			return sorted[a].priority < sorted[b].priority
+		}
+		return sorted[a].origIdx < sorted[b].origIdx
+	})
+
+	// Mark entries to keep: start from highest priority (end of sorted),
+	// include entries until budget is exceeded.
+	keep := make(map[int]bool)
+	totalLen := 0
+	for i := len(sorted) - 1; i >= 0; i-- {
+		e := entries[sorted[i].origIdx]
 		chunk := fmt.Sprintf("### Step %d: %s\nArgs: %s\nResult:\n%s\n\n",
 			e.StepIndex, e.ToolName, e.ToolArgs, e.ResultSnippet)
 		if totalLen+len(chunk)+headerLen > budget {
 			break
 		}
-		chunks = append([]string{chunk}, chunks...)
+		keep[sorted[i].origIdx] = true
 		totalLen += len(chunk)
 	}
 
-	droppedCount := len(entries) - len(chunks)
+	// Build output in original order (preserving chronological flow)
+	droppedCount := len(entries) - len(keep)
+	var droppedByPriority [4]int
+	for i, e := range entries {
+		if !keep[i] {
+			if e.Priority >= 0 && e.Priority <= 3 {
+				droppedByPriority[e.Priority]++
+			}
+		}
+	}
+
 	var sb strings.Builder
 	sb.WriteString("## Exploration Log\n\n")
 	if droppedCount > 0 {
-		sb.WriteString(fmt.Sprintf("[%d earlier steps omitted to fit context budget]\n\n", droppedCount))
+		sb.WriteString(fmt.Sprintf("[%d steps evicted to fit context budget: %d throwaway, %d low-priority, %d standard, %d high-priority]\n\n",
+			droppedCount, droppedByPriority[0], droppedByPriority[1], droppedByPriority[2], droppedByPriority[3]))
 	}
-	for _, c := range chunks {
-		sb.WriteString(c)
+	for i, e := range entries {
+		if keep[i] {
+			sb.WriteString(fmt.Sprintf("### Step %d: %s\nArgs: %s\nResult:\n%s\n\n",
+				e.StepIndex, e.ToolName, e.ToolArgs, e.ResultSnippet))
+		}
 	}
 	return sb.String()
 }

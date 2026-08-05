@@ -23,6 +23,12 @@ type CompactEngine interface {
 	// fact list. Used by the Recall Node Refinement Pass (ADR-0064).
 	// Code segments are never sent here — they use deterministic skeletons.
 	CompactToolOutput(ctx context.Context, content string) (string, error)
+
+	// ExtractWebFacts extracts structured facts from web-browsed content.
+	// Returns a structured list of claims with source attribution.
+	// This forces the model to commit to specific claims from source
+	// material before synthesis, preventing parametric bias.
+	ExtractWebFacts(ctx context.Context, content string, sourceURL string) (string, error)
 }
 
 // RouterEngine uses the 1B router model for reasoning compression.
@@ -83,6 +89,46 @@ func (r *RouterEngine) CompactToolOutput(ctx context.Context, content string) (s
 	return result.Content, nil
 }
 
+// ExtractWebFacts extracts structured facts from web-browsed content.
+// Uses the router model with a constrained extraction prompt that forces
+// the model to output structured claim → source → quote triples.
+func (r *RouterEngine) ExtractWebFacts(ctx context.Context, content string, sourceURL string) (string, error) {
+	sourceInfo := "the source document"
+	if sourceURL != "" {
+		sourceInfo = sourceURL
+	}
+
+	messages := []inference.InferenceMessage{
+		{
+			Role: "system",
+			Content: `Extract ALL factual claims from this web page content. For each fact, output:
+- CLAIM: [specific factual statement]
+- SOURCE: [URL or document name]
+- QUOTE: [verbatim quote from the source that supports this claim]
+
+Rules:
+1. Extract ONLY facts that appear in the source text. Do NOT add information from your own knowledge.
+2. Include statistics, dates, names, comparisons, version numbers, and quantitative claims.
+3. Preserve exact numbers, names, and URLs from the source.
+4. Skip navigation text, advertisements, cookie notices, and boilerplate.`,
+		},
+		{
+			Role:    "user",
+			Content: "Source: " + sourceInfo + "\n\n" + content,
+		},
+	}
+
+	cappedCtx := context.WithValue(ctx, inference.MaxTokensKey, 1024)
+	result, err := inference.CallRouter(cappedCtx, messages, "")
+	if err != nil {
+		return "", err
+	}
+	if result == nil {
+		return content, nil
+	}
+	return result.Content, nil
+}
+
 // PassthroughEngine returns input unchanged. Used for tests and
 // deterministic-only compaction mode.
 type PassthroughEngine struct{}
@@ -94,5 +140,10 @@ func (p *PassthroughEngine) CompactReasoning(_ context.Context, chunk string) (s
 
 // CompactToolOutput returns the content unchanged.
 func (p *PassthroughEngine) CompactToolOutput(_ context.Context, content string) (string, error) {
+	return content, nil
+}
+
+// ExtractWebFacts returns the content unchanged.
+func (p *PassthroughEngine) ExtractWebFacts(_ context.Context, content string, _ string) (string, error) {
 	return content, nil
 }

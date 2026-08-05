@@ -77,9 +77,22 @@ type temperatureContextKey struct{}
 //
 // When present with a float64 value > 0, the local model uses that temperature
 // instead of the config or hardcoded default.
-// Use context.WithValue(ctx, TemperatureKey, 0.7) for codegen,
+// Use context.WithValue(ctx, TemperatureKey, 0.65) for codegen,
 // context.WithValue(ctx, TemperatureKey, 0.6) for synthesis.
 var TemperatureKey = temperatureContextKey{}
+
+// presencePenaltyContextKey is a private type for the presence penalty context key.
+type presencePenaltyContextKey struct{}
+
+// PresencePenaltyKey is a context key that callers set to apply presence penalty
+// during inference. Presence penalty penalizes any token that has already appeared
+// in the output, regardless of distance. This is the most effective parameter for
+// preventing degeneration in GGUF models (research finding: ★★★★★ effectiveness).
+//
+// When present with a float64 value > 0, the local model includes presence_penalty
+// in the completion request. Recommended: 1.3 for codegen, 0 for GBNF-constrained.
+// Use context.WithValue(ctx, PresencePenaltyKey, 1.3).
+var PresencePenaltyKey = presencePenaltyContextKey{}
 
 // InferenceResult holds the model output along with token-level metrics from the server.
 type InferenceResult struct {
@@ -1037,6 +1050,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
 		MaxTokens          *int                     `json:"max_tokens,omitempty"`
+		PresencePenalty    *float64                 `json:"presence_penalty,omitempty"`
 		DRYMultiplier      *float64                 `json:"dry_multiplier,omitempty"`
 		DRYBase            *float64                 `json:"dry_base,omitempty"`
 		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
@@ -1098,6 +1112,13 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		if len(dry.SequenceBreakers) > 0 {
 			reqBody.DRYSequenceBreakers = dry.SequenceBreakers
 		}
+	}
+
+	// Presence penalty via context key — penalizes any token that has already
+	// appeared in the output, regardless of distance. Most effective parameter
+	// for preventing degeneration in unconstrained generation (codegen).
+	if pp, ok := ctx.Value(PresencePenaltyKey).(float64); ok && pp > 0 {
+		reqBody.PresencePenalty = &pp
 	}
 
 	if gbnfSchema != "" {
@@ -1281,6 +1302,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
 		MaxTokens          *int                     `json:"max_tokens,omitempty"`
+		PresencePenalty    *float64                 `json:"presence_penalty,omitempty"`
 		DRYMultiplier      *float64                 `json:"dry_multiplier,omitempty"`
 		DRYBase            *float64                 `json:"dry_base,omitempty"`
 		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
@@ -1343,6 +1365,11 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		if len(dry.SequenceBreakers) > 0 {
 			reqBody.DRYSequenceBreakers = dry.SequenceBreakers
 		}
+	}
+
+	// Presence penalty via context key (same as CallLocalModel)
+	if pp, ok := ctx.Value(PresencePenaltyKey).(float64); ok && pp > 0 {
+		reqBody.PresencePenalty = &pp
 	}
 
 	if gbnfSchema != "" {

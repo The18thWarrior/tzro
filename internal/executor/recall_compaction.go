@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"tzro/internal/compactor"
 	cfgpkg "tzro/internal/config"
@@ -38,8 +39,28 @@ func buildCompactedRecallContext(
 		if err != nil {
 			continue
 		}
+
+		// Two-pass approach: first collect all successful outputs as upstream
+		// context, then classify errors against that context.
+		var successOutputs []string
+		var rawSteps []memory.ThoughtStep
 		for _, s := range steps {
 			if s.ToolName == "" || s.ToolOutput == "" {
+				continue
+			}
+			rawSteps = append(rawSteps, s)
+			if !isToolError(s.ToolOutput) {
+				successOutputs = append(successOutputs, s.ToolOutput)
+			}
+		}
+
+		upstreamContext := strings.Join(successOutputs, "\n")
+		prunedCount := 0
+
+		for _, s := range rawSteps {
+			// Prune uninformative TOOL_ERRORs before they enter synthesis context
+			if isToolError(s.ToolOutput) && IsUninformativeToolError(s.ToolName, s.ToolArgs, s.ToolOutput, upstreamContext) {
+				prunedCount++
 				continue
 			}
 			allSteps = append(allSteps, compactor.ToolOutputStep{
@@ -48,6 +69,10 @@ func buildCompactedRecallContext(
 				ToolArgs:   s.ToolArgs,
 				ToolOutput: s.ToolOutput,
 			})
+		}
+
+		if prunedCount > 0 {
+			fmt.Fprintf(os.Stderr, "[EdgeEntry] Pruned %d uninformative TOOL_ERRORs from probe %s (hallucinated parameters)\n", prunedCount, probeID)
 		}
 	}
 

@@ -210,14 +210,28 @@ You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 	// No need for the old buildEnrichedRecallFallback.
 	synthesisInput := refinedContext
 
+	// Build fact-citation constraint for research tasks.
+	// When the refined context contains structured facts from the extractive
+	// pipeline (CLAIM/SOURCE/QUOTE format), constrain the model to only use
+	// the provided facts — preventing parametric bias.
+	factConstraint := ""
+	if strings.Contains(synthesisInput, "- CLAIM:") && strings.Contains(synthesisInput, "- SOURCE:") {
+		factConstraint = `
+CRITICAL CONSTRAINT: The context below contains structured facts extracted from source documents.
+You may ONLY use the provided facts. Do NOT add information from your own knowledge.
+Every factual claim in your response MUST reference a source from the extracted facts.
+If the extracted facts are insufficient to answer the question, say so explicitly.`
+	}
+
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
 
 ## Refined Discovery Context (Verified Facts):
-%s%s
+%s%s%s
 
 Review the gathered facts and produce a comprehensive, structured final answer.
-IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.`, goal, synthesisInput, symbolRefBlock)
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.
+IMPORTANT: Begin your response with the content directly. Do NOT describe what you are about to do. Do NOT write meta-commentary like "I will now synthesize" or "The answer is below". Start with "# " followed by a descriptive heading.`, goal, synthesisInput, symbolRefBlock, factConstraint)
 
 	// Synthesis escalation policy: if any upstream probe had its synthesis
 	// escalated to cloud (local model produced invalid/repetitive output),
@@ -266,7 +280,8 @@ Goal: %s
 Expand the structured outline below into a comprehensive, well-cited final answer.
 Preserve all data values, names, and numbers from the outline.
 Add proper prose transitions and paragraph structure.
-IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y].%s`, goal, symbolRefBlock)
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y].
+IMPORTANT: Begin your response with the content directly. Do NOT write meta-commentary. Start with "# " followed by a heading.%s`, goal, symbolRefBlock)
 
 			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
 				{Role: "system", Content: expandPrompt},

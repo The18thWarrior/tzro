@@ -319,6 +319,10 @@ func Init(configPath string) error {
 		},
 	})
 
+	// Register compound data tools (count_by, group_by, filter_where, top_n, describe_cache)
+	// These translate structured parameters to SQL, eliminating syntax errors from the 4B model.
+	RegisterCompoundDataTools()
+
 	// 2. Load static schemas from config file (fallback or preloaded tools)
 	if configPath != "" {
 		file, err := os.Open(configPath)

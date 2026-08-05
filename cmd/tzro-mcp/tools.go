@@ -342,9 +342,17 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(running) failed for %s: %v\n", taskID, err)
 		}
 
-		// Temperature 0.7 for codegen: sharper than default 1.0, reduces noise
+		// Temperature 0.65 for codegen: sharper than default 1.0, reduces noise
 		// in generated code while min_p 0.1 still provides dynamic token pruning.
-		codeCtxBg := context.WithValue(context.Background(), inference.TemperatureKey, 0.7)
+		// Research finding: 0.6-0.7 is optimal for unconstrained codegen on 4B models.
+		codeCtxBg := context.WithValue(context.Background(), inference.TemperatureKey, 0.65)
+
+		// Presence penalty 1.3 for codegen: penalizes any token that has already
+		// appeared, preventing the self-referential comment loop pattern where the
+		// model enters "// But the spec might expect..." degeneration cycles.
+		// Research finding: presence_penalty (1.2-1.5) is the single most effective
+		// parameter for preventing degeneration in GGUF models (★★★★★).
+		codeCtxBg = context.WithValue(codeCtxBg, inference.PresencePenaltyKey, 1.3)
 
 		// DRY (Don't Repeat Yourself) sampling for codegen: lighter than synthesis
 		// (0.6 vs 0.8 multiplier) with higher AllowedLength (3 vs 2) to allow

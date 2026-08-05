@@ -1098,9 +1098,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			}
 
 			if shouldExpand {
-				probeConfig.AllowedTools = append(probeConfig.AllowedTools, "introspect_cache", "sql_cached_data")
+				probeConfig.AllowedTools = append(probeConfig.AllowedTools,
+					"introspect_cache", "sql_cached_data",
+					"count_by", "group_by", "filter_where", "top_n", "describe_cache",
+				)
 				node.AllowedTools = probeConfig.AllowedTools
-				fmt.Fprintf(os.Stderr, "[Executor] Expanded probe allowedTools with cache tools for %s\n", node.ID)
+				fmt.Fprintf(os.Stderr, "[Executor] Expanded probe allowedTools with cache + compound data tools for %s\n", node.ID)
 			}
 		}
 
