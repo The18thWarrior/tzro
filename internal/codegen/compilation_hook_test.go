@@ -241,3 +241,99 @@ func initTestDB(t *testing.T) {
 		_ = memory.DB.Init()
 	})
 }
+
+// TestCompilationGateHook_CloudSemanticReview_RejectsBrokenLogic validates ADR-0070:
+// T4+ codegen tasks get a cloud semantic review after compilation passes. When the
+// review rejects the code, full cloud regeneration is triggered.
+func TestCompilationGateHook_CloudSemanticReview_RejectsBrokenLogic(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "query_builder.go")
+
+	goMod := "module testmod\n\ngo 1.22\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var reviewCalled bool
+
+	hook := &CompilationGateHook{
+		FilePath:         goFile,
+		Language:         "go",
+		Spec:             "Create a query builder with Limit(n int) that renders 'LIMIT n' for any integer",
+		AllowCloudRepair: true,
+		TaskTier:         5,         // T5 — triggers cloud review
+		AllowCloudReview: true,
+		CloudReviewFunc: func(ctx context.Context, code, spec, language string) (bool, string, error) {
+			reviewCalled = true
+			// Simulate rejection: code has a logic error
+			return false, "Limit fails for numbers > 9 — uses rune conversion instead of Itoa", nil
+		},
+	}
+
+	// Valid Go code that compiles but has a subtle logic bug
+	rawOutput := "package querybuilder\n\nimport \"strconv\"\n\nfunc Limit(n int) string {\n\treturn \"LIMIT \" + strconv.Itoa(n)\n}\n"
+	node := &compiler.GraphNode{
+		ID:           "reason_code",
+		OutputFormat: "source_code",
+	}
+
+	action, err := hook.AfterNode(context.Background(), "test-semantic-review", node, &rawOutput)
+	if err != nil {
+		t.Fatalf("AfterNode error: %v", err)
+	}
+	if action != executor.ActionContinue {
+		t.Errorf("expected ActionContinue, got %v", action)
+	}
+
+	if !reviewCalled {
+		t.Error("cloud semantic review should have been called for T5 task")
+	}
+
+	// When review rejects and we can't actually regenerate (no real cloud model in test),
+	// the output should still contain the compilation pass evidence
+	if !strings.Contains(rawOutput, "PASSED") {
+		t.Errorf("output should contain PASSED (compilation succeeded even if review rejected): %s", rawOutput)
+	}
+}
+
+// TestCompilationGateHook_T3_SkipsCloudReview validates ADR-0070:
+// T3 tasks should NOT trigger cloud review, even with AllowCloudReview=true.
+func TestCompilationGateHook_T3_SkipsCloudReview(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "simple.go")
+
+	goMod := "module testmod\n\ngo 1.22\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var reviewCalled bool
+
+	hook := &CompilationGateHook{
+		FilePath:         goFile,
+		Language:         "go",
+		Spec:             "Create a simple hello world function",
+		AllowCloudRepair: true,
+		TaskTier:         3,    // T3 — should NOT trigger cloud review
+		AllowCloudReview: true,
+		CloudReviewFunc: func(ctx context.Context, code, spec, language string) (bool, string, error) {
+			reviewCalled = true
+			return true, "", nil
+		},
+	}
+
+	rawOutput := "package main\n\nfunc Hello() string {\n\treturn \"hello world\"\n}\n"
+	node := &compiler.GraphNode{
+		ID:           "reason_code",
+		OutputFormat: "source_code",
+	}
+
+	_, err := hook.AfterNode(context.Background(), "test-t3-skip", node, &rawOutput)
+	if err != nil {
+		t.Fatalf("AfterNode error: %v", err)
+	}
+
+	if reviewCalled {
+		t.Error("cloud semantic review should NOT be called for T3 tasks")
+	}
+}

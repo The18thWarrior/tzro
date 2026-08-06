@@ -89,6 +89,11 @@ type ProbeConfig struct {
 	//   "filesystem" — inject read_file, list_dir, search_files (default if omitted)
 	//   "cache"      — reserved for analyze nodes (not used by SourceHint dispatch)
 	SourceHint string `json:"sourceHint,omitempty"`
+
+	// RequiredToolDispatch specifies tool names that must be dispatched at least
+	// once before synthesis is allowed. Auto-populated by the Kahn Compiler for
+	// analyze nodes (ADR-0068). Empty = no dispatch requirement.
+	RequiredToolDispatch []string `json:"requiredToolDispatch,omitempty"`
 }
 
 type GraphEdge struct {

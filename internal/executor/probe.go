@@ -347,7 +347,7 @@ func RunProbe(
 	// NOT to regular probes that happen to have cache tools injected at runtime.
 	// Without this check, probes that encounter upstream cached data get blocked
 	// by the sql_cached_data requirement even though they're not data analysis tasks.
-	phaseGateApplies := isAnalyze && config.SourceHint == "cache" && containsTool(config.AllowedTools, "sql_cached_data")
+	phaseGateApplies := shouldPhaseGateApply(&config)
 	isExtractionGoal := phaseGateApplies && goalImpliesExtraction(config.Goal)
 
 	// Analytical Evidence (ADR-0053): structured raw data from successful
@@ -1686,6 +1686,29 @@ func containsTool(allowedTools []string, tool string) bool {
 		}
 	}
 	return false
+}
+
+// shouldPhaseGateApply determines whether the synthesis phase gate should fire
+// for a given probe config. Returns true when either:
+// 1. Legacy condition: isAnalyze && SourceHint=cache && has sql_cached_data (ADR-0053)
+// 2. New condition: RequiredToolDispatch is non-empty (ADR-0068)
+func shouldPhaseGateApply(config *compiler.ProbeConfig) bool {
+	legacy := isAnalyzeConfig(config.AllowedTools) &&
+		config.SourceHint == "cache" &&
+		containsTool(config.AllowedTools, "sql_cached_data")
+	return legacy || len(config.RequiredToolDispatch) > 0
+}
+
+// requiredToolsBlocked checks whether all tools in RequiredToolDispatch have
+// been dispatched. Returns true and the list of missing tools if any required
+// tool has not been used. Returns false if no dispatch requirements exist.
+func requiredToolsBlocked(required []string, usedToolSet map[string]bool) (blocked bool, missing []string) {
+	for _, tool := range required {
+		if !usedToolSet[tool] {
+			missing = append(missing, tool)
+		}
+	}
+	return len(missing) > 0, missing
 }
 
 // extractSearchQueryFromGoal derives a web search query from the probe goal text.

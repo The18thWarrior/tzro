@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -44,6 +45,20 @@ type CompilationGateHook struct {
 	// already attempted a regeneration for this hook instance. Prevents
 	// infinite loops (ADR-0061).
 	specComplianceAttempted bool
+
+	// TaskTier is the complexity tier (1-5) from the benchmark/comparison suite.
+	// When >= 4 and AllowCloudReview is true, a cloud semantic review runs after
+	// compilation and spec compliance pass (ADR-0070).
+	TaskTier         int  `json:"-"`
+	AllowCloudReview bool `json:"-"`
+
+	// CloudReviewFunc is a pluggable semantic review function for testability.
+	// When nil, defaults to the real cloud inference implementation.
+	// Signature: (ctx, generatedCode, spec, language) -> (pass bool, reason string, error)
+	CloudReviewFunc func(ctx context.Context, code, spec, language string) (bool, string, error)
+
+	// cloudReviewAttempted prevents double cloud review within one hook lifecycle.
+	cloudReviewAttempted bool
 }
 
 // MaxLocalRepairAttempts is the number of local repair attempts before
@@ -141,6 +156,49 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 				} else {
 					fmt.Fprintf(os.Stderr, "[CompilationGateHook] Local regeneration failed for %s: %v\n", h.FilePath, regenErr)
 				}
+			}
+		}
+
+		// ADR-0070: Cloud Semantic Review for T4+ tasks.
+		// Fires after compilation and spec compliance both pass. The cloud model
+		// reviews semantic correctness — does the code actually DO what the spec asks?
+		// On rejection, triggers full cloud regeneration.
+		if h.TaskTier >= 4 && h.AllowCloudReview && h.Spec != "" && !h.cloudReviewAttempted {
+			h.cloudReviewAttempted = true
+
+			reviewFunc := h.CloudReviewFunc
+			if reviewFunc == nil {
+				reviewFunc = h.defaultCloudSemanticReview
+			}
+
+			pass, reason, reviewErr := reviewFunc(ctx, cleanCode, h.Spec, h.Language)
+			if reviewErr != nil {
+				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud semantic review error for %s: %v\n", h.FilePath, reviewErr)
+			} else if !pass {
+				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud semantic review REJECTED %s: %s. Triggering full cloud regeneration.\n",
+					h.FilePath, reason)
+
+				// Full cloud regeneration with spec + rejection reason
+				regenCode, regenErr := h.attemptCloudRegeneration(ctx, cleanCode, h.Spec, reason, taskID)
+				if regenErr == nil && regenCode != "" {
+					if _, _, writeErr := WriteCodeFile(h.FilePath, regenCode, 0); writeErr == nil {
+						recheck := RunCompilationGate(h.Language, h.FilePath)
+						if recheck.Pass {
+							fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud regeneration after semantic review PASSED for %s\n", h.FilePath)
+							cleanCode = regenCode
+							evidence.Reset()
+							evidence.WriteString("\n\n## Compilation Result\nPASSED\n")
+							evidence.WriteString("(Cloud regeneration after semantic review rejection)\n")
+						} else {
+							fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud regeneration FAILED compilation for %s: %s\n",
+								h.FilePath, recheck.Reason)
+						}
+					}
+				} else if regenErr != nil {
+					fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud regeneration failed for %s: %v\n", h.FilePath, regenErr)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud semantic review PASSED for %s\n", h.FilePath)
 			}
 		}
 	} else {
@@ -393,4 +451,82 @@ func extractCompilationEvidence(output string) (originalCode, compilerErrors str
 	}
 
 	return originalCode, strings.TrimSpace(errText)
+}
+
+// defaultCloudSemanticReview sends the generated code and spec to the cloud model
+// for semantic correctness review (ADR-0070). Returns (pass, reason, error).
+func (h *CompilationGateHook) defaultCloudSemanticReview(ctx context.Context, code, spec, language string) (bool, string, error) {
+	systemPrompt := fmt.Sprintf(`Review this %s code against the specification. Evaluate semantic correctness — does the code actually DO what the spec asks? Focus on logic errors, not style. Output JSON: {"pass": true/false, "reason": "string"}`, language)
+
+	userPrompt := fmt.Sprintf("## Specification\n%s\n\n## Generated Code\n%s", spec, code)
+
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	// Use JSON schema to constrain the response format
+	reviewSchema := `{"type":"object","properties":{"pass":{"type":"boolean"},"reason":{"type":"string"}},"required":["pass","reason"]}`
+
+	result, err := inference.CallCloudModel(ctx, messages, reviewSchema)
+	if err != nil {
+		return false, "", fmt.Errorf("cloud semantic review inference failed: %w", err)
+	}
+
+	// Parse the JSON response
+	type reviewResponse struct {
+		Pass   bool   `json:"pass"`
+		Reason string `json:"reason"`
+	}
+
+	var resp reviewResponse
+	if parseErr := json.Unmarshal([]byte(result), &resp); parseErr != nil {
+		// If we can't parse, assume pass (fail-open to avoid blocking)
+		fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud review response unparseable, assuming pass: %v\n", parseErr)
+		return true, "", nil
+	}
+
+	return resp.Pass, resp.Reason, nil
+}
+
+// attemptCloudRegeneration performs full cloud regeneration from spec + rejection
+// reason (ADR-0070). Unlike attemptCloudRepair which fixes compiler errors, this
+// regenerates from the spec because the code has semantic (logic) errors.
+func (h *CompilationGateHook) attemptCloudRegeneration(ctx context.Context, brokenCode, spec, rejectionReason, taskID string) (string, error) {
+	moduleCtx := DiscoverModuleContext(h.FilePath, h.Language)
+
+	systemPrompt := fmt.Sprintf(`You are a code generation agent. Generate %s code that correctly implements the specification.
+A previous attempt was rejected for semantic errors. Generate correct code from scratch.
+Output ONLY the source code — no explanations, no markdown fences, no commentary.
+
+## Module Context
+%s`, h.Language, moduleCtx)
+
+	userPrompt := fmt.Sprintf(`## Specification
+%s
+
+## Previous Attempt (REJECTED)
+%s
+
+## Rejection Reason
+%s
+
+Generate the complete corrected file implementing the specification correctly.`, spec, brokenCode, rejectionReason)
+
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	result, err := inference.CallCloudModel(ctx, messages, "")
+	if err != nil {
+		return "", fmt.Errorf("cloud regeneration inference failed: %w", err)
+	}
+
+	result = StripMarkdownFences(result)
+
+	fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud regeneration response: %d chars for task %s\n",
+		len(result), taskID)
+
+	return result, nil
 }

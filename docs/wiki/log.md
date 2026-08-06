@@ -2,6 +2,27 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-05T20:25:00-07:00] grill-with-docs | Benchmark Run 17 Remediation (ADR-0068, ADR-0069, ADR-0070)
+
+- **Activity**: Grill-with-docs session stress-testing proposed fixes for 6 benchmark failures. 9 design questions resolved across 3 failure clusters, re-organized during the session from 3 clusters into 2+1.
+- **Key Findings**:
+  1. **Re-clustering**: `lead_target_account_analysis` was originally classified as a SQL failure but is actually a content fidelity loss problem — the CSV data was resolved to the word "Content" via semantic fallback. 3 of 6 failures share content loss as root cause.
+  2. **Passing Salesforce tasks prove the model can generate SQL**: `lead_lookup_by_company` (5.0) and `lead_sector_breakdown` (4.0) used the same pipeline successfully. The 2 premature synthesis failures are a gating problem, not a model capability problem.
+  3. **No sandbox**: Rejected unit test generation + execution sandbox for codegen validation — adds a failure surface disproportionate to the edge case.
+- **Resolved terms**: Added "Required Tool Dispatch" to CONTEXT.md. Updated "Proactive Binding Splice" to include `plain_text_fallback` as splice-eligible.
+- **Decisions**:
+  - `RequiredToolDispatch` field on `ProbeConfig` — deterministic gate, not LLM judgment
+  - `plain_text_fallback` splice scoped by source node type (probe/recall/synthesis), not action allowlist
+  - No size guard on splice — `write_file` has no length limit
+  - T4+ codegen cloud review with full regeneration on rejection (Option A, not surgical correction)
+- **ADRs created**:
+  - [ADR-0068: Required Tool Dispatch Gate](../adr/0068-required-tool-dispatch-gate.md)
+  - [ADR-0069: Plain-Text Fallback Splice](../adr/0069-plain-text-fallback-splice.md)
+  - [ADR-0070: Verified Codegen T4+](../adr/0070-verified-codegen-t4-plus.md)
+- **Files changed**: `CONTEXT.md`, `docs/adr/0068-*`, `docs/adr/0069-*`, `docs/adr/0070-*`
+
+---
+
 ## [2026-08-04T23:59:00-07:00] wayfinder | Reliability Hardening (Research-Validated)
 
 - **Activity**: Charted a wayfinder map for reliability hardening based on a structured research investigation of all failure modes across 13+ benchmark runs. Research validated every observed failure as well-characterized in the literature.

@@ -753,6 +753,8 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 		Language:         language,
 		Spec:             spec,
 		AllowCloudRepair: true,
+		TaskTier:         t.Tier,  // ADR-0070: T4+ triggers cloud semantic review
+		AllowCloudReview: true,
 	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)
@@ -897,6 +899,8 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 		Language:         language,
 		Spec:             spec,
 		AllowCloudRepair: true,
+		TaskTier:         t.Tier,  // ADR-0070: T4+ triggers cloud semantic review
+		AllowCloudReview: true,
 	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)

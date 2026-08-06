@@ -94,13 +94,22 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				if node.Type == "analyze" {
 					if node.ProbeConfig == nil {
 						node.ProbeConfig = &ProbeConfig{
-							Goal:            node.Instructions,
-							AllowedTools:    cacheTools,
-							StepBudget:      15,
-							CompactEvery:    3,
-							CompactionLevel: CompactPreserve,
-							SourceHint:      "cache", // Phase gate discriminator — only "cache" hint activates the sql_cached_data requirement
+							Goal:                node.Instructions,
+							AllowedTools:        cacheTools,
+							StepBudget:          15,
+							CompactEvery:        3,
+							CompactionLevel:     CompactPreserve,
+							SourceHint:          "cache", // Phase gate discriminator — only "cache" hint activates the sql_cached_data requirement
+							RequiredToolDispatch: []string{"sql_cached_data"}, // ADR-0068: deterministic dispatch gate
 						}
+					}
+					// ADR-0068: Ensure RequiredToolDispatch is always set for analyze nodes,
+					// even when ProbeConfig was pre-populated by the planner.
+					if len(node.ProbeConfig.RequiredToolDispatch) == 0 {
+						node.ProbeConfig.RequiredToolDispatch = []string{"sql_cached_data"}
+					}
+					if node.ProbeConfig.SourceHint == "" {
+						node.ProbeConfig.SourceHint = "cache"
 					}
 					// Ensure cache tools are always present in AllowedTools
 					if !hasCacheToolsInAllowed(node.AllowedTools) {
@@ -576,13 +585,14 @@ func ensureAnalyzeForDataTasks(
 		Instructions: "Analyze the cached data to answer: " + goalPrompt,
 		AllowedTools: append([]string{}, cacheTools...),
 		ProbeConfig: &ProbeConfig{
-			Goal:            "Analyze the cached data to answer: " + goalPrompt,
-			AllowedTools:    append([]string{}, cacheTools...),
-			StepBudget:      15,
-			CompactEvery:    3,
-			CompactionLevel: CompactPreserve,
-			TaskContext:     goalPrompt,
-			SourceHint:      "cache",
+			Goal:                "Analyze the cached data to answer: " + goalPrompt,
+			AllowedTools:        append([]string{}, cacheTools...),
+			StepBudget:          15,
+			CompactEvery:        3,
+			CompactionLevel:     CompactPreserve,
+			TaskContext:         goalPrompt,
+			SourceHint:          "cache",
+			RequiredToolDispatch: []string{"sql_cached_data"}, // ADR-0068
 		},
 		Status:              "pending",
 		ActivationThreshold: 0.0,
@@ -708,12 +718,13 @@ func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdge
 			Instructions: analyzeInstructions,
 			AllowedTools: append([]string{}, cacheTools...),
 			ProbeConfig: &ProbeConfig{
-				Goal:            analyzeInstructions,
-				AllowedTools:    append([]string{}, cacheTools...),
-				StepBudget:      15,
-				CompactEvery:    3,
-				CompactionLevel: CompactPreserve,
-				SourceHint:      "cache",
+				Goal:                analyzeInstructions,
+				AllowedTools:        append([]string{}, cacheTools...),
+				StepBudget:          15,
+				CompactEvery:        3,
+				CompactionLevel:     CompactPreserve,
+				SourceHint:          "cache",
+				RequiredToolDispatch: []string{"sql_cached_data"}, // ADR-0068
 			},
 			Status:              "pending",
 			ActivationThreshold: 0.0,

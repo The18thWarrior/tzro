@@ -94,3 +94,56 @@ func TestSCT_SkipsAnalyzeInjectionWhenDownstreamAnalyzeExists(t *testing.T) {
 		t.Errorf("expected 1 analyze node (the planned one), got %d", analyzeCount)
 	}
 }
+
+// TestKahnCompiler_AnalyzeNode_SetsRequiredToolDispatch validates ADR-0068:
+// the SCT compiler auto-populates RequiredToolDispatch with ["sql_cached_data"]
+// and ensures SourceHint="cache" for analyze nodes.
+func TestKahnCompiler_AnalyzeNode_SetsRequiredToolDispatch(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_required_dispatch",
+		Nodes: []GraphNode{
+			{
+				ID:           "analyze_leads",
+				Type:         "analyze",
+				Instructions: "Count leads by country from the cached data",
+				Status:       "pending",
+			},
+		},
+		Edges: []GraphEdge{},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Find the analyze node
+	var analyzeNode *GraphNode
+	for i := range expanded.Nodes {
+		if expanded.Nodes[i].Type == "analyze" {
+			analyzeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if analyzeNode == nil {
+		t.Fatal("expected an analyze node in the expanded graph")
+	}
+
+	// ProbeConfig must exist
+	if analyzeNode.ProbeConfig == nil {
+		t.Fatal("analyze node should have a ProbeConfig")
+	}
+
+	// ADR-0068: RequiredToolDispatch must be auto-populated
+	if len(analyzeNode.ProbeConfig.RequiredToolDispatch) == 0 {
+		t.Fatal("analyze node ProbeConfig.RequiredToolDispatch should be auto-populated, got empty")
+	}
+	if analyzeNode.ProbeConfig.RequiredToolDispatch[0] != "sql_cached_data" {
+		t.Errorf("expected RequiredToolDispatch=[\"sql_cached_data\"], got %v", analyzeNode.ProbeConfig.RequiredToolDispatch)
+	}
+
+	// SourceHint must be "cache"
+	if analyzeNode.ProbeConfig.SourceHint != "cache" {
+		t.Errorf("expected SourceHint=\"cache\", got %q", analyzeNode.ProbeConfig.SourceHint)
+	}
+}

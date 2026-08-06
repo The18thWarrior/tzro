@@ -1908,7 +1908,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 // (semantic_fallback) are injected as prompt hints only.
 type ResolvedBinding struct {
 	Value string
-	Tier  string // "recursive_key" | "fuzzy_key" | "kv_line" | "semantic_fallback"
+	Tier  string // "recursive_key" | "fuzzy_key" | "kv_line" | "plain_text_fallback" | "semantic_fallback"
 }
 
 // partitionBindings splits resolved bindings into high-confidence (safe to splice
@@ -1919,7 +1919,7 @@ func partitionBindings(resolved map[string]ResolvedBinding) (highConf map[string
 	lowConf = make(map[string]string)
 	for k, rb := range resolved {
 		switch rb.Tier {
-		case "recursive_key", "fuzzy_key", "kv_line":
+		case "recursive_key", "fuzzy_key", "kv_line", "plain_text_fallback":
 			highConf[k] = rb.Value
 		default:
 			lowConf[k] = rb.Value
