@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -146,6 +147,24 @@ func extractToolAction(
 
 	if parsed.Tool == "" {
 		return "", "", nil, fmt.Errorf("two-pass extraction produced empty tool name")
+	}
+
+	// Validate tool name against allowed list — the 4B model sometimes
+	// sets tool="tool_call" (the action type) instead of an actual tool name.
+	if len(allowedTools) > 0 {
+		validTool := false
+		for _, t := range allowedTools {
+			if t == parsed.Tool {
+				validTool = true
+				break
+			}
+		}
+		if !validTool {
+			// Fall back to first allowed tool with any args extracted
+			fmt.Fprintf(os.Stderr, "[TwoPass] Invalid tool %q — falling back to %q\n",
+				parsed.Tool, allowedTools[0])
+			parsed.Tool = allowedTools[0]
+		}
 	}
 
 	return parsed.Action, parsed.Tool, parsed.Arguments, nil

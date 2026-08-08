@@ -101,7 +101,7 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				Name:         "orient",
 				AllowedTools: orientTools,
 				SystemPrompt: buildPhaseProbePrompt("orient", config.Goal, config.TaskContext),
-				StepBudget:   3,
+				StepBudget:   6,
 				Pass1Target:  TargetRouter,
 				Recovery: PhaseRecovery{
 					MaxRetries:   0,
@@ -115,6 +115,12 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 							return "discover"
 						}
 					}
+					// Fallthrough: even without list_dir, advance to discover
+					// so deep_read/synthesize phases can still execute.
+					// The preloaded TaskContext provides enough structure.
+					if step >= result.StepsUsed {
+						return "discover"
+					}
 					return ""
 				},
 			},
@@ -123,6 +129,7 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				AllowedTools: discoverTools,
 				SystemPrompt: buildPhaseProbePrompt("discover", config.Goal, config.TaskContext),
 				StepBudget:   8,
+				MinToolCalls: 3, // Match transition threshold — read ≥3 files before allowing synthesis
 				Pass1Target:  TargetRouter,
 				Recovery: PhaseRecovery{
 					MaxRetries:   1,
@@ -172,7 +179,7 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				Pass1Target:  TargetWorker,
 				Recovery: PhaseRecovery{
 					MaxRetries:   0,
-					OnExhaustion: ExhaustionFail,
+					OnExhaustion: ExhaustionSkip,
 					OnError:      ErrorFail,
 				},
 				Transition: func(step int, result PhaseResult, err error) string {

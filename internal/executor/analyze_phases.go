@@ -116,11 +116,11 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				Name:         "schema_orient",
 				AllowedTools: []string{"introspect_cache"},
 				SystemPrompt: buildPhaseAnalyzePrompt("schema_orient", config.Goal, config.TaskContext),
-				StepBudget:   2,
+				StepBudget:   4,
 				Pass1Target:  TargetRouter,
 				Recovery: PhaseRecovery{
-					MaxRetries:   0,
-					OnExhaustion: ExhaustionFail,
+					MaxRetries:   1, // Allow retry so forced tool call can fire introspect_cache
+					OnExhaustion: ExhaustionSkip,
 					OnError:      ErrorFail,
 				},
 				Transition: func(step int, result PhaseResult, err error) string {
@@ -138,6 +138,7 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				AllowedTools: []string{"sql_cached_data"},
 				SystemPrompt: buildPhaseAnalyzePrompt("query_dev", config.Goal, config.TaskContext),
 				StepBudget:   6,
+				MinToolCalls: 2, // Must execute ≥2 SQL queries before allowing synthesis
 				Pass1Target:  TargetWorker,
 				Recovery: PhaseRecovery{
 					MaxRetries:   1,

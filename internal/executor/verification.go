@@ -47,7 +47,7 @@ const verificationRubricSchema = `{
     "reason": { "type": "string" },
     "reSynthesis": { "type": "string" }
   },
-  "required": ["accepted", "goalAlignment", "factualGrounding", "coherence", "completeness", "reason"]
+  "required": ["accepted", "goalAlignment", "factualGrounding", "coherence", "completeness", "reason", "reSynthesis"]
 }`
 
 // generationAbortedMarker is the marker emitted by the Generation Guard
@@ -181,7 +181,7 @@ Your job:
   - coherence: Is the output well-structured and readable?
   - completeness: Does it cover all aspects of the goal?
 - Set "accepted" to true if ALL scores >= 0.6
-- IMPORTANT: When setting "accepted" to false, you MUST provide a "reSynthesis" field containing a complete replacement answer synthesized from the exploration context. Never reject without providing a reSynthesis — the rejected output will be discarded and your reSynthesis will be used as the final output.
+- IMPORTANT: When setting "accepted" to false, you MUST provide a "reSynthesis" field containing a COMPLETE, COMPREHENSIVE replacement answer synthesized from the exploration context. The reSynthesis must be a full document that directly fulfills the goal — not a summary or brief note. It should be at least as long and detailed as the exploration context warrants. Never produce a short reSynthesis — the rejected output will be discarded and your reSynthesis will be used as the final output. When accepting, set reSynthesis to an empty string.
 
 Be strict but fair. Accept well-structured output that addresses the goal with minor gaps. Reject output containing meta-commentary about the task, fabricated data, or missing key requirements.`
 

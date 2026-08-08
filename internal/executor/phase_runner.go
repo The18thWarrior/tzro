@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"tzro/internal/inference"
 	"tzro/internal/memory"
@@ -47,6 +48,11 @@ type Phase struct {
 	StepBudget   int
 	Pass1Target  ModelTarget
 	Recovery     PhaseRecovery
+	// MinToolCalls is the minimum number of tool calls required before
+	// synthesis is allowed. Defaults to 1 if zero. Set higher for phases
+	// that must read multiple files before synthesizing (e.g., discover
+	// phase scanning 71 ADR files).
+	MinToolCalls int
 	// Transition determines the next phase after each step completes.
 	// Returns "" to continue current phase, or a phase name to transition.
 	Transition func(step int, result PhaseResult, err error) string
@@ -114,6 +120,15 @@ type PhaseRunner struct {
 	// Goal is the probe's exploration goal, injected into tool context
 	// via tools.FileReadGoalKey so read_file can goal-compress large outputs.
 	Goal string
+
+	// probeID is set by Run() and used internally to persist ThoughtSteps.
+	// Format: taskID + "_" + nodeID (matches what Recall/compaction queries).
+	probeID string
+	// taskID is the workflow task ID, set by Run() for ThoughtStep persistence.
+	taskID string
+	// globalStepCounter tracks tool call count across all phases for
+	// consistent StepIndex values in persisted ThoughtSteps.
+	globalStepCounter int
 }
 
 // Run executes the Phase Runner state machine from InitialPhase through
@@ -131,6 +146,11 @@ func (pr *PhaseRunner) Run(
 	if pr.MaxCycles <= 0 {
 		pr.MaxCycles = 3
 	}
+
+	// Store IDs for ThoughtStep persistence in executePhase.
+	pr.probeID = probeID
+	pr.taskID = taskID
+	pr.globalStepCounter = 0
 
 	// Slice 8: Checkpoint recovery — load completed phases from DB.
 	// If phases were persisted from a prior run, skip them and resume
@@ -245,6 +265,7 @@ func (pr *PhaseRunner) executePhase(
 
 	var lastToolOutput string
 	var toolsCalled []string
+	var toolOutputLog []string // Accumulated tool outputs for synthesis context
 	var noActionRetries int
 
 	for step := 1; step <= phase.StepBudget; step++ {
@@ -268,33 +289,54 @@ func (pr *PhaseRunner) executePhase(
 		// --- Pass 2: GBNF-constrained action extraction ---
 		action, toolName, args, err := extractToolAction(phaseCtx, engine, reasoning, phase.AllowedTools, false)
 		if err != nil {
-			return result, "", fmt.Errorf("phase %q step %d pass 2 failed: %w", phase.Name, step, err)
+			// Treat extraction failures as synthesis signals rather than fatal errors.
+			// The 4B model frequently produces malformed JSON in the GBNF pass.
+			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q step %d: pass 2 extraction failed (%v) — treating as synthesis\n",
+				phase.Name, step, err)
+			action = "synthesize"
 		}
 
 		// --- No-action retry (ADR-0058 port): reject premature synthesis ---
-		// When the model signals "synthesize" but has called 0 tools in this
-		// phase and the phase has AllowedTools, the synthesis is premature.
+		// When the model signals "synthesize" but has called fewer tools than
+		// MinToolCalls and the phase has AllowedTools, the synthesis is premature.
 		// Re-prompt with corrective text instead of accepting it.
-		if action == "synthesize" && len(phase.AllowedTools) > 0 && len(toolsCalled) == 0 {
+		minCalls := phase.MinToolCalls
+		if minCalls <= 0 {
+			minCalls = 1 // default: at least 1 tool call required
+		}
+		if action == "synthesize" && len(phase.AllowedTools) > 0 && len(toolsCalled) < minCalls {
 			noActionRetries++
 			if noActionRetries <= 2 {
-				fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: premature synthesis rejected (0 tools called, retry %d/2)\n",
-					phase.Name, noActionRetries)
+				fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: premature synthesis rejected (%d/%d tools called, retry %d/2)\n",
+					phase.Name, len(toolsCalled), minCalls, noActionRetries)
 				lastToolOutput = fmt.Sprintf(
-					"REJECTED: You must call a tool before synthesizing. Available tools: %s. "+
-						"Call one of these tools to gather information, then synthesize.",
-					strings.Join(phase.AllowedTools, ", "))
+					"REJECTED: You must call at least %d tools before synthesizing. You have called %d. Available tools: %s. "+
+						"Call one of these tools to gather more information, then synthesize.",
+					minCalls, len(toolsCalled), strings.Join(phase.AllowedTools, ", "))
 				continue // retry the step without incrementing
 			}
-			// Exhausted retries — fall through to accept synthesis
-			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: no-action retry exhausted, accepting empty synthesis\n", phase.Name)
+			// Exhausted retries — force a tool call rather than accepting empty synthesis.
+			// The ToolFixup hook (ExplorationQueue) will redirect to the next unvisited file.
+			// Prefer read_file since the ExplorationQueue can populate args from PreloadPaths.
+			forcedTool := phase.AllowedTools[0]
+			for _, t := range phase.AllowedTools {
+				if t == "read_file" {
+					forcedTool = t
+					break
+				}
+			}
+			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: no-action retry exhausted — forcing %q call\n",
+				phase.Name, forcedTool)
+			action = "tool_call"
+			toolName = forcedTool
+			args = map[string]interface{}{}
 		}
 
 		if action == "synthesize" {
 			// Phase synthesis — generate summary from accumulated work
 			result.StepsUsed = step
 			result.ToolsCalled = toolsCalled
-			result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, synthesisEngine)
+			result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, toolOutputLog, synthesisEngine)
 
 			// Check transition
 			nextPhase := ""
@@ -319,6 +361,16 @@ func (pr *PhaseRunner) executePhase(
 			lastToolOutput = toolOutput
 		}
 
+		// --- Persist ThoughtStep for Recall Node pipeline (FM-1 fix) ---
+		// The Recall node's buildCompactedRecallContext queries ThoughtSteps
+		// by probeID. Without this, Recall synthesis runs with zero context.
+		pr.globalStepCounter++
+		pr.persistThoughtStep(phase.Name, toolName, args, lastToolOutput, reasoning)
+
+		// Accumulate tool outputs for phase synthesis context
+		argsStr, _ := json.Marshal(args)
+		toolOutputLog = append(toolOutputLog, fmt.Sprintf("### %s(%s)\n%s", toolName, string(argsStr), truncate(lastToolOutput, 2000)))
+
 		// --- ToolPostProcess hook: post-dispatch state tracking ---
 		if pr.ToolPostProcess != nil {
 			pr.ToolPostProcess(phase.Name, toolName, args, lastToolOutput, toolErr)
@@ -331,7 +383,7 @@ func (pr *PhaseRunner) executePhase(
 			nextPhase := phase.Transition(step, result, toolErr)
 			if nextPhase != "" {
 				// Transition triggered — synthesize current phase and move on
-				result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, synthesisEngine)
+				result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, toolOutputLog, synthesisEngine)
 				return result, nextPhase, nil
 			}
 		}
@@ -340,7 +392,17 @@ func (pr *PhaseRunner) executePhase(
 	// Step budget exhausted
 	result.StepsUsed = phase.StepBudget
 	result.ToolsCalled = toolsCalled
-	result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, synthesisEngine)
+	result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, toolOutputLog, synthesisEngine)
+
+	// Check transition before applying exhaustion recovery — allows phases
+	// to define a fallthrough transition that fires on budget exhaustion.
+	if phase.Transition != nil {
+		nextPhase := phase.Transition(phase.StepBudget, result, nil)
+		if nextPhase != "" {
+			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q budget exhausted — transitioning to %q via fallthrough\n", phase.Name, nextPhase)
+			return result, nextPhase, nil
+		}
+	}
 
 	// Handle exhaustion according to recovery strategy
 	switch phase.Recovery.OnExhaustion {
@@ -385,12 +447,25 @@ func (pr *PhaseRunner) synthesizePhase(
 	phase *Phase,
 	priorResults []PhaseResult,
 	toolsCalled []string,
+	toolOutputLog []string,
 	synthesisEngine ProbeInferenceEngine,
 ) string {
-	systemPrompt := fmt.Sprintf(
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(
 		"Summarize the work done in phase %q. List key findings and outputs concisely. "+
-			"Tools used: %s.", phase.Name, strings.Join(toolsCalled, ", "))
-	userPrompt := "Produce a concise summary of this phase's findings."
+			"Tools used: %s.", phase.Name, strings.Join(toolsCalled, ", ")))
+
+	// Include actual tool outputs so the model has data to summarize
+	if len(toolOutputLog) > 0 {
+		sb.WriteString("\n\n## Tool Outputs From This Phase\n")
+		for _, entry := range toolOutputLog {
+			sb.WriteString(entry)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	systemPrompt := sb.String()
+	userPrompt := "Produce a concise summary of this phase's findings based on the tool outputs above."
 
 	result, err := synthesisEngine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
 	if err != nil {
@@ -495,4 +570,38 @@ func recordToPhaseResult(record memory.PhaseResultRecord) PhaseResult {
 	}
 
 	return result
+}
+
+// persistThoughtStep saves a tool call as a memory.ThoughtStep so the
+// downstream Recall node can find it via GetThoughtSteps(probeID).
+// Best-effort: DB errors are logged but do not fail execution.
+func (pr *PhaseRunner) persistThoughtStep(phaseName, toolName string, args map[string]interface{}, toolOutput, reasoning string) {
+	if pr.probeID == "" {
+		return // No probeID — skip (e.g., in unit tests without IDs)
+	}
+
+	// Guard against uninitialized DB (common in unit tests)
+	defer func() {
+		if r := recover(); r != nil {
+			// DB not initialized — silently skip
+		}
+	}()
+
+	argsJSON, _ := json.Marshal(args)
+
+	step := memory.ThoughtStep{
+		ID:         fmt.Sprintf("%s_step_%d", pr.probeID, pr.globalStepCounter),
+		ProbeID:    pr.probeID,
+		TaskID:     pr.taskID,
+		StepIndex:  pr.globalStepCounter,
+		Thought:    reasoning,
+		ToolName:   toolName,
+		ToolArgs:   string(argsJSON),
+		ToolOutput: toolOutput,
+		CreatedAt:  time.Now().Unix(),
+	}
+
+	if err := memory.DB.AddThoughtStep(step); err != nil {
+		fmt.Fprintf(os.Stderr, "[PhaseRunner] Warning: failed to persist ThoughtStep %d: %v\n", pr.globalStepCounter, err)
+	}
 }

@@ -1777,6 +1777,26 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			time.Sleep(nodeDelay)
 		}
 
+		// ADR-0067: Verified Task Execution for terminal synthesis nodes.
+		// Without VTE here, flat DAGs (e.g., datanal tasks with no Recall node)
+		// rely entirely on the 4B model for final output, which often degenerates.
+		// Run the same verification pipeline as Recall nodes to catch and fix bad output.
+		if graph.GoalPrompt != "" {
+			finalSynthesis, _, vErr := VerifyTaskOutput(
+				ctx,
+				&DefaultCloudVerifier{},
+				graph.GoalPrompt,
+				inferenceResult,
+				accumulatedCtx, // use the same context that fed the synthesis
+				false,
+			)
+			if vErr == nil {
+				inferenceResult = finalSynthesis
+			} else {
+				fmt.Fprintf(os.Stderr, "[TerminalSynthesis] VTE error (non-fatal): %v\n", vErr)
+			}
+		}
+
 		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
 		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
 		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, inferenceResult)

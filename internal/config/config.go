@@ -585,7 +585,7 @@ func GetSensitiveKeywords() []string {
 	if len(keywords) > 0 {
 		return keywords
 	}
-	return []string{"password", "secret", "private_key", "api_key", "token", "credential", "db_url", "ssh_key"}
+	return []string{"password", "secret", "private_key", "api_key", "auth_token", "access_token", "bearer_token", "credential", "db_url", "ssh_key"}
 }
 
 // GetRestrictedDirectories returns the configured list of directory paths

@@ -239,16 +239,35 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		} else {
 			// Standard synthesis: recall/probe nodes carry the data;
 			// exec nodes are passthrough and can be aggressively compacted.
+			// ADR-0044: Apply a global synthesis ceiling to prevent 4B model
+			// degeneration. Without this, multiple untruncated recall nodes
+			// can accumulate 17K+ chars, consistently triggering GenerationGuard.
+			const synthesisCeiling = 10000
+			totalUntruncated := 0
 			for i, cn := range completed {
 				ntype := nodeTypeMap[cn.nodeID]
 				switch ntype {
 				case "recall":
-					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // untruncated
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // mark for now
+					totalUntruncated += len(cn.output)
 				case "deterministic":
-					budgeted[i] = budgetEntry{cn.nodeID, cn.output, 256}
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, 1024} // 1024 preserves SQL results (avg 300-800 chars)
 				default:
-					// action, probe, synthesis, etc. — untruncated for synthesis caller
+					// action, probe, synthesis, etc.
 					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+					totalUntruncated += len(cn.output)
+				}
+			}
+			// If total untruncated content exceeds ceiling, proportionally cap each
+			if totalUntruncated > synthesisCeiling {
+				for i := range budgeted {
+					if budgeted[i].budget == -1 && len(budgeted[i].output) > 0 {
+						proportional := (len(budgeted[i].output) * synthesisCeiling) / totalUntruncated
+						if proportional < 512 {
+							proportional = 512
+						}
+						budgeted[i].budget = proportional
+					}
 				}
 			}
 		}
