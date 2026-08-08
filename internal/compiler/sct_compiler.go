@@ -148,6 +148,41 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
+				// F2 guardrail: web_browse without web_search causes FUTILITY aborts.
+				// You can't browse URLs you haven't searched for. Ensure web_search
+				// is always present when web_browse is in allowedTools.
+				if node.Type == "probe" {
+					hasBrowse := false
+					hasSearch := false
+					for _, t := range node.AllowedTools {
+						if t == "web_browse" {
+							hasBrowse = true
+						}
+						if t == "web_search" {
+							hasSearch = true
+						}
+					}
+					if hasBrowse && !hasSearch {
+						node.AllowedTools = append(node.AllowedTools, "web_search")
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] PlanGuardrail: injected web_search (web_browse requires web_search) into %s\n", node.ID)
+					}
+					// Mirror into ProbeConfig
+					if node.ProbeConfig != nil {
+						hasBrowse, hasSearch = false, false
+						for _, t := range node.ProbeConfig.AllowedTools {
+							if t == "web_browse" {
+								hasBrowse = true
+							}
+							if t == "web_search" {
+								hasSearch = true
+							}
+						}
+						if hasBrowse && !hasSearch {
+							node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, "web_search")
+						}
+					}
+				}
+
 				if node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
 					node.ProbeConfig.CompactionLevel = CompactPreserve
 				}
@@ -200,7 +235,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
-				if !hasPlannedSynthesisChild && (discoveryNodesCount > 1 || node.Type == "analyze") {
+				if !hasPlannedSynthesisChild {
 					// Inject Recall Node to align discovery findings (ADR-0038)
 					// ADR-0053: Analyze nodes ALWAYS get a Recall Node, even as sole
 					// discovery nodes. Their internal probe synthesis is insufficient
@@ -230,11 +265,8 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					execNodeMap[node.ID] = recallID
 					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
 				} else {
-					if discoveryNodesCount <= 1 {
-						fmt.Printf("[Compiler] Probe %s is the sole discovery node in the graph (discoveryNodesCount=%d). Skipping automatic Recall injection.\n", node.ID, discoveryNodesCount)
-					} else {
-						fmt.Printf("[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
-					}
+					// Probe has a planned synthesis child — skip Recall injection
+					fmt.Fprintf(os.Stderr, "[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
 					execNodeMap[node.ID] = node.ID
 					bridgeNodeMap[node.ID] = node.ID
 				}
@@ -302,28 +334,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			break
 		}
 	}
-	if !hasSynthesisLeaf && discoveryNodesCount <= 1 {
-		hasProbeLeaf := false
-		hasAnalyzeLeaf := false
-		for _, node := range sctNodes {
-			if !isSourceMap[node.ID] {
-				if node.Type == "probe" {
-					hasProbeLeaf = true
-				}
-				if node.Type == "analyze" {
-					hasAnalyzeLeaf = true
-				}
-			}
-		}
-		// ADR-0053: Analyze nodes always get a downstream synthesis step.
-		// Their internal probe synthesis is insufficient for data analysis
-		// results — the Recall Node's Map-Reduce strategy is required.
-		// Only regular probe nodes skip when they're sole leaves.
-		if hasProbeLeaf && !hasAnalyzeLeaf {
-			fmt.Printf("[Compiler] Graph has a sole probe leaf. Skipping automatic terminal_synthesis injection.\n")
-			hasSynthesisLeaf = true
-		}
-	}
+
 
 	if !hasSynthesisLeaf {
 		synthID := "terminal_synthesis"

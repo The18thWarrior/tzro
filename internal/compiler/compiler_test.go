@@ -531,3 +531,77 @@ func TestSourceHint_EmptyFallsBackToHeuristic(t *testing.T) {
 		t.Errorf("expected heuristic fallback to inject web tools, got: %v", probeNode.AllowedTools)
 	}
 }
+
+func TestExpandToSCTGraph_SingleProbe_InjectsRecall(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "single_probe_recall",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore the codebase"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	hasRecall := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "p1_recall" {
+			hasRecall = true
+			if n.Type != "recall" {
+				t.Errorf("expected p1_recall type=recall, got %s", n.Type)
+			}
+		}
+	}
+	if !hasRecall {
+		t.Error("expected p1_recall to be injected for single-probe DAG (ADR-0072)")
+	}
+
+	// Recall should be the terminal output — no terminal_synthesis injected
+	hasTerminal := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "terminal_synthesis" {
+			hasTerminal = true
+		}
+	}
+	if hasTerminal {
+		t.Error("expected no terminal_synthesis — Recall Node is the terminal output for single-probe DAGs")
+	}
+}
+
+func TestExpandToSCTGraph_SingleProbeWithAction_RecallIsNotTerminal(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "probe_plus_action",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore the codebase"},
+			{ID: "a1", Type: "action", Action: "write_file", Instructions: "Save results"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "p1", TargetID: "a1"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	hasRecall := false
+	hasTerminal := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "p1_recall" {
+			hasRecall = true
+		}
+		if n.ID == "terminal_synthesis" {
+			hasTerminal = true
+		}
+	}
+	if !hasRecall {
+		t.Error("expected p1_recall to be injected")
+	}
+	if !hasTerminal {
+		t.Error("expected terminal_synthesis when Recall has downstream action nodes")
+	}
+}
+

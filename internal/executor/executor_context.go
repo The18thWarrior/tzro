@@ -314,6 +314,15 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		}
 
 		for i, cn := range completed {
+			// Recall nodes carry the primary data for downstream consumers.
+			// Never compact them — same treatment as the synthesis path (line 245).
+			// Without this, CompactContent can misclassify recall output as code
+			// and strip it to 0 chars via ExtractSkeleton.
+			ntype := nodeTypeMap[cn.nodeID]
+			if ntype == "recall" {
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				continue
+			}
 			// Exempt data-profile exec nodes from compaction — the cacheId
 			// and dataProfile envelope ARE the data. Compacting them severs
 			// the sql_cached_data pipeline for downstream analyze Probe nodes.

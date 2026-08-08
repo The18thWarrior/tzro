@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -741,6 +742,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		if skipGBNFRefinement {
 			fmt.Fprintf(os.Stderr, "[Executor] Skipping GBNF refinement for %s — Pass 1 output too large (%d chars > %d limit), using XML parser\n", node.ID, len(xmlResult), maxGBNFRefinementInputChars)
 		}
+
+		// F1 gate: Skip GBNF Pass 2 when Pass 1 already produced valid JSON
+		// matching the tool schema. Deterministic structural check — no LLM
+		// self-assessment. Prevents Pass 2 from clobbering correct parameters
+		// (observed: cloud-extracted paths overwritten with "{path}/" templates).
+		if !skipGBNFRefinement && schemaStr != "" {
+			pass1Args := extractToolArguments(xmlResult)
+			if len(pass1Args) > 0 && pass1SatisfiesSchema(pass1Args, schemaStr, node.ID) {
+				skipGBNFRefinement = true
+				fmt.Fprintf(os.Stderr, "[Executor] Skipping GBNF refinement for %s — Pass 1 output already satisfies tool schema\n", node.ID)
+			}
+		}
 		if schemaStr != "" && !skipGBNFRefinement {
 			refinementSystem := "You are a precise data format converter. Convert the provided XML tool arguments into a valid JSON object matching the schema. " +
 				"Preserve all values exactly as they appear in the XML. Do NOT add, remove, or modify any values."
@@ -1099,7 +1112,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 			if shouldExpand {
 				probeConfig.AllowedTools = append(probeConfig.AllowedTools,
-					"introspect_cache", "sql_cached_data",
+					"introspect_cache",
 					"count_by", "group_by", "filter_where", "top_n", "describe_cache",
 				)
 				node.AllowedTools = probeConfig.AllowedTools
@@ -1143,10 +1156,19 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		// (web_search, web_browse), injecting local directory content contaminates
 		// the synthesis context and causes degenerate output (benchmark R14:
 		// technical_deep_dive_gguf 4.75→1.00 regression from preloading docs/).
-		if len(probeConfig.PreloadPaths) == 0 && !isWebOnlyProbe(probeConfig.AllowedTools) {
+		//
+		// Skip for analyze nodes (SourceHint="cache"): these get data through
+		// the cache bridge — preloading directory content produces empty/irrelevant
+		// context. Uses SourceHint (authoritative) instead of tool-presence
+		// heuristic (isCacheEquippedProbe) which falsely triggers when Fix 4
+		// runtime-injects cache tools into regular probes.
+		isCacheAnalyzeNode := probeConfig.SourceHint == "cache"
+		if len(probeConfig.PreloadPaths) == 0 && !isWebOnlyProbe(probeConfig.AllowedTools) && !isCacheAnalyzeNode {
 			probeConfig.PreloadPaths = detectPreloadPaths(probeConfig.Goal, probeConfig.TaskContext)
 		} else if isWebOnlyProbe(probeConfig.AllowedTools) {
 			fmt.Fprintf(os.Stderr, "[Probe] Skipping PreloadPaths auto-detection for web-only probe %s (allowedTools: %v)\n", node.ID, probeConfig.AllowedTools)
+		} else if isCacheAnalyzeNode {
+			fmt.Fprintf(os.Stderr, "[Probe] Skipping PreloadPaths auto-detection for cache analyze node %s (SourceHint=cache)\n", node.ID)
 		}
 
 		// Collect binding keys that downstream nodes need from this probe's output.
@@ -1191,31 +1213,61 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 		if config.GetUsePhaseRunner() {
 			// Phase Runner dispatch — route by SourceHint.
-			// When UsePhaseRunner=true, the entire RunProbe flat loop is bypassed.
-			// This structurally eliminates ~12 remediation mechanisms that compensated
-			// for the flat loop's structural limitations (see design spec §Deleted):
-			//   - Exploration Queue (→ Deep-Read phase artifacts)
-			//   - Duplicate call detection (→ phase step budgets)
-			//   - Phase gate for analyze (→ Schema-Orient → Query-Dev transition)
-			//   - SQL auto-extraction (→ Query-Dev phase scoping)
-			//   - Analyze repetition exemption (→ Synthesize phase clean input)
-			//   - web_browse URL auto-population (→ Rank phase output)
-			//   - URL Pre-Extraction (→ Search phase output)
-			//   - Empty query seeding (→ Search phase prompt)
-			//   - Empty URL rejection (→ Rank→Deep-Read transition)
-			//   - Visited URL tracking (→ Deep-Read internal state)
-			//   - Output fingerprint tracking (→ phase transition triggers)
-			//   - minStepBudget adaptive floor (→ per-phase step budgets)
-			switch probeConfig.SourceHint {
-			case "web":
-				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ResearchPhases (SourceHint=web)\n", node.ID)
-				synthesis, err = RunResearchPhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-			case "cache":
-				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to AnalyzePhases (SourceHint=cache)\n", node.ID)
-				synthesis, err = RunAnalyzePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-			default:
-				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases\n", node.ID)
-				synthesis, err = RunProbePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+			//
+			// DirectSynthesis promotion (port from RunProbe:374-419):
+			// When PreloadPaths content fits within the local model's effective
+			// context budget, bypass the PhaseRunner and run single-shot synthesis.
+			//
+			// Threshold: 28K chars ≈ 8K tokens. The 4B model has a 16K context
+			// window; 8K tokens for content leaves 8K for system prompt + output.
+			// At 200K (the original value), 52K files consumed 15K tokens and
+			// left ~1K for output → hallucination (benchmark: cache_function_index).
+			const maxDirectSynthesisChars = 28_000
+			if len(probeConfig.PreloadPaths) > 0 && !probeConfig.DirectSynthesis && probeConfig.SourceHint != "web" && probeConfig.SourceHint != "cache" {
+				fullContent := preloadDirectoryContext(probeConfig.PreloadPaths, 10*1024*1024)
+				if len(fullContent) > 0 && len(fullContent) <= maxDirectSynthesisChars {
+					// Promote to DirectSynthesis — write to temp file, bypass PhaseRunner
+					contextFile := filepath.Join(probeConfig.PreloadPaths[0], ".preload_context_full.md")
+					if writeErr := os.WriteFile(contextFile, []byte(fullContent), 0644); writeErr == nil {
+						probeConfig.DirectSynthesis = true
+						probeConfig.ContextFile = contextFile
+						defer os.Remove(contextFile)
+						fmt.Fprintf(os.Stderr, "[Executor] Probe %s: preload content (%d chars) fits DirectSynthesis cap — promoting\n",
+							node.ID, len(fullContent))
+					}
+				} else if len(fullContent) > maxDirectSynthesisChars {
+					// Content exceeds DirectSynthesis cap — inject truncated preload
+					// as TaskContext for the orient phase to use
+					maxChars := probeConfig.PreloadMaxChars
+					if maxChars <= 0 {
+						maxChars = 32768
+					}
+					if len(fullContent) > maxChars {
+						fullContent = fullContent[:maxChars]
+					}
+					probeConfig.TaskContext = fmt.Sprintf("%s\n\nPre-loaded source context (%d chars, truncated):\n%s",
+						probeConfig.TaskContext, len(fullContent), fullContent)
+					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: preload content (%d chars) exceeds DirectSynthesis cap (%d) — injecting %d chars into TaskContext for PhaseRunner\n",
+						node.ID, len(fullContent), maxDirectSynthesisChars, len(fullContent))
+				}
+			}
+
+			if probeConfig.DirectSynthesis {
+				// Bypass PhaseRunner — run single-shot synthesis via legacy path
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: DirectSynthesis promoted — bypassing PhaseRunner\n", node.ID)
+				synthesis, err = RunProbe(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+			} else {
+				switch probeConfig.SourceHint {
+				case "web":
+					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ResearchPhases (SourceHint=web)\n", node.ID)
+					synthesis, err = RunResearchPhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+				case "cache":
+					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to AnalyzePhases (SourceHint=cache)\n", node.ID)
+					synthesis, err = RunAnalyzePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+				default:
+					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases\n", node.ID)
+					synthesis, err = RunProbePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+				}
 			}
 		} else {
 			// Legacy flat Thought Chain loop
@@ -1371,12 +1423,62 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			graph.GoalPrompt,
 			recallResult.Synthesis,
 			recallResult.RefinedContext,
+			false, // scatterAttempted: first pass, scatter not yet attempted
 		)
 		if vErr == nil {
 			synthesis = finalSynthesis
 			verificationResult = vResult
 		} else {
 			fmt.Fprintf(os.Stderr, "[Recall] VTE error (non-fatal): %v\n", vErr)
+		}
+
+		// ADR-0071: Item-Level Scatter — if VTE detects missing items,
+		// spawn targeted scatter probes to fill the gaps.
+		if verificationResult != nil && len(verificationResult.ScatterItems) > 0 && graph.MutationBudget != nil {
+			// Write refinedContext to temp file for scatter probes
+			tmpFile, tmpErr := os.CreateTemp("", "scatter_ctx_*.txt")
+			if tmpErr == nil {
+				_, _ = tmpFile.WriteString(recallResult.RefinedContext)
+				_ = tmpFile.Close()
+				ctxPath := tmpFile.Name()
+
+				// Set context file path on each ScatterSpec
+				for i := range verificationResult.ScatterItems {
+					verificationResult.ScatterItems[i].ContextFilePath = ctxPath
+				}
+
+				assemblyID, scatterIDs, spawnErr := SpawnScatterProbes(
+					graph, node.ID, verificationResult.ScatterItems, graph.MutationBudget,
+				)
+				if spawnErr == nil && assemblyID != "" {
+					fmt.Fprintf(os.Stderr, "[Recall] Scatter spawned: %d probes + assembly %s\n",
+						len(scatterIDs), assemblyID)
+
+					// Mark recall node as completed with the original synthesis —
+					// the scatter_assembly node will produce the final output.
+					nodeStatus := fmt.Sprintf("[Recall] %s", synthesis)
+					_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+					_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
+					e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
+
+					if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
+						e.getPublisher().PublishStream(stream.StreamChunk{
+							Source:  "executor",
+							TaskID:  taskID,
+							NodeID:  node.ID,
+							Type:    "node_state",
+							Content: string(statePayload),
+						})
+					}
+					return nil // Ready queue picks up scatter probes + assembly
+				}
+				if spawnErr != nil {
+					fmt.Fprintf(os.Stderr, "[Recall] Scatter spawn failed: %v\n", spawnErr)
+				}
+				// If spawn returned no probes (budget exhausted), fall through to normal completion
+			} else {
+				fmt.Fprintf(os.Stderr, "[Recall] Failed to create scatter context temp file: %v\n", tmpErr)
+			}
 		}
 
 		// Stash verification result for envelope assembly
@@ -1419,6 +1521,113 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 				Content: string(statePayload),
 			})
 		}
+		return nil
+	}
+	// 1.45 Scatter assembly node: collect scatter probe outputs, assemble, smooth, re-verify (ADR-0071)
+	if node.Type == "scatter_assembly" {
+		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
+		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Scatter Assembly: "+node.Instructions)
+
+		recallNodeID := node.Instructions // Instructions stores the recall node ID
+
+		// 1. Read recall node's original synthesis
+		recallSynthesis := ""
+		if state, ok := memory.DB.GetNodeState(taskID, recallNodeID); ok {
+			recallSynthesis = state.RawOutput
+			if recallSynthesis == "" {
+				recallSynthesis = state.Output
+			}
+		}
+
+		// 2. Find all upstream scatter probe outputs
+		scatterOutputs := make(map[string]string)
+		for _, edge := range graph.Edges {
+			if edge.TargetID == node.ID && strings.HasPrefix(edge.SourceID, "scatter_probe_") {
+				if state, ok := memory.DB.GetNodeState(taskID, edge.SourceID); ok && state.Status == "completed" {
+					// Extract the goal item from the probe node's config
+					goalItem := ""
+					for _, n := range graph.Nodes {
+						if n.ID == edge.SourceID && n.ProbeConfig != nil {
+							goalItem = n.ProbeConfig.Goal
+							break
+						}
+					}
+					rawOutput := state.RawOutput
+					if rawOutput == "" {
+						rawOutput = state.Output
+					}
+					if goalItem != "" && strings.TrimSpace(rawOutput) != "" {
+						scatterOutputs[goalItem] = rawOutput
+					}
+				}
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "[ScatterAssembly] Assembling %d scatter outputs with recall synthesis (%d chars)\n",
+			len(scatterOutputs), len(recallSynthesis))
+
+		// 3. Deterministic assembly
+		assembled := assembleScatterOutput(recallSynthesis, scatterOutputs)
+
+		// 4. Smoothing pass (single inference)
+		smoothingEngine := &ProbeInference{}
+		smoothed, err := smoothAssembly(ctx, assembled, smoothingEngine)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[ScatterAssembly] Smoothing error (non-fatal): %v\n", err)
+			smoothed = assembled
+		}
+
+		synthesis := smoothed
+
+		// 5. Re-run VTE with scatterAttempted=true (prevents re-scatter)
+		finalSynthesis, vResult, vErr := VerifyTaskOutput(
+			ctx,
+			&DefaultCloudVerifier{},
+			graph.GoalPrompt,
+			smoothed,
+			recallSynthesis, // Use original recall synthesis as refinedContext for cloud
+			true, // scatterAttempted: second pass
+		)
+		if vErr == nil {
+			synthesis = finalSynthesis
+			if vResult != nil {
+				e.stashVerificationResult(taskID, vResult)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "[ScatterAssembly] VTE error (non-fatal): %v\n", vErr)
+		}
+
+		nodeStatus := fmt.Sprintf("[ScatterAssembly] %s", synthesis)
+		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
+		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
+
+		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
+			e.getPublisher().PublishStream(stream.StreamChunk{
+				Source:  "executor",
+				TaskID:  taskID,
+				NodeID:  node.ID,
+				Type:    "node_state",
+				Content: string(statePayload),
+			})
+		}
+
+		// Clean up scatter context temp file if it exists
+		for _, edge := range graph.Edges {
+			if edge.TargetID == node.ID && strings.HasPrefix(edge.SourceID, "scatter_probe_") {
+				for _, n := range graph.Nodes {
+					if n.ID == edge.SourceID && n.ProbeConfig != nil && n.ProbeConfig.ContextFile != "" {
+						if strings.HasPrefix(n.ProbeConfig.ContextFile, os.TempDir()) {
+							_ = os.Remove(n.ProbeConfig.ContextFile)
+							fmt.Fprintf(os.Stderr, "[ScatterAssembly] Cleaned up temp context file: %s\n", n.ProbeConfig.ContextFile)
+						}
+						break // All scatter probes share the same context file
+					}
+				}
+				break
+			}
+		}
+
 		return nil
 	}
 
@@ -1908,7 +2117,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 // (semantic_fallback) are injected as prompt hints only.
 type ResolvedBinding struct {
 	Value string
-	Tier  string // "recursive_key" | "fuzzy_key" | "kv_line" | "plain_text_fallback" | "semantic_fallback"
+	Tier  string // "recursive_key" | "fuzzy_key" | "kv_line" | "plain_text_fallback" | "whole_output" | "semantic_fallback"
 }
 
 // partitionBindings splits resolved bindings into high-confidence (safe to splice
@@ -1919,7 +2128,7 @@ func partitionBindings(resolved map[string]ResolvedBinding) (highConf map[string
 	lowConf = make(map[string]string)
 	for k, rb := range resolved {
 		switch rb.Tier {
-		case "recursive_key", "fuzzy_key", "kv_line", "plain_text_fallback":
+		case "recursive_key", "fuzzy_key", "kv_line", "plain_text_fallback", "whole_output":
 			highConf[k] = rb.Value
 		default:
 			lowConf[k] = rb.Value
@@ -1987,6 +2196,104 @@ func stripSchemaProperties(schemaStr string, keysToStrip []string) string {
 	return string(modified)
 }
 
+// templatePattern matches unresolved template literals like "{path}", "{query}", "{value}".
+var templatePattern = regexp.MustCompile(`^\{[a-zA-Z_]+\}/?$`)
+
+// pass1SatisfiesSchema performs a deterministic structural check on Pass 1
+// extracted arguments against the tool schema. Returns true when all required
+// fields are present with non-placeholder values — meaning Pass 2 GBNF
+// refinement can be safely skipped.
+//
+// Placeholder detection rejects:
+//   - Empty strings
+//   - Values that equal their own field name (model echoed the key)
+//   - Unresolved {template} patterns like "{path}/" or "{query}"
+//
+// This prevents Pass 2 from clobbering correct parameters with garbled
+// re-extractions (observed: cloud-extracted paths overwritten with "{path}/"
+// templates by the 4B router model).
+func pass1SatisfiesSchema(args map[string]interface{}, schemaStr string, nodeID string) bool {
+	// Parse the schema to extract required fields
+	var schema map[string]interface{}
+	if err := json.Unmarshal([]byte(schemaStr), &schema); err != nil {
+		return false
+	}
+
+	// Navigate to the tool_arguments properties and required fields
+	toolArgs, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	toolArgsSchema, ok := toolArgs["tool_arguments"].(map[string]interface{})
+	if !ok {
+		// Flat schema (no tool_arguments wrapper)
+		toolArgsSchema = schema
+	}
+
+	// Get required fields
+	requiredRaw, _ := toolArgsSchema["required"].([]interface{})
+	if len(requiredRaw) == 0 {
+		// No required fields — nothing to validate against, skip Pass 2
+		return true
+	}
+
+	// Check each required field is present with a substantive value
+	for _, r := range requiredRaw {
+		fieldName, ok := r.(string)
+		if !ok {
+			continue
+		}
+
+		val, exists := args[fieldName]
+		if !exists {
+			fmt.Fprintf(os.Stderr, "[Executor F1] Pass 1 schema check: required field %q missing for %s\n", fieldName, nodeID)
+			return false
+		}
+
+		// Check the value is substantive (not a placeholder)
+		strVal := fmt.Sprintf("%v", val)
+		if isPlaceholderValue(strVal, fieldName) {
+			fmt.Fprintf(os.Stderr, "[Executor F1] Pass 1 schema check: required field %q has placeholder value %q for %s\n", fieldName, strVal, nodeID)
+			return false
+		}
+	}
+
+	return true
+}
+
+// isPlaceholderValue returns true if the value looks like a placeholder rather
+// than a real extracted parameter. Checks for empty strings, field name echoes,
+// and unresolved template patterns.
+func isPlaceholderValue(val, fieldName string) bool {
+	trimmed := strings.TrimSpace(val)
+
+	// Empty or whitespace-only
+	if trimmed == "" {
+		return true
+	}
+
+	// Value equals its own field name (model echoed the key as value)
+	if strings.EqualFold(trimmed, fieldName) {
+		return true
+	}
+
+	// Unresolved template literal: {path}, {query}, {value}/, etc.
+	if templatePattern.MatchString(trimmed) {
+		return true
+	}
+
+	// Generic placeholder words when they're the entire value
+	placeholders := []string{"value", "path", "query", "content", "data", "input", "output", "result", "column", "field", "name", "file"}
+	lower := strings.ToLower(trimmed)
+	for _, p := range placeholders {
+		if lower == p {
+			return true
+		}
+	}
+
+	return false
+}
+
 // resolveDynamicBindings resolves a node's DynamicBindings by looking up upstream
 // node RawOutput values from the database. Each binding maps a parameter name to
 // an upstream path in the format "nodeId.output.propertyName". Returns a map of
@@ -2015,6 +2322,33 @@ func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}
 
 		// Parse "nodeId.output.propertyName" format
 		parts := strings.SplitN(bindingPath, ".", 3) // ["nodeId", "output", "propertyName"]
+
+		// === Whole Output Binding ===
+		// Accept 2-segment paths ("nodeId.output") as a request for the entire
+		// raw output of the upstream node. Resolves in the binding parser before
+		// the Response Resolver is invoked, keeping the 5-tier cascade clean.
+		if len(parts) == 2 && parts[1] == "output" {
+			state, ok := GetNodeStateTolerant(taskID, parts[0])
+			if !ok {
+				fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] WARNING: Upstream node '%s' not found for whole_output binding '%s'\n", parts[0], paramName)
+				continue
+			}
+			sourceOutput := state.RawOutput
+			if sourceOutput == "" {
+				sourceOutput = state.Output
+				if idx := strings.Index(sourceOutput, "] "); idx != -1 {
+					sourceOutput = sourceOutput[idx+2:]
+				}
+			}
+			if sourceOutput != "" {
+				fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Resolved '%s' via whole_output (node: %s, %d chars)\n", paramName, parts[0], len(sourceOutput))
+				resolved[paramName] = ResolvedBinding{Value: sourceOutput, Tier: "whole_output"}
+			} else {
+				fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] WARNING: Empty output from node '%s' for whole_output binding '%s'\n", parts[0], paramName)
+			}
+			continue
+		}
+
 		if len(parts) < 3 || parts[1] != "output" {
 			// Suppress warning for literal values (file paths, URLs, etc.)
 			// that the planner sometimes places in DynamicBindings instead of

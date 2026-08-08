@@ -187,6 +187,14 @@ func buildExtractionInput(reasoning string) string {
 		return fmt.Sprintf("Context: %s\nAction tag content: %s\nContext: %s", prefix, tagContent, suffix)
 	}
 
-	// No ACTION tags — send full reasoning
+	// No ACTION tags — send reasoning, but truncate to the tail where the tool
+	// call intent typically lives. The 4B model often regurgitates preloaded
+	// source code in early reasoning (2048+ tokens). Sending all of it to GBNF
+	// extraction causes the model to reproduce it in JSON arguments, hitting
+	// the 1024-token cap → truncated JSON → parse failure.
+	const maxExtractionChars = 2000
+	if len(reasoning) > maxExtractionChars {
+		return reasoning[len(reasoning)-maxExtractionChars:]
+	}
 	return reasoning
 }

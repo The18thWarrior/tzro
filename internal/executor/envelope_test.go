@@ -313,4 +313,42 @@ func TestExecutionEnvelope_PhasesSection(t *testing.T) {
 	}
 }
 
+func TestFindSynthesisText_PrefersScatterAssembly_OverRecall(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-scatter-1",
+		Nodes: []compiler.GraphNode{
+			{ID: "probe_1", Type: "probe"},
+			{ID: "recall_1", Type: "recall"},
+			{ID: "scatter_assembly_recall_1", Type: "scatter_assembly"},
+		},
+	}
+	nodes := []memory.NodeState{
+		{TaskID: "task-scatter-1", NodeID: "probe_1", Status: "completed", RawOutput: "probe output"},
+		{TaskID: "task-scatter-1", NodeID: "recall_1", Status: "completed", RawOutput: "recall synthesis (original)"},
+		{TaskID: "task-scatter-1", NodeID: "scatter_assembly_recall_1", Status: "completed", RawOutput: "scatter assembled + smoothed output"},
+	}
 
+	result := findSynthesisText(graph, nodes)
+	if result != "scatter assembled + smoothed output" {
+		t.Errorf("expected scatter_assembly output, got %q", result)
+	}
+}
+
+func TestFindSynthesisText_FallsBackToRecall_WhenNoScatterAssembly(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-no-scatter",
+		Nodes: []compiler.GraphNode{
+			{ID: "probe_1", Type: "probe"},
+			{ID: "recall_1", Type: "recall"},
+		},
+	}
+	nodes := []memory.NodeState{
+		{TaskID: "task-no-scatter", NodeID: "probe_1", Status: "completed", RawOutput: "probe output"},
+		{TaskID: "task-no-scatter", NodeID: "recall_1", Status: "completed", RawOutput: "recall synthesis"},
+	}
+
+	result := findSynthesisText(graph, nodes)
+	if result != "recall synthesis" {
+		t.Errorf("expected recall output, got %q", result)
+	}
+}

@@ -42,3 +42,19 @@ func extractCacheIdFromText(text string) string {
 	return cacheIdRe.FindString(text)
 }
 
+// extractCacheIdsFromContext extracts all distinct cache_\d{10,} identifiers
+// from the upstream context text. Returns a deduplicated slice preserving
+// discovery order.
+func extractCacheIdsFromContext(text string) []string {
+	all := cacheIdRe.FindAllString(text, -1)
+	seen := make(map[string]bool)
+	var result []string
+	for _, id := range all {
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	return result
+}
+

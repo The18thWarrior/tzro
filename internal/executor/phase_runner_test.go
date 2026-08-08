@@ -11,6 +11,23 @@ import (
 	"tzro/internal/inference"
 )
 
+// stubToolDispatcher returns a ToolDispatcher that echoes tool args as JSON,
+// matching the old stub behavior. Tests that construct PhaseRunner directly
+// set this on the ToolDispatcher field.
+func stubToolDispatcher() func(context.Context, string, map[string]interface{}) (string, error) {
+	return func(_ context.Context, toolName string, args map[string]interface{}) (string, error) {
+		argsJSON, _ := json.Marshal(args)
+		return fmt.Sprintf("[%s result: args=%s]", toolName, string(argsJSON)), nil
+	}
+}
+
+// stubDispatchCtx returns a context with a stub ToolDispatcherKey injected.
+// Tests that call RunProbePhases/RunAnalyzePhases/RunResearchPhases use this
+// to avoid requiring real tool registration.
+func stubDispatchCtx() context.Context {
+	return context.WithValue(context.Background(), ToolDispatcherKey, stubToolDispatcher())
+}
+
 // MockPhaseEngine is a test double for Phase Runner step execution.
 // It returns pre-configured responses per phase, allowing tests to
 // control phase behavior deterministically.
@@ -141,8 +158,9 @@ func TestPhaseRunner_SinglePhase_ExecutesAndReturnsResult(t *testing.T) {
 				},
 			},
 		},
-		InitialPhase: "test_phase",
-		MaxCycles:    3,
+		InitialPhase:   "test_phase",
+		MaxCycles:      3,
+		ToolDispatcher: stubToolDispatcher(),
 	}
 
 	results, err := runner.Run(context.Background(), "task_test", "probe_test", engine, engine)
@@ -207,8 +225,9 @@ func TestPhaseRunner_SinglePhase_RespectsStepBudget(t *testing.T) {
 				Transition: func(step int, result PhaseResult, err error) string { return "" },
 			},
 		},
-		InitialPhase: "bounded",
-		MaxCycles:    3,
+		InitialPhase:   "bounded",
+		MaxCycles:      3,
+		ToolDispatcher: stubToolDispatcher(),
 	}
 
 	results, err := runner.Run(context.Background(), "task_test", "probe_budget_test", engine, engine)
@@ -290,11 +309,12 @@ func TestPhaseRunner_TwoPhaseTransition_CarriesContext(t *testing.T) {
 				},
 			},
 		},
-		InitialPhase: "orient",
-		MaxCycles:    3,
+		InitialPhase:   "orient",
+		MaxCycles:      3,
+		ToolDispatcher: stubToolDispatcher(),
 	}
 
-	results, err := runner.Run(context.Background(), "task_test", "probe_transition_test", engine, engine)
+	results, err := runner.Run(stubDispatchCtx(), "task_test", "probe_transition_test", engine, engine)
 	if err != nil {
 		t.Fatalf("PhaseRunner.Run failed: %v", err)
 	}
@@ -392,11 +412,12 @@ func TestPhaseRunner_ThreePhaseSequential(t *testing.T) {
 				Transition: func(step int, result PhaseResult, err error) string { return "" },
 			},
 		},
-		InitialPhase: "orient",
-		MaxCycles:    3,
+		InitialPhase:   "orient",
+		MaxCycles:      3,
+		ToolDispatcher: stubToolDispatcher(),
 	}
 
-	results, err := runner.Run(context.Background(), "task_test", "probe_3phase_test", engine, engine)
+	results, err := runner.Run(stubDispatchCtx(), "task_test", "probe_3phase_test", engine, engine)
 	if err != nil {
 		t.Fatalf("PhaseRunner.Run failed: %v", err)
 	}
@@ -443,11 +464,12 @@ func TestPhaseRunner_ExhaustionSkip_SkipsPhaseOnBudgetExhaustion(t *testing.T) {
 				},
 			},
 		},
-		InitialPhase: "orient",
-		MaxCycles:    3,
+		InitialPhase:   "orient",
+		MaxCycles:      3,
+		ToolDispatcher: stubToolDispatcher(),
 	}
 
-	results, err := runner.Run(context.Background(), "task_test", "probe_skip_test", engine, engine)
+	results, err := runner.Run(stubDispatchCtx(), "task_test", "probe_skip_test", engine, engine)
 	if err != nil {
 		t.Fatalf("PhaseRunner.Run failed: %v", err)
 	}
@@ -569,7 +591,7 @@ func TestRunProbePhases_OrientToDiscoverTransition(t *testing.T) {
 		CompactEvery: 3,
 	}
 
-	result, err := RunProbePhases(context.Background(), "task_probe", "probe_phases_test", config, engine, engine, nil)
+	result, err := RunProbePhases(stubDispatchCtx(), "task_probe", "probe_phases_test", config, engine, engine, nil)
 	if err != nil {
 		t.Fatalf("RunProbePhases failed: %v", err)
 	}
@@ -606,7 +628,7 @@ func TestRunProbePhases_FullPipeline_ProducesManifest(t *testing.T) {
 		StepBudget:   30,
 	}
 
-	result, err := RunProbePhases(context.Background(), "task_full", "probe_full_test", config, engine, engine, nil)
+	result, err := RunProbePhases(stubDispatchCtx(), "task_full", "probe_full_test", config, engine, engine, nil)
 	if err != nil {
 		t.Fatalf("RunProbePhases failed: %v", err)
 	}
@@ -648,7 +670,7 @@ func TestRunAnalyzePhases_SchemaOrientToQueryDev(t *testing.T) {
 		SourceHint:   "cache",
 	}
 
-	result, err := RunAnalyzePhases(context.Background(), "task_analyze", "analyze_test", config, engine, engine, nil)
+	result, err := RunAnalyzePhases(stubDispatchCtx(), "task_analyze", "analyze_test", config, engine, engine, nil)
 	if err != nil {
 		t.Fatalf("RunAnalyzePhases failed: %v", err)
 	}
@@ -695,7 +717,7 @@ func TestRunResearchPhases_SearchToRankToDeepRead(t *testing.T) {
 		SourceHint:   "web",
 	}
 
-	result, err := RunResearchPhases(context.Background(), "task_research", "research_test", config, engine, engine, nil)
+	result, err := RunResearchPhases(stubDispatchCtx(), "task_research", "research_test", config, engine, engine, nil)
 	if err != nil {
 		t.Fatalf("RunResearchPhases failed: %v", err)
 	}

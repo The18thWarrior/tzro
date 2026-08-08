@@ -157,8 +157,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 	}
 
-	// Fallback: find the last completed node of type recall > probe > synthesis
-	var lastRecall, lastProbe, lastSynthesis string
+	// Fallback: find the last completed node of type scatter_assembly > recall > probe > synthesis
+	var lastScatterAssembly, lastRecall, lastProbe, lastSynthesis string
 	for _, n := range nodes {
 		if n.Status != "completed" {
 			continue
@@ -169,6 +169,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 
 		switch nodeTypes[n.NodeID] {
+		case "scatter_assembly":
+			lastScatterAssembly = raw
 		case "recall":
 			lastRecall = raw
 		case "probe":
@@ -178,6 +180,9 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 	}
 
+	if lastScatterAssembly != "" {
+		return lastScatterAssembly
+	}
 	if lastRecall != "" {
 		return lastRecall
 	}

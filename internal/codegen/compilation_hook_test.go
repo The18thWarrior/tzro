@@ -337,3 +337,110 @@ func TestCompilationGateHook_T3_SkipsCloudReview(t *testing.T) {
 		t.Error("cloud semantic review should NOT be called for T3 tasks")
 	}
 }
+
+// TestCheckSymbolPreservation_DetectsRemovedSymbols validates that the
+// preservation assertion catches when generated code removes existing
+// public methods (FM-4).
+func TestCheckSymbolPreservation_DetectsRemovedSymbols(t *testing.T) {
+	originalCode := `package user
+
+// User represents a system user.
+type User struct {
+	Name  string
+	Email string
+}
+
+// NewUser creates a new User.
+func NewUser(name, email string) *User {
+	return &User{Name: name, Email: email}
+}
+
+// DisplayName returns the formatted display name.
+func (u *User) DisplayName() string {
+	return u.Name
+}
+`
+	generatedCode := `package user
+
+// User represents a system user.
+type User struct {
+	Name  string
+	Email string
+	Age   int
+}
+
+// Validate checks if the user is valid.
+func (u *User) Validate() error {
+	if u.Email == "" {
+		return fmt.Errorf("email required")
+	}
+	return nil
+}
+`
+	hook := &CompilationGateHook{
+		FilePath:        "user.go",
+		Language:        "go",
+		OriginalContent: originalCode,
+	}
+
+	missing := hook.checkSymbolPreservation(generatedCode)
+
+	if len(missing) == 0 {
+		t.Fatal("Expected missing symbols, got none")
+	}
+
+	// Should detect NewUser and DisplayName as missing
+	missingStr := strings.Join(missing, ", ")
+	if !strings.Contains(missingStr, "NewUser") {
+		t.Errorf("Expected 'NewUser' in missing list, got: %s", missingStr)
+	}
+	if !strings.Contains(missingStr, "DisplayName") {
+		t.Errorf("Expected 'DisplayName' in missing list, got: %s", missingStr)
+	}
+}
+
+// TestCheckSymbolPreservation_AllPreserved validates no false positives
+// when all original symbols are preserved.
+func TestCheckSymbolPreservation_AllPreserved(t *testing.T) {
+	originalCode := `package user
+
+type User struct {
+	Name string
+}
+
+func NewUser(name string) *User {
+	return &User{Name: name}
+}
+`
+	generatedCode := `package user
+
+import "fmt"
+
+type User struct {
+	Name  string
+	Email string
+}
+
+func NewUser(name string) *User {
+	return &User{Name: name}
+}
+
+func (u *User) Validate() error {
+	if u.Name == "" {
+		return fmt.Errorf("name required")
+	}
+	return nil
+}
+`
+	hook := &CompilationGateHook{
+		FilePath:        "user.go",
+		Language:        "go",
+		OriginalContent: originalCode,
+	}
+
+	missing := hook.checkSymbolPreservation(generatedCode)
+
+	if len(missing) != 0 {
+		t.Errorf("Expected no missing symbols, got: %v", missing)
+	}
+}

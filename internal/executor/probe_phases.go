@@ -64,7 +64,38 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	var filesWithSymbols int
 	var deepReadDepth int
 
+	// ADR-0058 port: Initialize Exploration Queue from PreloadPaths for
+	// deterministic loop-breaking. When a duplicate read_file is detected,
+	// redirect to the next unvisited file via ToolFixup.
+	var explorationQueue *ExplorationQueue
+	if len(config.PreloadPaths) > 0 {
+		queueFiles := collectPreloadFiles(config.PreloadPaths)
+		if len(queueFiles) > 0 {
+			explorationQueue = NewExplorationQueue(queueFiles)
+			fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue initialized with %d files\n", len(queueFiles))
+		}
+	}
+
 	runner := &PhaseRunner{
+		ToolFixup: func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{}) {
+			if toolName == "read_file" && explorationQueue != nil {
+				path, _ := args["path"].(string)
+				if path == "" || explorationQueue.visited[path] {
+					if next, ok := explorationQueue.NextUnvisited(); ok {
+						fmt.Fprintf(os.Stderr, "[ProbePhases] ToolFixup: redirecting read_file from %q to %q\n", path, next)
+						args["path"] = next
+					}
+				}
+			}
+			return toolName, args
+		},
+		ToolPostProcess: func(phaseName, toolName string, args map[string]interface{}, output string, err error) {
+			if toolName == "read_file" && err == nil && explorationQueue != nil {
+				if path, ok := args["path"].(string); ok && path != "" {
+					explorationQueue.MarkVisited(path)
+				}
+			}
+		},
 		Phases: map[string]*Phase{
 			"orient": {
 				Name:         "orient",
@@ -151,6 +182,7 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 		},
 		InitialPhase: "orient",
 		MaxCycles:    3,
+		Goal:         config.Goal,
 	}
 
 	return runner

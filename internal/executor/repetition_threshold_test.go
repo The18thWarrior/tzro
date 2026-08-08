@@ -37,8 +37,7 @@ func TestRepetitionThreshold_FalsePositive_StructuralMarkdown(t *testing.T) {
 	}
 	for i, desc := range sections {
 		sb.WriteString(fmt.Sprintf("## Module %d\n\n", i+1))
-		sb.WriteString(desc + " ")
-		sb.WriteString(closings[i] + "\n\n")
+		fmt.Fprintf(&sb, "%s %s\n\n", desc, closings[i])
 	}
 	output := sb.String()
 

@@ -9,6 +9,7 @@ import (
 
 	"tzro/internal/inference"
 	"tzro/internal/memory"
+	"tzro/internal/tools"
 )
 
 // phaseContextKey is a context key used to pass the current phase name
@@ -16,6 +17,15 @@ import (
 type phaseContextKeyType struct{}
 
 var phaseContextKey = phaseContextKeyType{}
+
+// toolDispatcherKeyType is a context key for injecting a custom tool
+// dispatcher into the Phase Runner. When set, dispatchPhaseTool uses this
+// instead of tools.Call. Used by tests and the executor for context injection.
+type toolDispatcherKeyType struct{}
+
+// ToolDispatcherKey allows callers to inject a custom tool dispatcher via context.
+// Value must be func(ctx context.Context, toolName string, args map[string]interface{}) (string, error).
+var ToolDispatcherKey = toolDispatcherKeyType{}
 
 // --- Core Types (Design Spec §Phase Runner Contract) ---
 
@@ -84,6 +94,26 @@ type PhaseRunner struct {
 	PhaseOrder   []string // Ordered phase names for sequential fallthrough
 	InitialPhase string
 	MaxCycles    int // Global backtrack budget (default: 3)
+
+	// ToolDispatcher overrides tool execution for testing. When nil,
+	// dispatchPhaseTool calls tools.Call (production). Tests inject a
+	// mock that returns pre-configured responses.
+	ToolDispatcher func(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
+
+	// ToolFixup is called after Pass 2 extraction, before tool dispatch.
+	// Allows per-node-type deterministic repair of empty/wrong tool arguments.
+	// Receives the Pass 1 reasoning text to enable SQL/query auto-extraction.
+	// Returns the (possibly modified) tool name and args.
+	ToolFixup func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{})
+
+	// ToolPostProcess is called after tool dispatch completes.
+	// Allows per-node-type post-dispatch state tracking (URL extraction,
+	// evidence capture, visited file marking).
+	ToolPostProcess func(phaseName, toolName string, args map[string]interface{}, output string, err error)
+
+	// Goal is the probe's exploration goal, injected into tool context
+	// via tools.FileReadGoalKey so read_file can goal-compress large outputs.
+	Goal string
 }
 
 // Run executes the Phase Runner state machine from InitialPhase through
@@ -215,6 +245,7 @@ func (pr *PhaseRunner) executePhase(
 
 	var lastToolOutput string
 	var toolsCalled []string
+	var noActionRetries int
 
 	for step := 1; step <= phase.StepBudget; step++ {
 		// --- Pass 1: Free-text reasoning (phase-specific model target) ---
@@ -240,6 +271,25 @@ func (pr *PhaseRunner) executePhase(
 			return result, "", fmt.Errorf("phase %q step %d pass 2 failed: %w", phase.Name, step, err)
 		}
 
+		// --- No-action retry (ADR-0058 port): reject premature synthesis ---
+		// When the model signals "synthesize" but has called 0 tools in this
+		// phase and the phase has AllowedTools, the synthesis is premature.
+		// Re-prompt with corrective text instead of accepting it.
+		if action == "synthesize" && len(phase.AllowedTools) > 0 && len(toolsCalled) == 0 {
+			noActionRetries++
+			if noActionRetries <= 2 {
+				fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: premature synthesis rejected (0 tools called, retry %d/2)\n",
+					phase.Name, noActionRetries)
+				lastToolOutput = fmt.Sprintf(
+					"REJECTED: You must call a tool before synthesizing. Available tools: %s. "+
+						"Call one of these tools to gather information, then synthesize.",
+					strings.Join(phase.AllowedTools, ", "))
+				continue // retry the step without incrementing
+			}
+			// Exhausted retries — fall through to accept synthesis
+			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: no-action retry exhausted, accepting empty synthesis\n", phase.Name)
+		}
+
 		if action == "synthesize" {
 			// Phase synthesis — generate summary from accumulated work
 			result.StepsUsed = step
@@ -254,15 +304,24 @@ func (pr *PhaseRunner) executePhase(
 			return result, nextPhase, nil
 		}
 
+		// --- ToolFixup hook: repair arguments before dispatch ---
+		if pr.ToolFixup != nil {
+			toolName, args = pr.ToolFixup(phase.Name, toolName, args, reasoning)
+		}
+
 		// --- Tool dispatch ---
 		toolsCalled = append(toolsCalled, toolName)
 
-		// Simulate tool execution (in production, this calls the real tool dispatcher)
 		toolOutput, toolErr := pr.dispatchPhaseTool(phaseCtx, toolName, args)
 		if toolErr != nil {
 			lastToolOutput = fmt.Sprintf("Error: %s", toolErr.Error())
 		} else {
 			lastToolOutput = toolOutput
+		}
+
+		// --- ToolPostProcess hook: post-dispatch state tracking ---
+		if pr.ToolPostProcess != nil {
+			pr.ToolPostProcess(phase.Name, toolName, args, lastToolOutput, toolErr)
 		}
 
 		// Check transition after each step
@@ -342,13 +401,36 @@ func (pr *PhaseRunner) synthesizePhase(
 }
 
 // dispatchPhaseTool dispatches a tool call within a phase.
-// In production, this delegates to the real tool dispatcher.
-// For now, returns a stub response — production wiring happens in Slice 10.
+// Priority order: (1) ToolDispatcher field, (2) ToolDispatcherKey context value,
+// (3) tools.Call production dispatch.
 func (pr *PhaseRunner) dispatchPhaseTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
-	// Production implementation will call tools.Dispatch(toolName, args)
-	// For now, return args as a JSON string to confirm dispatch happened
-	argsJSON, _ := json.Marshal(args)
-	return fmt.Sprintf("[%s result: args=%s]", toolName, string(argsJSON)), nil
+	// Override 1: struct field (set by tests that construct PhaseRunner directly)
+	if pr.ToolDispatcher != nil {
+		return pr.ToolDispatcher(ctx, toolName, args)
+	}
+
+	// Override 2: context value (set by tests that call RunProbePhases etc.)
+	if dispatcher, ok := ctx.Value(ToolDispatcherKey).(func(context.Context, string, map[string]interface{}) (string, error)); ok {
+		return dispatcher(ctx, toolName, args)
+	}
+
+	// Production: inject probe goal for read_file goal-compression,
+	// then dispatch via the global tool registry.
+	toolCtx := ctx
+	if pr.Goal != "" {
+		toolCtx = context.WithValue(ctx, tools.FileReadGoalKey, pr.Goal)
+	}
+
+	// Record dispatch for Execution Envelope (ADR-0055)
+	if recorder, ok := ctx.Value(DispatchRecorderKey).(func(string, map[string]interface{})); ok {
+		recorder(toolName, args)
+	}
+
+	result, err := tools.Call(toolCtx, toolName, args)
+	if err != nil {
+		return "", fmt.Errorf("tool %s failed: %w", toolName, err)
+	}
+	return result, nil
 }
 
 // BuildManifest assembles a PhaseManifest from completed PhaseResults.

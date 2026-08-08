@@ -94,6 +94,11 @@ type ProbeConfig struct {
 	// once before synthesis is allowed. Auto-populated by the Kahn Compiler for
 	// analyze nodes (ADR-0068). Empty = no dispatch requirement.
 	RequiredToolDispatch []string `json:"requiredToolDispatch,omitempty"`
+
+	// MaxTokens controls the maximum generation tokens for DirectSynthesis mode.
+	// When 0, defaults to 4096. Scatter probes set this to 300 to stay under
+	// the 400-token attention fatigue threshold (ADR-0071).
+	MaxTokens int `json:"maxTokens,omitempty"`
 }
 
 type GraphEdge struct {

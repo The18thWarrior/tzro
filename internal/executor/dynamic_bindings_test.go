@@ -119,6 +119,70 @@ func TestResolveDynamicBindings(t *testing.T) {
 			t.Errorf("Expected employee_email to still resolve, got %q", resolved["employee_email"].Value)
 		}
 	})
+
+	t.Run("WholeOutputBinding_ResolvesFullRawOutput", func(t *testing.T) {
+		// 2-segment path "nodeId.output" should resolve to the entire RawOutput
+		bindings := map[string]interface{}{
+			"dataset": "node_2.output",
+		}
+
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
+
+		if _, exists := resolved["dataset"]; !exists {
+			t.Fatal("Expected 'dataset' to be resolved via whole_output binding, but it was missing")
+		}
+		if resolved["dataset"].Tier != "whole_output" {
+			t.Errorf("Expected tier 'whole_output', got %q", resolved["dataset"].Tier)
+		}
+		if resolved["dataset"].Value != execToolResponse {
+			t.Errorf("Expected full raw output, got %q", resolved["dataset"].Value)
+		}
+	})
+
+	t.Run("WholeOutputBinding_IsSpliceEligible", func(t *testing.T) {
+		// whole_output tier should be in the high-confidence partition (splice-eligible)
+		bindings := map[string]interface{}{
+			"dataset": "node_2.output",
+		}
+
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
+		highConf, lowConf := partitionBindings(resolved)
+
+		if _, inHigh := highConf["dataset"]; !inHigh {
+			t.Error("Expected whole_output binding in highConf (splice-eligible)")
+		}
+		if _, inLow := lowConf["dataset"]; inLow {
+			t.Error("whole_output binding should NOT be in lowConf")
+		}
+	})
+
+	t.Run("WholeOutputBinding_MissingNode", func(t *testing.T) {
+		bindings := map[string]interface{}{
+			"dataset": "nonexistent_node.output",
+		}
+
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
+
+		if _, exists := resolved["dataset"]; exists {
+			t.Errorf("Expected missing node to not resolve, but got %q", resolved["dataset"].Value)
+		}
+	})
+
+	t.Run("ThreeSegmentBinding_StillWorks", func(t *testing.T) {
+		// Verify the 3-segment path still resolves normally (regression check)
+		bindings := map[string]interface{}{
+			"email": "node_2.output.employee_email",
+		}
+
+		resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
+
+		if resolved["email"].Value != "maozedong@enterprise.corp" {
+			t.Errorf("Expected 3-segment binding to still work, got %q", resolved["email"].Value)
+		}
+		if resolved["email"].Tier != "recursive_key" {
+			t.Errorf("Expected tier 'recursive_key' for 3-segment binding, got %q", resolved["email"].Tier)
+		}
+	})
 }
 
 // TestDynamicBindingsPostExtractionOverride validates that the post-extraction

@@ -462,6 +462,14 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 		return fmt.Sprintf("degenerate output (%d chars after cleaning)", len(cleaned))
 	}
 
+	// Check for Generation Guard abort marker (F3-B: guard-aborted synthesis recovery).
+	// When the GenerationGuard aborts generation mid-stream, it appends a marker
+	// to the truncated output. Detect it here so the Recall Node can escalate
+	// to cloud re-synthesis before VTE needs to catch it.
+	if strings.Contains(cleaned, "[GENERATION_ABORTED") {
+		return "generation aborted by guard"
+	}
+
 	// Check if output IS a control token (the entire output)
 	trimmed := strings.TrimSpace(output)
 	for _, token := range controlTokens {

@@ -2,6 +2,69 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-07T12:25:00-07:00] grill-with-docs | Plan Template Registry Design (ADR-0048 updated)
+
+- **Activity**: Grill-with-docs session stress-testing the Plan Template Registry handoff against the domain model, codebase, and existing ADRs. 10 design questions resolved covering insertion point, storage format, classification mechanism, mutation authority, structural invariants, prompt mechanics, escape hatch, template categories, and benchmark interaction.
+- **Key Findings**:
+  1. **Templates are a local-planner-only concern.** The cloud planner retains full freeform graph generation. Templates are a cognitive scaffold for the 4B model, not a universal planning abstraction.
+  2. **The compiler stays template-unaware.** Template selection happens at the routing/planning boundary, before `ExpandToSCTGraph`. The registry is consumed by `planWithBackend`, not by the Kahn Compiler.
+  3. **Full mutation authority.** The local model can modify nodes, edges, tools, everything. The existing validation pipeline (`findInvalidTools`, `CompileAndSort`, `repairGraphWithProbe`, cloud escalation) enforces all necessary structural invariants post-mutation.
+  4. **Recall Nodes are NOT in templates.** Templates are Abstract Graphs (pre-compilation input). The Kahn Compiler auto-injects Recall Nodes — including them in templates would cause duplicates.
+  5. **`data-analysis` template uses `analyze` type, not `probe(cache)`.** The glossary explicitly distinguishes Analyze Nodes from Probe Nodes.
+  6. **No `freeform` escape category.** If GBNF classification picks the wrong template, cloud fallback via `PlanWithEscalation` is the implicit escape hatch.
+  7. **System prompt drops from ~150 lines to ~50.** Template JSON replaces the verbose schema documentation. A compact Node Type Reference Card lists all available node types.
+  8. **Templates apply universally, including benchmarks.** `action-chain` template added for multi-step tool workflows.
+- **Resolved terms**: Updated **Strategic Planner** (edit-not-create scoped to local Strategist only) and **Plan Template Registry** (8 categories, GBNF classification, Go struct storage, local-only scope) in CONTEXT.md.
+- **Decisions**:
+  - Go structs in `internal/templates/` for storage
+  - GBNF-constrained LLM classification on router model for template selection
+  - Full JSON round-trip for mutation (model receives + outputs complete graph)
+  - 8 templates: `explore-only`, `explore-and-write`, `research`, `research-and-write`, `data-analysis`, `multi-probe-synthesis`, `codegen`, `action-chain`
+  - Implicit cloud fallback as escape hatch (no `freeform` category)
+  - Existing validation pipeline sufficient for invariant enforcement
+- **ADR updated**: [ADR-0048](../adr/0048-plan-template-selection-and-mutation.md) — rewritten with all session decisions
+- **CONTEXT.md updated**: Strategic Planner, Plan Template Registry entries
+
+## [2026-08-07T10:47:00-07:00] grill-with-docs | Mandatory Recall Injection for Single-Probe DAGs (ADR-0072)
+
+
+- **Activity**: Grill-with-docs session stress-testing the "Synthesis Retry Path for Guard-Aborted Output" handoff against the domain model and codebase. 6 design questions resolved covering DAG shape validity, planner behavior, Recall injection policy, terminal synthesis interaction, and option evaluation.
+- **Key Findings**:
+  1. **`probe → write_file` without Recall is a planning defect, not a valid DAG shape.** The Kahn Compiler intentionally skipped Recall injection for `discoveryNodesCount <= 1`, but this created a VTE verification gap. CONTEXT.md already defined Recall as "injected automatically after a Probe Node" — the code didn't match the definition.
+  2. **Local planner uses `write_file` as a terminal crutch.** Research task prompts don't request files on disk. The 4B planner's schema examples show no probe-only terminal pattern, so it invents `write_file` action nodes as the only way to express "produce output."
+  3. **Options A (abort retry) and B (cloud escalation) from the handoff are unnecessary.** The structural fix (always inject Recall) routes all probe output through VTE, which already handles guard aborts via Structural Pre-Check + Cloud Re-Synthesis.
+  4. **The Recall Node is correctly detected as a synthesis leaf** for single-probe DAGs via `isSynthesisGoal()` matching "synthesize" + `!isSourceMap` (no outgoing edges). No terminal_synthesis injection needed.
+  5. **Multi-probe DAGs are unaffected.** Recall Nodes in multi-probe DAGs have outgoing edges (wired to terminal_synthesis), so they're in `isSourceMap` and don't trigger the synthesis-leaf detection.
+  6. **Guard abort during action node Pass 2 GBNF refinement is deferred.** Different concern (parameter extraction, not synthesis), Recall Node can't address it, rare occurrence.
+- **Resolved terms**: No new CONTEXT.md terms needed — existing definitions already describe the correct behavior.
+- **Decisions**:
+  - Always inject Recall Node for single-probe DAGs (ADR-0072)
+  - Plan Templates are the companion fix (separate session) — prevents wrong DAG shapes at the source
+  - Recall is terminal output only for single-probe DAGs; multi-probe DAGs still use terminal_synthesis consolidation
+- **ADR created**: [ADR-0072](../adr/0072-mandatory-recall-injection-for-single-probe-dags.md)
+- **Wiki index updated**: Added ADR-0072 entry
+
+## [2026-08-06T21:40:00-07:00] grill-with-docs | Pre-Flight Validation and 4B Failure Mode Mitigations (ADR-0071)
+
+
+- **Activity**: Grill-with-docs session stress-testing 6 implemented failure mode mitigations against the domain model. 8 design questions resolved covering terminology, blocking semantics, wiring decisions, latency bounds, and the Item-Level Scatter architecture.
+- **Key Findings**:
+  1. **Pre-Flight Validation** is a new layer wrapping Structural Pre-Check — not a replacement. Keeps Structural Pre-Check's definition tight.
+  2. **Coverage verification is advisory-only** — the cloud Verification Gate's `completeness` score owns judgment. Hardcoding a 30% threshold at the local layer risks false positives on semantic coverage.
+  3. **Assistant prefilling infrastructure is complete but unwired** — choosing effective prefixes per task type requires empirical benchmark validation. On the roadmap.
+  4. **Schema enrichment is wired** into `enrichCacheBridgeContext` — Analyze Nodes automatically receive column statistics.
+  5. **Content validation bounded to 2s** via context deadline — prevents worst-case latency from slow URLs on the VTE hot path.
+  6. **Item-Level Scatter is reactive, not proactive** — the planner cannot predict coverage failures ahead of time. CheckCoverage detects missing items, MutationBudget spawns targeted follow-up Probes.
+  7. **Item-Level Scatter ≠ MapReduceSynthesis** — different scope (DAG nodes vs. within-node), different split axis (goal items vs. content chunks), different assembly (deterministic concat vs. LLM reduce).
+  8. **Two meta-pattern detectors remain separate** — `validateSynthesisOutput` (single-hit) and `detectMetaResponse` (ratio-based) use genuinely different threshold strategies.
+- **Resolved terms**: Added "Pre-Flight Validation" and "Item-Level Scatter" to CONTEXT.md. Updated "Structural Pre-Check" and "MapReduceSynthesis" avoid-lists.
+- **Decisions**:
+  - Pre-Flight Validation is Stage 2 of VTE (wraps Structural Pre-Check + coverage + content)
+  - Coverage and content issues are advisory, not blocking
+  - Schema enrichment wired into cache bridge; assistant prefilling deferred to roadmap
+  - Item-Level Scatter uses reactive MutationBudget spawning, not plan-time decomposition
+- **ADR**: [ADR-0071: Pre-Flight Validation and 4B Failure Mode Mitigations](../adr/0071-pre-flight-validation-and-4b-failure-mode-mitigations.md)
+
 ## [2026-08-05T20:25:00-07:00] grill-with-docs | Benchmark Run 17 Remediation (ADR-0068, ADR-0069, ADR-0070)
 
 - **Activity**: Grill-with-docs session stress-testing proposed fixes for 6 benchmark failures. 9 design questions resolved across 3 failure clusters, re-organized during the session from 3 clusters into 2+1.

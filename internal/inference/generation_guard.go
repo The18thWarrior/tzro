@@ -311,7 +311,7 @@ func (g *RepetitionGuard) checkCompressionRatio(s string) bool {
 	                   // degenerate repetition loops compress to ~0.05-0.15
 	switch g.contentMode {
 	case ContentModeProse:
-		threshold = 0.35 // prose: more lenient, valid prose compresses to ~0.45-0.60
+		threshold = 0.50 // prose: valid prose compresses to ~0.45-0.60, degenerate to ~0.05-0.15
 	case ContentModeTabular:
 		threshold = 0.10 // tabular: very lenient, tables compress to ~0.15-0.25 by design
 	}

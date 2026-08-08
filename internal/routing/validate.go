@@ -157,6 +157,12 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 	} else {
 		repairGoal = "Explore and complete the following objectives:\n"
 	}
+	// Include the overall task goal so the repair probe stays on-topic.
+	// Without this, the probe only sees the removed node instructions which
+	// are often too terse to guide exploration effectively.
+	if graph.GoalPrompt != "" {
+		repairGoal = fmt.Sprintf("Overall task goal: %s\n\n%s", graph.GoalPrompt, repairGoal)
+	}
 	for i, instr := range removedInstructions {
 		repairGoal += fmt.Sprintf("%d. %s\n", i+1, instr)
 	}

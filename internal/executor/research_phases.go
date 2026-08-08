@@ -50,7 +50,59 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	var searchHasURLs bool
 	var urlsBrowsed int
 
+	// ADR-0058 port: State for web-specific guardrails.
+	// discoveredURLs accumulates URLs from web_search results.
+	// visitedURLs tracks URLs already browsed to prevent duplicates.
+	var discoveredURLs []string
+	visitedURLs := make(map[string]bool)
+
 	runner := &PhaseRunner{
+		ToolFixup: func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{}) {
+			switch toolName {
+			case "web_search":
+				// Empty query seeding: extract a search query from the goal
+				query, _ := args["query"].(string)
+				if strings.TrimSpace(query) == "" {
+					seeded := extractSearchQueryFromGoal(config.Goal)
+					if seeded != "" {
+						fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolFixup: seeding empty web_search query from goal: %q\n", seeded)
+						args["query"] = seeded
+					}
+				}
+			case "web_browse":
+				// URL auto-population: redirect empty or visited URLs to next unvisited
+				url, _ := args["url"].(string)
+				if strings.TrimSpace(url) == "" || visitedURLs[url] {
+					for _, candidate := range discoveredURLs {
+						if !visitedURLs[candidate] {
+							fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolFixup: redirecting web_browse from %q to %q\n", url, candidate)
+							args["url"] = candidate
+							break
+						}
+					}
+				}
+			}
+			return toolName, args
+		},
+		ToolPostProcess: func(phaseName, toolName string, args map[string]interface{}, output string, err error) {
+			switch toolName {
+			case "web_search":
+				if err == nil {
+					// Extract URLs from search results for the deep_read phase
+					urls := extractURLsFromWebSearch(output)
+					discoveredURLs = append(discoveredURLs, urls...)
+					if len(urls) > 0 {
+						fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolPostProcess: extracted %d URLs from web_search\n", len(urls))
+					}
+				}
+			case "web_browse":
+				if err == nil {
+					if url, ok := args["url"].(string); ok && url != "" {
+						visitedURLs[url] = true
+					}
+				}
+			}
+		},
 		Phases: map[string]*Phase{
 			"search": {
 				Name:         "search",
@@ -141,6 +193,7 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 		},
 		InitialPhase: "search",
 		MaxCycles:    3,
+		Goal:         config.Goal,
 	}
 
 	_ = searchHasURLs

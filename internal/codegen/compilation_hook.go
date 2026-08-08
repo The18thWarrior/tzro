@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"tzro/internal/compiler"
@@ -12,6 +13,7 @@ import (
 	"tzro/internal/executor"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
+	"tzro/internal/symbols"
 )
 
 // CompilationGateHook implements executor.ExecutionHook to run the compilation
@@ -57,8 +59,17 @@ type CompilationGateHook struct {
 	// Signature: (ctx, generatedCode, spec, language) -> (pass bool, reason string, error)
 	CloudReviewFunc func(ctx context.Context, code, spec, language string) (bool, string, error)
 
+	// OriginalContent holds the pre-existing file content (seed file) for update
+	// tasks. When non-empty, the preservation assertion runs after compilation
+	// and spec compliance pass, checking that all original public symbols survive
+	// in the generated code (FM-4).
+	OriginalContent string
+
 	// cloudReviewAttempted prevents double cloud review within one hook lifecycle.
 	cloudReviewAttempted bool
+
+	// preservationAttempted prevents infinite preservation loops.
+	preservationAttempted bool
 }
 
 // MaxLocalRepairAttempts is the number of local repair attempts before
@@ -199,6 +210,48 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 				}
 			} else {
 				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud semantic review PASSED for %s\n", h.FilePath)
+			}
+		}
+
+		// FM-4: Preservation assertion for update tasks.
+		// When OriginalContent is provided, extract public symbols from both
+		// the original and generated code. If any original symbols are missing,
+		// trigger regeneration with explicit preservation instructions.
+		if h.OriginalContent != "" && !h.preservationAttempted {
+			missing := h.checkSymbolPreservation(cleanCode)
+			if len(missing) > 0 {
+				h.preservationAttempted = true
+				fmt.Fprintf(os.Stderr, "[CompilationGateHook] Preservation FAILED for %s — %d original symbols removed: %v\n",
+					h.FilePath, len(missing), missing)
+
+				// Build regeneration prompt with preservation requirement
+				moduleCtx := DiscoverModuleContext(h.FilePath, h.Language)
+				preservationPrompt := fmt.Sprintf(
+					"The generated code is missing the following original public symbols that MUST be preserved: %s\n\n"+
+						"Regenerate the code to include ALL original public symbols while also fulfilling the spec.\n\n"+
+						"Original file content:\n```\n%s\n```\n\n"+
+						"Spec: %s",
+					strings.Join(missing, ", "), h.OriginalContent, h.Spec)
+				_ = moduleCtx // available for future prompt enrichment
+
+				regenCode, regenErr := h.attemptLocalRegeneration(ctx, preservationPrompt, taskID)
+				if regenErr == nil && regenCode != "" {
+					if _, _, writeErr := WriteCodeFile(h.FilePath, regenCode, 0); writeErr == nil {
+						recheck := RunCompilationGate(h.Language, h.FilePath)
+						if recheck.Pass {
+							fmt.Fprintf(os.Stderr, "[CompilationGateHook] Preservation regeneration COMPILED for %s\n", h.FilePath)
+							cleanCode = regenCode
+							evidence.Reset()
+							evidence.WriteString("\n\n## Compilation Result\nPASSED\n")
+							evidence.WriteString("(Regenerated after preservation failure)\n")
+						} else {
+							fmt.Fprintf(os.Stderr, "[CompilationGateHook] Preservation regeneration FAILED compilation for %s: %s\n",
+								h.FilePath, recheck.Reason)
+						}
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "[CompilationGateHook] Preservation regeneration failed for %s: %v\n", h.FilePath, regenErr)
+				}
 			}
 		}
 	} else {
@@ -529,4 +582,40 @@ Generate the complete corrected file implementing the specification correctly.`,
 		len(result), taskID)
 
 	return result, nil
+}
+
+// checkSymbolPreservation extracts public symbols from both the original
+// content and the generated code, returning the names of any original symbols
+// that are missing in the generated version. Uses the Symbol Extractor
+// (tree-sitter-based AST parsing) for deterministic, language-aware comparison.
+func (h *CompilationGateHook) checkSymbolPreservation(generatedCode string) []string {
+	filename := filepath.Base(h.FilePath)
+
+	originalSyms, origErr := symbols.ExtractSymbols(filename, []byte(h.OriginalContent))
+	if origErr != nil || len(originalSyms) == 0 {
+		return nil // Can't extract — skip preservation check
+	}
+
+	generatedSyms, genErr := symbols.ExtractSymbols(filename, []byte(generatedCode))
+	if genErr != nil {
+		return nil // Can't extract — skip preservation check
+	}
+
+	// Build a set of generated symbol names (exported only)
+	generatedSet := make(map[string]bool)
+	for _, s := range generatedSyms {
+		if s.Exported {
+			generatedSet[s.Name] = true
+		}
+	}
+
+	// Find original exported symbols missing from generated code
+	var missing []string
+	for _, s := range originalSyms {
+		if s.Exported && !generatedSet[s.Name] {
+			missing = append(missing, fmt.Sprintf("%s (%s)", s.Name, s.Kind))
+		}
+	}
+
+	return missing
 }

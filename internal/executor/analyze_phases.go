@@ -49,7 +49,68 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	var schemaIntrospected bool
 	var analyticalQueries int
 
+	// ADR-0058 port: State for SQL-specific guardrails.
+	// Extract known cacheIds from upstream context so we can auto-populate
+	// empty introspect_cache and sql_cached_data calls.
+	knownCacheIds := extractCacheIdsFromContext(config.TaskContext)
+	dispatchedHashes := make(map[string]bool)
+
 	runner := &PhaseRunner{
+		ToolFixup: func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{}) {
+			switch toolName {
+			case "introspect_cache":
+				// Auto-populate empty cacheId
+				cacheId, _ := args["cacheId"].(string)
+				if strings.TrimSpace(cacheId) == "" && len(knownCacheIds) > 0 {
+					args["cacheId"] = knownCacheIds[0]
+					fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: auto-populated introspect_cache cacheId=%q\n", knownCacheIds[0])
+				}
+			case "sql_cached_data":
+				// Auto-populate empty cacheId
+				cacheId, _ := args["cacheId"].(string)
+				if strings.TrimSpace(cacheId) == "" && len(knownCacheIds) > 0 {
+					args["cacheId"] = knownCacheIds[0]
+					fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: auto-populated sql_cached_data cacheId=%q\n", knownCacheIds[0])
+				}
+				// SQL auto-extraction from reasoning text
+				sql, _ := args["sql"].(string)
+				if strings.TrimSpace(sql) == "" {
+					extracted, _ := extractSQLFromText(reasoning)
+					if extracted != "" {
+						args["sql"] = extracted
+						fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: extracted SQL from reasoning: %q\n", truncate(extracted, 80))
+					} else if cacheId, ok := args["cacheId"].(string); ok && cacheId != "" {
+						// Generate a default exploratory query
+						args["sql"] = defaultSQLForCacheId(cacheId)
+						fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: generated default SQL for cacheId=%q\n", cacheId)
+					}
+				}
+				// Duplicate detection — skip if same args already dispatched
+				hash := fmt.Sprintf("%s:%v", toolName, args)
+				if dispatchedHashes[hash] {
+					fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: skipping duplicate sql_cached_data call\n")
+					// Return a no-op tool name to prevent dispatch
+					return "noop", args
+				}
+				dispatchedHashes[hash] = true
+			}
+			return toolName, args
+		},
+		ToolPostProcess: func(phaseName, toolName string, args map[string]interface{}, output string, err error) {
+			if toolName == "introspect_cache" && err == nil {
+				// Extract any additional cacheIds discovered
+				discovered := extractCacheIdFromText(output)
+				if discovered != "" {
+					for _, existing := range knownCacheIds {
+						if existing == discovered {
+							return
+						}
+					}
+					knownCacheIds = append(knownCacheIds, discovered)
+					fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolPostProcess: discovered new cacheId=%q\n", discovered)
+				}
+			}
+		},
 		Phases: map[string]*Phase{
 			"schema_orient": {
 				Name:         "schema_orient",
@@ -127,6 +188,7 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 		},
 		InitialPhase: "schema_orient",
 		MaxCycles:    3,
+		Goal:         config.Goal,
 	}
 
 	// Suppress unused variable warnings

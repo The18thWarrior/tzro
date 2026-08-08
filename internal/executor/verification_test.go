@@ -132,6 +132,85 @@ func TestVerificationResult_ZeroValue(t *testing.T) {
 	}
 }
 
+// ── FM1 Meta-Response Detection tests ────────────────────────────────────────
+
+func TestStructuralPreCheck_MetaResponseDetection(t *testing.T) {
+	// FM1: Output dominated by meta-response patterns should fail
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			"sure_here_is",
+			"Sure! Here is the documentation you requested. I have carefully analyzed the codebase and prepared a comprehensive overview. " +
+				"I generated the documentation covering all the key areas. I have also included examples for each section. " +
+				"I have prepared detailed explanations of the architecture. I have compiled the relevant information from multiple sources. " +
+				"The documentation is ready for your review. I have written the analysis as requested.",
+		},
+		{
+			"i_generated_the_report",
+			"I generated the report as requested. I have analyzed the data and created a summary. " +
+				"I have prepared the market analysis document. I created the overview of trends. " +
+				"I have compiled the findings from multiple sources. I have written the conclusions. " +
+				"I prepared the final recommendations section. I have generated all sections.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, reason := StructuralPreCheck(tt.input)
+			if result != "failed" {
+				t.Errorf("expected 'failed' for meta-response output, got %q (reason: %s)", result, reason)
+			}
+			if !strings.Contains(reason, "meta_response") {
+				t.Errorf("expected reason to contain 'meta_response', got %q", reason)
+			}
+		})
+	}
+}
+
+func TestStructuralPreCheck_MetaResponseWithContent(t *testing.T) {
+	// FM1: Meta-response preamble followed by real content → pre-check should still pass
+	// because the existing validateSynthesisOutput doesn't catch this pattern,
+	// and real content is present
+	input := "Sure! Here is the documentation you requested.\n\n" +
+		"# Architecture Overview\n\n" +
+		"The system uses a DAG-based execution model with three primary components:\n" +
+		"the compiler transforms abstract graphs into topologically-sorted layers,\n" +
+		"the executor processes each layer dispatching tool calls, and the inference\n" +
+		"engine provides both local and cloud model access for reasoning tasks.\n\n" +
+		"## Compiler\n\nThe Kahn Compiler performs topological sorting of the abstract graph."
+
+	result, reason := StructuralPreCheck(input)
+	if result != "passed" {
+		t.Errorf("meta-response with real content should pass (content dominates), got %q (reason: %s)", result, reason)
+	}
+}
+
+func TestStructuralPreCheck_NormalOutputNoRegression(t *testing.T) {
+	// Verify that normal synthesis content with no meta-response patterns still passes
+	normal := `# Security Advisory Analysis
+
+The following vulnerabilities were identified in the Go standard library:
+
+1. **CVE-2024-24790** - net/netip: Unexpected behavior with IPv4-mapped IPv6 addresses
+   - Severity: HIGH (CVSS 9.8)
+   - Affected: Go 1.21.x before 1.21.11
+
+2. **CVE-2024-24789** - archive/zip: Incorrect handling of certain ZIP files
+   - Severity: MEDIUM (CVSS 5.5)
+   - Affected: All Go versions before 1.21.11
+
+3. **CVE-2024-24791** - net/http: HTTP/2 flow control vulnerability
+   - Severity: HIGH (CVSS 7.5)
+   - Affected: Go 1.22.x before 1.22.5`
+
+	result, reason := StructuralPreCheck(normal)
+	if result != "passed" {
+		t.Errorf("normal synthesis should pass, got %q (reason: %s)", result, reason)
+	}
+}
+
 // ── Slice 2: CloudVerifier tests ─────────────────────────────────────────────
 
 // mockCloudVerifier is a test double for CloudVerifier.
@@ -235,6 +314,7 @@ func TestVerifyTaskOutput_PreCheckFail_CallsCloudForReSynthesis(t *testing.T) {
 		"Explore the architecture",
 		"", // empty synthesis = pre-check fail
 		"The system has three modules: compiler, executor, inference.",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -269,6 +349,7 @@ func TestVerifyTaskOutput_Accepted_ReturnsOriginal(t *testing.T) {
 		"Explore the architecture",
 		validTestSynthesis,
 		"refined context here",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -303,6 +384,7 @@ func TestVerifyTaskOutput_Rejected_ReturnsReSynthesis(t *testing.T) {
 		"Explore the architecture",
 		validTestSynthesis,
 		"refined context here",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -318,6 +400,79 @@ func TestVerifyTaskOutput_Rejected_ReturnsReSynthesis(t *testing.T) {
 	}
 }
 
+// TestVerifyTaskOutput_Rejected_EmptyReSynthesis_TriggersFallback validates
+// that when the cloud verifier rejects but omits reSynthesis, the fallback
+// re-synthesis call is attempted. In test (no API key), the fallback fails
+// gracefully and the original synthesis is returned.
+func TestVerifyTaskOutput_Rejected_EmptyReSynthesis_TriggersFallback(t *testing.T) {
+	enableCloudForTest(t)
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:         false,
+			GoalAlignment:    0.4,
+			FactualGrounding: 0.8,
+			Coherence:        0.85,
+			Completeness:     0.35,
+			Reason:           "Missing coverage of required dimensions",
+			ReSynthesis:      "", // Empty — should trigger fallback
+		},
+	}
+
+	finalSynthesis, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		"Research durable execution engines",
+		validTestSynthesis,
+		"Temporal uses event sourcing. Restate uses journaled execution.",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Accepted {
+		t.Error("expected rejected")
+	}
+	// In test env (no API key), the fallback cloud call fails and we get the original back.
+	// The important thing is it doesn't crash and returns gracefully.
+	if finalSynthesis == "" {
+		t.Error("expected non-empty finalSynthesis (should be original or fallback)")
+	}
+}
+
+// TestVerifyTaskOutput_Rejected_WithReSynthesis_NoFallback confirms that when
+// reSynthesis is populated, it is used directly and no fallback call is made.
+func TestVerifyTaskOutput_Rejected_WithReSynthesis_NoFallback(t *testing.T) {
+	enableCloudForTest(t)
+	expectedReSynth := "## Complete replacement answer with all required dimensions"
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:         false,
+			GoalAlignment:    0.3,
+			FactualGrounding: 0.2,
+			Reason:           "Output is meta-commentary",
+			ReSynthesis:      expectedReSynth,
+		},
+	}
+
+	finalSynthesis, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		"Analyze the codebase",
+		validTestSynthesis,
+		"refined context",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if finalSynthesis != expectedReSynth {
+		t.Errorf("expected reSynthesis to be used directly, got %q", finalSynthesis)
+	}
+	if result.ReSynthesis != expectedReSynth {
+		t.Errorf("expected result.ReSynthesis = %q, got %q", expectedReSynth, result.ReSynthesis)
+	}
+}
+
 func TestVerifyTaskOutput_CloudError_ReturnsOriginalGracefully(t *testing.T) {
 	enableCloudForTest(t)
 	mock := &mockCloudVerifier{
@@ -330,6 +485,7 @@ func TestVerifyTaskOutput_CloudError_ReturnsOriginalGracefully(t *testing.T) {
 		"Explore the architecture",
 		validTestSynthesis,
 		"refined context here",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("expected graceful degradation, got error: %v", err)
@@ -355,7 +511,7 @@ func TestVerifyTaskOutput_PromptContainsAllSections(t *testing.T) {
 		result: &VerificationResult{Accepted: true, GoalAlignment: 1.0, FactualGrounding: 1.0, Coherence: 1.0, Completeness: 1.0, Reason: "ok"},
 	}
 
-	_, _, _ = VerifyTaskOutput(context.Background(), mock, goal, synthesis, refinedCtx)
+	_, _, _ = VerifyTaskOutput(context.Background(), mock, goal, synthesis, refinedCtx, false)
 
 	if mock.lastGoal != goal {
 		t.Errorf("verifier did not receive goal, got %q", mock.lastGoal)
@@ -385,6 +541,7 @@ func TestVerifyTaskOutput_StrictLocal_SkipsCloud(t *testing.T) {
 		"Explore the architecture",
 		validTestSynthesis,
 		"refined context",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -429,6 +586,7 @@ func TestVerifyTaskOutput_Hybrid_CallsCloud(t *testing.T) {
 		"Explore the architecture",
 		validTestSynthesis,
 		"refined context",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -453,6 +611,7 @@ func TestVerifyTaskOutput_StrictLocal_FailedPreCheck_StillReturnsOriginal(t *tes
 		"Explore the architecture",
 		"", // empty = pre-check fail
 		"refined context",
+		false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -543,5 +702,188 @@ func TestEnvelope_PopulatedVerification_IncludesRubric(t *testing.T) {
 	}
 	if source, ok := vMap["source"].(string); !ok || source != "cloud_verification" {
 		t.Errorf("expected source='cloud_verification', got %v", vMap["source"])
+	}
+}
+
+// ── Slice: Item-Level Scatter signal tests (ADR-0071) ──────────────────────────
+
+func TestVerifyTaskOutput_PopulatesScatterItems_WhenCoverageMissing(t *testing.T) {
+	enableCloudForTest(t)
+	goal := `Research these topics:
+1. Kubernetes deployment patterns
+2. Service mesh architectures
+3. Container orchestration strategies`
+
+	// Synthesis only covers Kubernetes, missing the other two
+	synthesis := `## Research Findings
+
+### Kubernetes Deployment Patterns
+Kubernetes supports multiple deployment strategies including rolling updates,
+blue-green deployments, and canary releases. Rolling updates are the default
+strategy and gradually replace old pods with new ones.`
+
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{Accepted: true},
+	}
+
+	_, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		goal,
+		synthesis,
+		"refined context with all three topics",
+		false, // scatterAttempted=false
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT call cloud — scatter returns early
+	if mock.callCount != 0 {
+		t.Errorf("expected cloud verifier not called when scatter requested, got %d", mock.callCount)
+	}
+
+	// Should have scatter items for the missing topics
+	if len(result.ScatterItems) == 0 {
+		t.Fatal("expected non-empty ScatterItems")
+	}
+	if result.Source != "scatter_needed" {
+		t.Errorf("expected source 'scatter_needed', got %q", result.Source)
+	}
+
+	// Verify the missing items are the right ones
+	missingGoals := make(map[string]bool)
+	for _, spec := range result.ScatterItems {
+		missingGoals[spec.GoalItem] = true
+	}
+	if !missingGoals["Service mesh architectures"] {
+		t.Error("expected 'Service mesh architectures' in scatter items")
+	}
+	if !missingGoals["Container orchestration strategies"] {
+		t.Error("expected 'Container orchestration strategies' in scatter items")
+	}
+}
+
+func TestVerifyTaskOutput_SkipsScatter_WhenScatterAttempted(t *testing.T) {
+	enableCloudForTest(t)
+	goal := `Research these topics:
+1. Kubernetes deployment patterns
+2. Service mesh architectures
+3. Container orchestration strategies`
+
+	// Same synthesis that only covers Kubernetes
+	synthesis := `## Research Findings
+
+### Kubernetes Deployment Patterns
+Kubernetes supports multiple deployment strategies including rolling updates,
+blue-green deployments, and canary releases. Rolling updates are the default
+strategy and gradually replace old pods with new ones.`
+
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:         true,
+			GoalAlignment:    0.7,
+			FactualGrounding: 0.9,
+			Coherence:        0.9,
+			Completeness:     0.5,
+			Reason:           "partially complete",
+		},
+	}
+
+	_, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		goal,
+		synthesis,
+		"refined context with all three topics",
+		true, // scatterAttempted=true
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should call cloud — scatter already attempted, proceed normally
+	if mock.callCount != 1 {
+		t.Errorf("expected cloud verifier called once when scatter already attempted, got %d", mock.callCount)
+	}
+
+	// Should NOT have scatter items
+	if len(result.ScatterItems) != 0 {
+		t.Errorf("expected empty ScatterItems when scatter already attempted, got %d", len(result.ScatterItems))
+	}
+}
+
+func TestVerifyTaskOutput_NoScatter_WhenStructuralFails(t *testing.T) {
+	enableCloudForTest(t)
+	goal := `Research these topics:
+1. Kubernetes deployment patterns
+2. Service mesh architectures`
+
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:    false,
+			ReSynthesis: "Cloud re-synthesis",
+		},
+	}
+
+	// Empty synthesis → structural pre-check fails → no scatter
+	_, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		goal,
+		"", // empty = structural fail
+		"refined context",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT have scatter items — structural failure bypasses coverage
+	if len(result.ScatterItems) != 0 {
+		t.Errorf("expected no scatter when structural pre-check fails, got %d items", len(result.ScatterItems))
+	}
+	if result.PreCheckResult != "failed" {
+		t.Errorf("expected pre-check 'failed', got %q", result.PreCheckResult)
+	}
+}
+
+func TestVerifyTaskOutput_NoScatter_WhenNoItemList(t *testing.T) {
+	enableCloudForTest(t)
+	// Free-form goal with no numbered/bulleted items
+	goal := "Explain the overall architecture of the system"
+
+	synthesis := `## Architecture Overview
+
+The system follows a DAG-based execution model with three primary components:
+compiler, executor, and inference engine. The compiler transforms abstract
+graphs into topologically-sorted execution layers.`
+
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:         true,
+			GoalAlignment:    0.95,
+			FactualGrounding: 0.90,
+			Coherence:        0.95,
+			Completeness:     0.90,
+			Reason:           "Output is comprehensive",
+		},
+	}
+
+	_, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		goal,
+		synthesis,
+		"refined context",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No item list → no coverage check → no scatter
+	if len(result.ScatterItems) != 0 {
+		t.Errorf("expected no scatter for free-form goal, got %d items", len(result.ScatterItems))
 	}
 }

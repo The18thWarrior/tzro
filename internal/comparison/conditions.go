@@ -50,11 +50,14 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		return ComparisonResult{}, err
 	}
 
-	// Save and restore model mode via the global pointer
+	// Save and restore model mode and phase runner config via the global pointer
 	originalModelMode := config.GlobalConfig.ModelMode
+	originalUsePhaseRunner := config.GlobalConfig.UsePhaseRunner
 	config.GlobalConfig.ModelMode = modelMode
+	config.GlobalConfig.UsePhaseRunner = true // Enable Phase Runner for Research/Analyze nodes (FM-3)
 	defer func() {
 		config.GlobalConfig.ModelMode = originalModelMode
+		config.GlobalConfig.UsePhaseRunner = originalUsePhaseRunner
 	}()
 
 	// Isolated database per condition run. Append timestamp to avoid SQLite
@@ -756,6 +759,11 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 		TaskTier:         t.Tier,  // ADR-0070: T4+ triggers cloud semantic review
 		AllowCloudReview: true,
 	}
+	// FM-4: Populate OriginalContent for update tasks so the preservation
+	// assertion can detect removed public symbols.
+	if codeCtx != nil && codeCtx.ExistingContent != "" {
+		compilationHook.OriginalContent = codeCtx.ExistingContent
+	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)
 
@@ -901,6 +909,10 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 		AllowCloudRepair: true,
 		TaskTier:         t.Tier,  // ADR-0070: T4+ triggers cloud semantic review
 		AllowCloudReview: true,
+	}
+	// FM-4: Populate OriginalContent for update tasks.
+	if codeCtx != nil && codeCtx.ExistingContent != "" {
+		compilationHook.OriginalContent = codeCtx.ExistingContent
 	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)
