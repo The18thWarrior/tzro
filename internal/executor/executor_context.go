@@ -242,7 +242,7 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			// ADR-0044: Apply a global synthesis ceiling to prevent 4B model
 			// degeneration. Without this, multiple untruncated recall nodes
 			// can accumulate 17K+ chars, consistently triggering GenerationGuard.
-			const synthesisCeiling = 10000
+			const synthesisCeiling = 16000
 			totalUntruncated := 0
 			for i, cn := range completed {
 				ntype := nodeTypeMap[cn.nodeID]
@@ -251,7 +251,7 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // mark for now
 					totalUntruncated += len(cn.output)
 				case "deterministic":
-					budgeted[i] = budgetEntry{cn.nodeID, cn.output, 1024} // 1024 preserves SQL results (avg 300-800 chars)
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, 4096} // 4096 preserves filter_where results (FM-13: 1024 was over-compacting lookup answers)
 				default:
 					// action, probe, synthesis, etc.
 					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
@@ -352,9 +352,19 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			// Exempt nodes explicitly referenced by downstream DynamicBindings.
 			// Their output is the data source for a downstream node's parameter
 			// extraction — compacting it destroys the data pipeline.
+			// Red-team FM-11 fix: Cap exemption at 16KB. Outputs larger than
+			// this (e.g., filter_where returning 139 rows × 22 columns = 95KB)
+			// overflow the 32K token context window. The response resolver can
+			// use derived cache IDs for very large outputs.
 			if bindingExempt[cn.nodeID] {
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
-				fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Exempting node %s from compaction — referenced by downstream DynamicBinding\n", cn.nodeID)
+				const maxExemptChars = 16384
+				if len(cn.output) <= maxExemptChars {
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+					fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Exempting node %s from compaction — referenced by downstream DynamicBinding\n", cn.nodeID)
+				} else {
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, maxExemptChars}
+					fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Capping DynamicBinding-exempt node %s at %d chars (output: %d chars)\n", cn.nodeID, maxExemptChars, len(cn.output))
+				}
 				continue
 			}
 			perNodeBudget := (nodeWeights[i] * dynamicCeiling) / totalWeight

@@ -60,7 +60,10 @@ func (sdb *SqliteDatabase) InitWithConnection(conn *sql.DB, dialect db.DialectAd
 
 	sdb.db = conn
 	sdb.dialect = dialect
-	sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	sdb.EmbeddingEngine = embeddings.DefaultEngine
+	if sdb.EmbeddingEngine == nil {
+		sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	}
 
 	// Run initialization queries provided by dialect
 	tx, err := sdb.db.Begin()
@@ -113,8 +116,11 @@ func (sdb *SqliteDatabase) Init() error {
 		sdb.dialect = &db.SqliteDialect{}
 	}
 
-	// Initialize the default Pure Go Embedding Engine for local semantic matching
-	sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	// Prefer neural embedding engine; fall back to Pure Go bag-of-words
+	sdb.EmbeddingEngine = embeddings.DefaultEngine
+	if sdb.EmbeddingEngine == nil {
+		sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	}
 
 	// Enable WAL mode
 	if _, err := sdb.db.Exec("PRAGMA journal_mode=WAL;"); err != nil {

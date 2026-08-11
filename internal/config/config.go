@@ -85,6 +85,19 @@ type EngineConfig struct {
 	// Empty = single-sidecar mode (existing behavior).
 	RouterModelPath string `json:"routerModelPath,omitempty"`
 
+	// Embedding sidecar: Optional GGUF model path for the embedding sidecar.
+	// When empty, auto-downloads All-MiniLM-L6-v2-Q8 (~23MB) on first use.
+	// The embedding sidecar runs a dedicated llama-server with --embedding
+	// for neural vector embeddings used by memory search, skill matching,
+	// and schema-aware column selection (ADR-0075).
+	EmbeddingModelPath string `json:"embeddingModelPath,omitempty"`
+
+	// Column scoring threshold for embedding-based select column resolution
+	// in AnalyzePhases. Columns with cosine similarity to the goal text above
+	// this threshold are included in the query_builder SELECT clause.
+	// Default 0.3. Range [0.0, 1.0].
+	ColumnScoreThreshold float64 `json:"columnScoreThreshold,omitempty"`
+
 	// Thinking Budget: Maximum reasoning tokens when thinking mode is active
 	// (unconstrained inference passes only — GBNF-constrained calls always
 	// disable thinking). Default 750. Set to 0 to use the default.
@@ -879,6 +892,39 @@ func GetRouterModelPath() string {
 	// Auto-detect: scan models directory for a small GGUF file
 	// that is not the worker model or a companion file.
 	return autoDetectRouterModel(workerPath)
+}
+
+// GetEmbeddingModelPath returns the configured embedding model path.
+// If empty, returns the default auto-download path (~/.tzro/models/all-MiniLM-L6-v2-Q8_0.gguf).
+func GetEmbeddingModelPath() string {
+	configMutex.RLock()
+	embPath := GlobalConfig.EmbeddingModelPath
+	configMutex.RUnlock()
+
+	if embPath != "" {
+		if !filepath.IsAbs(embPath) {
+			embPath = filepath.Join(GetModelsDir(), filepath.Base(embPath))
+		}
+		return embPath
+	}
+
+	// Default: auto-download location
+	return filepath.Join(GetModelsDir(), "all-MiniLM-L6-v2-Q8_0.gguf")
+}
+
+// GetColumnScoreThreshold returns the cosine similarity threshold for
+// embedding-based select column resolution. Default 0.3.
+func GetColumnScoreThreshold() float64 {
+	configMutex.RLock()
+	t := GlobalConfig.ColumnScoreThreshold
+	configMutex.RUnlock()
+	if t <= 0 {
+		return 0.3
+	}
+	if t > 1.0 {
+		return 1.0
+	}
+	return t
 }
 
 // GetDaemonURL returns the active daemon HTTP URL by checking:

@@ -4,12 +4,22 @@ import (
 	"context"
 	"math"
 	"strings"
+	"time"
 	"unicode"
 )
 
 type EmbeddingEngine interface {
 	Embed(ctx context.Context, text string) ([]float32, error)
 	CosineSimilarity(v1, v2 []float32) float32
+}
+
+// DefaultEngine is the package-level embedding engine. Set to a neural
+// EmbeddingSidecar at startup; nil falls back to bag-of-words.
+var DefaultEngine EmbeddingEngine
+
+// SetDefaultEngine sets the package-level embedding engine.
+func SetDefaultEngine(e EmbeddingEngine) {
+	DefaultEngine = e
 }
 
 type PureGoEmbeddingEngine struct {
@@ -239,8 +249,29 @@ func tokenizeDynamic(s string) map[string]float64 {
 	return vec
 }
 
-// CosineSimilarity computes the dynamic cosine similarity coefficient [0.0, 1.0] between two strings.
+// CosineSimilarity computes semantic similarity between two strings.
+// When DefaultEngine (neural embeddings) is available, uses vector cosine
+// similarity for high-quality semantic matching. Falls back to bag-of-words
+// tokenization when the neural sidecar is unavailable.
 func CosineSimilarity(s1, s2 string) float64 {
+	// Try neural embeddings first
+	if DefaultEngine != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		v1, err1 := DefaultEngine.Embed(ctx, s1)
+		v2, err2 := DefaultEngine.Embed(ctx, s2)
+		if err1 == nil && err2 == nil && len(v1) == len(v2) && len(v1) > 0 {
+			return float64(DefaultEngine.CosineSimilarity(v1, v2))
+		}
+		// Fall through to bag-of-words on error
+	}
+
+	// Bag-of-words fallback
+	return cosineSimilarityBagOfWords(s1, s2)
+}
+
+// cosineSimilarityBagOfWords is the original bag-of-words implementation.
+func cosineSimilarityBagOfWords(s1, s2 string) float64 {
 	v1 := tokenizeDynamic(s1)
 	v2 := tokenizeDynamic(s2)
 

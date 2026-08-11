@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"tzro/internal/cache"
@@ -63,7 +65,14 @@ func RegisterCompoundDataTools() {
 				return fmt.Sprintf(`{"success":false,"error":"%s"}`, err.Error()), nil
 			}
 			sql := fmt.Sprintf("SELECT [%s], COUNT(*) as count FROM [%s] GROUP BY [%s] ORDER BY count DESC", column, cacheID, column)
-			return cache.ExecuteSQL(ctx, cacheID, sql)
+			result, err := cache.ExecuteSQL(ctx, cacheID, sql)
+			if err == nil {
+				// ADR-0076: Materialize GROUP BY result as a derived table
+				if derivedID, mErr := cache.MaterializeDerivedTable(cacheID, sql, result, ""); mErr == nil {
+					result += fmt.Sprintf("\n\n[Derived cache: %s]", derivedID)
+				}
+			}
+			return result, err
 		},
 	})
 
@@ -102,7 +111,14 @@ func RegisterCompoundDataTools() {
 			aggFuncUpper := strings.ToUpper(aggFunc)
 			sql := fmt.Sprintf("SELECT [%s], %s([%s]) as result FROM [%s] GROUP BY [%s] ORDER BY result DESC",
 				groupCol, aggFuncUpper, aggCol, cacheID, groupCol)
-			return cache.ExecuteSQL(ctx, cacheID, sql)
+			result, err := cache.ExecuteSQL(ctx, cacheID, sql)
+			if err == nil {
+				// ADR-0076: Materialize GROUP BY result as a derived table
+				if derivedID, mErr := cache.MaterializeDerivedTable(cacheID, sql, result, ""); mErr == nil {
+					result += fmt.Sprintf("\n\n[Derived cache: %s]", derivedID)
+				}
+			}
+			return result, err
 		},
 	})
 
@@ -132,19 +148,39 @@ func RegisterCompoundDataTools() {
 			if err := validateColumn(cacheID, column); err != nil {
 				return fmt.Sprintf(`{"success":false,"error":"%s"}`, err.Error()), nil
 			}
+			// Red-team FM-6 fix: Default to '=' when the operator is empty, whitespace,
+			// or a non-operator character (e.g., ',' or '-' from args extraction ambiguity).
+			// FM-6b: Extended to default ALL invalid operators to '=' — the model
+			// almost always intends equality; returning an error produces a total
+			// task failure for a recoverable issue.
+			operator = strings.TrimSpace(operator)
 			if !validOperators[operator] {
-				return fmt.Sprintf(`{"success":false,"error":"invalid operator: %s. Use =, !=, <, >, <=, >=, LIKE, IN, IS NULL, IS NOT NULL"}`, operator), nil
+				fmt.Fprintf(os.Stderr, "[filter_where] FM-6b fix: defaulted invalid operator %q to '='\n", operator)
+				operator = "="
 			}
 			opUpper := strings.ToUpper(operator)
 			var sql string
 			if opUpper == "IS NULL" || opUpper == "IS NOT NULL" {
-				sql = fmt.Sprintf("SELECT * FROM [%s] WHERE [%s] %s LIMIT 100", cacheID, column, opUpper)
+				sql = fmt.Sprintf("SELECT * FROM [%s] WHERE [%s] %s", cacheID, column, opUpper)
 			} else {
 				// Quote the value to prevent injection
 				escapedValue := strings.ReplaceAll(value, "'", "''")
-				sql = fmt.Sprintf("SELECT * FROM [%s] WHERE [%s] %s '%s' LIMIT 100", cacheID, column, opUpper, escapedValue)
+				sql = fmt.Sprintf("SELECT * FROM [%s] WHERE [%s] %s '%s'", cacheID, column, opUpper, escapedValue)
 			}
-			return cache.ExecuteSQL(ctx, cacheID, sql)
+			result, err := cache.ExecuteSQL(ctx, cacheID, sql)
+			if err != nil {
+				return result, err
+			}
+			// FM-19 fix: Prepend a summary line with the actual match count.
+			// This short metadata line survives aggressive compaction and prevents
+			// the synthesis model from confabulating row counts.
+			var records []interface{}
+			count := 0
+			if json.Unmarshal([]byte(result), &records) == nil {
+				count = len(records)
+			}
+			summary := fmt.Sprintf("[Filter result: %d rows matched WHERE %s %s '%s']\n\n", count, column, opUpper, value)
+			return summary + result, nil
 		},
 	})
 

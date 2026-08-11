@@ -1,7 +1,9 @@
 package cache
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -173,6 +175,193 @@ func MaterializeTable(cacheID, rawPayload string, columnTypes map[string]string,
 	return tx.Commit()
 }
 
+// MaterializeDerivedTable creates an idempotent derived table in the ephemeral
+// query DB from SQL result JSON. Used to persist GROUP BY and aggregate results
+// so downstream tools (top_n) can query them.
+//
+// The derived table name is a deterministic hash of parentCacheID + sql,
+// ensuring repeated identical queries don't create duplicate tables.
+// Idempotent: skips insertion if the table already has rows.
+//
+// ADR-0076: Deterministic Query Path.
+func MaterializeDerivedTable(parentCacheID, sql, resultJSON string, taskID string) (string, error) {
+	db := QueryDB()
+	if db == nil {
+		return "", fmt.Errorf("ephemeral query DB not available")
+	}
+
+	// Deterministic derived ID from hash of parent + SQL
+	hash := sha256.Sum256([]byte(parentCacheID + sql))
+	derivedID := "cache_derived_" + hex.EncodeToString(hash[:8]) // 16-char hex suffix
+
+	// Parse result JSON
+	var records []map[string]interface{}
+	if err := json.Unmarshal([]byte(resultJSON), &records); err != nil {
+		// Try extracting from wrapped format
+		extracted, extractErr := extractRecordsArray(resultJSON)
+		if extractErr != nil {
+			return "", fmt.Errorf("failed to parse result JSON: %w", err)
+		}
+		records = extracted
+	}
+	if len(records) == 0 {
+		return "", fmt.Errorf("no records to materialize")
+	}
+
+	// Collect columns from first record
+	var columns []string
+	for k := range records[0] {
+		columns = append(columns, k)
+	}
+
+	tableName := sanitizeTableName(derivedID)
+
+	// Build CREATE TABLE — all columns as TEXT for derived tables
+	var colDefs []string
+	for _, col := range columns {
+		colDefs = append(colDefs, fmt.Sprintf("%s TEXT", sanitizeColumnName(col)))
+	}
+	createSQL := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", tableName, strings.Join(colDefs, ", "))
+
+	tx, err := db.Begin()
+	if err != nil {
+		return "", fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Create the table
+	if _, err := tx.Exec(createSQL); err != nil {
+		return "", fmt.Errorf("failed to create derived table: %w", err)
+	}
+
+	// Idempotency check: skip insertion if table already has rows
+	var existingRows int
+	if err := tx.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&existingRows); err == nil && existingRows > 0 {
+		// Table already populated — commit (to finalize CREATE IF NOT EXISTS) and return
+		tx.Commit()
+		fmt.Fprintf(os.Stderr, "[Cache/MaterializeDerived] Skipping insert — %s already has %d rows\n", derivedID, existingRows)
+		return derivedID, nil
+	}
+
+	// Prepare INSERT
+	placeholders := make([]string, len(columns))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		tableName,
+		strings.Join(sanitizeColumnNames(columns), ", "),
+		strings.Join(placeholders, ", "))
+
+	stmt, err := tx.Prepare(insertSQL)
+	if err != nil {
+		return "", fmt.Errorf("failed to prepare insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, record := range records {
+		values := make([]interface{}, len(columns))
+		for i, col := range columns {
+			val, exists := record[col]
+			if !exists || val == nil {
+				values[i] = nil
+			} else {
+				values[i] = fmt.Sprintf("%v", val)
+			}
+		}
+		if _, err := stmt.Exec(values...); err != nil {
+			fmt.Fprintf(os.Stderr, "[Cache/MaterializeDerived] Row insert warning: %v\n", err)
+		}
+	}
+
+	// Register metadata
+	createdAt := time.Now().Unix()
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO _cache_tables (table_name, task_id, created_at) VALUES (?, ?, ?)`,
+		derivedID, taskID, createdAt); err != nil {
+		return "", fmt.Errorf("failed to insert metadata: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("failed to commit: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "[Cache/MaterializeDerived] Created %s with %d rows from %s\n", derivedID, len(records), parentCacheID)
+	return derivedID, nil
+}
+
+// GetCacheColumns returns the column names from a materialized cache table.
+// Returns nil if the table or query DB is unavailable (non-fatal).
+func GetCacheColumns(cacheID string) []string {
+	db := QueryDB()
+	if db == nil {
+		return nil
+	}
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info([%s])", cacheID))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var cid int
+		var name, dtype string
+		var notnull int
+		var dfltValue *string
+		var pk int
+		if err := rows.Scan(&cid, &name, &dtype, &notnull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		cols = append(cols, name)
+	}
+	return cols
+}
+
+// GetCacheSampleValues returns up to `limit` distinct values per column for a
+// materialized cache table. Used to anchor the analyze query phase prompt with
+// concrete data values, preventing the model from guessing filter strings.
+//
+// Red-team FM-10 fix: value-aware query composition.
+func GetCacheSampleValues(cacheID string, columns []string, limit int) map[string][]string {
+	db := QueryDB()
+	if db == nil {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 15
+	}
+
+	result := make(map[string][]string, len(columns))
+	for _, col := range columns {
+		// Skip the internal _rowid column if present
+		if col == "_rowid" {
+			continue
+		}
+		query := fmt.Sprintf("SELECT DISTINCT [%s] FROM [%s] WHERE [%s] IS NOT NULL AND [%s] != '' LIMIT %d",
+			col, cacheID, col, col, limit)
+		rows, err := db.Query(query)
+		if err != nil {
+			continue
+		}
+		var values []string
+		for rows.Next() {
+			var val string
+			if err := rows.Scan(&val); err != nil {
+				continue
+			}
+			// Skip very long values (>50 chars) — they're not useful for filter matching
+			if len(val) <= 50 {
+				values = append(values, val)
+			}
+		}
+		rows.Close()
+		if len(values) > 0 {
+			result[col] = values
+		}
+	}
+	return result
+}
+
 // DropTaskTables removes all materialized cache tables owned by the given taskID.
 func DropTaskTables(taskID string) {
 	db := QueryDB()
@@ -237,9 +426,52 @@ func SweepExpiredTables() {
 // extractRecordsArray parses rawPayload as JSON and extracts the records array.
 // Handles both top-level arrays and objects wrapping an array (e.g., {"records": [...]}).
 func extractRecordsArray(rawPayload string) ([]map[string]interface{}, error) {
+	payload := rawPayload
+
+	// First attempt: try direct JSON parse
 	var parsed interface{}
-	if err := json.Unmarshal([]byte(rawPayload), &parsed); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+		// FM-20 fix v3: If direct parse fails, strip non-JSON prefix.
+		// The FM-19 summary prefix "[Filter result: N rows...]" looks like a
+		// JSON array start but isn't. json.MarshalIndent produces "[\n  {\n"
+		// (with whitespace between '[' and '{'), so simple "[{" won't match.
+		//
+		// Strategy: find the last occurrence of "]\n\n" (end of prefix line +
+		// blank line separator) and try parsing from there. Fall back to
+		// scanning for '{"' as a universal JSON object marker.
+		found := false
+
+		// Try 1: Split on double-newline after the prefix bracket
+		if idx := strings.Index(payload, "]\n\n"); idx > 0 {
+			trimmed := strings.TrimSpace(payload[idx+3:])
+			if json.Unmarshal([]byte(trimmed), &parsed) == nil {
+				found = true
+			}
+		}
+
+		// Try 2: Find first '{' followed by '"' (JSON object start)
+		if !found {
+			if idx := strings.Index(payload, `{"`); idx > 0 {
+				// Walk back to find the array '[' if present
+				arrayStart := strings.LastIndex(payload[:idx], "[")
+				startIdx := idx
+				if arrayStart > 0 {
+					// Check if only whitespace between '[' and '{"'
+					between := strings.TrimSpace(payload[arrayStart+1 : idx])
+					if between == "" {
+						startIdx = arrayStart
+					}
+				}
+				trimmed := payload[startIdx:]
+				if json.Unmarshal([]byte(trimmed), &parsed) == nil {
+					found = true
+				}
+			}
+		}
+
+		if !found {
+			return nil, fmt.Errorf("invalid JSON: %w", err)
+		}
 	}
 
 	switch v := parsed.(type) {

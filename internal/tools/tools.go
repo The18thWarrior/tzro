@@ -323,6 +323,11 @@ func Init(configPath string) error {
 	// These translate structured parameters to SQL, eliminating syntax errors from the 4B model.
 	RegisterCompoundDataTools()
 
+	// Register query_builder composite tool (ADR-0074: Structured Query Composition)
+	// Accepts composable operations (filter, group_by, aggregate, order_by, select) and
+	// deterministically assembles SQL. Used internally by AnalyzePhases v2.
+	Register(NewQueryBuilderTool())
+
 	// 2. Load static schemas from config file (fallback or preloaded tools)
 	if configPath != "" {
 		file, err := os.Open(configPath)

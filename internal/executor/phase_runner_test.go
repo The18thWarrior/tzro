@@ -640,7 +640,7 @@ func TestRunProbePhases_FullPipeline_ProducesManifest(t *testing.T) {
 
 // --- Slice 6: Analyze Phase Template ---
 
-func TestRunAnalyzePhases_SchemaOrientToQueryDev(t *testing.T) {
+func TestRunAnalyzePhases_SchemaOrientToQuery(t *testing.T) {
 	engine := NewMockPhaseEngine()
 
 	engine.PhaseResponses["schema_orient"] = []MockPhaseStep{
@@ -648,24 +648,25 @@ func TestRunAnalyzePhases_SchemaOrientToQueryDev(t *testing.T) {
 			Reasoning:  "Introspecting cache schema.\n<ACTION>{\"tool\":\"introspect_cache\",\"arguments\":{\"cacheId\":\"cache_123\"}}</ACTION>",
 			ToolName:   "introspect_cache",
 			ToolArgs:   map[string]interface{}{"cacheId": "cache_123"},
-			ToolResult: `{"columns": ["id", "name", "value"], "rowCount": 100}`,
+			ToolResult: `{"columns": ["id", "name", "Country", "value"], "rowCount": 100}`,
 		},
 	}
 
-	engine.PhaseResponses["query_dev"] = []MockPhaseStep{
-		{Reasoning: "q1", ToolName: "sql_cached_data", ToolArgs: map[string]interface{}{"query": "SELECT * FROM cache_123 LIMIT 5"}, ToolResult: `[{"id":1}]`},
-		{Reasoning: "q2", ToolName: "sql_cached_data", ToolArgs: map[string]interface{}{"query": "SELECT COUNT(*) FROM cache_123"}, ToolResult: `[{"count":100}]`},
-	}
-
-	engine.PhaseResponses["compute"] = []MockPhaseStep{
-		{Reasoning: "c1", ToolName: "sql_cached_data", ToolArgs: map[string]interface{}{"query": "SELECT AVG(value) FROM cache_123"}, ToolResult: `[{"avg":42.5}]`},
+	engine.PhaseResponses["query"] = []MockPhaseStep{
+		{Reasoning: "q1", ToolName: "query_builder", ToolArgs: map[string]interface{}{
+			"cacheId": "cache_123",
+			"operations": []interface{}{
+				map[string]interface{}{"type": "group_by", "column": "Country"},
+				map[string]interface{}{"type": "aggregate", "function": "COUNT", "alias": "count"},
+			},
+		}, ToolResult: `[{"Country":"USA","count":42},{"Country":"UK","count":18}]`},
 	}
 
 	engine.PhaseResponses["synthesize"] = []MockPhaseStep{}
 
 	config := compiler.ProbeConfig{
-		Goal:         "Analyze the sales data and report top performers",
-		AllowedTools: []string{"introspect_cache", "sql_cached_data"},
+		Goal:         "Count leads by country",
+		AllowedTools: []string{"introspect_cache", "query_builder"},
 		StepBudget:   15,
 		SourceHint:   "cache",
 	}
@@ -679,6 +680,7 @@ func TestRunAnalyzePhases_SchemaOrientToQueryDev(t *testing.T) {
 		t.Error("expected non-empty synthesis")
 	}
 }
+
 
 // --- Slice 7: Research Phase Template ---
 

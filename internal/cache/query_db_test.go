@@ -781,3 +781,147 @@ func TestMaterializeTable_SpecialCharColumns(t *testing.T) {
 		t.Error("envelope should contain sanitized column name 'Target_Account_'")
 	}
 }
+
+// =======================================
+// Slice 1: MaterializeDerivedTable (ADR-0076)
+// =======================================
+
+func TestMaterializeDerivedTable_Basic(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	// Materialize a base table first
+	materializeTestData(t, "cache_base_123")
+
+	// Simulate a GROUP BY result
+	resultJSON := `[
+		{"Sector": "Tech", "count": 2},
+		{"Sector": "Finance", "count": 2},
+		{"Sector": "Health", "count": 1}
+	]`
+	sql := "SELECT Sector, COUNT(*) as count FROM [cache_base_123] GROUP BY Sector"
+
+	derivedID, err := MaterializeDerivedTable("cache_base_123", sql, resultJSON, "test_task")
+	if err != nil {
+		t.Fatalf("MaterializeDerivedTable failed: %v", err)
+	}
+
+	// Derived ID should be deterministic and non-empty
+	if derivedID == "" {
+		t.Fatal("expected non-empty derived cacheID")
+	}
+	if !strings.HasPrefix(derivedID, "cache_derived_") {
+		t.Errorf("expected cache_derived_ prefix, got: %s", derivedID)
+	}
+
+	// Query the derived table
+	db := QueryDB()
+	rows, err := db.Query(fmt.Sprintf("SELECT * FROM [%s]", derivedID))
+	if err != nil {
+		t.Fatalf("failed to query derived table: %v", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	if count != 3 {
+		t.Errorf("expected 3 rows in derived table, got %d", count)
+	}
+}
+
+func TestMaterializeDerivedTable_DeterministicName(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	resultJSON := `[{"col": "val"}]`
+	sql := "SELECT col FROM [cache_base] GROUP BY col"
+
+	id1, err := MaterializeDerivedTable("cache_base", sql, resultJSON, "task1")
+	if err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+
+	// Same inputs → same derived ID
+	id2, err := MaterializeDerivedTable("cache_base", sql, resultJSON, "task1")
+	if err != nil {
+		t.Fatalf("second call failed: %v", err)
+	}
+
+	if id1 != id2 {
+		t.Errorf("expected deterministic ID: %s != %s", id1, id2)
+	}
+
+	// Different SQL → different derived ID
+	id3, err := MaterializeDerivedTable("cache_base", "SELECT col FROM [cache_base]", resultJSON, "task1")
+	if err != nil {
+		t.Fatalf("third call failed: %v", err)
+	}
+	if id1 == id3 {
+		t.Errorf("different SQL should produce different derived ID: both = %s", id1)
+	}
+}
+
+func TestMaterializeDerivedTable_Idempotent(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	resultJSON := `[
+		{"Sector": "Tech", "count": 2},
+		{"Sector": "Finance", "count": 2}
+	]`
+	sql := "SELECT Sector, COUNT(*) as count FROM [cache_test] GROUP BY Sector"
+
+	// First call
+	derivedID, err := MaterializeDerivedTable("cache_test", sql, resultJSON, "task1")
+	if err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+
+	// Second call — should succeed without error and not duplicate rows
+	_, err = MaterializeDerivedTable("cache_test", sql, resultJSON, "task1")
+	if err != nil {
+		t.Fatalf("second call failed: %v", err)
+	}
+
+	// Verify row count is still 2 (not 4)
+	db := QueryDB()
+	var rowCount int
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM [%s]", derivedID)).Scan(&rowCount)
+	if err != nil {
+		t.Fatalf("count query failed: %v", err)
+	}
+	if rowCount != 2 {
+		t.Errorf("expected 2 rows (idempotent), got %d", rowCount)
+	}
+}
+
+func TestMaterializeDerivedTable_RegistersMetadata(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	resultJSON := `[{"x": 1}]`
+	sql := "SELECT x FROM [cache_meta_test]"
+
+	derivedID, err := MaterializeDerivedTable("cache_meta_test", sql, resultJSON, "my_task_123")
+	if err != nil {
+		t.Fatalf("MaterializeDerivedTable failed: %v", err)
+	}
+
+	// Check metadata table
+	db := QueryDB()
+	var tableName, taskID string
+	err = db.QueryRow("SELECT table_name, task_id FROM _cache_tables WHERE table_name = ?", derivedID).
+		Scan(&tableName, &taskID)
+	if err != nil {
+		t.Fatalf("metadata query failed: %v", err)
+	}
+	if tableName != derivedID {
+		t.Errorf("expected table_name=%s, got %s", derivedID, tableName)
+	}
+	if taskID != "my_task_123" {
+		t.Errorf("expected task_id=my_task_123, got %s", taskID)
+	}
+}
+

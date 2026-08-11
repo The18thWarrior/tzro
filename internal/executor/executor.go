@@ -656,6 +656,16 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		for attempt := 1; attempt <= maxRetries; attempt++ {
 			instruction := fmt.Sprintf("Extract structured tool parameters for '%s' in XML format `<params><argName>value</argName>...</params>`. Do NOT nest the params tag inside itself.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
 
+			// Red-team FM-12 fix: Anchor SQLite dialect in the validator instruction
+			// when the target tool is sql_cached_data. Cloud models default to PostgreSQL.
+			if node.Action == "sql_cached_data" {
+				instruction += "\n\nIMPORTANT: The SQL engine is SQLite. You MUST use SQLite syntax:" +
+					"\n- Use GROUP_CONCAT(column) instead of STRING_AGG(column, separator)" +
+					"\n- Use GROUP_CONCAT(DISTINCT column) instead of STRING_AGG(DISTINCT column, separator)" +
+					"\n- Use LIKE instead of ILIKE (SQLite LIKE is case-insensitive for ASCII)" +
+					"\n- Use 1/0 instead of TRUE/FALSE for boolean values"
+			}
+
 			// Inject low-confidence bindings as prompt hints (high-confidence are already stripped)
 			if len(node.DynamicBindings) > 0 {
 				resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
@@ -758,6 +768,17 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			refinementSystem := "You are a precise data format converter. Convert the provided XML tool arguments into a valid JSON object matching the schema. " +
 				"Preserve all values exactly as they appear in the XML. Do NOT add, remove, or modify any values."
 
+			// Red-team FM-11 fix: Anchor known cacheIds in the refinement prompt
+			// so the model picks from real values instead of hallucinating fake IDs.
+			if strings.Contains(schemaStr, "cacheId") {
+				knownCaches := extractCacheIdsFromContext(accumulatedCtx)
+				if len(knownCaches) > 0 {
+					refinementSystem += fmt.Sprintf(
+						"\nIMPORTANT: Valid cache IDs are: %s. For the cacheId field, use one of these EXACT values. Do NOT invent cache IDs.",
+						strings.Join(knownCaches, ", "))
+				}
+			}
+
 			// Use the stripped schema for Pass 2 as well — high-confidence params aren't in the XML output
 			refinementUser := fmt.Sprintf("Convert the following XML tool arguments for '%s' into the JSON schema format.\n\n"+
 				"XML INPUT:\n%s\n\n"+
@@ -777,7 +798,10 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			refineReq.TaskID = taskID
 
 			refineCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
-			refineResult, refineErr := inference.ExecuteRouterStructured(refineCtx, refineReq)
+			// FM-18 fix: Use 4B worker for GBNF refinement, not 1B router.
+			// The 1B router echoes JSON field names as values (e.g., groupCol="groupCol")
+			// because it lacks the semantic capacity to resolve values from context.
+			refineResult, refineErr := inference.ExecuteWorkerStructured(refineCtx, refineReq)
 			if refineErr == nil {
 				var check map[string]interface{}
 				if json.Unmarshal([]byte(refineResult), &check) == nil {
@@ -917,7 +941,10 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 				IsLowStakes: true,
 			}
 
-			detResult, detErr := inference.ExecuteRouterStructured(ctx, detReq)
+			// FM-18 fix: Use 4B worker for deterministic args inference.
+			// Extracting tool params from accumulated context requires semantic
+			// understanding that the 1B router lacks.
+			detResult, detErr := inference.ExecuteWorkerStructured(ctx, detReq)
 			if detErr == nil {
 				// Use extractToolArguments which handles recursive tool_arguments unwrapping
 				toolArguments = extractToolArguments(detResult)
@@ -935,6 +962,18 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		coerceNumericArguments(toolArguments, interpolatedPrompt)
 		coerceStringArguments(toolArguments, interpolatedPrompt, node.Action)
 		resolveInterpolatedArguments(toolArguments, interpolatedPrompt, node.Instructions, taskID, graph)
+
+		// Red-team FM-9 fix: Guard against deterministic inference overriding the
+		// validator's cacheId with a stale/wrong one from accumulated context.
+		// The interpolated prompt contains the validator's JSON output — if it has
+		// a cacheId, that's the authoritative value.
+		if inferredCacheId, ok := toolArguments["cacheId"].(string); ok && inferredCacheId != "" {
+			validatorCacheId := extractCacheIdFromText(interpolatedPrompt)
+			if validatorCacheId != "" && validatorCacheId != inferredCacheId {
+				fmt.Fprintf(os.Stderr, "[Executor] FM-9 Guard: deterministic inference changed cacheId %q → %q, restoring validator value\n", validatorCacheId, inferredCacheId)
+				toolArguments["cacheId"] = validatorCacheId
+			}
+		}
 
 		// Hard-override any dynamically bound params with resolved upstream values.
 		// ADR-0030: High-confidence tiers override unconditionally; low-confidence
@@ -960,6 +999,23 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 
 		fmt.Fprintf(os.Stderr, "[Executor] Deterministic tool arguments extracted: %v\n", toolArguments)
 
+		// Red-team FM-18 fix: Detect validator field-name hallucination.
+		// When the 4B model fails to resolve a value from context, it sometimes
+		// echoes the JSON field name as the value (e.g., groupCol="groupCol",
+		// aggCol="groupCol"). Detect this by checking if any string value matches
+		// a known tool schema field name, and clear it if so.
+		schemaFieldNames := map[string]bool{
+			"cacheId": true, "groupCol": true, "aggCol": true, "aggFunc": true,
+			"column": true, "orderCol": true, "direction": true, "operator": true,
+			"value": true, "n": true, "sql": true,
+		}
+		for paramName, paramVal := range toolArguments {
+			if strVal, ok := paramVal.(string); ok && schemaFieldNames[strVal] {
+				fmt.Fprintf(os.Stderr, "[Executor] FM-18 Guard: param %q has value %q (echoed field name), clearing\n", paramName, strVal)
+				delete(toolArguments, paramName)
+			}
+		}
+
 		// Tool-existence validation with classification fallback.
 		// If the planner hallucinated a tool name, try to classify it to a real tool.
 		if tools.GetTool(node.Action) == nil {
@@ -969,6 +1025,44 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 				node.Action = resolved
 			} else {
 				return fmt.Errorf("tool '%s' is not registered and could not be classified to a known tool", node.Action)
+			}
+		}
+		// Red-team FM-11 fix: Final cacheId validation before tool dispatch.
+		// If the cacheId doesn't match any known cache from accumulated context,
+		// replace it. This catches cases where both validator and inference hallucinate.
+		// FM-14 fix: Also accept derived cache IDs (cache_derived_[hex]{16}) created
+		// by MaterializeDerivedTable for GROUP BY results.
+		if cacheIdArg, ok := toolArguments["cacheId"].(string); ok && cacheIdArg != "" {
+			// Format validation: cacheId must match cache_\d{10,} or cache_derived_[hex]{16}.
+			// File paths, column names, and other hallucinated values are rejected.
+			cacheIdPattern := regexp.MustCompile(`^cache_(?:\d{10,}|derived_[a-f0-9]{16})$`)
+			if !cacheIdPattern.MatchString(cacheIdArg) {
+				knownCaches := extractCacheIdsFromContext(accumulatedCtx)
+				if len(knownCaches) > 0 {
+					fmt.Fprintf(os.Stderr, "[Executor] FM-11 Guard: cacheId %q fails format check, replacing with %q\n", cacheIdArg, knownCaches[0])
+					toolArguments["cacheId"] = knownCaches[0]
+				} else {
+					fmt.Fprintf(os.Stderr, "[Executor] FM-11 Guard: cacheId %q fails format check and no known caches available\n", cacheIdArg)
+				}
+			} else {
+				knownCaches := extractCacheIdsFromContext(accumulatedCtx)
+				if len(knownCaches) > 0 {
+					found := false
+					for _, kc := range knownCaches {
+						if kc == cacheIdArg {
+							found = true
+							break
+						}
+					}
+					if !found {
+						fmt.Fprintf(os.Stderr, "[Executor] FM-11 Guard: cacheId %q not in known set %v, replacing with %q\n", cacheIdArg, knownCaches, knownCaches[0])
+						toolArguments["cacheId"] = knownCaches[0]
+						// Also fix any SQL that references the old cacheId
+						if sqlArg, ok := toolArguments["sql"].(string); ok && sqlArg != "" {
+							toolArguments["sql"] = strings.ReplaceAll(sqlArg, cacheIdArg, knownCaches[0])
+						}
+					}
+				}
 			}
 		}
 
@@ -999,6 +1093,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		}
 
 		var compactedOutput string
+		var derivedCacheID string
 		if isCompactionDisabled(ctx) {
 			compactedOutput = output
 		} else {
@@ -1007,6 +1102,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", err)
 			} else if cacheID != "" {
+				derivedCacheID = cacheID
 				fmt.Fprintf(os.Stderr, "[Executor Compactor] Payload > 12KB. Saved to SQLite and disk cache -> CacheID: %s\n", cacheID)
 				e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
 			}
@@ -1021,7 +1117,14 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		// P0 Fix: Store clean tool output separately for downstream interpolation.
 		// The display-formatted nodeStatus contains tier prefix + compacted output,
 		// which corrupts JSON property lookups in interpolateVariables.
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
+		// Red-team FM-3 fix: When the compactor created a derived cacheId (e.g.,
+		// filter_where result > 12KB), inject it as a top-level JSON field so
+		// downstream binding resolution finds the filtered cacheId, not the original.
+		rawOutputToStore := output
+		if derivedCacheID != "" {
+			rawOutputToStore = injectCacheIdIntoRawOutput(output, derivedCacheID)
+		}
+		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, rawOutputToStore)
 		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
 
 		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
@@ -2085,16 +2188,12 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		return ErrTaskPaused
 	}
 
-	// P0 Fix: Store clean tool output for downstream variable interpolation.
-	// Without this, interpolateVariables() falls back to the display-formatted Output
-	// which contains tier prefix + compaction, corrupting JSON property lookups.
-	_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
-
 	// ADR-0055: Record tool dispatch for Execution Envelope assembly
 	e.RecordDispatch(taskID, node.Action, toolCall.ToolArguments)
 
 	// 6. Compact Output & Cache via deep module
 	var compactedOutput string
+	var derivedCacheID string
 	if isCompactionDisabled(ctx) {
 		compactedOutput = output
 	} else {
@@ -2103,10 +2202,23 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", err)
 		} else if cacheID != "" {
+			derivedCacheID = cacheID
 			fmt.Fprintf(os.Stderr, "[Executor Compactor] Payload > 12KB. Saved to SQLite and disk cache -> CacheID: %s\n", cacheID)
 			e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
 		}
 	}
+
+	// P0 Fix: Store clean tool output for downstream variable interpolation.
+	// Without this, interpolateVariables() falls back to the display-formatted Output
+	// which contains tier prefix + compaction, corrupting JSON property lookups.
+	// Red-team FM-3 fix: When the compactor created a derived cacheId (e.g.,
+	// filter_where result > 12KB), inject it as a top-level JSON field so
+	// downstream binding resolution finds the filtered cacheId, not the original.
+	rawOutputToStore := output
+	if derivedCacheID != "" {
+		rawOutputToStore = injectCacheIdIntoRawOutput(output, derivedCacheID)
+	}
+	_ = memory.DB.SetNodeRawOutput(taskID, node.ID, rawOutputToStore)
 
 	if nodeDelay > 0 {
 		time.Sleep(nodeDelay)
@@ -2148,7 +2260,7 @@ func partitionBindings(resolved map[string]ResolvedBinding) (highConf map[string
 	lowConf = make(map[string]string)
 	for k, rb := range resolved {
 		switch rb.Tier {
-		case "recursive_key", "fuzzy_key", "kv_line", "plain_text_fallback", "whole_output":
+		case "recursive_key", "fuzzy_key", "kv_line", "plain_text_fallback", "whole_output", "derived_cache":
 			highConf[k] = rb.Value
 		default:
 			lowConf[k] = rb.Value
@@ -2283,7 +2395,7 @@ func pass1SatisfiesSchema(args map[string]interface{}, schemaStr string, nodeID 
 
 // isPlaceholderValue returns true if the value looks like a placeholder rather
 // than a real extracted parameter. Checks for empty strings, field name echoes,
-// and unresolved template patterns.
+// unresolved template patterns, and garbled Unicode output.
 func isPlaceholderValue(val, fieldName string) bool {
 	trimmed := strings.TrimSpace(val)
 
@@ -2300,6 +2412,37 @@ func isPlaceholderValue(val, fieldName string) bool {
 	// Unresolved template literal: {path}, {query}, {value}/, etc.
 	if templatePattern.MatchString(trimmed) {
 		return true
+	}
+
+	// Red-team FM-5 fix: Detect garbled Unicode in short identifier-like values.
+	// Cloud retries occasionally produce CJK or other non-ASCII characters in
+	// fields that should be column names, operators, or identifiers. Reject
+	// values under 200 chars that contain non-ASCII runes — real column names
+	// and tool parameters are always ASCII.
+	if len(trimmed) < 200 {
+		for _, r := range trimmed {
+			if r > 127 {
+				fmt.Fprintf(os.Stderr, "[Executor F1] Rejecting garbled Unicode value %q for field %q\n", trimmed, fieldName)
+				return true
+			}
+		}
+	}
+
+	// Red-team FM-10 fix: Field-specific validation for cacheId.
+	// The model frequently hallucinates file paths (e.g., "/Users/.../file.csv")
+	// as the cacheId instead of the actual cache_NNNN identifier. File paths
+	// look like substantive values to the generic placeholder check, so we need
+	// an explicit guard. Rejecting here forces Pass 2 GBNF refinement which
+	// will extract the correct cacheId from the accumulated context.
+	if strings.EqualFold(fieldName, "cacheId") || strings.EqualFold(fieldName, "cacheid") || strings.EqualFold(fieldName, "cache_id") {
+		if strings.Contains(trimmed, "/") || strings.Contains(trimmed, "\\") {
+			fmt.Fprintf(os.Stderr, "[Executor F1] FM-10: Rejecting file path %q as %s value\n", trimmed, fieldName)
+			return true
+		}
+		if !strings.HasPrefix(trimmed, "cache_") {
+			fmt.Fprintf(os.Stderr, "[Executor F1] FM-10: Rejecting non-cache value %q for %s (expected cache_NNNN)\n", trimmed, fieldName)
+			return true
+		}
 	}
 
 	// Generic placeholder words when they're the entire value
@@ -2421,6 +2564,24 @@ func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}
 				// Key collision — fall through to semantic fallback (skip Tier 2)
 				fmt.Fprintf(os.Stderr, "[Response Resolver] Key collision for '%s' (%d matches) — falling through to semantic\n", propertyKey, len(matches))
 				goto semanticFallback
+			}
+
+			// === Tier 1.3: Derived cache resolution (Red-team FM-2/FM-3 fix) ===
+			// When the planner uses generic binding keys like "content", "data", or
+			// "filtered_data" but the upstream node output contains a derivedCacheId
+			// (injected by the compactor when output > 12KB was saved to a new cache),
+			// resolve the binding to the derivedCacheId. This prevents the semantic
+			// fallback from hallucinating garbage for these ambiguous keys.
+			if isDerivedCacheBindingKey(propertyKey) {
+				cacheMatches := recursiveKeySearch(parsed, "derivedCacheId")
+				if len(cacheMatches) == 1 {
+					val := formatMatchValue(cacheMatches[0].Value)
+					if val != "" {
+						fmt.Fprintf(os.Stderr, "[Response Resolver] Resolved '%s' via derived_cache (derivedCacheId=%s)\n", paramName, val)
+						resolved[paramName] = ResolvedBinding{Value: val, Tier: "derived_cache"}
+						continue
+					}
+				}
 			}
 
 			// === Tier 1.5: Fuzzy key search (suffix/substring containment) ===
@@ -3557,4 +3718,33 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// injectCacheIdIntoRawOutput annotates a raw tool output with a derived cacheId
+// so downstream binding resolution can discover the filtered/derived cache.
+//
+// Red-team FM-3 fix: When filter_where (or any tool) produces output > 12KB,
+// the compactor saves it to a new SQLite cache. Without this injection, downstream
+// nodes resolve bindings against the original (unfiltered) cacheId because the
+// derived cacheId only appears in log lines, not in the stored raw output.
+//
+// Strategy:
+//   - If output is a JSON array: wrap in {"derivedCacheId": "...", "data": [...]}
+//   - If output is a JSON object: add "derivedCacheId" field
+//   - If output is plain text: prepend a metadata line
+func injectCacheIdIntoRawOutput(output string, cacheID string) string {
+	trimmed := strings.TrimSpace(output)
+
+	// JSON array — wrap in an envelope
+	if strings.HasPrefix(trimmed, "[") {
+		return fmt.Sprintf(`{"derivedCacheId":"%s","data":%s}`, cacheID, output)
+	}
+
+	// JSON object — inject field at the start
+	if strings.HasPrefix(trimmed, "{") {
+		return fmt.Sprintf(`{"derivedCacheId":"%s",%s`, cacheID, trimmed[1:])
+	}
+
+	// Plain text — prepend metadata line
+	return fmt.Sprintf("derivedCacheId: %s\n%s", cacheID, output)
 }

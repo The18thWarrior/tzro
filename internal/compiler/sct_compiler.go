@@ -236,34 +236,56 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				}
 
 				if !hasPlannedSynthesisChild {
-					// Inject Recall Node to align discovery findings (ADR-0038)
-					// ADR-0053: Analyze nodes ALWAYS get a Recall Node, even as sole
-					// discovery nodes. Their internal probe synthesis is insufficient
-					// for data analysis results — the Recall Node's Map-Reduce
-					// strategy and downstream terminal_synthesis are required.
-					recallID := node.ID + "_recall"
-					recallThreshold := 0.9
-					if isBenchmark {
-						recallThreshold = 0.0
+					// Check if this is a terminal analyze node (v3 data passthrough).
+					// Analyze nodes with SourceHint="cache" that have NO outgoing edges
+					// are terminal — their data passthrough output IS the answer.
+					// Injecting a Recall node would re-synthesize structured data into
+					// bad prose (FM-21 regression). Skip Recall for these nodes.
+					isTerminalAnalyze := false
+					if node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "cache" {
+						hasOutgoingEdge := false
+						for _, edge := range graph.Edges {
+							if edge.SourceID == node.ID {
+								hasOutgoingEdge = true
+								break
+							}
+						}
+						if !hasOutgoingEdge {
+							isTerminalAnalyze = true
+							fmt.Fprintf(os.Stderr, "[Compiler] Analyze node %s is terminal (no outgoing edges). Skipping Recall injection — data passthrough is the final output.\n", node.ID)
+						}
 					}
-					sctNodes = append(sctNodes, GraphNode{
-						ID:                  recallID,
-						Type:                "recall",
-						Action:              "synthesize",
-						Instructions:        fmt.Sprintf("Traverse the execution history of %s node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.Type, node.ID),
-						Status:              "pending",
-						ActivationThreshold: recallThreshold, // High skepticism for synthesis
-						DynamicBindings:     node.DynamicBindings,
-					})
 
-					// Probe/Analyze -> Recall edge
-					sctEdges = append(sctEdges, GraphEdge{
-						SourceID: node.ID,
-						TargetID: recallID,
-					})
+					if isTerminalAnalyze {
+						// Terminal analyze — no Recall. Map directly.
+						execNodeMap[node.ID] = node.ID
+						bridgeNodeMap[node.ID] = node.ID
+					} else {
+						// Inject Recall Node to align discovery findings (ADR-0038)
+						recallID := node.ID + "_recall"
+						recallThreshold := 0.9
+						if isBenchmark {
+							recallThreshold = 0.0
+						}
+						sctNodes = append(sctNodes, GraphNode{
+							ID:                  recallID,
+							Type:                "recall",
+							Action:              "synthesize",
+							Instructions:        fmt.Sprintf("Traverse the execution history of %s node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.Type, node.ID),
+							Status:              "pending",
+							ActivationThreshold: recallThreshold, // High skepticism for synthesis
+							DynamicBindings:     node.DynamicBindings,
+						})
 
-					execNodeMap[node.ID] = recallID
-					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
+						// Probe/Analyze -> Recall edge
+						sctEdges = append(sctEdges, GraphEdge{
+							SourceID: node.ID,
+							TargetID: recallID,
+						})
+
+						execNodeMap[node.ID] = recallID
+						bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
+					}
 				} else {
 					// Probe has a planned synthesis child — skip Recall injection
 					fmt.Fprintf(os.Stderr, "[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
@@ -345,7 +367,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		sctNodes = append(sctNodes, GraphNode{
 			ID:                  synthID,
 			Type:                "synthesis",
-			Instructions:        "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details.",
+			Instructions:        "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details. You MUST answer using ONLY the data provided in context. Do NOT ask for more information, request clarification, or say you don't have access to data. Produce your best answer from what is available.",
 			Status:              "pending",
 			ActivationThreshold: synthThreshold,
 		})
@@ -786,6 +808,35 @@ func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdge
 
 		sctEdges = newEdges
 		fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-injected analyze node %s for tabular read_file %s\n", analyzeID, origNode.ID)
+	}
+
+	// Red-team FM-10 fix: Convert probe nodes that reference tabular files
+	// directly into analyze nodes. When the planner emits a probe (type: "probe")
+	// instead of an action node for CSV analysis, the task bypasses the structured
+	// query pipeline and falls into generic file exploration where the 4B model fails.
+	// This conversion ensures tabular data always goes through AnalyzePhases.
+	for i, node := range sctNodes {
+		if node.Type != "probe" || node.ProbeConfig == nil {
+			continue
+		}
+		// Check if probe instructions reference a tabular file
+		if !referencesTabularFile(node.Instructions) && !referencesTabularFile(node.ProbeConfig.Goal) {
+			continue
+		}
+		// Skip if already configured as a cache analyze node
+		if node.ProbeConfig.SourceHint == "cache" {
+			continue
+		}
+		// Convert probe → analyze in-place
+		sctNodes[i].Type = "analyze"
+		sctNodes[i].AllowedTools = append([]string{}, cacheTools...)
+		sctNodes[i].ProbeConfig.AllowedTools = append([]string{}, cacheTools...)
+		sctNodes[i].ProbeConfig.SourceHint = "cache"
+		sctNodes[i].ProbeConfig.CompactionLevel = CompactPreserve
+		if sctNodes[i].ProbeConfig.StepBudget < 15 {
+			sctNodes[i].ProbeConfig.StepBudget = 15
+		}
+		fmt.Fprintf(os.Stderr, "[KahnCompiler] Converted probe %s to analyze (tabular file detected in instructions)\n", node.ID)
 	}
 
 	return sctNodes, sctEdges

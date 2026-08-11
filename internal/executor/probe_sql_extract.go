@@ -7,8 +7,10 @@ import "regexp"
 // when the model fails to emit an <ACTION> tag. (ADR-0058)
 var sqlFromCacheRe = regexp.MustCompile(`(?i)(SELECT\s+.+?\s+FROM\s+(cache_\d{10,})(?:\s+(?:WHERE|GROUP|ORDER|LIMIT|HAVING|UNION)[^;]*?)?)(?:;|\n\n|$)`)
 
-// cacheIdRe matches cache table identifiers (cache_ followed by 10+ digits).
-var cacheIdRe = regexp.MustCompile(`cache_\d{10,}`)
+// cacheIdRe matches cache table identifiers:
+//   - Base tables:    cache_<10+ digits>      (e.g., cache_1786399432292925)
+//   - Derived tables: cache_derived_<16 hex>   (e.g., cache_derived_72cdb9d9b681a365)
+var cacheIdRe = regexp.MustCompile(`cache_(?:\d{10,}|derived_[a-f0-9]{16})`)
 
 // extractSQLFromText attempts to find a SQL SELECT statement targeting a
 // cache_* table in the given text. Returns (sql, cacheTable) on match,
@@ -42,9 +44,9 @@ func extractCacheIdFromText(text string) string {
 	return cacheIdRe.FindString(text)
 }
 
-// extractCacheIdsFromContext extracts all distinct cache_\d{10,} identifiers
-// from the upstream context text. Returns a deduplicated slice preserving
-// discovery order.
+// extractCacheIdsFromContext extracts all distinct cache identifiers (both base
+// cache_\d{10,} and derived cache_derived_[hex]{16}) from the upstream context
+// text. Returns a deduplicated slice preserving discovery order.
 func extractCacheIdsFromContext(text string) []string {
 	all := cacheIdRe.FindAllString(text, -1)
 	seen := make(map[string]bool)

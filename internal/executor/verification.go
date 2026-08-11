@@ -86,14 +86,26 @@ func StructuralPreCheck(synthesis string) (result string, reason string) {
 	// The 4B model's instruction-tuning creates a strong prior toward "helpful assistant"
 	// responses. At 4B scale, this prior is stronger relative to the task instruction than
 	// at frontier scale. Detect outputs dominated by meta-response patterns.
-	if metaReason := detectMetaResponse(trimmed); metaReason != "" {
-		return "failed", metaReason
+	// Skip for structured data passthrough (analyze node v3) — raw JSON/tabular
+	// query results would false-positive on meta-response and repetition checks.
+	isStructuredData := strings.Contains(trimmed, "## Query Result") || strings.Contains(trimmed, "## Cache Reference")
+	if !isStructuredData {
+		if metaReason := detectMetaResponse(trimmed); metaReason != "" {
+			return "failed", metaReason
+		}
 	}
 
 	// Check 4: Reuse existing validateSynthesisOutput for meta-commentary,
 	// control token leaks, and repetitive content detection.
-	if validationReason := validateSynthesisOutput(synthesis); validationReason != "" {
-		return "failed", validationReason
+	// Pass isAnalyzeNode for structured data to skip n-gram repetition checks.
+	if isStructuredData {
+		if validationReason := validateSynthesisOutput(synthesis, WithAnalyzeNode()); validationReason != "" {
+			return "failed", validationReason
+		}
+	} else {
+		if validationReason := validateSynthesisOutput(synthesis); validationReason != "" {
+			return "failed", validationReason
+		}
 	}
 
 	return "passed", ""

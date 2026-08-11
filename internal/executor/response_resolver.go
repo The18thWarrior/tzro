@@ -283,3 +283,23 @@ func collectAllKeys(data interface{}, currentPath string, results *[]keyMatch) {
 		}
 	}
 }
+
+// isDerivedCacheBindingKey returns true if the property key is a generic data
+// reference that planners commonly use to bind to upstream tabular data outputs.
+// When these keys have 0 exact matches in the upstream JSON but a derivedCacheId
+// exists, the resolver should use the derivedCacheId instead of falling through
+// to the error-prone semantic fallback.
+//
+// Red-team FM-2 fix: The planner generates bindings like "data": "node.output.content"
+// or "data": "node.output.filtered_data", but tool outputs use keys like "rows",
+// "results", or just raw JSON arrays. The semantic fallback hallucinates garbage
+// for these generic keys. Resolving to the derivedCacheId is deterministic and correct.
+func isDerivedCacheBindingKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "content", "data", "filtered_data", "csv_data", "raw_data",
+		"result", "results", "output", "rows", "records":
+		return true
+	default:
+		return false
+	}
+}

@@ -341,6 +341,22 @@ var internalDashboardTools = map[string]bool{
 	"terminal_synthesis": true,
 }
 
+// internalDataTools are tools internal to AnalyzePhases v2. They must not
+// appear in the local planner's tool inventory — exposing them causes the
+// local model to generate flat DAGs with deterministic exec nodes instead
+// of using the analyze node template (which delegates to AnalyzePhases).
+// introspect_cache stays visible as a classification signal for the
+// data-analysis template. ADR-0074: Structured Query Composition.
+var internalDataTools = map[string]bool{
+	"group_by":        true,
+	"filter_where":    true,
+	"top_n":           true,
+	"count_by":        true,
+	"describe_cache":  true,
+	"sql_cached_data": true,
+	"query_builder":   true,
+}
+
 func collectToolNames() []string {
 	daemons := mcp.GlobalRegistry.GetList()
 	var names []string
@@ -349,6 +365,9 @@ func collectToolNames() []string {
 	}
 	for _, t := range tools.GetList() {
 		if internalDashboardTools[t.Name()] {
+			continue
+		}
+		if internalDataTools[t.Name()] {
 			continue
 		}
 		names = append(names, t.Name())

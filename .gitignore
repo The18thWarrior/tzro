@@ -80,6 +80,7 @@ config.json
 mcp.lock
 .dashboard.lock
 *.db
+.llama-embed.port
 
 models/*
 
