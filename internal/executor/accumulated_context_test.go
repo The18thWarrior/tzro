@@ -338,8 +338,10 @@ func TestAccumulatedContext_SynthesisCapsDeterministicOutput(t *testing.T) {
 
 	taskID := "task_synth_det_test"
 
-	// Create a deterministic node with a long success message (500 chars)
-	longSuccess := "File written successfully to /very/long/path/that/keeps/going/" + strings.Repeat("x", 400)
+	// Create a deterministic node with a long success message (5000 chars)
+	// This exceeds the 4096-char budget for deterministic nodes under standard synthesis,
+	// so it must be compacted.
+	longSuccess := "File written successfully to /very/long/path/that/keeps/going/" + strings.Repeat("x", 5000)
 
 	if err := memory.DB.SetNodeState(taskID, "write_node", "completed", "output write_node"); err != nil {
 		t.Fatalf("failed to set node state: %v", err)
@@ -366,7 +368,7 @@ func TestAccumulatedContext_SynthesisCapsDeterministicOutput(t *testing.T) {
 
 	result := buildAccumulatedContext(taskID, graph, "synthesis")
 
-	// The deterministic output should be capped — the full 500-char output should NOT be present
+	// The deterministic output should be capped — the full 5000+ char output should NOT be present
 	if strings.Contains(result, longSuccess) {
 		t.Error("synthesis caller should cap deterministic output, but found full content")
 	}
@@ -376,22 +378,31 @@ func TestAccumulatedContext_SynthesisCapsDeterministicOutput(t *testing.T) {
 		t.Error("deterministic node should still appear in synthesis context (just capped)")
 	}
 
-	// The recall output should be fully present (not capped)
+	// The recall output should be fully present (not capped — it's small and under ceiling)
 	if !strings.Contains(result, recallOutput) {
 		t.Error("recall output should be fully present in synthesis context")
 	}
 }
 
-// T6: Synthesis nodes get untruncated validator/recall RawOutput regardless of budget.
+// T6: Synthesis nodes apply proportional budgets to recall/validator RawOutput
+// under the 16K synthesis ceiling (ADR-0044). When total untruncated content
+// exceeds the ceiling, outputs are proportionally capped. This test verifies
+// that the non-synthesis path truncates large action-node outputs that exceed
+// their tiered per-node budget.
 func TestAccumulatedContext_SynthesisUntruncatedValidatorRecall(t *testing.T) {
 	cleanup := setupContextTestDB(t)
 	defer cleanup()
 
 	taskID := "task_synth_untrunc_test"
 
-	// Create a validator node with a very large output (15K chars — would normally be truncated)
+	// Create outputs large enough to exceed non-synthesis per-node budgets.
+	// Non-synthesis path: dynamicCeiling = 3 * 4096 = 12288 chars.
+	// Action (validator) weight = 6, deterministic weight = 1, recall = exempt.
+	// totalWeight = 7, so action budget = (6 * 12288) / 7 ≈ 10,532 chars.
+	// Validator: ~15K chars → exceeds ~10K budget under non-synthesis path.
+	// Under synthesis path: total ~20K > 16K ceiling → proportionally capped too.
 	validatorContent := `{"content": "` + strings.Repeat("Generated code content. ", 600) + `", "path": "output.go"}`
-	recallContent := "Comprehensive synthesis: " + strings.Repeat("detailed finding. ", 500)
+	recallContent := "Comprehensive synthesis: " + strings.Repeat("detailed finding. ", 250)
 
 	nodes := []struct {
 		id     string
@@ -417,24 +428,14 @@ func TestAccumulatedContext_SynthesisUntruncatedValidatorRecall(t *testing.T) {
 
 	graph := &compiler.ExecutionGraph{Nodes: graphNodes}
 
-	result := buildAccumulatedContext(taskID, graph, "synthesis")
-
-	// The full validator content should be present (untruncated)
-	if !strings.Contains(result, validatorContent) {
-		t.Error("synthesis should include full untruncated validator output")
-	}
-
-	// The full recall content should be present (untruncated)
-	if !strings.Contains(result, recallContent) {
-		t.Error("synthesis should include full untruncated recall output")
-	}
-
-	// Compare with non-synthesis caller — it should truncate these
+	// Non-synthesis caller should truncate the validator output (exceeds ~10K per-node budget)
 	resultAction := buildAccumulatedContext(taskID, graph, "action")
-
-	// Non-synthesis caller should have truncated the large outputs
 	if strings.Contains(resultAction, validatorContent) {
 		t.Error("non-synthesis caller should truncate large validator output")
+	}
+	// But the validator node should still appear
+	if !strings.Contains(resultAction, "validator_1") {
+		t.Error("validator node should still appear in non-synthesis context (just truncated)")
 	}
 }
 

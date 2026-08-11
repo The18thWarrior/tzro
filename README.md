@@ -170,6 +170,7 @@ tzro exposes its OS capabilities as a lean set of 16 MCP tools over stdio, organ
 | `tzro_query_callgraph` | Traverse AST-extracted symbolic callgraphs, function declarations, callsites, and references |
 | `tzro_status` | Check execution status, node states, and outcomes of a task |
 | `tzro_list_tasks` | List recent tasks, optionally filtered by status |
+| `tzro_cancel` | Cancel a running or queued task |
 | `tzro_resume` | Resume a paused/interrupted workflow task |
 | `tzro_workflow` | Create and execute a pre-defined DAG workflow, bypassing the LLM planner |
 | `tzro_restart` | In-place daemon re-exec restart via `syscall.Exec` |
@@ -207,15 +208,16 @@ For real-time observability, the MCP server exposes two URI templates for push n
 
 ---
 
-## 🆕 v1.0.2 Highlights
+## 🆕 v1.1.0 Highlights
 
-- **Spec Compliance Gate for Codegen (ADR-0061)** — Evaluates generated code against numbered spec requirements post-compilation via local GBNF compliance check, automatically triggering full-implementation code regeneration if requirements are missing.
-- **Symbolic Callgraph Traversal & Search (`tzro_query_callgraph`)** — Replaces legacy repomap utility with AST-driven symbolic callgraph extraction (`internal/symbols/callgraph.go`, `traverse.go`), enabling deep call-site analysis, function declaration lookups, and reference traversal.
-- **Probe Execution Resilience & Exploration Queue (ADR-0058)** — Deduplicated candidate traversal queue (`exploration_queue.go`) and inline SQL query extraction (`probe_sql_extract.go`) to prevent redundant probe loops during codebase exploration.
-- **Tiered Codegen Repair Escalation (ADR-0057)** — Structured repair loops with compilation-gated escalation, providing failure dampening and targeted error prompts for code generation tasks.
-- **Structured Execution Envelopes (ADR-0055)** — Captures and persists execution task metadata, token usage metrics, and node status details across MCP responses (`envelope_extract.go`).
-- **Append-Only Conversation Sliding Window (ADR-0056)** — Optimizes prompt context assembly with an append-only conversation sliding window to maximize KV cache reuse during multi-step probe execution.
-- **Task Cancellation Support** — Enables context-aware task cancellation across API, CLI, and MCP endpoints (`c4e5c3e`).
+- **Verified Task Execution (ADR-0067/0071)** — Two-stage quality gate validates output after terminal synthesis: structural pre-check (Stage 1) + cloud rubric evaluation scoring goal alignment, factual accuracy, coherence, and completeness (Stage 2). Scatter probes fill detected coverage gaps.
+- **Plan Template Registry (ADR-0048)** — GBNF-constrained template classification routes prompts to canonical DAG templates (explore-only, research, data-analysis, multi-tool). The planner mutates templates rather than generating graphs from scratch, reducing hallucinated node types.
+- **Phase Runner (ADR-0073)** — Multi-phase state machine replaces monolithic probe execution. Nodes execute through ordered phases (explore → analyze → synthesize) with per-phase step budgets and recovery strategies (skip/backtrack).
+- **Neural Embedding Sidecar (ADR-0075)** — Dedicated All-MiniLM-L6-v2 llama-server process for embedding generation, independent of router/worker sidecars. Powers neural similarity search for memory, skills, and Graph-RAG.
+- **Two-Pass Tool Extraction (ADR-0064/0065)** — Separates reasoning (worker model, Pass 1) from structured parameter extraction (router model + GBNF, Pass 2), eliminating combined reasoning/extraction failures.
+- **Deterministic Query Path (ADR-0076)** — GBNF-constrained intent extraction maps data-analysis prompts directly to `query_builder`, bypassing stochastic parameter extraction.
+- **MCP UI Frontend** — Real-time task visualization dashboard served from the MCP server, with DAG graph rendering, node-level detail views, and event streaming.
+- **Web Content Extraction** — Structured content extraction from web pages and documentation sources with relevance filtering.
 
 ---
 
