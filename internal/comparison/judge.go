@@ -121,6 +121,30 @@ Respond with ONLY a JSON object in this exact format:
 
 Do NOT wrap the JSON in code fences. Output raw JSON only.`
 
+const researchJudgeSystemPrompt = `You are a research quality evaluator. You will receive a web research synthesis and a quality rubric. Score each criterion on a 1-5 scale:
+  1 = Missing, wrong, or no sources cited
+  2 = Minimal research with unreliable or fabricated sources
+  3 = Adequate research but incomplete coverage or weak sourcing
+  4 = Good research with multiple real sources and solid analysis
+  5 = Excellent, comprehensive research with authoritative sources and insightful synthesis
+
+Pay special attention to:
+- Whether cited URLs appear to be real and relevant (not fabricated)
+- Whether the synthesis goes beyond simply listing search snippets
+- Whether claims are supported by the cited sources
+- Whether the analysis addresses all aspects of the research question
+
+Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
+{
+  "criteria": [
+    {"name": "CriterionName", "score": 4, "reasoning": "Brief explanation"}
+  ],
+  "overallScore": 4.0,
+  "summary": "Brief overall assessment"
+}
+
+Do NOT wrap the JSON in code fences. Output raw JSON only.`
+
 // JudgeSystemPromptForCategory returns the appropriate judge system prompt
 // for the given task category.
 func JudgeSystemPromptForCategory(category string) string {
@@ -129,6 +153,8 @@ func JudgeSystemPromptForCategory(category string) string {
 		return codeJudgeSystemPrompt
 	case CategoryDatanal:
 		return datanalJudgeSystemPrompt
+	case CategoryResearch:
+		return researchJudgeSystemPrompt
 	default:
 		return judgeSystemPrompt
 	}
@@ -164,6 +190,8 @@ func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric Quali
 		contentLabel = "Generated Code"
 	case CategoryDatanal:
 		contentLabel = "Data Analysis Result"
+	case CategoryResearch:
+		contentLabel = "Research Synthesis"
 	default:
 		contentLabel = "Generated Documentation"
 	}

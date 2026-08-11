@@ -387,6 +387,10 @@ func (t *TestSchemaTool) Name() string {
 	return "test_schema_tool"
 }
 
+func (t *TestSchemaTool) Description() string {
+	return ""
+}
+
 func (t *TestSchemaTool) GetSchema() (string, error) {
 	return `{
 		"type": "object",

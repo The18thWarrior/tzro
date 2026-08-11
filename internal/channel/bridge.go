@@ -108,6 +108,12 @@ var chunkTypeMap = map[string]string{
 	"task_failed":    EventTaskFailed,
 	"task_paused":    EventTaskPaused,
 
+	// Intermediate progress (emitted during node execution)
+	"node_state":              EventNodeProgress, // State updates within running nodes (e.g., probe thought chain steps)
+	"tool_execution_failed":   EventNodeProgress, // Tool retry attempts
+	"cache_envelope_created":  EventNodeProgress, // Cache write confirmations
+	"schema_validation_failed": EventNodeProgress, // Schema retry attempts
+
 	// Special events
 	"confidence_insufficient": EventConfidenceEscalation,
 	"edge_thought_generated":  EventEdgeThought,

@@ -49,6 +49,9 @@ helpers/benchmark_results*.json
 # Node (belt-and-suspenders with web/.gitignore)
 node_modules/
 
+# Vite build output (committed artifact is app/progress.html)
+cmd/tzro-mcp/app-src/dist/
+
 # Test / coverage
 coverage/
 
@@ -77,6 +80,7 @@ config.json
 mcp.lock
 .dashboard.lock
 *.db
+.llama-embed.port
 
 models/*
 

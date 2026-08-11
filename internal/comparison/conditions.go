@@ -50,11 +50,14 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		return ComparisonResult{}, err
 	}
 
-	// Save and restore model mode via the global pointer
+	// Save and restore model mode and phase runner config via the global pointer
 	originalModelMode := config.GlobalConfig.ModelMode
+	originalUsePhaseRunner := config.GlobalConfig.UsePhaseRunner
 	config.GlobalConfig.ModelMode = modelMode
+	config.GlobalConfig.UsePhaseRunner = true // Enable Phase Runner for Research/Analyze nodes (FM-3)
 	defer func() {
 		config.GlobalConfig.ModelMode = originalModelMode
+		config.GlobalConfig.UsePhaseRunner = originalUsePhaseRunner
 	}()
 
 	// Isolated database per condition run. Append timestamp to avoid SQLite
@@ -270,12 +273,18 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		fmt.Fprintf(os.Stderr, "[Comparison] Codegen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
 	} else if t.Category == CategoryDocgen {
 		fmt.Fprintf(os.Stderr, "[Comparison] Docgen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
+	} else if t.Category == CategoryResearch {
+		// Research tasks use web_search and web_browse for internet research.
+		// Register these tools so the DAG planner can include them.
+		tools.Register(tools.NewWebSearchTool())
+		tools.Register(tools.NewWebBrowseTool())
+		fmt.Fprintf(os.Stderr, "[Comparison] Research task %s: web_search + web_browse registered\n", t.ID)
 	}
 
 	// Initialize inference backend for Probe Node execution.
 	// Without this, probe nodes fail with "no active inference backend".
 	oldBackend := inference.ActiveBackend
-	inference.ActiveBackend = inference.NewLlamaServerBackend(inference.GlobalLocalModel, telemetry.Default)
+	inference.ActiveBackend = inference.NewBackend(config.GlobalConfig.InferenceBackend, telemetry.Default)
 	defer func() {
 		inference.ActiveBackend = oldBackend
 	}()
@@ -336,6 +345,9 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	} else if t.Category == CategoryDatanal {
 		// For datanal tasks, the CSV file is at helpers/LeadSuccess.csv relative to the project root.
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: The data file is located in the project directory at: %s/helpers/LeadSuccess.csv", taskPrompt, projectRoot)
+	} else if t.Category == CategoryResearch {
+		// For research tasks, instruct the model to use web tools and cite sources.
+		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: You have access to web_search and web_browse tools. Use web_search to find relevant sources, then use web_browse to read full page content from the most promising URLs. Always cite your sources with the actual URLs you visited. Do not fabricate or hallucinate URLs.", taskPrompt)
 	}
 
 	startTime := time.Now()
@@ -611,7 +623,7 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 
 	// Initialize inference backend
 	oldBackend := inference.ActiveBackend
-	inference.ActiveBackend = inference.NewLlamaServerBackend(inference.GlobalLocalModel, telemetry.Default)
+	inference.ActiveBackend = inference.NewBackend(config.GlobalConfig.InferenceBackend, telemetry.Default)
 	defer func() {
 		inference.ActiveBackend = oldBackend
 	}()
@@ -744,6 +756,13 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 		Language:         language,
 		Spec:             spec,
 		AllowCloudRepair: true,
+		TaskTier:         t.Tier,  // ADR-0070: T4+ triggers cloud semantic review
+		AllowCloudReview: true,
+	}
+	// FM-4: Populate OriginalContent for update tasks so the preservation
+	// assertion can detect removed public symbols.
+	if codeCtx != nil && codeCtx.ExistingContent != "" {
+		compilationHook.OriginalContent = codeCtx.ExistingContent
 	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)
@@ -784,13 +803,63 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 		outputText = extractTerminalSynthesis(graph, taskID)
 	}
 
-	// Run compilation gate (informational — logged for benchmark reporting)
+	// Run compilation gate — if it fails and the cloud model hasn't been
+	// used yet, attempt a single cloud repair pass. The in-DAG
+	// CompilationGateHook requires MaxLocalRepairAttempts (2) failures to
+	// escalate, but the codegen DAG only has one reason_code node, so the
+	// hook fires at most once and never reaches the threshold.
 	compResult := codegen.RunCompilationGate(language, targetPath)
 	if !compResult.Pass {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", conditionID, t.ID, compResult.Reason)
+
+		// Post-DAG cloud repair: only if no cloud tokens were used during
+		// the DAG execution (avoids double cloud cost when the hook already
+		// escalated). Uses the same narrow repair payload as the hook.
+		_, currentCloudUsage := tracker.GetUsage()
+		if currentCloudUsage.TotalTokens == 0 {
+			fmt.Fprintf(os.Stderr, "[Comparison] Attempting post-DAG cloud repair for %s/%s\n", conditionID, t.ID)
+
+			originalModelMode := config.GlobalConfig.ModelMode
+			config.GlobalConfig.ModelMode = "cloud"
+
+			moduleCtx := codegen.DiscoverModuleContext(targetPath, language)
+			repairTaskID := fmt.Sprintf("comparison_%s_repair_%s", conditionID, t.ID)
+			repairGraph := codegen.BuildRepairDAG(repairTaskID, outputText, compResult.Reason, spec, language, 500, moduleCtx)
+
+			repairErr := executor.GlobalEngine.ExecuteGraphReactive(ctx, repairGraph)
+			config.GlobalConfig.ModelMode = originalModelMode
+
+			if repairErr == nil {
+				repairedCode := extractLastSourceCodeOutput(repairTaskID, repairGraph)
+				if repairedCode != "" {
+					_, _, writeErr := codegen.WriteCodeFile(targetPath, repairedCode, 500)
+					if writeErr != nil {
+						fmt.Fprintf(os.Stderr, "[Comparison] Repair WriteCodeFile failed: %v\n", writeErr)
+					}
+				}
+
+				// Re-read and re-check compilation
+				if data, readErr := os.ReadFile(targetPath); readErr == nil {
+					outputText = string(data)
+				}
+				recheckResult := codegen.RunCompilationGate(language, targetPath)
+				if recheckResult.Pass {
+					fmt.Fprintf(os.Stderr, "[Comparison] Post-DAG cloud repair RESOLVED compilation for %s/%s\n", conditionID, t.ID)
+				} else {
+					fmt.Fprintf(os.Stderr, "[Comparison] Post-DAG cloud repair did NOT resolve compilation for %s/%s: %s\n",
+						conditionID, t.ID, recheckResult.Reason)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "[Comparison] Post-DAG cloud repair FAILED for %s/%s: %v\n", conditionID, t.ID, repairErr)
+			}
+		}
 	} else {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate PASSED for %s/%s\n", conditionID, t.ID)
 	}
+
+	// Re-read usage after potential cloud repair
+	wallClock = time.Since(startTime).Milliseconds()
+	localUsage, cloudUsage = tracker.GetUsage()
 
 	toolCallCount := countToolCalls(graph, taskID)
 
@@ -838,6 +907,12 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 		Language:         language,
 		Spec:             spec,
 		AllowCloudRepair: true,
+		TaskTier:         t.Tier,  // ADR-0070: T4+ triggers cloud semantic review
+		AllowCloudReview: true,
+	}
+	// FM-4: Populate OriginalContent for update tasks.
+	if codeCtx != nil && codeCtx.ExistingContent != "" {
+		compilationHook.OriginalContent = codeCtx.ExistingContent
 	}
 	executor.GlobalEngine.RegisterHook(compilationHook)
 	defer executor.GlobalEngine.UnregisterHook(compilationHook)

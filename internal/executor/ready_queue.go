@@ -35,13 +35,24 @@ const contextKeyNodeID contextKeyType = "nodeID"
 //
 // The method locks the engine mutex to prevent concurrent graph execution.
 func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compiler.ExecutionGraph) error {
+	// ADR-0063: Background tasks must wait for all foreground activity to clear
+	// before acquiring compute resources. This prevents background work from
+	// competing with foreground tasks for the sidecar inference slot.
+	if !graph.IsForeground {
+		if err := proactivity.WaitForForegroundClear(ctx); err != nil {
+			return fmt.Errorf("background task %s cancelled while waiting for foreground: %w", graph.TaskID, err)
+		}
+	}
+
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
 	// Register as foreground activity so the Sentinel defers its LLM calls
 	// and doesn't compete for the local model during task execution.
-	proactivity.RegisterActiveUserTask(graph.TaskID)
-	defer proactivity.DeregisterActiveUserTask(graph.TaskID)
+	if graph.IsForeground {
+		proactivity.RegisterActiveUserTask(graph.TaskID)
+		defer proactivity.DeregisterActiveUserTask(graph.TaskID)
+	}
 
 	// Pre-task GC: Clear KV cache slots from previous tasks to prevent
 	// memory pressure degradation in sequential runs (e.g., benchmarks).

@@ -19,7 +19,7 @@ type OpenAPITool struct {
 	OperationID   string                 `json:"operationId"`
 	Path          string                 `json:"path"`
 	Method        string                 `json:"method"`
-	Description   string                 `json:"description"`
+	Desc          string                 `json:"description"`
 	BaseURL       string                 `json:"baseUrl"`
 	AuthType      string                 `json:"authType"`
 	AuthKey       string                 `json:"authKey,omitempty"`
@@ -31,6 +31,14 @@ type OpenAPITool struct {
 
 func (t *OpenAPITool) Name() string {
 	return t.OperationID
+}
+
+func (t *OpenAPITool) GetDescription() string {
+	return t.Desc
+}
+
+func (t *OpenAPITool) Description() string {
+	return t.Desc
 }
 
 // GetSchema compiles properties and required elements into a valid, GBNF-wrapped JSON Schema
@@ -303,7 +311,7 @@ func RegisterOpenAPISpec(oi memory.OpenAPIIntegration) error {
 				OperationID:   operationID,
 				Path:          pathStr,
 				Method:        methodClean,
-				Description:   description,
+				Desc:          description,
 				BaseURL:       baseURL,
 				AuthType:      oi.AuthType,
 				AuthKey:       oi.AuthKey,

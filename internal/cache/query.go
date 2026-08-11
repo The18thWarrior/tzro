@@ -30,6 +30,10 @@ const (
 // If the materialized table is missing (TTL'd or post-restart), it
 // attempts lazy re-materialization from the prod DB before failing.
 func ExecuteSQL(ctx context.Context, cacheID, sqlQuery string) (string, error) {
+	// Red-team FM-12 fix: Normalize PostgreSQL dialect to SQLite.
+	// Cloud models (used for validator escalation) often emit PostgreSQL syntax.
+	sqlQuery = normalizeSQLDialect(sqlQuery)
+
 	// Safety Layer 1: statement type check
 	if err := validateStatementType(sqlQuery); err != nil {
 		return "", err
@@ -293,3 +297,32 @@ func readFileAsJSON_bridge(filePath string) string {
 // Remove after all callers migrate to ExecuteSQL.
 var _ = fmt.Sprintf // suppress unused import
 var _ = os.Stderr   // suppress unused import
+
+// normalizeSQLDialect rewrites PostgreSQL-specific syntax to SQLite equivalents.
+// Cloud models (used for validator escalation) often emit PostgreSQL dialect
+// which is incompatible with the SQLite ephemeral query DB.
+//
+// Red-team FM-12 fix.
+func normalizeSQLDialect(sql string) string {
+	// STRING_AGG(expr, sep) → GROUP_CONCAT(expr, sep)
+	stringAggRe := regexp.MustCompile(`(?i)\bSTRING_AGG\s*\(`)
+	sql = stringAggRe.ReplaceAllString(sql, "GROUP_CONCAT(")
+
+	// SQLite quirk: GROUP_CONCAT(DISTINCT col, separator) is invalid —
+	// DISTINCT aggregates accept only one argument. Rewrite to drop the separator.
+	// Match: GROUP_CONCAT(DISTINCT expr, 'sep') → GROUP_CONCAT(DISTINCT expr)
+	distinctSepRe := regexp.MustCompile(`(?i)GROUP_CONCAT\s*\(\s*DISTINCT\s+([^,)]+?)\s*,\s*'[^']*'\s*\)`)
+	sql = distinctSepRe.ReplaceAllString(sql, "GROUP_CONCAT(DISTINCT $1)")
+
+	// ILIKE → LIKE (SQLite LIKE is case-insensitive for ASCII by default)
+	ilikeRe := regexp.MustCompile(`(?i)\bILIKE\b`)
+	sql = ilikeRe.ReplaceAllString(sql, "LIKE")
+
+	// BOOLEAN literals: TRUE/FALSE → 1/0
+	trueRe := regexp.MustCompile(`(?i)\bTRUE\b`)
+	falseRe := regexp.MustCompile(`(?i)\bFALSE\b`)
+	sql = trueRe.ReplaceAllString(sql, "1")
+	sql = falseRe.ReplaceAllString(sql, "0")
+
+	return sql
+}

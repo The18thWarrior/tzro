@@ -19,6 +19,7 @@ import (
 	"tzro/internal/proactivity"
 	"tzro/internal/routing"
 	"tzro/internal/telemetry"
+	"tzro/internal/templates"
 	"tzro/internal/tools"
 )
 
@@ -115,6 +116,9 @@ func Execute(ctx context.Context, prompt string, opts ExecuteOptions) (*compiler
 
 	_ = memory.DB.UpdateTaskStatus(opts.TaskID, "running", "")
 
+	// ADR-0063: Propagate foreground priority to the graph for executor gating
+	graph.IsForeground = opts.IsForeground
+
 	// 2. Kahn topological sorting -> levels
 	levels, err := compiler.CompileAndSort(graph)
 	if err != nil {
@@ -140,6 +144,9 @@ func ExecuteStatic(ctx context.Context, graph *compiler.ExecutionGraph, opts Exe
 		proactivity.RegisterActiveUserTask(opts.TaskID)
 		defer proactivity.DeregisterActiveUserTask(opts.TaskID)
 	}
+
+	// ADR-0063: Propagate foreground priority to the graph for executor gating
+	graph.IsForeground = opts.IsForeground
 
 	levels, err := compiler.CompileAndSort(graph)
 	if err != nil {
@@ -321,6 +328,35 @@ func buildSelfContainedGraph(taskID, prompt string) *compiler.ExecutionGraph {
 }
 
 // collectToolNames gathers all registered tool names from MCP daemons and the global tool registry.
+// internalDashboardTools are tools used exclusively by the hardcoded
+// "generate system dashboard spec" graph (line 168). They must never appear
+// in the planner's tool inventory for user-facing tasks — exposing them
+// causes the local model to misroute code generation to compose_layout.
+var internalDashboardTools = map[string]bool{
+	"compose_layout":     true,
+	"gather_metrics":     true,
+	"gather_tasks":       true,
+	"gather_config":      true,
+	"gather_workflows":   true,
+	"terminal_synthesis": true,
+}
+
+// internalDataTools are tools internal to AnalyzePhases v2. They must not
+// appear in the local planner's tool inventory — exposing them causes the
+// local model to generate flat DAGs with deterministic exec nodes instead
+// of using the analyze node template (which delegates to AnalyzePhases).
+// introspect_cache stays visible as a classification signal for the
+// data-analysis template. ADR-0074: Structured Query Composition.
+var internalDataTools = map[string]bool{
+	"group_by":        true,
+	"filter_where":    true,
+	"top_n":           true,
+	"count_by":        true,
+	"describe_cache":  true,
+	"sql_cached_data": true,
+	"query_builder":   true,
+}
+
 func collectToolNames() []string {
 	daemons := mcp.GlobalRegistry.GetList()
 	var names []string
@@ -328,6 +364,12 @@ func collectToolNames() []string {
 		names = append(names, k)
 	}
 	for _, t := range tools.GetList() {
+		if internalDashboardTools[t.Name()] {
+			continue
+		}
+		if internalDataTools[t.Name()] {
+			continue
+		}
 		names = append(names, t.Name())
 	}
 	return names
@@ -361,10 +403,10 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 	// Ingest globally registered tools (including dynamic benchmark mock tools and standalone tools)
 	for _, t := range tools.GetList() {
 		name := t.Name()
-		if !isBenchmark && name == "list_tools" {
+		if name == "list_tools" {
 			continue
 		}
-		if isBenchmark && name == "list_tools" {
+		if internalDashboardTools[name] {
 			continue
 		}
 
@@ -398,8 +440,30 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 		repoMap = "No repository map available."
 	}
 
-	systemPrompt := fmt.Sprintf(`You are the Strategic Planner (The Strategist) for the tzro agentic engine.
-Your task is to compile a user's natural language request into a Directed Acyclic Graph (DAG) representing an automated workflow execution plan.
+	// --- Plan Template Registry (ADR-0048) ---
+	// 1. Classify the task into a template category via GBNF-constrained inference
+	toolNames := make([]string, 0, len(toolsInfo))
+	for _, t := range tools.GetList() {
+		toolNames = append(toolNames, t.Name())
+	}
+	templateCategory := classifier.ClassifyTemplateCategory(ctx, prompt, toolNames)
+	fmt.Fprintf(os.Stderr, "[Plan Template] classified → %s\n", templateCategory)
+	telemetry.Default.PublishEvent("template_classified", taskID, "",
+		fmt.Sprintf("Category: %s", templateCategory))
+
+	// 2. Hydrate the template
+	tmpl := templates.Get(templateCategory)
+	tmpl.TaskID = taskID
+	tmplJSON, _ := json.MarshalIndent(tmpl, "", "  ")
+
+	// 3. Build compact mutation system prompt (replaces the ~150-line freeform prompt)
+	systemPrompt := fmt.Sprintf(`You are the Strategic Planner for the tzro agentic engine.
+You are editing an existing execution plan template to accomplish the user's specific task.
+
+## Starting Plan Template (category: %s)
+%s
+
+%s
 
 ## Available Tool Inventory:
 %s
@@ -410,88 +474,20 @@ Your task is to compile a user's natural language request into a Directed Acycli
 ## Static Repository Map Scaffolding:
 %s
 
-## Output Schema Constraints:
-You must output a single valid JSON object representing the graph. Do NOT include markdown code fences (e.g. 'json'), HTML wrappers, or conversational pleasantries. Output must be raw JSON only!
+## Your Task
+Modify the starting plan template to accomplish the user's request. You have mutation authority over:
+- Add or remove nodes
+- Change node types, actions, instructions, and allowedTools
+- Add or remove edges (edges control both execution order and data flow between nodes)
+- Modify probeConfig fields (goal, allowedTools, stepBudget, sourceHint)
 
-Target JSON Structure:
-{
-  "taskId": "%s",
-  "maxCycles": 5,
-  "nodes": [
-    {
-      "id": "node_unique_id",
-      "type": "action",
-      "action": "target_tool_name_from_inventory",
-      "instructions": "Extremely detailed step instructions with static values from the user prompt. Do NOT bake in values that come from upstream tool outputs.",
-      "dynamicBindings": {"param_from_upstream": "upstream_node_id.output.property_name"},
-      "allowedTools": ["target_tool_name_from_inventory"],
-      "suggestedSkillIds": ["suggested_skill_id_from_sop_index"],
-      "status": "pending",
-      "activationThreshold": 0.7
-    },
-    {
-      "id": "probe_unique_id",
-      "type": "probe",
-      "action": "",
-      "instructions": "Detailed exploration objective describing what to discover and what output to produce",
-      "allowedTools": ["read_file", "list_dir", "search_files"],
-      "status": "pending",
-      "probeConfig": {
-        "goal": "Detailed exploration objective describing what to discover and what output to produce",
-        "allowedTools": ["read_file", "list_dir", "search_files"],
-        "stepBudget": 20,
-        "compactEvery": 3
-      }
-    }
-  ],
-  "edges": [
-    { "sourceId": "node_source_id", "targetId": "node_target_id" }
-  ]
-}
+Do NOT add \"dynamicBindings\" — data flow between nodes is handled automatically by the execution engine based on edge topology.
 
-### Schema Details:
-1. "type": Must be one of "action", "conditional", "loop", "probe", or "analyze".
-2. "action": The target tool name from inventory. For probe and analyze nodes, set this field to an empty string "".
-3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action", "analyze", or other type nodes, omit this field entirely.
-4. "instructions": Provide natural language goals or variables to read/write.
-5. "activationThreshold": Sufficiency gate threshold (0.0 - 1.0) to enable Edge Thoughts and neural traversal for incoming edges. Defaults to 0.7 for action nodes in codegen tasks, 0.0 (disabled) otherwise.
-
-### Probe Node Guidance:
-When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
-
-### Analyze Node Guidance:
-When the request involves analyzing, aggregating, filtering, counting, grouping, ranking, or summarizing data from a file or upstream data source, you MUST emit a node of type "analyze" instead of guessing tool names for data operations. The analyze node runs an internal data exploration loop and handles data access automatically. Set the "instructions" field to describe the analysis goal in natural language (e.g., "Count leads by country, return top 5 sorted by count"). Do NOT specify allowedTools or probeConfig for analyze nodes — the execution engine provisions them automatically. For analyze tasks that require reading a file first, plan an upstream action node with read_file, then an analyze node downstream.
-
-## Design Rules:
-1. Strategy only: You NEVER execute tools yourself. Plan the steps logically.
-2. Data flow: For parameters whose values come from an upstream tool's response, declare them in 'dynamicBindings' as {"param_name": "upstream_node_id.output.property_name"}. These are resolved at execution time. Do NOT write upstream output values into the 'instructions' field — they are not available at planning time.
-3. allowedTools limit: Restrict the local worker's action space at each node. Only include the 1-2 tools absolutely necessary.
-4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
-5. Probe vs. Action vs. Analyze routing: If the task requires reactive exploration, use a probe node. If the task requires data analysis/aggregation/filtering, use an analyze node. If the exact tool parameters are known upfront, use an action node.
-6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
-7. EXPLORATION ROUTING RULE (CRITICAL): For tasks involving codebase exploration, directory traversal, file reading, documentation generation, code indexing, architecture analysis, or ANY task where the next step depends on what was just discovered, you MUST emit a SINGLE probe node. Action nodes are too rigid for exploration and will fail. Any plan that decomposes documentation or indexing into multiple action nodes is WRONG.
-8. TOOL CONFORMANCE (CRITICAL): You MUST only reference tools from the Available Tool Inventory above. Do NOT invent, hallucinate, or guess tool names that are not listed. If you need to analyze data, use an analyze node. If you are unsure whether a tool exists, use a probe or analyze node instead of guessing tool names. Any plan referencing non-existent tools will be rejected.
-9. PROBE-FIRST POLICY (LATENCY OPTIMIZATION): You are provided with only a SHALLOW directory tree. If the user request references specific files, functions, or deep paths not visible in the shallow map, you MUST plan a "probe" node to discover the exact paths rather than guessing them.
-
-### Code Generation Rules (ADR-0035, ADR-0057):
-When the task involves generating or modifying ACTUAL SOURCE CODE files (.go, .ts, .py, etc.):
-1. You MUST emit an action node that calls the "tzro_code" tool with the "spec" (what to generate) and "filepath" (absolute path to the target file). The tzro_code tool handles compilation gates, repair loops, context gathering, and file writing automatically.
-2. Do NOT set "outputFormat": "source_code" on raw action nodes. Do NOT try to generate code directly through action nodes with write_file. Always delegate code generation to tzro_code.
-3. If the codegen task requires reading existing files for context first, plan an upstream probe node with allowedTools ["read_file", "list_dir", "search_files"], then a downstream action node calling tzro_code with dynamicBindings to pass discovered context into the spec.
-4. Do NOT emit type "probe" for code generation tasks (writing .go/.ts/.py files). Use action nodes calling tzro_code.
-5. For tasks that modify an existing file, set "mode": "diff" in the tzro_code arguments. For new files, omit mode or set "mode": "full".
-
-### Documentation & Exploration Rules (CategoryDocgen):
-When the task involves generating documentation, function indexes, architecture summaries, or analyzing the codebase without writing implementation code:
-1. By default, you MUST use a SINGLE node of type "probe".
-2. If the task explicitly requires saving the generated documentation to a file (e.g., using write_file), you MUST use a 2-node graph:
-   - Node 1: type "probe" (allowedTools: ["read_file", "list_dir", "search_files"]) to explore the codebase and synthesize the documentation.
-   - Node 2: type "action", action "write_file" (allowedTools: ["write_file"]), with dynamicBindings binding "content" to "explore_node_id.output.synthesis".
-   - Do NOT use a type "action" node with read_file for exploration. Exploration MUST be done by a probe node.
-3. Documentation tasks are NOT code generation tasks. Do NOT apply the Code Generation Rules (ADR-0035) to documentation tasks.
-4. A probe node's internal Thought Chain is the most efficient way to index a codebase for documentation.
-5. Do NOT set "outputFormat": "source_code" for documentation output.
-6. If you decompose a docgen/exploration task into multiple action nodes (other than the final write_file node), the plan will be REJECTED because action nodes cannot see intermediate exploration results and will guess file paths incorrectly.`, toolsListStr, skillsListStr, repoMap, taskID)
+Output the COMPLETE modified JSON graph. Do NOT include markdown code fences, HTML, or conversational text. Output raw JSON only.
+The output must be a valid JSON object with "taskId", "maxCycles", "nodes", and "edges" fields.`,
+		templateCategory, string(tmplJSON),
+		templates.NodeTypeReferenceCard,
+		toolsListStr, skillsListStr, repoMap)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")
 
@@ -502,27 +498,23 @@ When the task involves generating documentation, function indexes, architecture 
 You are compiling a DAG workflow execution graph for the tzro_dag benchmark evaluation.
 To satisfy evaluation matching:
 1. Plan one node per tool call in the user's request. Each node must use exactly one tool from the available inventory.
-2. Write DETAILED natural language instructions for each node that include EVERY static parameter value from the user's prompt — names, IDs, codes, amounts, dates, email addresses, types, and all other entity references. NEVER omit a static value. Example: "Initiate a background check for candidate Mao Zedong (ID: CAND-ID-11153) and capture the status and background check code".
-3. For parameters whose value comes from an upstream tool's RESPONSE (e.g. employee_email, customer_id, contract_id returned by a prior tool call), declare them in "dynamicBindings" as {"param_name": "node_id.output.field_name"}. Do NOT write these values into the instructions — they are unknown at planning time. Example: {"dynamicBindings": {"customer_id": "node_1.output.customer_id"}}.
-4. Ensure edges form a valid DAG representing BOTH data dependencies AND procedural ordering between nodes. When the user's request describes steps in a specific sequence (e.g., 'verify payment first, then create the lead'), emit edges that enforce that order even when no dynamicBinding connects the nodes. If step A must logically complete before step B begins (e.g., checking bank records before generating a receipt, looking up a supplier before generating a purchase order), you MUST emit an edge from A to B.
-5. Keep node IDs sequential (node_1, node_2, ...). The execution node for node_X is always node_X_exec (the engine appends _exec automatically for SCT expansion).
-6. CRITICAL SEQUENCE CONSTRAINT: When the user prompt contains ordering language like "first", "before", "then", "after", "once ... is done", or "verify ... before ...", the FIRST action in the user's described sequence MUST be node_1 with no inbound edges. Subsequent steps MUST have edges from their prerequisites. Example: if the user says "Verify payment first, then create the lead, then send email", the correct plan is:
-   - node_1: crm.check_payment (runs first, no inbound edges)
-   - node_2: crm.create_lead (edge: node_1 → node_2)
-   - node_3: email.send_welcome (edge: node_2 → node_3)
-   WRONG: Emitting crm.create_lead as node_1 when the user says "verify payment first" violates the sequence constraint and WILL fail evaluation.
+2. Write DETAILED natural language instructions for each node that include EVERY static parameter value from the user's prompt — names, IDs, codes, amounts, dates, email addresses, types, and all other entity references. NEVER omit a static value.
+3. For parameters whose value comes from an upstream tool's RESPONSE, declare them in "dynamicBindings" as {"param_name": "node_id.output.field_name"}. Do NOT write these values into the instructions.
+4. Ensure edges form a valid DAG representing BOTH data dependencies AND procedural ordering between nodes.
+5. Keep node IDs sequential (node_1, node_2, ...).
+6. CRITICAL SEQUENCE CONSTRAINT: When the user prompt contains ordering language like "first", "before", "then", "after", "once ... is done", the FIRST action in the user's described sequence MUST be node_1 with no inbound edges. Subsequent steps MUST have edges from their prerequisites.
 `
 	} else if isBenchmark {
 		systemPrompt += `
 
 ## BENCHMARK MODE ACTIVE (CRITICAL COMPLIANCE):
-You are compiling a graph inside a standardized Berkeley Function Calling Leaderboard (BFCL) single-turn or multi-turn simulation turn.
+You are compiling a graph inside a standardized Berkeley Function Calling Leaderboard (BFCL) simulation turn.
 To satisfy evaluation matching:
-1. You may compile a graph containing multiple sequential nodes (up to 10 nodes) representing the full workflow required for this turn (e.g. including any intermediate file moving, copying, or finding steps needed to execute the user's request).
-2. Set the "instructions" field of each node to contain ONLY the raw target parameter value (e.g. the filename "final_report.pdf", "log.txt", the search keyword "budget analysis", or the exact tweet/comment content) and absolutely no other text, sentences, explanations, or paths. If the request is a general directory listing or command, pass the user's message itself as the instructions.
+1. Compile a graph containing multiple sequential nodes (up to 10 nodes) representing the full workflow.
+2. Set the "instructions" field of each node to contain ONLY the raw target parameter value and absolutely no other text.
 3. Ensure that all node actions are selected from the available tool list that matches the user's core intent.
-4. If the user request is missing required parameters necessary to invoke the relevant tools (for example, attempting to book a flight, authenticate, or buy insurance without providing required tokens, dates, locations, or account details), you MUST check if those parameters are available in the CONVERSATIONAL DIALOGUE HISTORY or RAG context below. If they are present in the history or context, you MUST inherit and reuse them to plan the nodes. However, if the required parameters are completely missing from BOTH the current prompt and the session history/context, or if the request is purely conversational or asking a question with no actionable intent, you MUST NOT plan any nodes. Instead, compile an empty graph (i.e. set "nodes": [] and "edges": []) to signal that a conversational response / clarification request is required before execution can proceed.
-5. For parallel tool executions (e.g., executing the same tool for multiple different numbers, locations, files, or parameters in parallel), you MUST partition the parameters and write ONLY the specific single target value corresponding to that node into its "instructions" field (e.g., if finding factorials of 5, 10, and 15, node_1 instructions must be "5", node_2 must be "10", and node_3 must be "15"). NEVER copy the original multi-item user prompt into the instructions of all nodes, as this causes redundant concurrent executions.
+4. If the user request is missing required parameters, check the CONVERSATIONAL DIALOGUE HISTORY or RAG context below. If required parameters are completely missing, compile an empty graph ("nodes": [], "edges": []).
+5. For parallel tool executions, partition the parameters and write ONLY the specific single target value into each node's instructions.
 `
 	}
 
@@ -537,7 +529,7 @@ To satisfy evaluation matching:
 		systemPrompt += "\n\n" + ragCtx
 	}
 
-	userPrompt := fmt.Sprintf("Create an automation workflow execution graph for: '%s'", prompt)
+	userPrompt := fmt.Sprintf("Modify the plan template to accomplish: '%s'", prompt)
 
 	res, err := inference.ActiveBackend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, "")
 	if err != nil {
@@ -557,6 +549,18 @@ To satisfy evaluation matching:
 	if graph.MaxCycles == 0 {
 		graph.MaxCycles = 5
 	}
+
+	// Fix 2: Post-mutation binding validation — repair any DynamicBindings
+	// that reference node IDs the local model hallucinated or renamed.
+	repairDynamicBindings(&graph, tmpl)
+
+	// Telemetry: track mutation delta (ADR-0048)
+	templateNodeCount := len(tmpl.Nodes)
+	mutatedNodeCount := len(graph.Nodes)
+	telemetry.Default.PublishEvent("template_mutation_complete", taskID, "",
+		fmt.Sprintf("Category: %s, Template nodes: %d, Mutated nodes: %d, Delta: %+d",
+			templateCategory, templateNodeCount, mutatedNodeCount, mutatedNodeCount-templateNodeCount))
+
 	return &graph, nil
 }
 
@@ -572,10 +576,10 @@ func planWithCloud(ctx context.Context, taskID, prompt, intentType string) (*com
 	// Ingest globally registered tools (including dynamic benchmark mock tools and standalone tools)
 	for _, t := range tools.GetList() {
 		name := t.Name()
-		if !isBenchmark && name == "list_tools" {
+		if name == "list_tools" {
 			continue
 		}
-		if isBenchmark && name == "list_tools" {
+		if internalDashboardTools[name] {
 			continue
 		}
 
@@ -771,4 +775,107 @@ func cleanJSONString(s string) string {
 		s = strings.TrimSpace(s)
 	}
 	return s
+}
+
+// repairDynamicBindings validates that every DynamicBindings reference in the
+// mutated graph points to an actual node ID. When the local model renames
+// template nodes (e.g. "explore" → "explore_cache_source") the bindings
+// silently break because they still reference the old or hallucinated IDs.
+//
+// Repair strategy:
+//  1. Build a set of valid node IDs from the mutated graph.
+//  2. For each binding reference, check if the source node exists.
+//  3. If not, try prefix-matching against existing nodes.
+//  4. If that fails, fall back to the corresponding template binding.
+//  5. Log all repairs so we can track mutation quality.
+func repairDynamicBindings(graph *compiler.ExecutionGraph, tmpl *compiler.ExecutionGraph) {
+	if graph == nil {
+		return
+	}
+
+	// Build lookup of valid node IDs in the mutated graph
+	validIDs := make(map[string]bool, len(graph.Nodes))
+	for _, n := range graph.Nodes {
+		validIDs[n.ID] = true
+	}
+
+	// Build template binding map: nodeID → paramName → bindingPath
+	tmplBindings := make(map[string]map[string]string)
+	if tmpl != nil {
+		for _, n := range tmpl.Nodes {
+			if len(n.DynamicBindings) > 0 {
+				m := make(map[string]string)
+				for k, v := range n.DynamicBindings {
+					if s, ok := v.(string); ok {
+						m[k] = s
+					}
+				}
+				tmplBindings[n.ID] = m
+			}
+		}
+	}
+
+	for i := range graph.Nodes {
+		node := &graph.Nodes[i]
+		if len(node.DynamicBindings) == 0 {
+			continue
+		}
+
+		for paramName, rawBinding := range node.DynamicBindings {
+			bindStr, ok := rawBinding.(string)
+			if !ok {
+				continue
+			}
+
+			parts := strings.SplitN(bindStr, ".", 3)
+			if len(parts) < 3 {
+				continue // Not a standard nodeId.output.property format
+			}
+
+			sourceID := parts[0]
+			if validIDs[sourceID] {
+				continue // Binding is valid
+			}
+
+			// Source node doesn't exist — attempt repair
+			repaired := false
+
+			// Strategy 1: Prefix match against existing nodes
+			for existingID := range validIDs {
+				if strings.HasPrefix(existingID, sourceID) || strings.HasPrefix(sourceID, existingID) {
+					newBinding := existingID + "." + parts[1] + "." + parts[2]
+					node.DynamicBindings[paramName] = newBinding
+					fmt.Fprintf(os.Stderr, "[BindingRepair] Repaired '%s' binding '%s': %q → %q (prefix match)\n",
+						node.ID, paramName, bindStr, newBinding)
+					repaired = true
+					break
+				}
+			}
+
+			if repaired {
+				continue
+			}
+
+			// Strategy 2: Fall back to corresponding template binding
+			// Find the template node that this mutated node corresponds to
+			// by matching position or checking template bindings for the same param
+			for _, tmplMap := range tmplBindings {
+				if tmplBinding, ok := tmplMap[paramName]; ok {
+					tmplParts := strings.SplitN(tmplBinding, ".", 3)
+					if len(tmplParts) >= 3 && validIDs[tmplParts[0]] {
+						node.DynamicBindings[paramName] = tmplBinding
+						fmt.Fprintf(os.Stderr, "[BindingRepair] Repaired '%s' binding '%s': %q → %q (template fallback)\n",
+							node.ID, paramName, bindStr, tmplBinding)
+						repaired = true
+						break
+					}
+				}
+			}
+
+			if !repaired {
+				fmt.Fprintf(os.Stderr, "[BindingRepair] WARNING: Could not repair '%s' binding '%s': %q (no matching node found)\n",
+					node.ID, paramName, bindStr)
+			}
+		}
+	}
 }

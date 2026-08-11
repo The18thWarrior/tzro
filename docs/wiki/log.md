@@ -2,6 +2,153 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-07T12:25:00-07:00] grill-with-docs | Plan Template Registry Design (ADR-0048 updated)
+
+- **Activity**: Grill-with-docs session stress-testing the Plan Template Registry handoff against the domain model, codebase, and existing ADRs. 10 design questions resolved covering insertion point, storage format, classification mechanism, mutation authority, structural invariants, prompt mechanics, escape hatch, template categories, and benchmark interaction.
+- **Key Findings**:
+  1. **Templates are a local-planner-only concern.** The cloud planner retains full freeform graph generation. Templates are a cognitive scaffold for the 4B model, not a universal planning abstraction.
+  2. **The compiler stays template-unaware.** Template selection happens at the routing/planning boundary, before `ExpandToSCTGraph`. The registry is consumed by `planWithBackend`, not by the Kahn Compiler.
+  3. **Full mutation authority.** The local model can modify nodes, edges, tools, everything. The existing validation pipeline (`findInvalidTools`, `CompileAndSort`, `repairGraphWithProbe`, cloud escalation) enforces all necessary structural invariants post-mutation.
+  4. **Recall Nodes are NOT in templates.** Templates are Abstract Graphs (pre-compilation input). The Kahn Compiler auto-injects Recall Nodes — including them in templates would cause duplicates.
+  5. **`data-analysis` template uses `analyze` type, not `probe(cache)`.** The glossary explicitly distinguishes Analyze Nodes from Probe Nodes.
+  6. **No `freeform` escape category.** If GBNF classification picks the wrong template, cloud fallback via `PlanWithEscalation` is the implicit escape hatch.
+  7. **System prompt drops from ~150 lines to ~50.** Template JSON replaces the verbose schema documentation. A compact Node Type Reference Card lists all available node types.
+  8. **Templates apply universally, including benchmarks.** `action-chain` template added for multi-step tool workflows.
+- **Resolved terms**: Updated **Strategic Planner** (edit-not-create scoped to local Strategist only) and **Plan Template Registry** (8 categories, GBNF classification, Go struct storage, local-only scope) in CONTEXT.md.
+- **Decisions**:
+  - Go structs in `internal/templates/` for storage
+  - GBNF-constrained LLM classification on router model for template selection
+  - Full JSON round-trip for mutation (model receives + outputs complete graph)
+  - 8 templates: `explore-only`, `explore-and-write`, `research`, `research-and-write`, `data-analysis`, `multi-probe-synthesis`, `codegen`, `action-chain`
+  - Implicit cloud fallback as escape hatch (no `freeform` category)
+  - Existing validation pipeline sufficient for invariant enforcement
+- **ADR updated**: [ADR-0048](../adr/0048-plan-template-selection-and-mutation.md) — rewritten with all session decisions
+- **CONTEXT.md updated**: Strategic Planner, Plan Template Registry entries
+
+## [2026-08-07T10:47:00-07:00] grill-with-docs | Mandatory Recall Injection for Single-Probe DAGs (ADR-0072)
+
+
+- **Activity**: Grill-with-docs session stress-testing the "Synthesis Retry Path for Guard-Aborted Output" handoff against the domain model and codebase. 6 design questions resolved covering DAG shape validity, planner behavior, Recall injection policy, terminal synthesis interaction, and option evaluation.
+- **Key Findings**:
+  1. **`probe → write_file` without Recall is a planning defect, not a valid DAG shape.** The Kahn Compiler intentionally skipped Recall injection for `discoveryNodesCount <= 1`, but this created a VTE verification gap. CONTEXT.md already defined Recall as "injected automatically after a Probe Node" — the code didn't match the definition.
+  2. **Local planner uses `write_file` as a terminal crutch.** Research task prompts don't request files on disk. The 4B planner's schema examples show no probe-only terminal pattern, so it invents `write_file` action nodes as the only way to express "produce output."
+  3. **Options A (abort retry) and B (cloud escalation) from the handoff are unnecessary.** The structural fix (always inject Recall) routes all probe output through VTE, which already handles guard aborts via Structural Pre-Check + Cloud Re-Synthesis.
+  4. **The Recall Node is correctly detected as a synthesis leaf** for single-probe DAGs via `isSynthesisGoal()` matching "synthesize" + `!isSourceMap` (no outgoing edges). No terminal_synthesis injection needed.
+  5. **Multi-probe DAGs are unaffected.** Recall Nodes in multi-probe DAGs have outgoing edges (wired to terminal_synthesis), so they're in `isSourceMap` and don't trigger the synthesis-leaf detection.
+  6. **Guard abort during action node Pass 2 GBNF refinement is deferred.** Different concern (parameter extraction, not synthesis), Recall Node can't address it, rare occurrence.
+- **Resolved terms**: No new CONTEXT.md terms needed — existing definitions already describe the correct behavior.
+- **Decisions**:
+  - Always inject Recall Node for single-probe DAGs (ADR-0072)
+  - Plan Templates are the companion fix (separate session) — prevents wrong DAG shapes at the source
+  - Recall is terminal output only for single-probe DAGs; multi-probe DAGs still use terminal_synthesis consolidation
+- **ADR created**: [ADR-0072](../adr/0072-mandatory-recall-injection-for-single-probe-dags.md)
+- **Wiki index updated**: Added ADR-0072 entry
+
+## [2026-08-06T21:40:00-07:00] grill-with-docs | Pre-Flight Validation and 4B Failure Mode Mitigations (ADR-0071)
+
+
+- **Activity**: Grill-with-docs session stress-testing 6 implemented failure mode mitigations against the domain model. 8 design questions resolved covering terminology, blocking semantics, wiring decisions, latency bounds, and the Item-Level Scatter architecture.
+- **Key Findings**:
+  1. **Pre-Flight Validation** is a new layer wrapping Structural Pre-Check — not a replacement. Keeps Structural Pre-Check's definition tight.
+  2. **Coverage verification is advisory-only** — the cloud Verification Gate's `completeness` score owns judgment. Hardcoding a 30% threshold at the local layer risks false positives on semantic coverage.
+  3. **Assistant prefilling infrastructure is complete but unwired** — choosing effective prefixes per task type requires empirical benchmark validation. On the roadmap.
+  4. **Schema enrichment is wired** into `enrichCacheBridgeContext` — Analyze Nodes automatically receive column statistics.
+  5. **Content validation bounded to 2s** via context deadline — prevents worst-case latency from slow URLs on the VTE hot path.
+  6. **Item-Level Scatter is reactive, not proactive** — the planner cannot predict coverage failures ahead of time. CheckCoverage detects missing items, MutationBudget spawns targeted follow-up Probes.
+  7. **Item-Level Scatter ≠ MapReduceSynthesis** — different scope (DAG nodes vs. within-node), different split axis (goal items vs. content chunks), different assembly (deterministic concat vs. LLM reduce).
+  8. **Two meta-pattern detectors remain separate** — `validateSynthesisOutput` (single-hit) and `detectMetaResponse` (ratio-based) use genuinely different threshold strategies.
+- **Resolved terms**: Added "Pre-Flight Validation" and "Item-Level Scatter" to CONTEXT.md. Updated "Structural Pre-Check" and "MapReduceSynthesis" avoid-lists.
+- **Decisions**:
+  - Pre-Flight Validation is Stage 2 of VTE (wraps Structural Pre-Check + coverage + content)
+  - Coverage and content issues are advisory, not blocking
+  - Schema enrichment wired into cache bridge; assistant prefilling deferred to roadmap
+  - Item-Level Scatter uses reactive MutationBudget spawning, not plan-time decomposition
+- **ADR**: [ADR-0071: Pre-Flight Validation and 4B Failure Mode Mitigations](../adr/0071-pre-flight-validation-and-4b-failure-mode-mitigations.md)
+
+## [2026-08-05T20:25:00-07:00] grill-with-docs | Benchmark Run 17 Remediation (ADR-0068, ADR-0069, ADR-0070)
+
+- **Activity**: Grill-with-docs session stress-testing proposed fixes for 6 benchmark failures. 9 design questions resolved across 3 failure clusters, re-organized during the session from 3 clusters into 2+1.
+- **Key Findings**:
+  1. **Re-clustering**: `lead_target_account_analysis` was originally classified as a SQL failure but is actually a content fidelity loss problem — the CSV data was resolved to the word "Content" via semantic fallback. 3 of 6 failures share content loss as root cause.
+  2. **Passing Salesforce tasks prove the model can generate SQL**: `lead_lookup_by_company` (5.0) and `lead_sector_breakdown` (4.0) used the same pipeline successfully. The 2 premature synthesis failures are a gating problem, not a model capability problem.
+  3. **No sandbox**: Rejected unit test generation + execution sandbox for codegen validation — adds a failure surface disproportionate to the edge case.
+- **Resolved terms**: Added "Required Tool Dispatch" to CONTEXT.md. Updated "Proactive Binding Splice" to include `plain_text_fallback` as splice-eligible.
+- **Decisions**:
+  - `RequiredToolDispatch` field on `ProbeConfig` — deterministic gate, not LLM judgment
+  - `plain_text_fallback` splice scoped by source node type (probe/recall/synthesis), not action allowlist
+  - No size guard on splice — `write_file` has no length limit
+  - T4+ codegen cloud review with full regeneration on rejection (Option A, not surgical correction)
+- **ADRs created**:
+  - [ADR-0068: Required Tool Dispatch Gate](../adr/0068-required-tool-dispatch-gate.md)
+  - [ADR-0069: Plain-Text Fallback Splice](../adr/0069-plain-text-fallback-splice.md)
+  - [ADR-0070: Verified Codegen T4+](../adr/0070-verified-codegen-t4-plus.md)
+- **Files changed**: `CONTEXT.md`, `docs/adr/0068-*`, `docs/adr/0069-*`, `docs/adr/0070-*`
+
+---
+
+## [2026-08-04T23:59:00-07:00] wayfinder | Reliability Hardening (Research-Validated)
+
+- **Activity**: Charted a wayfinder map for reliability hardening based on a structured research investigation of all failure modes across 13+ benchmark runs. Research validated every observed failure as well-characterized in the literature.
+- **Map**: [.scratch/reliability-hardening/MAP.md](../../.scratch/reliability-hardening/MAP.md)
+- **Research source**: Research Findings report (conversation 97df0125)
+- **Key Findings**:
+  1. **Every failure mode is typical**: Text degeneration, synthesis leak, hallucination, codegen compilation, data retrieval, context pollution, GBNF truncation — all well-characterized for 4B-class models.
+  2. **Problems are systems engineering, not model capability**: The 4B model can produce 5.0 quality — the problem is variance, not a ceiling.
+  3. **Guardrail Paradox**: 9 accumulated compensatory mechanisms are adding failure surfaces faster than closing them. VTE as a single verification gate replaces 5-6 narrow heuristics.
+- **Tickets**: 11 tickets (01–11), 3 Tier 1 (temperature gap, compression detection, VTE always-on), 6 Tier 2 (Analyze Node enforcement, compound tools, extractive pipeline, error pruning, output prefix, StringCoercion fix), 2 checkpoints.
+- **Frontier**: Tickets 01-09 are unblocked and ready-for-agent. Tickets 10-11 are blocked by their prerequisites.
+
+---
+
+## [2026-08-03T20:25:00-07:00] grill-with-docs | Probe Pass 1 Worker Routing (ADR-0065)
+
+- **Activity**: Grill-with-docs session analyzing router/worker task breakdown, triggered by benchmark results-research-10 showing catastrophic probe navigation failure. 7 design questions resolved.
+- **Key Findings**:
+  1. **1B router cannot navigate probe steps**: Across 5 research tasks, the router signaled "synthesize" at every step, produced 0 successful tool calls through 8-step probes, and all synthesis outputs were repetitive or hallucinatory.
+  2. **Three failure modes identified**: (a) premature synthesis / navigation collapse, (b) Pass 2 GBNF extraction truncation at 512 tokens, (c) synthesis degeneration from the 4B worker.
+  3. **CONTEXT.md was stale**: Glossary described Pass 1 on worker, but code had it on router. Now corrected to match new design.
+- **Resolved terms**: Updated "Thought Chain" in CONTEXT.md to describe schema-based model routing (ADR-0065).
+- **Decisions**:
+  - Pass 1 (unconstrained reasoning) → worker model for navigation quality
+  - Pass 2 (GBNF extraction) → stays on router for speed
+  - Schema-based routing in `DefaultProbeInference`: empty schema → worker, non-empty → router
+  - Pass 2 token cap increased 512 → 1024 to prevent JSON truncation
+  - Hardcoded (no config knob) — benchmark evidence is conclusive
+- **ADR created**: [ADR-0065: Probe Pass 1 Worker Routing](../adr/0065-probe-pass1-worker-routing.md)
+- **Files changed**: `internal/executor/probe.go`, `internal/executor/two_pass.go`, `CONTEXT.md`
+
+---
+
+## [2026-07-31T18:46:00-07:00] wayfinder | MCP Subscriptions Upgrade (Go SDK v1.6.1 → v1.7.0)
+
+- **Activity**: Charted a wayfinder map for upgrading the MCP server to support the 2026-07-28 `subscriptions/listen` protocol pattern. Goal: real-time execution visibility for IDE agents without `tzro_status` polling.
+- **Key Findings**:
+  1. **SDK v1.7.0 is backward compatible**: `SubscribeHandler`, `UnsubscribeHandler`, and `server.ResourceUpdated()` all work unchanged. The SDK handles `subscriptions/listen` protocol internally.
+  2. **Full protocol migration**: v1.7.0 replaces `initialize` with `server/discover`, removes `resources/subscribe`/`resources/unsubscribe` on 2026-07-28 revision, removes `ping` and `logging/setLevel`. SDK auto-negotiates version.
+  3. **Data-bearing notifications are the key design question**: `ResourceUpdated()` only sends URI pings. Rich inline payloads need a different mechanism — custom notification methods, extended params, or enriched `resources/read` responses.
+- **Map**: `.scratch/mcp-subscriptions-upgrade/MAP.md`
+- **Frontier tickets**: 5 tickets created (01 resolved, 02-05 open). Research ticket 01 completed.
+- **Relates to**: ADR-0017 (MCP Resource Subscriptions), ADR-0009 (StreamBus)
+
+---
+
+## [2026-07-31T10:53:00-07:00] grill-with-docs | Two-Pass Extraction, Recall Compaction, and Recall Inversion (ADR-0064)
+
+- **Activity**: Grill-with-docs session stress-testing 3 interconnected fixes to Probe and Recall execution quality, motivated by DAG shape analysis of benchmark runs 3–5 (research category). 13 design questions resolved. Produced ADR-0064.
+- **Key Findings**:
+  1. **Two-Pass Tool Extraction**: Thought Chain steps always generate free-text reasoning (Pass 1, worker) then GBNF-constrained action extraction (Pass 2, router). Eliminates the dual-path `<ACTION>` tag parsing / GBNF rescue fallback. GBNF pass uses targeted extraction (when `<ACTION>` tags exist) or full reasoning output. Schema: `{"action": "tool_call" | "synthesize", "tool": string, "arguments": object}`.
+  2. **Content-Aware Recall Compaction**: Recall fallback uses existing Compactor segmentation with new router LLM summarization for text segments ("fact-extraction" prompt). Code → skeleton, tabular → sample rows, text → bulleted facts. Analyze Node evidence exempt. Budget: 32K chars default, configurable. Failure cascade: router fact-extraction → `TruncateTextMiddleOut` → hard truncation.
+  3. **Recall Loop Inversion**: Deterministic compaction builds baseline `refinedContext` before agentic loop. Model cooperation is additive, not required. Role shifts from "Map-Reduce discovery" to "Refinement Pass." Two-pass pattern applied to Recall loop's `fetch_details`/`update_refined_context` tools.
+- **Design Decisions**:
+  - Always run GBNF pass, even when `<ACTION>` tags are valid (validation layer, ~1-2s overhead acceptable)
+  - Router summarization over hard truncation for text tool outputs (preserves information density)
+  - LLM summarization surface scoped to web/text content only; "code is never LLM-compressed" invariant preserved
+  - One ADR covering all 3 fixes (interconnected, same root cause)
+- **Docs Updated**: CONTEXT.md (Recall Node → Refinement Pass, Thought Chain → Two-Pass, Structured Compactor → Fact Extraction surface). ADR-0064 created.
+- **Supersedes**: GBNF Rescue fallback (ADR-0058 Mechanism C), Map-Reduce Recall terminology (ADR-0037).
+
+---
+
 ## [2026-07-28T22:15:00-07:00] tdd | Implement Run 6 Benchmark Fixes (ADR-0060, ADR-0061)
 
 - **Activity**: TDD implementation of 3 fixes designed during prior grill-with-docs session. 16 vertical test slices, all GREEN. Full regression (38 packages) clean.
@@ -1828,3 +1975,30 @@ Chronological append-only record of wiki operations and major agent engineering 
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
 
+
+## 2026-08-04 — Verified Task Execution & Context Pruning Wayfinder
+
+**Effort**: [VTE + Context Pruning Scoping](.scratch/vte-context-pruning/MAP.md)
+**Status**: Charted — research fired, 2 tickets on frontier
+
+Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and a new Deterministic Context Pruning idea are one unified feature or two independent features. VTE design spec is complete (pending approval). Context pruning was triggered by recurring `TOOL_ERROR` patterns (hallucinated cache IDs) poisoning downstream Accumulated Context.
+
+**Tickets**:
+- [Poisoned context taxonomy](.scratch/vte-context-pruning/issues/01-poisoned-context-taxonomy.md) (research, AFK, delegated to tzro_run)
+- [Intervention points vs VTE](.scratch/vte-context-pruning/issues/02-intervention-points-vs-vte.md) (grilling, HITL)
+- [Unified or independent?](.scratch/vte-context-pruning/issues/03-unified-or-independent.md) (grilling, HITL, blocked by 01+02)
+
+**Key artifacts**:
+- ADR: [0067-verified-task-execution](docs/adr/0067-verified-task-execution.md)
+- Design spec: [VTE design](docs/superpowers/specs/2026-08-04-verified-task-execution-design.md)
+- CONTEXT.md: 7 new terms added (Verified Task Execution, Verification Gate, Structural Pre-Check, Cloud Re-Synthesis, Verification Rubric, Verdict, updated Confidence Tier + Execution Envelope)
+
+
+## 2026-08-04 — Context Pruning: Root Cause Found
+
+**Finding**: The hallucinated cache ID `cache_1784607195509971000` (15 occurrences across benchmark runs) is **not a model hallucination** — it is a hardcoded example in the Analyze Node system prompt (`probe.go:1775`) that the 4B model copies verbatim when no real cache IDs are available from upstream context.
+
+**Fix**: Conditionally emit cache tool few-shot examples only when real cache IDs are extracted from upstream context. When no cache data exists, show generic ACTION format without cache-specific examples. Removed all instances of the hardcoded ID from runtime code paths.
+
+**Modified files**:
+- [MODIFY] [probe.go](internal/executor/probe.go) — conditional few-shot, generic fallback, updated cacheId handling guidance

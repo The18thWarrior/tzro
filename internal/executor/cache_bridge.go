@@ -55,6 +55,28 @@ Example SQL patterns:
 Schema introspection result:
 %s`, match, match, match, match, match, match, schema)
 
+	// FM2: Append per-column enrichment (cardinality, non-null counts, top values)
+	// from the ephemeral query DB. Helps the 4B model understand data distribution
+	// before writing queries — prevents wrong column references and lazy LIMIT queries.
+	if qdb := cache.QueryDB(); qdb != nil {
+		if columnEnrichments, err := cache.EnrichSchema(qdb, match); err == nil && len(columnEnrichments) > 0 {
+			enrichment += "\n\n## COLUMN STATISTICS\n"
+			for _, col := range columnEnrichments {
+				enrichment += fmt.Sprintf("- **%s** (%s): %d rows, %d non-null, %d unique values",
+					col.ColumnName, col.DataType, col.TotalCount, col.NonNullCount, col.Cardinality)
+				if len(col.TopValues) > 0 {
+					topStrs := make([]string, 0, len(col.TopValues))
+					for _, tv := range col.TopValues {
+						topStrs = append(topStrs, fmt.Sprintf("%q (%d)", tv.Value, tv.Count))
+					}
+					enrichment += fmt.Sprintf(" | Top: %s", strings.Join(topStrs, ", "))
+				}
+				enrichment += "\n"
+			}
+			fmt.Fprintf(os.Stderr, "[Executor] Enriched cache bridge with column statistics for %s (%d columns)\n", match, len(columnEnrichments))
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "[Executor] Enriched cache bridge context with introspect_cache for %s\n", match)
 	return accumulatedCtx + enrichment
 }
@@ -102,7 +124,7 @@ func (e *ExecutionEngine) maybeInjectCacheBridge(
 		Action: "sql_cached_data",
 		Instructions: "Query the cached tabular data from the upstream node's Data Profile. " +
 			"Use the cacheId from the upstream output. " +
-			"Execute: SELECT * FROM cache_<id> LIMIT 100 to return a representative sample.",
+			"Execute: SELECT * FROM cache_<id> LIMIT 5 to return a representative sample.",
 		AllowedTools:        cacheToolNames,
 		Status:              "pending",
 		ActivationThreshold: 0.0,

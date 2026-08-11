@@ -187,18 +187,88 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 	if isSynthesis {
 		// Synthesis path (ADR-0044 Mechanism A):
 		// - Validator (action nodes with _validator suffix or any action) and recall nodes: untruncated
-		// - Deterministic nodes: capped at 256 chars
+		// - Deterministic nodes: capped at 256 chars (when recall/probe nodes exist)
 		// - No global ceiling
-		for i, cn := range completed {
+		//
+		// Flat-DAG detection: when no recall or probe nodes completed, the
+		// deterministic exec nodes ARE the primary data carriers (e.g., web_browse
+		// results). Capping them at 256 chars destroys the research data before
+		// synthesis ever sees it. In this case, give exec nodes a proportional
+		// budget based on their output size within a shared ceiling.
+		hasRecallOrProbe := false
+		for _, cn := range completed {
 			ntype := nodeTypeMap[cn.nodeID]
-			switch ntype {
-			case "recall":
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // untruncated
-			case "deterministic":
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, 256}
-			default:
-				// action, probe, synthesis, etc. — untruncated for synthesis caller
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+			if ntype == "recall" || ntype == "probe" || ntype == "analyze" {
+				hasRecallOrProbe = true
+				break
+			}
+		}
+
+		if !hasRecallOrProbe {
+			// Flat DAG: proportional budgets for deterministic exec nodes.
+			// Ceiling: min(nodeCount * 4096, 32000) — same formula as standard path.
+			flatCeiling := len(completed) * 4096
+			if flatCeiling > 32000 {
+				flatCeiling = 32000
+			}
+			// Sum total output size of deterministic nodes for proportional split
+			totalDetSize := 0
+			for _, cn := range completed {
+				if nodeTypeMap[cn.nodeID] == "deterministic" {
+					totalDetSize += len(cn.output)
+				}
+			}
+			for i, cn := range completed {
+				ntype := nodeTypeMap[cn.nodeID]
+				switch ntype {
+				case "deterministic":
+					if totalDetSize > 0 {
+						proportional := (len(cn.output) * flatCeiling) / totalDetSize
+						if proportional < 512 {
+							proportional = 512 // floor: enough for meaningful content
+						}
+						budgeted[i] = budgetEntry{cn.nodeID, cn.output, proportional}
+					} else {
+						budgeted[i] = budgetEntry{cn.nodeID, cn.output, 256}
+					}
+				default:
+					// action, recall, probe, synthesis — untruncated
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				}
+			}
+		} else {
+			// Standard synthesis: recall/probe nodes carry the data;
+			// exec nodes are passthrough and can be aggressively compacted.
+			// ADR-0044: Apply a global synthesis ceiling to prevent 4B model
+			// degeneration. Without this, multiple untruncated recall nodes
+			// can accumulate 17K+ chars, consistently triggering GenerationGuard.
+			const synthesisCeiling = 16000
+			totalUntruncated := 0
+			for i, cn := range completed {
+				ntype := nodeTypeMap[cn.nodeID]
+				switch ntype {
+				case "recall":
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // mark for now
+					totalUntruncated += len(cn.output)
+				case "deterministic":
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, 4096} // 4096 preserves filter_where results (FM-13: 1024 was over-compacting lookup answers)
+				default:
+					// action, probe, synthesis, etc.
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+					totalUntruncated += len(cn.output)
+				}
+			}
+			// If total untruncated content exceeds ceiling, proportionally cap each
+			if totalUntruncated > synthesisCeiling {
+				for i := range budgeted {
+					if budgeted[i].budget == -1 && len(budgeted[i].output) > 0 {
+						proportional := (len(budgeted[i].output) * synthesisCeiling) / totalUntruncated
+						if proportional < 512 {
+							proportional = 512
+						}
+						budgeted[i].budget = proportional
+					}
+				}
 			}
 		}
 	} else {
@@ -263,6 +333,15 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		}
 
 		for i, cn := range completed {
+			// Recall nodes carry the primary data for downstream consumers.
+			// Never compact them — same treatment as the synthesis path (line 245).
+			// Without this, CompactContent can misclassify recall output as code
+			// and strip it to 0 chars via ExtractSkeleton.
+			ntype := nodeTypeMap[cn.nodeID]
+			if ntype == "recall" {
+				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				continue
+			}
 			// Exempt data-profile exec nodes from compaction — the cacheId
 			// and dataProfile envelope ARE the data. Compacting them severs
 			// the sql_cached_data pipeline for downstream analyze Probe nodes.
@@ -273,9 +352,19 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			// Exempt nodes explicitly referenced by downstream DynamicBindings.
 			// Their output is the data source for a downstream node's parameter
 			// extraction — compacting it destroys the data pipeline.
+			// Red-team FM-11 fix: Cap exemption at 16KB. Outputs larger than
+			// this (e.g., filter_where returning 139 rows × 22 columns = 95KB)
+			// overflow the 32K token context window. The response resolver can
+			// use derived cache IDs for very large outputs.
 			if bindingExempt[cn.nodeID] {
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
-				fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Exempting node %s from compaction — referenced by downstream DynamicBinding\n", cn.nodeID)
+				const maxExemptChars = 16384
+				if len(cn.output) <= maxExemptChars {
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+					fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Exempting node %s from compaction — referenced by downstream DynamicBinding\n", cn.nodeID)
+				} else {
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, maxExemptChars}
+					fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Capping DynamicBinding-exempt node %s at %d chars (output: %d chars)\n", cn.nodeID, maxExemptChars, len(cn.output))
+				}
 				continue
 			}
 			perNodeBudget := (nodeWeights[i] * dynamicCeiling) / totalWeight

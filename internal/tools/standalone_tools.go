@@ -27,6 +27,10 @@ func (b *BaseAgentTool) Name() string {
 	return b.name
 }
 
+func (b *BaseAgentTool) Description() string {
+	return b.description
+}
+
 func (b *BaseAgentTool) GetSchema() (string, error) {
 	return b.schema, nil
 }
@@ -53,6 +57,15 @@ func (b *BaseAgentTool) Call(ctx context.Context, args map[string]interface{}) (
 		return string(b), nil
 	}
 
+	// Store Extracted content on the context-based side-channel before
+	// serialization drops it (json:"-"). The probe loop reads this via
+	// ExtractedFromCtx() after Call returns.
+	if res.Extracted != nil {
+		if holder := extractedHolderFromCtx(ctx); holder != nil {
+			holder.Content = res.Extracted
+		}
+	}
+
 	resBytes, err := json.Marshal(res)
 	if err != nil {
 		return "", err
@@ -65,6 +78,10 @@ type ListToolsTool struct{}
 
 func (l *ListToolsTool) Name() string {
 	return "list_tools"
+}
+
+func (l *ListToolsTool) Description() string {
+	return "Introspect the available tools in the registry."
 }
 
 func (l *ListToolsTool) GetSchema() (string, error) {
@@ -244,11 +261,13 @@ func NewWebSearchTool() *BaseAgentTool {
 				})
 			}
 
+			// Success-path hint: guide the probe to browse relevant results
+			hint := fmt.Sprintf("Found %d results — use web_browse to read the most relevant URLs for details.", len(resultMaps))
 			return ToolSuccess(map[string]interface{}{
 				"results": resultMaps,
 				"query":   in.Query,
 				"source":  source,
-			}), nil
+			}, WithHint(hint)), nil
 		},
 	}
 }
@@ -1289,6 +1308,9 @@ func NewQueryTool() *BaseAgentTool {
 					}
 					resultList = append(resultList, rowMap)
 				}
+			}
+			if err := rows.Err(); err != nil {
+				return ToolError("rows iteration error: " + err.Error()), nil
 			}
 
 			return ToolSuccess(resultList), nil

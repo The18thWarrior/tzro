@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"tzro/internal/content"
 )
 
 // ToolResultMeta holds execution metadata appended to every tool result.
@@ -22,26 +24,31 @@ type ToolResult struct {
 	Hint         string          `json:"hint,omitempty"`         // what the agent should try next
 	RelatedTools []string        `json:"relatedTools,omitempty"` // alternative tools to try
 	Meta         *ToolResultMeta `json:"_meta,omitempty"`
+
+	// Extracted carries rich content (text + images) from format-specific extractors.
+	// Side-channel for the probe loop — never serialized to JSON. When set, the probe
+	// uses this instead of the raw Data field to construct step messages.
+	Extracted *content.ExtractedContent `json:"-"`
 }
 
 type ExecuteFn func(ctx context.Context, input json.RawMessage) (*ToolResult, error)
 
-type ErrorOption func(*ToolResult)
+type ResultOption func(*ToolResult)
 
-func WithHint(hint string) ErrorOption {
+func WithHint(hint string) ResultOption {
 	return func(r *ToolResult) {
 		r.Hint = hint
 	}
 }
 
-func WithRelatedTools(tools ...string) ErrorOption {
+func WithRelatedTools(tools ...string) ResultOption {
 	return func(r *ToolResult) {
 		r.RelatedTools = tools
 	}
 }
 
 // ToolError creates a standardised error result with navigational hints.
-func ToolError(msg string, opts ...ErrorOption) *ToolResult {
+func ToolError(msg string, opts ...ResultOption) *ToolResult {
 	r := &ToolResult{Success: false, Error: msg}
 	for _, opt := range opts {
 		opt(r)
@@ -49,9 +56,13 @@ func ToolError(msg string, opts ...ErrorOption) *ToolResult {
 	return r
 }
 
-// ToolSuccess creates a standardised success result.
-func ToolSuccess(data interface{}) *ToolResult {
-	return &ToolResult{Success: true, Data: data}
+// ToolSuccess creates a standardised success result with optional hints.
+func ToolSuccess(data interface{}, opts ...ResultOption) *ToolResult {
+	r := &ToolResult{Success: true, Data: data}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 // WithToolMeta wraps an Execute function to inject timing metadata.
@@ -79,3 +90,38 @@ func WithToolMeta(toolName string, fn ExecuteFn) ExecuteFn {
 		return result, nil
 	}
 }
+
+// --- Extracted Content Side-Channel ---
+//
+// The Extracted field on ToolResult is json:"-", so it gets dropped during
+// serialization in BaseAgentTool.Call(). This context-based side-channel
+// lets the probe loop retrieve the Extracted content after Call returns.
+
+type extractedCtxKey struct{}
+
+// ExtractedHolder is a mutable container placed on the context.
+// BaseAgentTool.Call sets it; the probe loop reads it.
+type ExtractedHolder struct {
+	Content *content.ExtractedContent
+}
+
+// NewExtractedCtx returns a context with an empty ExtractedHolder.
+// Call this before tools.Call() to enable the side-channel.
+func NewExtractedCtx(ctx context.Context) (context.Context, *ExtractedHolder) {
+	holder := &ExtractedHolder{}
+	return context.WithValue(ctx, extractedCtxKey{}, holder), holder
+}
+
+// ExtractedFromCtx retrieves the ExtractedHolder from a context, or nil.
+func ExtractedFromCtx(ctx context.Context) *ExtractedHolder {
+	return extractedHolderFromCtx(ctx)
+}
+
+// extractedHolderFromCtx is the internal accessor used by BaseAgentTool.Call.
+func extractedHolderFromCtx(ctx context.Context) *ExtractedHolder {
+	if holder, ok := ctx.Value(extractedCtxKey{}).(*ExtractedHolder); ok {
+		return holder
+	}
+	return nil
+}
+

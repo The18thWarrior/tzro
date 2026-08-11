@@ -17,6 +17,7 @@ import (
 // Tool represents a single tool definition that can be dynamically resolved and executed.
 type Tool interface {
 	Name() string
+	Description() string
 	GetSchema() (string, error)
 	Call(ctx context.Context, args map[string]interface{}) (string, error)
 }
@@ -66,6 +67,7 @@ type ClientToolAdapter struct {
 }
 
 func (c *ClientToolAdapter) Name() string               { return c.NameVal }
+func (c *ClientToolAdapter) Description() string         { return c.DescriptionVal }
 func (c *ClientToolAdapter) GetSchema() (string, error) { return c.SchemaVal, nil }
 func (c *ClientToolAdapter) Call(ctx context.Context, args map[string]interface{}) (string, error) {
 	return "", fmt.Errorf("client-side tool '%s' must be executed by client", c.NameVal)
@@ -155,6 +157,10 @@ func (m *MCPToolAdapter) Name() string {
 	return m.name
 }
 
+func (m *MCPToolAdapter) Description() string {
+	return m.description
+}
+
 func (m *MCPToolAdapter) GetSchema() (string, error) {
 	return mcp.GetGBNFSchema(m.inputSchema)
 }
@@ -210,6 +216,10 @@ func (f *FunctionTool) Name() string {
 	return f.NameVal
 }
 
+func (f *FunctionTool) Description() string {
+	return ""
+}
+
 func (f *FunctionTool) GetSchema() (string, error) {
 	return f.SchemaVal, nil
 }
@@ -234,6 +244,7 @@ func Init(configPath string) error {
 
 	Register(&ListToolsTool{})
 	Register(NewWebSearchTool())
+	Register(NewWebBrowseTool())
 	Register(NewSearchKBTool())
 	Register(NewQueryKGTool())
 	Register(NewIngestKGTool())
@@ -307,6 +318,15 @@ func Init(configPath string) error {
 			return cache.ExecuteSQL(ctx, cacheID, sqlQuery)
 		},
 	})
+
+	// Register compound data tools (count_by, group_by, filter_where, top_n, describe_cache)
+	// These translate structured parameters to SQL, eliminating syntax errors from the 4B model.
+	RegisterCompoundDataTools()
+
+	// Register query_builder composite tool (ADR-0074: Structured Query Composition)
+	// Accepts composable operations (filter, group_by, aggregate, order_by, select) and
+	// deterministically assembles SQL. Used internally by AnalyzePhases v2.
+	Register(NewQueryBuilderTool())
 
 	// 2. Load static schemas from config file (fallback or preloaded tools)
 	if configPath != "" {

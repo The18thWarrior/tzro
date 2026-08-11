@@ -20,6 +20,7 @@ const (
 	EventNodeCompleted        = "node_completed"
 	EventNodeFailed           = "node_failed"
 	EventNodeSkipped          = "node_skipped"
+	EventNodeProgress         = "node_progress" // Intermediate progress update within a node
 	EventEdgeThought          = "edge_thought"
 	EventConfidenceEscalation = "confidence_escalation"
 	EventMutationSpawned      = "mutation_spawned"

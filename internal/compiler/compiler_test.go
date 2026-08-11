@@ -221,3 +221,387 @@ func TestComputeTimeBudget_UnknownType(t *testing.T) {
 		t.Errorf("expected %s for unknown type, got %s", expected, budget)
 	}
 }
+
+func TestLooksLikeResearchNode(t *testing.T) {
+	tests := []struct {
+		instructions string
+		want         bool
+	}{
+		{"Search the web for the latest AI orchestration frameworks", true},
+		{"Use web_search to find authoritative sources on Go CVEs", true},
+		{"Browse the official documentation and extract pricing info", true},
+		{"Find sources discussing GGUF quantization techniques online", true},
+		{"Search for market trends in local-first inference on the internet", true},
+		{"Read the codebase and summarize the architecture", false},
+		{"Explore the directory structure and list all Go files", false},
+		{"Analyze the CSV data and compute averages", false},
+		{"Write a function that calculates compound interest", false},
+	}
+
+	for _, tt := range tests {
+		got := looksLikeResearchNode(tt.instructions)
+		if got != tt.want {
+			preview := tt.instructions
+			if len(preview) > 50 {
+				preview = preview[:50]
+			}
+			t.Errorf("looksLikeResearchNode(%q) = %v, want %v", preview, got, tt.want)
+		}
+	}
+}
+
+func TestHasWebToolsInAllowed(t *testing.T) {
+	if !hasWebToolsInAllowed([]string{"read_file", "web_search"}) {
+		t.Error("should detect web_search")
+	}
+	if !hasWebToolsInAllowed([]string{"web_browse", "list_dir"}) {
+		t.Error("should detect web_browse")
+	}
+	if hasWebToolsInAllowed([]string{"read_file", "list_dir", "search_files"}) {
+		t.Error("should not match codebase tools")
+	}
+	if hasWebToolsInAllowed([]string{}) {
+		t.Error("should not match empty list")
+	}
+}
+
+func TestResearchToolPropagation_InjectsWebTools(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_research_propagation",
+		Nodes: []GraphNode{
+			{
+				ID:           "search_frameworks",
+				Type:         "probe",
+				Instructions: "Search the web for the top 3 LLM orchestration frameworks and find authoritative sources.",
+				AllowedTools: []string{"read_file", "list_dir"}, // Planner forgot web tools
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Search the web for LLM frameworks",
+					AllowedTools: []string{"read_file", "list_dir"},
+					StepBudget:   15,
+					CompactEvery: 3,
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Find the probe node in the expanded graph
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "search_frameworks" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found in expanded graph")
+	}
+
+	// Verify web tools were injected into AllowedTools
+	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("expected web tools in AllowedTools, got: %v", probeNode.AllowedTools)
+	}
+
+	// Verify web tools were injected into ProbeConfig.AllowedTools
+	if probeNode.ProbeConfig == nil {
+		t.Fatal("ProbeConfig should not be nil")
+	}
+	if !hasWebToolsInAllowed(probeNode.ProbeConfig.AllowedTools) {
+		t.Errorf("expected web tools in ProbeConfig.AllowedTools, got: %v", probeNode.ProbeConfig.AllowedTools)
+	}
+}
+
+func TestResearchToolPropagation_DoesNotInjectForCodebaseProbe(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_no_research_propagation",
+		Nodes: []GraphNode{
+			{
+				ID:           "explore_codebase",
+				Type:         "probe",
+				Instructions: "Read the codebase and explain the architecture of the executor package.",
+				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Explore the executor package",
+					AllowedTools: []string{"read_file", "list_dir", "search_files"},
+					StepBudget:   20,
+					CompactEvery: 3,
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "explore_codebase" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Should NOT have web tools injected
+	if hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("web tools should NOT be injected for codebase exploration, got: %v", probeNode.AllowedTools)
+	}
+}
+
+func TestResearchToolPropagation_NoDoubleInjection(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_no_double_injection",
+		Nodes: []GraphNode{
+			{
+				ID:           "search_node",
+				Type:         "probe",
+				Instructions: "Search the web for Go security vulnerabilities",
+				AllowedTools: []string{"web_search", "web_browse"}, // Already has web tools
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Search for Go CVEs",
+					AllowedTools: []string{"web_search", "web_browse"},
+					StepBudget:   15,
+					CompactEvery: 3,
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "search_node" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Count web_search occurrences — should be exactly 1 (no double injection)
+	count := 0
+	for _, tool := range probeNode.AllowedTools {
+		if tool == "web_search" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 web_search in AllowedTools, got %d (tools: %v)", count, probeNode.AllowedTools)
+	}
+}
+
+func TestSourceHint_WebInjectsTools(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_source_hint_web",
+		Nodes: []GraphNode{
+			{
+				ID:           "web_research",
+				Type:         "probe",
+				Instructions: "Research AI frameworks", // Generic — no web keywords
+				AllowedTools: []string{"read_file"},    // No web tools
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Research AI frameworks",
+					AllowedTools: []string{"read_file"},
+					StepBudget:   15,
+					CompactEvery: 3,
+					SourceHint:   "web", // Declarative web hint
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "web_research" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// SourceHint=web should inject web tools even without research keywords
+	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("expected web tools from SourceHint=web, got: %v", probeNode.AllowedTools)
+	}
+	if !hasWebToolsInAllowed(probeNode.ProbeConfig.AllowedTools) {
+		t.Errorf("expected web tools in ProbeConfig.AllowedTools from SourceHint=web, got: %v", probeNode.ProbeConfig.AllowedTools)
+	}
+}
+
+func TestSourceHint_FilesystemDefault(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_source_hint_filesystem",
+		Nodes: []GraphNode{
+			{
+				ID:           "explore_code",
+				Type:         "probe",
+				Instructions: "Explore the project structure",
+				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Explore the project",
+					AllowedTools: []string{"read_file", "list_dir", "search_files"},
+					StepBudget:   20,
+					CompactEvery: 3,
+					SourceHint:   "filesystem", // Explicit filesystem hint
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "explore_code" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Filesystem hint should NOT inject web tools
+	if hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("filesystem SourceHint should NOT inject web tools, got: %v", probeNode.AllowedTools)
+	}
+}
+
+func TestSourceHint_EmptyFallsBackToHeuristic(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_source_hint_empty",
+		Nodes: []GraphNode{
+			{
+				ID:           "search_implicit",
+				Type:         "probe",
+				Instructions: "Search the web for Go security best practices and find authoritative sources",
+				AllowedTools: []string{"read_file"},
+				ProbeConfig: &ProbeConfig{
+					Goal:         "Search for security best practices",
+					AllowedTools: []string{"read_file"},
+					StepBudget:   15,
+					CompactEvery: 3,
+					// No SourceHint — should fall back to heuristic
+				},
+			},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	var probeNode *GraphNode
+	for i, node := range expanded.Nodes {
+		if node.ID == "search_implicit" {
+			probeNode = &expanded.Nodes[i]
+			break
+		}
+	}
+	if probeNode == nil {
+		t.Fatal("probe node not found")
+	}
+
+	// Without SourceHint, the heuristic should still detect research intent
+	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
+		t.Errorf("expected heuristic fallback to inject web tools, got: %v", probeNode.AllowedTools)
+	}
+}
+
+func TestExpandToSCTGraph_SingleProbe_InjectsRecall(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "single_probe_recall",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore the codebase"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	hasRecall := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "p1_recall" {
+			hasRecall = true
+			if n.Type != "recall" {
+				t.Errorf("expected p1_recall type=recall, got %s", n.Type)
+			}
+		}
+	}
+	if !hasRecall {
+		t.Error("expected p1_recall to be injected for single-probe DAG (ADR-0072)")
+	}
+
+	// Recall should be the terminal output — no terminal_synthesis injected
+	hasTerminal := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "terminal_synthesis" {
+			hasTerminal = true
+		}
+	}
+	if hasTerminal {
+		t.Error("expected no terminal_synthesis — Recall Node is the terminal output for single-probe DAGs")
+	}
+}
+
+func TestExpandToSCTGraph_SingleProbeWithAction_RecallIsNotTerminal(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "probe_plus_action",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore the codebase"},
+			{ID: "a1", Type: "action", Action: "write_file", Instructions: "Save results"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "p1", TargetID: "a1"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	hasRecall := false
+	hasTerminal := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "p1_recall" {
+			hasRecall = true
+		}
+		if n.ID == "terminal_synthesis" {
+			hasTerminal = true
+		}
+	}
+	if !hasRecall {
+		t.Error("expected p1_recall to be injected")
+	}
+	if !hasTerminal {
+		t.Error("expected terminal_synthesis when Recall has downstream action nodes")
+	}
+}
+

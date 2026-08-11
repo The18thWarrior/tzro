@@ -215,6 +215,40 @@ func TestConfig_AccumulatedContextMaxCharsExplicit(t *testing.T) {
 	}
 }
 
+func TestConfig_RecallCompactionBudgetCharsDefault(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.RecallCompactionBudgetChars
+	GlobalConfig.RecallCompactionBudgetChars = 0
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.RecallCompactionBudgetChars = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetRecallCompactionBudgetChars()
+	if got != 32000 {
+		t.Errorf("expected default 32000, got %d", got)
+	}
+}
+
+func TestConfig_RecallCompactionBudgetCharsExplicit(t *testing.T) {
+	configMutex.Lock()
+	saved := GlobalConfig.RecallCompactionBudgetChars
+	GlobalConfig.RecallCompactionBudgetChars = 48000
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		GlobalConfig.RecallCompactionBudgetChars = saved
+		configMutex.Unlock()
+	}()
+
+	got := GetRecallCompactionBudgetChars()
+	if got != 48000 {
+		t.Errorf("expected 48000, got %d", got)
+	}
+}
+
 func TestConfig_RouterModelPath_PersistsToConfig(t *testing.T) {
 	// Create an isolated config file
 	tempDir, err := os.MkdirTemp("", "tzro-config-router-*")

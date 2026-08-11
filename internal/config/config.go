@@ -85,6 +85,19 @@ type EngineConfig struct {
 	// Empty = single-sidecar mode (existing behavior).
 	RouterModelPath string `json:"routerModelPath,omitempty"`
 
+	// Embedding sidecar: Optional GGUF model path for the embedding sidecar.
+	// When empty, auto-downloads All-MiniLM-L6-v2-Q8 (~23MB) on first use.
+	// The embedding sidecar runs a dedicated llama-server with --embedding
+	// for neural vector embeddings used by memory search, skill matching,
+	// and schema-aware column selection (ADR-0075).
+	EmbeddingModelPath string `json:"embeddingModelPath,omitempty"`
+
+	// Column scoring threshold for embedding-based select column resolution
+	// in AnalyzePhases. Columns with cosine similarity to the goal text above
+	// this threshold are included in the query_builder SELECT clause.
+	// Default 0.3. Range [0.0, 1.0].
+	ColumnScoreThreshold float64 `json:"columnScoreThreshold,omitempty"`
+
 	// Thinking Budget: Maximum reasoning tokens when thinking mode is active
 	// (unconstrained inference passes only — GBNF-constrained calls always
 	// disable thinking). Default 750. Set to 0 to use the default.
@@ -103,6 +116,18 @@ type EngineConfig struct {
 	// output stays in SQLite). Default 16000. Set to 0 to use the default.
 	AccumulatedContextMaxChars int `json:"accumulatedContextMaxChars,omitempty"`
 
+	// RecallCompactionBudgetChars caps the total characters of compacted
+	// ThoughtStep tool outputs in the Recall Node Refinement Pass (ADR-0064).
+	// The Recall baseline context is compacted to fit within this budget.
+	// Default 32000. Set to 0 to use the default.
+	RecallCompactionBudgetChars int `json:"recallCompactionBudgetChars,omitempty"`
+
+	// HybridSynthesisThresholdChars is the context size (in chars) above which
+	// synthesis uses a two-phase approach: local outline + cloud polish.
+	// Below this threshold, the standard local-try → cloud-fallback is used.
+	// Default 50000 (~12.5K tokens). Set to 0 to use the default.
+	HybridSynthesisThresholdChars int `json:"hybridSynthesisThresholdChars,omitempty"`
+
 	// Multi-Branch Edge Thought Evaluation (ADR-0045)
 	// MCTSMaxDepth caps the recursive AGoT spawn depth. Default 3.
 	MCTSMaxDepth int `json:"mctsMaxDepth,omitempty"`
@@ -118,6 +143,11 @@ type EngineConfig struct {
 	// Default false (use router). Set to true to use the worker model.
 	ProbeUseWorkerModel bool `json:"probeUseWorkerModel,omitempty"`
 
+	// UsePhaseRunner enables the Phase Runner state machine for probe, analyze,
+	// and research nodes. When true, these nodes dispatch to structured multi-phase
+	// pipelines instead of the flat Thought Chain loop. Default false.
+	UsePhaseRunner bool `json:"usePhaseRunner,omitempty"`
+
 	// CacheReuseTokens controls the --cache-reuse flag passed to llama-server.
 	// This determines how many tokens of the prompt prefix are checked for KV
 	// cache matches. 0 means unlimited (match the entire prefix), which enables
@@ -125,13 +155,19 @@ type EngineConfig struct {
 	// Higher values use more memory for the prefix cache but eliminate redundant
 	// prefill computation. Default 0 (unlimited). Set to a positive value to limit.
 	CacheReuseTokens int `json:"cacheReuseTokens,omitempty"`
+
+	// DefaultTemperature overrides the hardcoded 1.0 temperature for inference.
+	// The cascade is: hardcoded 1.0 < config DefaultTemperature < context TemperatureKey.
+	// Set to 0 to use the hardcoded default (1.0).
+	DefaultTemperature float64 `json:"defaultTemperature,omitempty"`
 }
 
 type BackendConfig struct {
-	Type   string `json:"type"`   // "llama-server" | "openai-compatible"
-	URL    string `json:"url"`    // Remote endpoint URL
-	Model  string `json:"model"`  // Model name/ID
-	APIKey string `json:"apiKey"` // Optional, supports $VAR
+	Type         string `json:"type"`                   // "llama-server" | "openai-compatible"
+	URL          string `json:"url"`                    // Remote endpoint URL
+	Model        string `json:"model"`                  // Model name/ID
+	APIKey       string `json:"apiKey"`                 // Optional, supports $VAR
+	SchemaFormat string `json:"schemaFormat,omitempty"` // "json_object" (default, Ollama/LMStudio) | "json_schema" (OpenAI API)
 }
 
 func detectTzroDir() string {
@@ -281,13 +317,17 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.ThreadCount = cfg.ThreadCount
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.RecallCompactionBudgetChars = cfg.RecallCompactionBudgetChars
+	GlobalConfig.HybridSynthesisThresholdChars = cfg.HybridSynthesisThresholdChars
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
+	GlobalConfig.UsePhaseRunner = cfg.UsePhaseRunner
 	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
+	GlobalConfig.DefaultTemperature = cfg.DefaultTemperature
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -326,13 +366,17 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.ThreadCount = cfg.ThreadCount
 	GlobalConfig.ProbeStepMaxTokens = cfg.ProbeStepMaxTokens
 	GlobalConfig.AccumulatedContextMaxChars = cfg.AccumulatedContextMaxChars
+	GlobalConfig.RecallCompactionBudgetChars = cfg.RecallCompactionBudgetChars
+	GlobalConfig.HybridSynthesisThresholdChars = cfg.HybridSynthesisThresholdChars
 	GlobalConfig.MCTSMaxDepth = cfg.MCTSMaxDepth
 	GlobalConfig.MCTSMaxSimulations = cfg.MCTSMaxSimulations
 	GlobalConfig.MCTSSpeculationCeil = cfg.MCTSSpeculationCeil
 	GlobalConfig.ProbeUseWorkerModel = cfg.ProbeUseWorkerModel
+	GlobalConfig.UsePhaseRunner = cfg.UsePhaseRunner
 	GlobalConfig.CacheReuseTokens = cfg.CacheReuseTokens
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
+	GlobalConfig.DefaultTemperature = cfg.DefaultTemperature
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -554,7 +598,7 @@ func GetSensitiveKeywords() []string {
 	if len(keywords) > 0 {
 		return keywords
 	}
-	return []string{"password", "secret", "private_key", "api_key", "token", "credential", "db_url", "ssh_key"}
+	return []string{"password", "secret", "private_key", "api_key", "auth_token", "access_token", "bearer_token", "credential", "db_url", "ssh_key"}
 }
 
 // GetRestrictedDirectories returns the configured list of directory paths
@@ -693,6 +737,34 @@ func GetAccumulatedContextMaxChars() int {
 	return v
 }
 
+// GetRecallCompactionBudgetChars returns the configured max total characters for
+// the Recall Node Refinement Pass baseline context (ADR-0064).
+// Defaults to 32000 if not explicitly configured or set to a non-positive value.
+func GetRecallCompactionBudgetChars() int {
+	configMutex.RLock()
+	v := GlobalConfig.RecallCompactionBudgetChars
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 32000
+	}
+	return v
+}
+
+// GetHybridSynthesisThresholdChars returns the context size (in chars) above which
+// synthesis uses a two-phase approach: local outline + cloud polish.
+// Defaults to 50000 if not explicitly configured or set to a non-positive value.
+func GetHybridSynthesisThresholdChars() int {
+	configMutex.RLock()
+	v := GlobalConfig.HybridSynthesisThresholdChars
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 50000
+	}
+	return v
+}
+
 // GetMCTSMaxDepth returns the configured maximum recursive AGoT spawn depth.
 // Defaults to 3 if not explicitly configured or set to a non-positive value.
 func GetMCTSMaxDepth() int {
@@ -749,6 +821,29 @@ func GetProbeUseWorkerModel() bool {
 	return v
 }
 
+// GetUsePhaseRunner returns whether the Phase Runner state machine should be
+// used for probe, analyze, and research nodes instead of the flat Thought Chain.
+func GetUsePhaseRunner() bool {
+	configMutex.RLock()
+	v := GlobalConfig.UsePhaseRunner
+	configMutex.RUnlock()
+	return v
+}
+
+// GetDefaultTemperature returns the configured default inference temperature.
+// Defaults to 1.0 (the llama-server requirement for min_p to function) if not
+// explicitly configured or set to a non-positive value.
+func GetDefaultTemperature() float64 {
+	configMutex.RLock()
+	v := GlobalConfig.DefaultTemperature
+	configMutex.RUnlock()
+
+	if v <= 0 {
+		return 1.0
+	}
+	return v
+}
+
 // GetCodeModelPath returns the configured dedicated code model path.
 // If not explicitly configured or file doesn't exist, returns empty string
 // (caller should fall back to the default GGUFModelPath).
@@ -797,6 +892,39 @@ func GetRouterModelPath() string {
 	// Auto-detect: scan models directory for a small GGUF file
 	// that is not the worker model or a companion file.
 	return autoDetectRouterModel(workerPath)
+}
+
+// GetEmbeddingModelPath returns the configured embedding model path.
+// If empty, returns the default auto-download path (~/.tzro/models/all-MiniLM-L6-v2-Q8_0.gguf).
+func GetEmbeddingModelPath() string {
+	configMutex.RLock()
+	embPath := GlobalConfig.EmbeddingModelPath
+	configMutex.RUnlock()
+
+	if embPath != "" {
+		if !filepath.IsAbs(embPath) {
+			embPath = filepath.Join(GetModelsDir(), filepath.Base(embPath))
+		}
+		return embPath
+	}
+
+	// Default: auto-download location
+	return filepath.Join(GetModelsDir(), "all-MiniLM-L6-v2-Q8_0.gguf")
+}
+
+// GetColumnScoreThreshold returns the cosine similarity threshold for
+// embedding-based select column resolution. Default 0.3.
+func GetColumnScoreThreshold() float64 {
+	configMutex.RLock()
+	t := GlobalConfig.ColumnScoreThreshold
+	configMutex.RUnlock()
+	if t <= 0 {
+		return 0.3
+	}
+	if t > 1.0 {
+		return 1.0
+	}
+	return t
 }
 
 // GetDaemonURL returns the active daemon HTTP URL by checking:

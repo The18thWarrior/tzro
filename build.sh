@@ -8,6 +8,10 @@ mkdir -p bin
 echo "==> Building Dashboard frontend..."
 (cd dashboard && npm install --silent && npm run build)
 
+# Build MCP progress app -> cmd/tzro-mcp/app/progress.html
+echo "==> Building MCP progress app..."
+(cd cmd/tzro-mcp && bash build-app.sh)
+
 echo "==> Building tzro CLI (cmd/tzro) -> bin/tzro..."
 go build -o bin/tzro ./cmd/tzro
 

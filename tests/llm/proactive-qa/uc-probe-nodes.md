@@ -53,6 +53,13 @@ A local AI coding agent wants to explore an unfamiliar codebase or perform high-
 - [ ] Symbolic callgraph extractor traverses function declarations, callsites, and references across multi-language codebases (Go, Python, TypeScript, JavaScript, Rust, Java).
 - [ ] Exploration queue handles candidate traversal locations with deduplication to ensure resilient probe execution.
 - [ ] SQL query extractor parses inline SQL queries and table references during code exploration.
+- [ ] Two-Pass Tool Extraction (ADR-0064): Pass 1 runs free-text reasoning on the worker model, Pass 2 runs GBNF-constrained action extraction on the router model.
+- [ ] When the probe has not met its minimum step budget, the GBNF grammar in Pass 2 constrains output to `tool_call` only — the model physically cannot output `synthesize`.
+- [ ] Recall compaction produces a deduplicated, fact-first context summary injected before synthesis.
+- [ ] DRY (Don't Repeat Yourself) sampling in the local model prevents repetitive phrase loops during synthesis by detecting and penalizing repeated n-grams.
+- [ ] Foreground compute preemption interrupts background tasks when a user-initiated task arrives, ensuring responsive execution.
+- [ ] Research phase provisioning automatically adds web_search and web_browse tools when the task is classified as research-oriented.
+- [ ] Goal-driven query seeding populates initial tool arguments when the model produces empty args in Pass 2.
 
 ## Edge Cases to Probe
 

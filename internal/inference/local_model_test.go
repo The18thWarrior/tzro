@@ -437,3 +437,91 @@ func TestMaxTokensKey_PropagatesThroughCallLocalModel(t *testing.T) {
 		t.Errorf("expected default max_tokens=2048, got %d", int(maxTokensVal))
 	}
 }
+
+func TestDRYSamplingKey_PropagatesThroughCallLocalModel(t *testing.T) {
+	var capturedBody map[string]interface{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decoder := json.NewDecoder(r.Body)
+		decoder.Decode(&capturedBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "ok"}}],
+			"usage": {"prompt_tokens": 10, "completion_tokens": 5}
+		}`))
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	mgr := &LocalModelManager{
+		ActivePort:      port,
+		Status:          "Active",
+		inferenceClient: http.DefaultClient,
+	}
+
+	msgs := []InferenceMessage{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "usr"},
+	}
+
+	// Test 1: WITH DRYSamplingKey — all dry_* params should appear
+	dryCfg := DRYSamplingConfig{
+		Multiplier:       0.8,
+		Base:             1.75,
+		AllowedLength:    2,
+		PenaltyLastN:     -1,
+		SequenceBreakers: []string{"\n", ":", "\"", "*"},
+	}
+	ctx := context.WithValue(context.Background(), DRYSamplingKey, dryCfg)
+	_, err = mgr.CallLocalModel(ctx, msgs, "")
+	if err != nil {
+		t.Fatalf("CallLocalModel with DRYSamplingKey failed: %v", err)
+	}
+
+	// Verify dry_multiplier
+	if v, ok := capturedBody["dry_multiplier"].(float64); !ok || v != 0.8 {
+		t.Errorf("expected dry_multiplier=0.8, got %v", capturedBody["dry_multiplier"])
+	}
+	// Verify dry_base
+	if v, ok := capturedBody["dry_base"].(float64); !ok || v != 1.75 {
+		t.Errorf("expected dry_base=1.75, got %v", capturedBody["dry_base"])
+	}
+	// Verify dry_allowed_length
+	if v, ok := capturedBody["dry_allowed_length"].(float64); !ok || int(v) != 2 {
+		t.Errorf("expected dry_allowed_length=2, got %v", capturedBody["dry_allowed_length"])
+	}
+	// Verify dry_penalty_last_n
+	if v, ok := capturedBody["dry_penalty_last_n"].(float64); !ok || int(v) != -1 {
+		t.Errorf("expected dry_penalty_last_n=-1, got %v", capturedBody["dry_penalty_last_n"])
+	}
+	// Verify dry_sequence_breakers
+	breakers, ok := capturedBody["dry_sequence_breakers"].([]interface{})
+	if !ok || len(breakers) != 4 {
+		t.Errorf("expected 4 dry_sequence_breakers, got %v", capturedBody["dry_sequence_breakers"])
+	}
+
+	// Test 2: WITHOUT DRYSamplingKey — dry_* params should be absent
+	capturedBody = nil
+	ctx2 := context.Background()
+	_, err = mgr.CallLocalModel(ctx2, msgs, "")
+	if err != nil {
+		t.Fatalf("CallLocalModel without DRYSamplingKey failed: %v", err)
+	}
+
+	for _, key := range []string{"dry_multiplier", "dry_base", "dry_allowed_length", "dry_penalty_last_n", "dry_sequence_breakers"} {
+		if _, exists := capturedBody[key]; exists {
+			t.Errorf("expected %s to be absent when DRYSamplingKey is not set", key)
+		}
+	}
+}

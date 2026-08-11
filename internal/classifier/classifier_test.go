@@ -14,10 +14,8 @@ import (
 )
 
 func TestClassifyHeuristic(t *testing.T) {
-	// Force heuristics fallback by ensuring both router and worker are stopped.
-	// Classify now routes through ExecuteRouterStructured → GlobalRouterModel,
-	// which falls back to GlobalWorkerModel when router is unavailable.
-	// With both stopped, ExecuteStructured falls through to heuristic fallback.
+	// With both sidecars stopped, Classify falls back to "chat" for all prompts
+	// (no keyword-based heuristic fallback exists — the function returns chat as default).
 	inference.GlobalRouterModel.Status = "Stopped"
 	inference.GlobalWorkerModel.Status = "Stopped"
 
@@ -29,16 +27,16 @@ func TestClassifyHeuristic(t *testing.T) {
 		t.Errorf("expected chat, got %s", res1.Type)
 	}
 
-	// 2. Scheduled/cron text should fallback deterministically to heartbeat
+	// 2. Scheduled/cron text also falls back to chat when inference unavailable
 	res2 := Classify(ctx, "run every 5 minutes: check uptime")
-	if res2.Type != "heartbeat" {
-		t.Errorf("expected heartbeat, got %s", res2.Type)
+	if res2.Type != "chat" {
+		t.Errorf("expected chat fallback when sidecars stopped, got %s", res2.Type)
 	}
 
-	// 3. Research keywords should fallback to research
+	// 3. Research keywords also fall back to chat when inference unavailable
 	res3 := Classify(ctx, "analyze system performance logs")
-	if res3.Type != "research" {
-		t.Errorf("expected research, got %s", res3.Type)
+	if res3.Type != "chat" {
+		t.Errorf("expected chat fallback when sidecars stopped, got %s", res3.Type)
 	}
 }
 
@@ -127,22 +125,23 @@ func TestClassifyComplexityLLM(t *testing.T) {
 }
 
 func TestClassifyComplexityHeuristicFallback(t *testing.T) {
-	// Stopped sidecar should fallback to complexity heuristics
+	// With sidecars stopped, ClassifyComplexity falls back to T0 by default.
+	// Only workflow promotion (tool cap > 12 or semantic triggers) returns T2.
 	inference.GlobalRouterModel.Status = "Stopped"
 	inference.GlobalWorkerModel.Status = "Stopped"
 
 	ctx := context.Background()
 
-	// Short request -> T0
+	// Short request -> T0 (default fallback)
 	c1 := ClassifyComplexity(ctx, "hello there", []string{"some_tool"})
 	if c1 != "T0" {
 		t.Errorf("expected T0 for short query, got %s", c1)
 	}
 
-	// Bulk keywords -> T1 fallback
+	// Bulk keywords also fall back to T0 when inference is unavailable
 	c2 := ClassifyComplexity(ctx, "bulk delete records from database", []string{"some_tool"})
-	if c2 != "T1" {
-		t.Errorf("expected T1 for bulk query, got %s", c2)
+	if c2 != "T0" {
+		t.Errorf("expected T0 fallback for bulk query without sidecar, got %s", c2)
 	}
 }
 

@@ -50,31 +50,26 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 	}
 
 	taskID := uuid.New().String()
-	timeoutSec := args.Timeout
-	if timeoutSec <= 0 {
-		timeoutSec = 60
-	}
 
 	// Start SubagentChannel for real-time event delivery to the harness.
 	// Node count is unknown at this point (planning hasn't started), so pass 0.
+	// Channel lifecycle is managed by the background goroutine, not this handler.
 	ch := startSubagentChannel(req, mcpServer, taskID, 0)
 	if ch != nil {
-		defer ch.Close()
 		// v2: Register channel for bidirectional tool dispatch.
 		// ChannelToolHook will intercept client-tool nodes and dispatch via sampling.
 		channel.GlobalChannelToolHook.RegisterChannel(taskID, ch)
-		defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
 	}
 
-	type execResult struct {
-		nodes []memory.NodeState
-		err   error
-	}
-
-	doneChan := make(chan execResult, 1)
-
-	// Execute task in a background goroutine to allow fallback to async mode if it times out
+	// Execute task in a background goroutine. The handler returns immediately
+	// so the MCP App UI can connect to the task via SSE using the taskId.
 	go func() {
+		// Manage channel lifecycle within the goroutine scope.
+		if ch != nil {
+			defer ch.Close()
+			defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
+		}
+
 		if isDaemonRunning() {
 			type RunRequest struct {
 				Prompt        string `json:"prompt"`
@@ -88,7 +83,7 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 			}
 			_, err := proxyToDaemon("/api/tasks/run", "POST", reqBody)
 			if err != nil {
-				doneChan <- execResult{err: fmt.Errorf("daemon task run initiation failed: %w", err)}
+				fmt.Printf("[tzro-mcp] daemon task run initiation failed for %s: %v\n", taskID, err)
 				return
 			}
 
@@ -97,15 +92,13 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 
 			resp, err := http.Get(url)
 			if err != nil {
-				doneChan <- execResult{err: fmt.Errorf("failed to connect to daemon event stream: %w", err)}
+				fmt.Printf("[tzro-mcp] failed to connect to daemon event stream for %s: %v\n", taskID, err)
 				return
 			}
 			defer resp.Body.Close()
 
 			reader := bufio.NewReader(resp.Body)
 			var currentEventType string
-			var taskErr error
-			var finalStatus string
 
 			for {
 				line, err := reader.ReadString('\n')
@@ -134,21 +127,12 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 							_ = ch.EmitEvent(event)
 						}
 
-						if event.Type == channel.EventTaskCompleted {
-							finalStatus = "completed"
-						} else if event.Type == channel.EventTaskFailed {
-							finalStatus = "failed"
-							taskErr = fmt.Errorf("%s", event.Message)
+						if event.Type == channel.EventTaskCompleted || event.Type == channel.EventTaskFailed {
+							break
 						}
 					}
 				}
 			}
-
-			nodes := memory.DB.GetAllNodeStates(taskID)
-			if finalStatus == "failed" && taskErr == nil {
-				taskErr = fmt.Errorf("task failed")
-			}
-			doneChan <- execResult{nodes: nodes, err: taskErr}
 		} else {
 			execOpts := task.ExecuteOptions{
 				TaskID:        taskID,
@@ -157,113 +141,29 @@ func handleTzroRun(ctx context.Context, req *mcp.CallToolRequest, args TzroRunAr
 				SelfContained: args.SelfContained,
 			}
 			_, _, err := task.Execute(context.Background(), args.Prompt, execOpts)
-			nodes := memory.DB.GetAllNodeStates(taskID)
-			doneChan <- execResult{nodes: nodes, err: err}
+			if err != nil {
+				fmt.Printf("[tzro-mcp] task execution failed for %s: %v\n", taskID, err)
+			}
 		}
 	}()
 
-	select {
-	case res := <-doneChan:
-		status := "completed"
-		var errMsg string
-		if res.err != nil {
-			status = "failed"
-			errMsg = res.err.Error()
-		}
+	// Return immediately with the taskId. The agent polls tzro_status for
+	// completion; the MCP App UI connects via SSE to the daemon for live updates.
+	daemonPort := getDaemonPort()
+	setLastTask(taskID, daemonPort)
 
-		respMap := map[string]interface{}{
-			"taskId": taskID,
-			"status": status,
-			"nodes":  res.nodes,
-		}
-		if errMsg != "" {
-			respMap["error"] = errMsg
-		}
-		// ADR-0055: Hoist Execution Envelope to top-level result
-		if envelope := extractEnvelopeResult(res.nodes); envelope != nil {
-			respMap["result"] = envelope
-		}
-
-		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: string(respBytes)},
-			},
-		}, nil, nil
-
-	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		// Timeout hit: check if the graph was persisted to SQLite by querying node_states.
-		// If nodes exist, the executor is running and the task ID is safe to return.
-		// If no nodes exist, planning is still in progress or failed — give a brief grace period.
-		nodes := memory.DB.GetAllNodeStates(taskID)
-		if len(nodes) == 0 {
-			// Brief grace: wait up to 5 more seconds for planning to complete
-			graceTimer := time.After(5 * time.Second)
-			graceTicker := time.NewTicker(500 * time.Millisecond)
-			defer graceTicker.Stop()
-
-		graceLoop:
-			for {
-				select {
-				case res := <-doneChan:
-					// Task finished during grace period
-					status := "completed"
-					var errMsg string
-					if res.err != nil {
-						status = "failed"
-						errMsg = res.err.Error()
-					}
-					respMap := map[string]interface{}{
-						"taskId": taskID,
-						"status": status,
-						"nodes":  res.nodes,
-					}
-					if errMsg != "" {
-						respMap["error"] = errMsg
-					}
-					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-					return &mcp.CallToolResult{
-						Content: []mcp.Content{
-							&mcp.TextContent{Text: string(respBytes)},
-						},
-					}, nil, nil
-
-				case <-graceTicker.C:
-					nodes = memory.DB.GetAllNodeStates(taskID)
-					if len(nodes) > 0 {
-						break graceLoop
-					}
-
-				case <-graceTimer:
-					// Grace period exhausted — return "planning" status
-					respMap := map[string]interface{}{
-						"taskId": taskID,
-						"status": "planning",
-						"message": "Task is still being planned. The graph has not been compiled yet. " +
-							"Check tzro_status after a delay — the task may not appear until planning completes.",
-					}
-					respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-					return &mcp.CallToolResult{
-						Content: []mcp.Content{
-							&mcp.TextContent{Text: string(respBytes)},
-						},
-					}, nil, nil
-				}
-			}
-		}
-
-		// Nodes exist — graph is persisted and execution is in progress
-		respMap := map[string]interface{}{
-			"taskId": taskID,
-			"status": "running",
-		}
-		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: string(respBytes)},
-			},
-		}, nil, nil
+	respMap := map[string]interface{}{
+		"taskId":     taskID,
+		"status":     "accepted",
+		"daemonPort": daemonPort,
 	}
+	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+	return &mcp.CallToolResult{
+		Meta: mcp.Meta{"ui": map[string]any{"resourceUri": buildAppResourceURI(taskID, daemonPort)}},
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
 }
 
 // tzro_code tool definition
@@ -284,8 +184,9 @@ type TzroCodeArgs struct {
 const maxFullRewriteLines = 500
 
 // autoModeDiffThreshold is the line count above which auto-mode selects diff
-// instead of full. Set lower than the hard guard to prefer diff early.
-const autoModeDiffThreshold = 200
+// instead of full. Set aggressively low: files ≥20 lines use the Edit Loop
+// for ~30-50× token reduction over full-file generation.
+const autoModeDiffThreshold = 20
 
 func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCodeArgs) (*mcp.CallToolResult, any, error) {
 	if strings.TrimSpace(args.Spec) == "" {
@@ -306,10 +207,9 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 	}
 
 	taskID := uuid.New().String()
-	timeoutSec := args.Timeout
-	if timeoutSec <= 0 {
-		timeoutSec = 120
-	}
+	// Note: args.Timeout is accepted for backward compatibility but ignored
+	// since tzro_code now returns immediately (fully async).
+
 
 	// Resolve maxLines: arg → config → default 500
 	maxLines := args.MaxLines
@@ -413,50 +313,174 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 
 	fmt.Fprintf(os.Stderr, "[tzro_code] Mode=%s for %s\n", mode, args.Filepath)
 
-	// Route via pseudo-code availability and complexity classification:
-	//   pseudocode provided → expansion DAG (any complexity)
-	//   no pseudocode → direct generation (complexity logged for observability)
-	var graph *compiler.ExecutionGraph
-
-	if strings.TrimSpace(args.Pseudocode) != "" {
-		// Pseudo-code expansion mode: local model expands pseudo-code into source
-		fmt.Fprintf(os.Stderr, "[tzro_code] Pseudo-code expansion mode for %s\n", args.Filepath)
-		graph = codegen.BuildPseudocodeExpansionDAG(taskID, args.Pseudocode, args.Spec, args.Filepath, language, maxLines, codeCtx)
-	} else {
-		// Classify complexity (informational — used for logging and benchmark routing)
-		tier := codegen.ClassifyCodeComplexity(args.Spec, codeCtx)
-		fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, proceeding with direct generation for %s\n", tier, args.Filepath)
-
-		switch mode {
-		case "diff":
-			graph = codegen.BuildDiffDAG(taskID, args.Spec, args.Filepath, language, codeCtx)
-		default:
-			graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
-		}
+	// Create a task record so tzro_status can report on this task immediately.
+	if err := memory.DB.CreateTask(taskID, fmt.Sprintf("[codegen] %s → %s", mode, args.Filepath)); err != nil {
+		fmt.Fprintf(os.Stderr, "[tzro_code] WARNING: CreateTask failed for %s: %v\n", taskID, err)
 	}
 
-	type execResult struct {
-		nodes []memory.NodeState
-		err   error
+	// Start SubagentChannel for real-time event delivery to the UI.
+	ch := startSubagentChannel(req, mcpServer, taskID, 0)
+	if ch != nil {
+		channel.GlobalChannelToolHook.RegisterChannel(taskID, ch)
 	}
 
-	doneChan := make(chan execResult, 1)
-
-	// Register the compilation gate hook for this task's execution.
-	// It runs the compiler on source_code nodes and enriches their output
-	// with compilation results, enabling Edge Thought-driven repair (ADR-0036).
 	// ADR-0057: AllowCloudRepair is true in Direct mode (no pseudocode provided)
 	// and false in Draft mode (pseudocode provided). Draft mode returns
 	// the failing code + compiler errors to the caller for targeted edits.
 	isDraftMode := strings.TrimSpace(args.Pseudocode) != ""
-	compilationHook := &codegen.CompilationGateHook{
-		FilePath:         args.Filepath,
-		Language:         language,
-		Spec:             args.Spec,
-		AllowCloudRepair: !isDraftMode,
-	}
 
+	// Execute in background goroutine. The handler returns immediately
+	// so the MCP client can poll via tzro_status.
 	go func() {
+		// Manage channel lifecycle within the goroutine scope.
+		if ch != nil {
+			defer ch.Close()
+			defer channel.GlobalChannelToolHook.UnregisterChannel(taskID)
+		}
+
+		if err := memory.DB.UpdateTaskStatus(taskID, "running", ""); err != nil {
+			fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(running) failed for %s: %v\n", taskID, err)
+		}
+
+		// Temperature 0.65 for codegen: sharper than default 1.0, reduces noise
+		// in generated code while min_p 0.1 still provides dynamic token pruning.
+		// Research finding: 0.6-0.7 is optimal for unconstrained codegen on 4B models.
+		codeCtxBg := context.WithValue(context.Background(), inference.TemperatureKey, 0.65)
+
+		// Presence penalty 1.3 for codegen: penalizes any token that has already
+		// appeared, preventing the self-referential comment loop pattern where the
+		// model enters "// But the spec might expect..." degeneration cycles.
+		// Research finding: presence_penalty (1.2-1.5) is the single most effective
+		// parameter for preventing degeneration in GGUF models (★★★★★).
+		codeCtxBg = context.WithValue(codeCtxBg, inference.PresencePenaltyKey, 1.3)
+
+		// DRY (Don't Repeat Yourself) sampling for codegen: lighter than synthesis
+		// (0.6 vs 0.8 multiplier) with higher AllowedLength (3 vs 2) to allow
+		// repeated struct fields, test cases, and switch arms. Code-aware sequence
+		// breakers prevent penalty accumulation across structural boundaries.
+		codeCtxBg = context.WithValue(codeCtxBg, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+			Multiplier:       0.6,
+			Base:             1.75,
+			AllowedLength:    3,
+			PenaltyLastN:     -1,
+			SequenceBreakers: []string{"{", "}", ";", "(", ")", "\n"},
+		})
+
+		// Route via pseudo-code availability and complexity classification:
+		//   pseudocode provided → expansion DAG (any complexity)
+		//   no pseudocode, diff → edit loop (inline, no DAG)
+		//   no pseudocode, full → DAG codegen
+		if strings.TrimSpace(args.Pseudocode) == "" && mode == "diff" {
+			// Edit Loop path: plan-then-hunk iterative codegen, no DAG needed.
+			moduleContext := codegen.DiscoverModuleContext(args.Filepath, language)
+			editEngine := &codegen.DefaultEditLoopEngine{}
+			patchedContent, editErr := codegen.RunEditLoop(
+				codeCtxBg, editEngine, args.Spec, args.Filepath,
+				codeCtx.ExistingContent, language, codeCtx.Siblings, moduleContext,
+			)
+			if editErr != nil {
+				_ = memory.DB.SetNodeState(taskID, "edit_loop", "failed", fmt.Sprintf("edit loop failed: %v", editErr))
+				if err := memory.DB.UpdateTaskStatus(taskID, "failed", fmt.Sprintf("edit loop failed: %v", editErr)); err != nil {
+					fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+				}
+				fmt.Fprintf(os.Stderr, "[tzro_code] Edit loop failed for %s: %v\n", args.Filepath, editErr)
+				return
+			}
+
+			// Write patched file
+			if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
+				fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
+			}
+			if writeErr := os.WriteFile(args.Filepath, []byte(patchedContent), 0644); writeErr != nil {
+				_ = memory.DB.SetNodeState(taskID, "edit_loop", "failed", fmt.Sprintf("file write failed: %v", writeErr))
+				if err := memory.DB.UpdateTaskStatus(taskID, "failed", fmt.Sprintf("file write failed: %v", writeErr)); err != nil {
+					fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+				}
+				fmt.Fprintf(os.Stderr, "[tzro_code] File write failed for %s: %v\n", args.Filepath, writeErr)
+				return
+			}
+
+			totalLines := strings.Count(patchedContent, "\n")
+
+			// Post-codegen compile gate: validate the edit_loop output compiles.
+			// If compilation fails, re-run edit loop with error feedback (max 2 retries).
+			compResult := codegen.RunCompilationGate(language, args.Filepath)
+			if !compResult.Pass {
+				const maxEditLoopRetries = 2
+				for retry := 0; retry < maxEditLoopRetries; retry++ {
+					fmt.Fprintf(os.Stderr, "[tzro_code] Compilation failed after edit_loop (attempt %d/%d): %s\n",
+						retry+1, maxEditLoopRetries, compResult.Reason)
+
+					// Build repair spec: original spec + compiler errors
+					repairSpec := fmt.Sprintf(
+						"%s\n\n## COMPILER ERRORS (must fix)\n%s\n\nFix ALL compiler errors. Preserve the existing implementation intent.",
+						args.Spec, compResult.Reason,
+					)
+
+					// Re-run edit loop with error-enriched spec
+					repairContent, repairErr := codegen.RunEditLoop(
+						codeCtxBg, editEngine, repairSpec, args.Filepath,
+						patchedContent, language, codeCtx.Siblings, moduleContext,
+					)
+					if repairErr != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] Repair edit loop failed: %v\n", repairErr)
+						break
+					}
+
+					// Write repaired file
+					if writeErr := os.WriteFile(args.Filepath, []byte(repairContent), 0644); writeErr != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] Repair file write failed: %v\n", writeErr)
+						break
+					}
+
+					patchedContent = repairContent
+					totalLines = strings.Count(patchedContent, "\n")
+					compResult = codegen.RunCompilationGate(language, args.Filepath)
+					if compResult.Pass {
+						fmt.Fprintf(os.Stderr, "[tzro_code] Compilation passed after repair attempt %d\n", retry+1)
+						break
+					}
+				}
+
+				// If still failing after all retries, report the error
+				if !compResult.Pass {
+					errMsg := fmt.Sprintf("compilation failed after %d repair attempts: %s", maxEditLoopRetries, compResult.Reason)
+					_ = memory.DB.SetNodeState(taskID, "edit_loop", "failed", errMsg)
+					if err := memory.DB.UpdateTaskStatus(taskID, "failed", errMsg); err != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+					}
+					fmt.Fprintf(os.Stderr, "[tzro_code] Edit loop compilation failed for %s: %s\n", args.Filepath, compResult.Reason)
+					return
+				}
+			}
+
+			outputMsg := fmt.Sprintf("Updated %s via edit_loop (%d lines)", args.Filepath, totalLines)
+			_ = memory.DB.SetNodeState(taskID, "edit_loop", "completed", outputMsg)
+			if err := memory.DB.UpdateTaskStatus(taskID, "completed", ""); err != nil {
+				fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(completed) failed for %s: %v\n", taskID, err)
+			}
+			fmt.Fprintf(os.Stderr, "[tzro_code] Edit loop completed for %s (%d lines)\n", args.Filepath, totalLines)
+			return
+		}
+
+		// DAG path: build execution graph for full/pseudocode modes.
+		var graph *compiler.ExecutionGraph
+		if strings.TrimSpace(args.Pseudocode) != "" {
+			fmt.Fprintf(os.Stderr, "[tzro_code] Pseudo-code expansion mode for %s\n", args.Filepath)
+			graph = codegen.BuildPseudocodeExpansionDAG(taskID, args.Pseudocode, args.Spec, args.Filepath, language, maxLines, codeCtx)
+		} else {
+			tier := codegen.ClassifyCodeComplexity(args.Spec, codeCtx)
+			fmt.Fprintf(os.Stderr, "[tzro_code] Complexity tier=%s, proceeding with direct generation for %s\n", tier, args.Filepath)
+			graph = codegen.BuildCodeDAG(taskID, args.Spec, args.Filepath, language, maxLines, codeCtx)
+		}
+
+		// Register the compilation gate hook for this task's execution.
+		compilationHook := &codegen.CompilationGateHook{
+			FilePath:         args.Filepath,
+			Language:         language,
+			Spec:             args.Spec,
+			AllowCloudRepair: !isDraftMode,
+		}
 		executor.GlobalEngine.RegisterHook(compilationHook)
 		defer executor.GlobalEngine.UnregisterHook(compilationHook)
 
@@ -465,8 +489,8 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			IntentType:   "codegen",
 			IsForeground: true,
 		}
-		_, err := task.ExecuteStatic(context.Background(), graph, execOpts)
-		_ = err
+		_, execErr := task.ExecuteStatic(codeCtxBg, graph, execOpts)
+		_ = execErr
 		nodes := memory.DB.GetAllNodeStates(taskID)
 
 		// Check if any node failed
@@ -477,48 +501,26 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 				break
 			}
 		}
-		doneChan <- execResult{nodes: nodes, err: taskErr}
-	}()
 
-	select {
-	case res := <-doneChan:
 		status := "completed"
-		var errMsg string
-		if res.err != nil {
+		if taskErr != nil {
 			status = "failed"
-			errMsg = res.err.Error()
 		}
 
-		respMap := map[string]interface{}{
-			"taskId":   taskID,
-			"status":   status,
-			"filepath": args.Filepath,
-			"language": language,
-			"mode":     mode,
-		}
-		if mode == "full" {
-			respMap["maxLines"] = maxLines
-		}
-		if errMsg != "" {
-			respMap["error"] = errMsg
-		}
-
-		// ADR-0057: In Draft mode, enrich failure responses with the failing
-		// code and compiler errors so the harness can do targeted edits
-		// instead of full regeneration.
+		// ADR-0057: In Draft mode, enrich failure with compiler errors
 		if status == "failed" && isDraftMode && compilationHook.GetLocalFailureCount() > 0 {
-			respMap["status"] = "complexity_exceeded"
-			respMap["compilerErrors"] = compilationHook.GetLastCompilerErrors()
-			// Read the failing file content from disk
-			if failingCode, readErr := os.ReadFile(args.Filepath); readErr == nil {
-				respMap["failingCode"] = string(failingCode)
+			errMsg := fmt.Sprintf("complexity_exceeded: %v", taskErr)
+			if err := memory.DB.UpdateTaskStatus(taskID, "failed", errMsg); err != nil {
+				fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
 			}
+			fmt.Fprintf(os.Stderr, "[tzro_code] DAG failed (complexity_exceeded) for %s\n", args.Filepath)
+			return
 		}
 
 		// Post-process: extract reason_code output, write file (pure Go)
 		if status == "completed" {
 			var rawCode string
-			for _, n := range res.nodes {
+			for _, n := range nodes {
 				if n.NodeID == "reason_code" && n.Status == "completed" {
 					rawCode = n.RawOutput
 					if rawCode == "" {
@@ -528,147 +530,112 @@ func handleTzroCode(ctx context.Context, req *mcp.CallToolRequest, args TzroCode
 			}
 
 			if rawCode == "" {
-				respMap["status"] = "failed"
-				respMap["error"] = "reason_code produced no output"
-			} else {
-				// Quality gate: structural validation before writing
-				cleanedForGate := codegen.StripMarkdownFences(rawCode)
-				gateResult := codegen.RunStructuralQualityGate(cleanedForGate, language)
-				if !gateResult.Pass {
-					fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed: %s\n", gateResult.Reason)
-					respMap["status"] = "failed"
-					respMap["error"] = fmt.Sprintf("quality gate: %s", gateResult.Reason)
-				} else {
-					// Quality gate passed — write the file
-					switch mode {
-					case "diff":
-						// Parse structured diff output
-						var diffOutput codegen.DiffOutput
-						rawJSON := rawCode
-						// Try direct parse; fallback to stripping markdown fences
-						if err := json.Unmarshal([]byte(rawJSON), &diffOutput); err != nil {
-							stripped := codegen.StripMarkdownFences(rawJSON)
-							if err2 := json.Unmarshal([]byte(stripped), &diffOutput); err2 != nil {
-								respMap["status"] = "failed"
-								respMap["error"] = fmt.Sprintf("diff output parse failed: %v", err)
-								break
-							}
+				if err := memory.DB.UpdateTaskStatus(taskID, "failed", "reason_code produced no output"); err != nil {
+					fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+				}
+				fmt.Fprintf(os.Stderr, "[tzro_code] reason_code produced no output for %s\n", args.Filepath)
+				return
+			}
+
+			// Quality gate: structural validation before writing
+			cleanedForGate := codegen.StripMarkdownFences(rawCode)
+			gateResult := codegen.RunStructuralQualityGate(cleanedForGate, language)
+			if !gateResult.Pass {
+				fmt.Fprintf(os.Stderr, "[tzro_code] Quality gate failed: %s\n", gateResult.Reason)
+				if err := memory.DB.UpdateTaskStatus(taskID, "failed", fmt.Sprintf("quality gate: %s", gateResult.Reason)); err != nil {
+					fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+				}
+				return
+			}
+
+			// Quality gate passed — write the file
+			switch mode {
+			case "diff":
+				// Parse structured diff output
+				var diffOutput codegen.DiffOutput
+				rawJSON := rawCode
+				if err := json.Unmarshal([]byte(rawJSON), &diffOutput); err != nil {
+					stripped := codegen.StripMarkdownFences(rawJSON)
+					if err2 := json.Unmarshal([]byte(stripped), &diffOutput); err2 != nil {
+						if dbErr := memory.DB.UpdateTaskStatus(taskID, "failed", fmt.Sprintf("diff output parse failed: %v", err)); dbErr != nil {
+							fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, dbErr)
 						}
+						return
+					}
+				}
 
-						if len(diffOutput.Hunks) == 0 {
-							respMap["status"] = "failed"
-							respMap["error"] = "diff output contained no hunks"
-							break
-						}
+				if len(diffOutput.Hunks) == 0 {
+					if err := memory.DB.UpdateTaskStatus(taskID, "failed", "diff output contained no hunks"); err != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+					}
+					return
+				}
 
-						// Apply hunks to existing content
-						patched, applyErr := codegen.ApplyDiffHunks(codeCtx.ExistingContent, diffOutput.Hunks)
-						if applyErr != nil {
-							respMap["status"] = "failed"
-							respMap["error"] = fmt.Sprintf("diff application failed: %v", applyErr)
-						} else {
-							// Write patched file
-							if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
-								fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
-							}
-							if writeErr := os.WriteFile(args.Filepath, []byte(patched), 0644); writeErr != nil {
-								respMap["status"] = "failed"
-								respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
-							} else {
-								totalLines := strings.Count(patched, "\n")
-								linesChanged := 0
-								for _, h := range diffOutput.Hunks {
-									linesChanged += strings.Count(h.ReplaceContent, "\n") + 1
-								}
-								respMap["action"] = "updated"
-								respMap["hunksApplied"] = len(diffOutput.Hunks)
-								respMap["linesChanged"] = linesChanged
-								respMap["totalLines"] = totalLines
-							}
-						}
+				patched, applyErr := codegen.ApplyDiffHunks(codeCtx.ExistingContent, diffOutput.Hunks)
+				if applyErr != nil {
+					if err := memory.DB.UpdateTaskStatus(taskID, "failed", fmt.Sprintf("diff application failed: %v", applyErr)); err != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+					}
+					return
+				}
 
-					default: // "full"
-						writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
-						if writeErr != nil {
-							respMap["status"] = "failed"
-							respMap["error"] = fmt.Sprintf("file write failed: %v", writeErr)
-						} else {
-							respMap["action"] = writeAction
-							respMap["linesWritten"] = linesWritten
+				if backupErr := tools.BackupFile(args.Filepath); backupErr != nil {
+					fmt.Fprintf(os.Stderr, "[codegen] Backup failed (non-fatal): %v\n", backupErr)
+				}
+				if writeErr := os.WriteFile(args.Filepath, []byte(patched), 0644); writeErr != nil {
+					if err := memory.DB.UpdateTaskStatus(taskID, "failed", fmt.Sprintf("file write failed: %v", writeErr)); err != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+					}
+					return
+				}
 
-							// Compilation gate results are embedded in the node output by the
-							// CompilationGateHook (AfterNode). Edge Thought spawning handles
-							// repair attempts via the MutationBudget (ADR-0036).
-							//
-							// Find the final source_code node's output to extract compilation status.
-							// This may be reason_code or a spawned repair node.
-							compilationInfo := map[string]interface{}{
-								"passed": true, // assume pass; override if we find FAILED
-							}
+				fmt.Fprintf(os.Stderr, "[tzro_code] DAG diff completed for %s (%d hunks)\n", args.Filepath, len(diffOutput.Hunks))
 
-							// Check all completed nodes for the last source_code output
-							for _, n := range res.nodes {
-								if n.Status == "completed" {
-									output := n.RawOutput
-									if output == "" {
-										output = n.Output
-									}
-									if strings.Contains(output, "## Compilation Result") {
-										if strings.Contains(output, "FAILED") {
-											compilationInfo["passed"] = false
-											// Extract error text after "FAILED\n"
-											if idx := strings.Index(output, "FAILED\n"); idx >= 0 {
-												errText := output[idx+len("FAILED\n"):]
-												if endIdx := strings.Index(errText, "\n\n##"); endIdx > 0 {
-													errText = errText[:endIdx]
-												}
-												compilationInfo["errors"] = strings.TrimSpace(errText)
-											}
-										}
-									}
-								}
-							}
-
-							// Check if repair was attempted (spawned nodes exist)
-							for _, n := range res.nodes {
-								if strings.HasPrefix(n.NodeID, "spawned_") {
-									compilationInfo["repairAttempted"] = true
-									// Check mutation budget exhaustion
-									if compilationInfo["passed"] == false && graph.MutationBudget != nil && graph.MutationBudget.RemainingSpawns == 0 {
-										compilationInfo["budgetExhausted"] = true
-									}
-									break
-								}
-							}
-
-							respMap["compilation"] = compilationInfo
-						}
-					} // end switch mode
-				} // end quality gate else (passed)
-			} // end rawCode non-empty
-		} // end status == completed
-
-		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: string(respBytes)},
-			},
-		}, nil, nil
-
-	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		respMap := map[string]interface{}{
-			"taskId":   taskID,
-			"status":   "running",
-			"filepath": args.Filepath,
-			"message":  "Code generation is still in progress. Use tzro_status to check completion.",
+			default: // "full"
+				writeAction, linesWritten, writeErr := codegen.WriteCodeFile(args.Filepath, rawCode, maxLines)
+				if writeErr != nil {
+					if err := memory.DB.UpdateTaskStatus(taskID, "failed", fmt.Sprintf("file write failed: %v", writeErr)); err != nil {
+						fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+					}
+					return
+				}
+				_ = writeAction
+				fmt.Fprintf(os.Stderr, "[tzro_code] DAG full completed for %s (%d lines written)\n", args.Filepath, linesWritten)
+			}
 		}
-		respBytes, _ := json.MarshalIndent(respMap, "", "  ")
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: string(respBytes)},
-			},
-		}, nil, nil
+
+		// Final status update
+		if status == "failed" {
+			if err := memory.DB.UpdateTaskStatus(taskID, "failed", taskErr.Error()); err != nil {
+				fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(failed) failed for %s: %v\n", taskID, err)
+			}
+		} else {
+			if err := memory.DB.UpdateTaskStatus(taskID, "completed", ""); err != nil {
+				fmt.Fprintf(os.Stderr, "[tzro_code] UpdateTaskStatus(completed) failed for %s: %v\n", taskID, err)
+			}
+		}
+	}()
+
+	// Return immediately with the taskId. The agent polls tzro_status for
+	// completion; the MCP App UI connects via SSE for live updates.
+	daemonPort := getDaemonPort()
+	setLastTask(taskID, daemonPort)
+
+	respMap := map[string]interface{}{
+		"taskId":     taskID,
+		"status":     "accepted",
+		"filepath":   args.Filepath,
+		"language":   language,
+		"mode":       mode,
+		"daemonPort": daemonPort,
 	}
+	respBytes, _ := json.MarshalIndent(respMap, "", "  ")
+	return &mcp.CallToolResult{
+		Meta: mcp.Meta{"ui": map[string]any{"resourceUri": buildAppResourceURI(taskID, daemonPort)}},
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(respBytes)},
+		},
+	}, nil, nil
 }
 
 // tzro_status tool definition
@@ -1769,6 +1736,17 @@ func runDelegationHint() string {
 	}
 }
 
+// getDaemonPort returns the daemon port string for inclusion in tool results,
+// allowing the MCP App UI to connect to the correct daemon instance.
+func getDaemonPort() string {
+	daemonURL := config.GetDaemonURL()
+	// Extract port from URL like "http://127.0.0.1:8080"
+	if idx := strings.LastIndex(daemonURL, ":"); idx != -1 {
+		return daemonURL[idx+1:]
+	}
+	return "8080"
+}
+
 // registerTools registers all tools with the MCP server.
 // tzro_activity_report tool definition
 
@@ -2697,11 +2675,13 @@ func registerTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_run",
 		Description: "Plan, compile, and execute a durable DAG workflow from a natural language prompt." + runDelegationHint(),
+		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURIBase}},
 	}, handleTzroRun)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "tzro_code",
 		Description: "Generate or update a single file via local LLM codegen. Supports two modes: 'full' (whole-file rewrite, default for new/small files) and 'diff' (structured hunk edits, default for files >200 lines). Files >500 lines MUST use diff mode. Pass a spec/JSDoc and filepath.",
+		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appResourceURIBase}},
 	}, handleTzroCode)
 
 	mcp.AddTool(server, &mcp.Tool{

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"tzro/internal/content"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/sentinel"
@@ -162,6 +163,11 @@ func dispatchNamedFunction(ctx context.Context, name string, params map[string]i
 
 	case "dashboard_spec":
 		return apiDashboardSpec(ctx, params)
+
+	// --- Cache Management ---
+
+	case "cache_clear":
+		return apiCacheClear(ctx, params)
 
 	default:
 		return errResult(fmt.Sprintf(`{"error": "unknown endpoint '%s'. Use a named function or an HTTP path starting with /"}`, name))
@@ -588,4 +594,17 @@ func boolParam(params map[string]interface{}, key string) bool {
 	}
 	v, _ := params[key].(bool)
 	return v
+}
+
+// apiCacheClear clears the image cache and returns the number of files removed.
+func apiCacheClear(ctx context.Context, params map[string]interface{}) (*mcp.CallToolResult, any, error) {
+	removed, err := content.ClearImageCache()
+	if err != nil {
+		return errResult(fmt.Sprintf(`{"error": "failed to clear cache: %v"}`, err))
+	}
+
+	result := fmt.Sprintf(`{"success": true, "filesRemoved": %d}`, removed)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: result}},
+	}, nil, nil
 }

@@ -64,7 +64,7 @@ func TestPlan_ShallowMapIntegration(t *testing.T) {
 			if startIdx == -1 {
 				continue
 			}
-			endIdx := strings.Index(msg.Content[startIdx:], "## Output Schema Constraints:")
+			endIdx := strings.Index(msg.Content[startIdx:], "## Your Task")
 			if endIdx == -1 {
 				continue
 			}

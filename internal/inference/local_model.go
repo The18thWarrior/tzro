@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 	"tzro/internal/config"
+	"tzro/internal/proactivity"
 	"tzro/internal/stream"
 	"tzro/internal/telemetry"
 )
@@ -41,6 +42,57 @@ type maxTokensContextKey struct{}
 // local model includes max_tokens in the completion request, preventing runaway
 // generation. Use context.WithValue(ctx, MaxTokensKey, 2048).
 var MaxTokensKey = maxTokensContextKey{}
+
+// drySamplingContextKey is a private type for the DRY sampling context key.
+type drySamplingContextKey struct{}
+
+// DRYSamplingConfig holds parameters for DRY (Don't Repeat Yourself) sampling.
+// DRY is sequence-aware: it detects repeated token sequences and applies an
+// exponential penalty based on match length, unlike frequency_penalty which
+// only penalizes individual tokens and degrades structured output quality.
+type DRYSamplingConfig struct {
+	Multiplier       float64  `json:"dry_multiplier"`                 // Main strength (0.0 = disabled, 0.8 = recommended)
+	Base             float64  `json:"dry_base"`                       // Escalation for longer repeats (default: 1.75)
+	AllowedLength    int      `json:"dry_allowed_length"`             // Min sequence length before penalty (default: 2)
+	PenaltyLastN     int      `json:"dry_penalty_last_n"`             // Lookback window (-1 = full context)
+	SequenceBreakers []string `json:"dry_sequence_breakers,omitempty"` // Tokens that reset detection
+}
+
+// DRYSamplingKey is a context key that callers set to enable DRY sampling
+// during inference. When present with a DRYSamplingConfig value, the local
+// model includes DRY parameters in the completion request.
+// Primarily used for synthesis passes where the 4B model degenerates into
+// repetitive phrase loops (e.g., "Consider Using a Security Toolchain" ×115).
+// DRY is preferred over frequency_penalty because it targets sequence-level
+// repetition without degrading code or structured output quality.
+var DRYSamplingKey = drySamplingContextKey{}
+
+// temperatureContextKey is a private type for the temperature override context key.
+type temperatureContextKey struct{}
+
+// TemperatureKey is a context key that callers set to override the inference
+// temperature for a specific call. The cascade is:
+//
+//	hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
+//
+// When present with a float64 value > 0, the local model uses that temperature
+// instead of the config or hardcoded default.
+// Use context.WithValue(ctx, TemperatureKey, 0.65) for codegen,
+// context.WithValue(ctx, TemperatureKey, 0.6) for synthesis.
+var TemperatureKey = temperatureContextKey{}
+
+// presencePenaltyContextKey is a private type for the presence penalty context key.
+type presencePenaltyContextKey struct{}
+
+// PresencePenaltyKey is a context key that callers set to apply presence penalty
+// during inference. Presence penalty penalizes any token that has already appeared
+// in the output, regardless of distance. This is the most effective parameter for
+// preventing degeneration in GGUF models (research finding: ★★★★★ effectiveness).
+//
+// When present with a float64 value > 0, the local model includes presence_penalty
+// in the completion request. Recommended: 1.3 for codegen, 0 for GBNF-constrained.
+// Use context.WithValue(ctx, PresencePenaltyKey, 1.3).
+var PresencePenaltyKey = presencePenaltyContextKey{}
 
 // InferenceResult holds the model output along with token-level metrics from the server.
 type InferenceResult struct {
@@ -121,6 +173,21 @@ var GlobalRouterModel = &LocalModelManager{
 // Deprecated: Use GlobalWorkerModel or GlobalRouterModel directly.
 var GlobalLocalModel = GlobalWorkerModel
 
+// init registers foreground preemption hooks with the proactivity system.
+// When a foreground task registers, the sidecar's KV cache is saved and cleared.
+// When all foreground tasks complete, the cache is restored.
+func init() {
+	proactivity.RegisterPreemptionCallback(func() {
+		// Save background KV cache state to disk so foreground gets a clean slot.
+		_ = GlobalWorkerModel.PreemptForChat(context.Background())
+	})
+
+	proactivity.RegisterResumeCallback(func() {
+		// Restore background KV cache state after foreground completes.
+		_ = GlobalWorkerModel.RestoreAfterChat(context.Background())
+	})
+}
+
 // sidecarFilePrefix returns the filesystem prefix for this sidecar's lock/port files.
 // Router: .llama-router  Worker: .llama-server (backward compatible)
 func (m *LocalModelManager) sidecarFilePrefix() string {
@@ -144,7 +211,11 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	}
 
 	cfg := config.Get()
-	m.GGUFModelPath = cfg.GGUFModelPath
+	// Only read from global config if the caller hasn't already set a model path
+	// (e.g., StartActive sets routerPath before calling Start on the router sidecar).
+	if m.GGUFModelPath == "" {
+		m.GGUFModelPath = cfg.GGUFModelPath
+	}
 	if m.GGUFModelPath != "" && !filepath.IsAbs(m.GGUFModelPath) {
 		m.GGUFModelPath = filepath.Join(config.GetModelsDir(), filepath.Base(m.GGUFModelPath))
 	}
@@ -297,11 +368,12 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	}
 
 	// Optimized launch args (12 resolved decisions from sidecar optimization session)
+	parallelSlots := getWorkerParallelSlots(getSystemMemoryGB())
 	args := []string{
 		"-m", m.GGUFModelPath,
 		"--port", strconv.Itoa(m.ActivePort),
 		"--threads", strconv.Itoa(pCores),
-		"--parallel", "1",
+		"--parallel", strconv.Itoa(parallelSlots),
 		"--jinja",
 		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
 		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 64K)
@@ -312,6 +384,8 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--n-predict", "16384", // Q9: max tokens per generation
 		"--slot-save-path", slotSavePath, // Q8: enable /slots save/restore API for preemption
 		"--cache-ram", "2048", // Limit maximum prompt cache host memory to 2GB to resolve memory pressure
+		"-b", "2048", // Prompt processing batch size (up from default 512)
+		"-ub", "512", // Micro-batch size for prompt processing
 	}
 
 	if useMTP {
@@ -375,12 +449,15 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		fmt.Fprintf(os.Stderr, "[Llama Sidecar] Vision projector loaded: %s\n", mmProjPath)
 	}
 
-	// Router sidecar overrides: smaller context, no speculative decoding, no vision
+	// Router sidecar overrides: memory-gated context, no speculative decoding, no vision
 	if m.Role == "router" {
-		// Override ctx-size to 16384 for router (smaller than worker's 32K but enough for probe chains)
+		// Memory-gated router context: 64K on ≥16GB (eliminates probe HTTP 400
+		// from analyze prompts exceeding 16K), 16K on <16GB to conserve memory.
+		// Router model (1B) natively supports 131K — 64K is well within bounds.
+		routerCtxSize := getRouterContextSize(getSystemMemoryGB())
 		for i, a := range args {
 			if a == "--ctx-size" && i+1 < len(args) {
-				args[i+1] = "16384"
+				args[i+1] = strconv.Itoa(routerCtxSize)
 			}
 			if a == "--n-predict" && i+1 < len(args) {
 				args[i+1] = "4096" // Router outputs: compaction can produce longer reasoning summaries
@@ -389,12 +466,11 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			// (default 0 = unlimited), no override needed for router — same value
 			// works for both sidecars since append-only context benefits both.
 		}
-		// Remove speculative decoding args (overkill for router) and vision projector
+		// Remove vision projector and slot-save-path for router; re-enable spec decoding with ngram-simple.
 		var cleanArgs []string
 		skip := false
 		for _, a := range args {
-			if a == "--spec-type" || a == "--spec-draft-model" || a == "--spec-draft-n-max" ||
-				a == "--slot-save-path" || a == "--mmproj" {
+			if a == "--slot-save-path" || a == "--mmproj" {
 				skip = true
 				continue
 			}
@@ -404,8 +480,33 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 			}
 			cleanArgs = append(cleanArgs, a)
 		}
-		args = cleanArgs
-		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=%d (routing mode, no speculative decoding)\n", config.GetCacheReuseTokens())
+		// Override router speculative decoding to lightweight ngram-simple
+		// (rather than stripping it entirely). Provides ~20-30% faster
+		// generation for structured/repetitive outputs (ACTION tags, JSON).
+		for i, a := range cleanArgs {
+			if a == "--spec-type" && i+1 < len(cleanArgs) {
+				cleanArgs[i+1] = "ngram-simple"
+			}
+			if a == "--spec-draft-n-max" && i+1 < len(cleanArgs) {
+				cleanArgs[i+1] = "16"
+			}
+			if a == "--spec-draft-model" {
+				// Remove draft model arg (ngram-simple doesn't need it)
+				cleanArgs[i] = ""
+				if i+1 < len(cleanArgs) {
+					cleanArgs[i+1] = ""
+				}
+			}
+		}
+		// Filter empty strings from draft model removal
+		var filteredArgs []string
+		for _, a := range cleanArgs {
+			if a != "" {
+				filteredArgs = append(filteredArgs, a)
+			}
+		}
+		args = filteredArgs
+		fmt.Fprintf(os.Stderr, "[Llama Router] Starting with ctx=16384, cache-reuse=%d (routing mode, ngram-simple speculative decoding)\n", config.GetCacheReuseTokens())
 	}
 
 	m.cmd = exec.CommandContext(context.Background(), llamaBinary, args...)
@@ -792,6 +893,61 @@ func (m *LocalModelManager) getGPULayerCount() int {
 	return 0
 }
 
+// getSystemMemoryGB returns the total system memory in gigabytes.
+// Uses sysctl on macOS, /proc/meminfo on Linux, runtime fallback elsewhere.
+func getSystemMemoryGB() int {
+	if runtime.GOOS == "darwin" {
+		out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
+		if err == nil {
+			if bytes, parseErr := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64); parseErr == nil {
+				return int(bytes / (1024 * 1024 * 1024))
+			}
+		}
+	}
+
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile("/proc/meminfo")
+		if err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "MemTotal:") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						if kb, parseErr := strconv.ParseUint(fields[1], 10, 64); parseErr == nil {
+							return int(kb / (1024 * 1024))
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback: assume 16GB (conservative default)
+	return 16
+}
+
+// getWorkerParallelSlots returns the number of parallel inference slots
+// for the worker sidecar, based on system memory.
+// ≥24GB → 2 slots (enables DAG-level concurrency)
+// <24GB → 1 slot (baseline, avoids memory pressure)
+func getWorkerParallelSlots(memoryGB int) int {
+	if memoryGB >= 24 {
+		return 2
+	}
+	return 1
+}
+
+// getRouterContextSize returns the context window size for the router sidecar,
+// based on system memory. The 1B router model supports 131K context natively.
+// ≥16GB → 65536 (matches worker context, eliminates probe HTTP 400 from
+//         analyze system prompts exceeding the 16K limit with CSV tool output)
+// <16GB → 16384 (preserve current behavior, lower memory footprint)
+func getRouterContextSize(memoryGB int) int {
+	if memoryGB >= 16 {
+		return 65536
+	}
+	return 16384
+}
+
 // allocateRandomPort asks the OS for a random free port by briefly binding to :0,
 // then immediately releasing it for llama-server to use.
 func allocateRandomPort() (int, error) {
@@ -828,6 +984,60 @@ func releaseFileLock(f *os.File) {
 	_ = f.Close()
 }
 
+// TokenizeContent calls the sidecar's /tokenize endpoint to get an exact token
+// count for the given content. Returns the number of tokens. Used by the probe
+// pre-flight check to detect context overflow before sending inference requests.
+// The llama.cpp server natively exposes /tokenize.
+func (m *LocalModelManager) TokenizeContent(content string) (int, error) {
+	if m.Status != "Active" || m.ActivePort == 0 {
+		// Fallback to heuristic: ~4 chars per token
+		return len(content) / 4, nil
+	}
+
+	reqBody := map[string]interface{}{
+		"content": content,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	url := fmt.Sprintf("http://localhost:%d/tokenize", m.ActivePort)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return len(content) / 4, nil // Fallback
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.getInferenceClient().Do(req)
+	if err != nil {
+		return len(content) / 4, nil // Fallback
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return len(content) / 4, nil // Fallback
+	}
+
+	var result struct {
+		Tokens []int `json:"tokens"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return len(content) / 4, nil // Fallback
+	}
+
+	return len(result.Tokens), nil
+}
+
+// GetActiveContextSize returns the n_ctx the sidecar was launched with.
+// Used by the probe pre-flight check to compare against tokenized prompt size.
+func (m *LocalModelManager) GetActiveContextSize() int {
+	if m.Role == "router" {
+		return getRouterContextSize(getSystemMemoryGB())
+	}
+	return config.GetContextSize()
+}
+
 // CallLocalModel handles the local structured JSON inference call.
 // Phase-conditional thinking: enables <think> reasoning when no GBNF schema is
 // active (free-form passes), disables it during grammar-constrained output.
@@ -840,6 +1050,12 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
 		MaxTokens          *int                     `json:"max_tokens,omitempty"`
+		PresencePenalty    *float64                 `json:"presence_penalty,omitempty"`
+		DRYMultiplier      *float64                 `json:"dry_multiplier,omitempty"`
+		DRYBase            *float64                 `json:"dry_base,omitempty"`
+		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
+		DRYPenaltyLastN    *int                     `json:"dry_penalty_last_n,omitempty"`
+		DRYSequenceBreakers []string                `json:"dry_sequence_breakers,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
 		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
@@ -860,10 +1076,19 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		templateKwargs["thinking_budget"] = budget
 	}
 
+	// Temperature cascade: hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
+	temperature := 1.0 // Q7: required for min_p to function; GBNF constrains output safety
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp > 0 && cfgTemp != 1.0 {
+		temperature = cfgTemp
+	}
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp > 0 {
+		temperature = ctxTemp
+	}
+
 	reqBody := CompletionRequest{
 		Model:              "Agents-A1-4B",
 		Messages:           MessagesToMaps(messages),
-		Temperature:        1.0, // Q7: required for min_p to function; GBNF constrains output safety
+		Temperature:        temperature,
 		MinP:               0.1, // Q7: dynamic token pruning — prunes tokens <10% of top token probability
 		ChatTemplateKwargs: templateKwargs,
 	}
@@ -874,6 +1099,27 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		maxTok = overrideTok
 	}
 	reqBody.MaxTokens = &maxTok
+
+	// DRY (Don't Repeat Yourself) sampling via context key — detects and penalizes
+	// repeated token sequences, preventing phrase-level repetition loops during
+	// synthesis. Unlike frequency_penalty (individual tokens), DRY is sequence-aware
+	// and won't degrade code or structured output quality.
+	if dry, ok := ctx.Value(DRYSamplingKey).(DRYSamplingConfig); ok && dry.Multiplier > 0 {
+		reqBody.DRYMultiplier = &dry.Multiplier
+		reqBody.DRYBase = &dry.Base
+		reqBody.DRYAllowedLength = &dry.AllowedLength
+		reqBody.DRYPenaltyLastN = &dry.PenaltyLastN
+		if len(dry.SequenceBreakers) > 0 {
+			reqBody.DRYSequenceBreakers = dry.SequenceBreakers
+		}
+	}
+
+	// Presence penalty via context key — penalizes any token that has already
+	// appeared in the output, regardless of distance. Most effective parameter
+	// for preventing degeneration in unconstrained generation (codegen).
+	if pp, ok := ctx.Value(PresencePenaltyKey).(float64); ok && pp > 0 {
+		reqBody.PresencePenalty = &pp
+	}
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}
@@ -1056,6 +1302,12 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		Temperature        float64                  `json:"temperature"`
 		MinP               float64                  `json:"min_p"`
 		MaxTokens          *int                     `json:"max_tokens,omitempty"`
+		PresencePenalty    *float64                 `json:"presence_penalty,omitempty"`
+		DRYMultiplier      *float64                 `json:"dry_multiplier,omitempty"`
+		DRYBase            *float64                 `json:"dry_base,omitempty"`
+		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
+		DRYPenaltyLastN    *int                     `json:"dry_penalty_last_n,omitempty"`
+		DRYSequenceBreakers []string                `json:"dry_sequence_breakers,omitempty"`
 		Stream             bool                     `json:"stream"`
 		StreamOptions      *StreamOptionsStruct     `json:"stream_options,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
@@ -1075,10 +1327,20 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		templateKwargs["thinking_budget"] = budget
 	}
 
+	// Temperature cascade (same logic as CallLocalModel):
+	// hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
+	temperature := 1.0
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp > 0 && cfgTemp != 1.0 {
+		temperature = cfgTemp
+	}
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp > 0 {
+		temperature = ctxTemp
+	}
+
 	reqBody := CompletionRequest{
 		Model:       "Agents-A1-4B",
 		Messages:    MessagesToMaps(messages),
-		Temperature: 1.0,
+		Temperature: temperature,
 		MinP:        0.1,
 		Stream:      true,
 		StreamOptions: &StreamOptionsStruct{
@@ -1093,6 +1355,22 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		maxTok = overrideTok
 	}
 	reqBody.MaxTokens = &maxTok
+
+	// DRY sampling via context key (same as CallLocalModel)
+	if dry, ok := ctx.Value(DRYSamplingKey).(DRYSamplingConfig); ok && dry.Multiplier > 0 {
+		reqBody.DRYMultiplier = &dry.Multiplier
+		reqBody.DRYBase = &dry.Base
+		reqBody.DRYAllowedLength = &dry.AllowedLength
+		reqBody.DRYPenaltyLastN = &dry.PenaltyLastN
+		if len(dry.SequenceBreakers) > 0 {
+			reqBody.DRYSequenceBreakers = dry.SequenceBreakers
+		}
+	}
+
+	// Presence penalty via context key (same as CallLocalModel)
+	if pp, ok := ctx.Value(PresencePenaltyKey).(float64); ok && pp > 0 {
+		reqBody.PresencePenalty = &pp
+	}
 
 	if gbnfSchema != "" {
 		var schemaObj map[string]interface{}
@@ -1215,9 +1493,18 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		}
 	}
 
-	// If generation was aborted, close the response body to cancel the stream
+	// If generation was aborted, close the response body to cancel the stream.
+	// The SSE usage chunk arrives after content chunks, so closing the body
+	// before [DONE] means promptTokens/completionTokens stay at 0. Estimate
+	// from accumulated content so the tracker records actual work done.
 	if generationAborted {
 		resp.Body.Close()
+		if completionTokens == 0 && accumulatedContent.Len() > 0 {
+			// Rough estimate: ~4 chars per token for English/code
+			completionTokens = accumulatedContent.Len() / 4
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar] Guard abort: estimating %d completion tokens from %d chars\n",
+				completionTokens, accumulatedContent.Len())
+		}
 	}
 
 	duration := time.Since(startTime).Seconds()

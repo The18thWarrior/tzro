@@ -546,3 +546,53 @@ func TestGetRawPayload_ReadsFromFilePath(t *testing.T) {
 		t.Errorf("first record name = %q, want %q", records[0]["name"], "Alice")
 	}
 }
+
+func TestTruncateEnvelopeValues_SampleRecordTruncation(t *testing.T) {
+	env := CacheEnvelope{
+		SampleRecord: map[string]interface{}{
+			"short_field": "hello",
+			"long_field":  strings.Repeat("x", 200),
+			"numeric":     42.0,
+		},
+	}
+
+	result := truncateEnvelopeValues(env)
+
+	// Short field should be unchanged
+	if result.SampleRecord["short_field"] != "hello" {
+		t.Errorf("short field modified: %v", result.SampleRecord["short_field"])
+	}
+	// Long field should be truncated to 100 + "..."
+	longVal := result.SampleRecord["long_field"].(string)
+	if len(longVal) != 103 { // 100 + "..."
+		t.Errorf("long field length = %d, want 103", len(longVal))
+	}
+	if !strings.HasSuffix(longVal, "...") {
+		t.Error("long field should end with ...")
+	}
+	// Numeric should be unchanged
+	if result.SampleRecord["numeric"] != 42.0 {
+		t.Errorf("numeric field modified: %v", result.SampleRecord["numeric"])
+	}
+}
+
+func TestTruncateEnvelopeValues_EnumValuesCapping(t *testing.T) {
+	env := CacheEnvelope{
+		SampleRecord: map[string]interface{}{},
+		EnumValues: map[string][]string{
+			"status": {"active", "inactive", "pending", "closed", "archived"},
+			"small":  {"yes", "no"},
+		},
+	}
+
+	result := truncateEnvelopeValues(env)
+
+	// Should cap at 3 entries
+	if len(result.EnumValues["status"]) != 3 {
+		t.Errorf("status enum values = %d, want 3", len(result.EnumValues["status"]))
+	}
+	// Small list should be unchanged
+	if len(result.EnumValues["small"]) != 2 {
+		t.Errorf("small enum values = %d, want 2", len(result.EnumValues["small"]))
+	}
+}

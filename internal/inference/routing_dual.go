@@ -25,7 +25,13 @@ func CallRouter(ctx context.Context, messages []InferenceMessage, jsonSchema str
 // CallWorker sends an inference request to the worker sidecar (quality, large model).
 // Use for: code generation, complex reasoning, DAG planning, repair/fix passes,
 // edge thought generation, long-form synthesis.
+//
+// When ActiveBackend is set (e.g., remote OpenAI-compatible endpoint), routes
+// through the backend instead of the local sidecar.
 func CallWorker(ctx context.Context, messages []InferenceMessage, jsonSchema string) (*InferenceResult, error) {
+	if ActiveBackend != nil {
+		return ActiveBackend.CallModel(ctx, messages, jsonSchema)
+	}
 	return GlobalWorkerModel.CallLocalModel(ctx, messages, jsonSchema)
 }
 
@@ -39,7 +45,12 @@ func CallRouterStream(ctx context.Context, messages []InferenceMessage, jsonSche
 }
 
 // CallWorkerStream sends a streaming inference request to the worker sidecar.
+//
+// When ActiveBackend is set, routes through the backend instead of the local sidecar.
 func CallWorkerStream(ctx context.Context, messages []InferenceMessage, jsonSchema string, meta StreamMeta) (*InferenceResult, error) {
+	if ActiveBackend != nil {
+		return ActiveBackend.CallModelStream(ctx, messages, jsonSchema, meta)
+	}
 	return GlobalWorkerModel.CallLocalModelStream(ctx, messages, jsonSchema, meta)
 }
 
@@ -48,17 +59,37 @@ func CallWorkerStream(ctx context.Context, messages []InferenceMessage, jsonSche
 // thought generation, parameter extraction, branch evaluation, binding resolution.
 //
 // Falls back to the worker sidecar transparently if the router is unavailable.
+//
+// IMPORTANT: This dispatches via CallRouter/CallRouterStream (which target
+// GlobalRouterModel directly) rather than GlobalRouterModel.ExecuteStructured(),
+// because ExecuteStructured checks the package-level ActiveBackend and would
+// route all calls through the remote inference backend instead of the local
+// router sidecar.
 func ExecuteRouterStructured(ctx context.Context, req StructuredInferenceRequest) (string, error) {
-	if isRouterAvailable() {
-		return GlobalRouterModel.ExecuteStructured(ctx, req)
+	var res *InferenceResult
+	var err error
+
+	if req.StreamMeta != nil {
+		res, err = CallRouterStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta)
+	} else {
+		res, err = CallRouter(ctx, req.Messages, req.JSONSchema)
 	}
-	fmt.Fprintln(os.Stderr, "[Inference] Router sidecar unavailable, falling back to worker for structured call")
-	return GlobalWorkerModel.ExecuteStructured(ctx, req)
+
+	if err != nil {
+		return "", err
+	}
+	if res == nil {
+		return "", fmt.Errorf("router returned nil result")
+	}
+	return res.Content, nil
 }
 
 // ExecuteWorkerStructured routes a StructuredInferenceRequest through the worker
 // sidecar (quality, large model). Use for: code generation, complex reasoning,
 // DAG planning, synthesis, primary tool parameter extraction.
+//
+// When ActiveBackend is set, the ExecuteStructured routing logic on GlobalWorkerModel
+// already dispatches through ActiveBackend (see routing.go lines ~290-302).
 func ExecuteWorkerStructured(ctx context.Context, req StructuredInferenceRequest) (string, error) {
 	return GlobalWorkerModel.ExecuteStructured(ctx, req)
 }

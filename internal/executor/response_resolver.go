@@ -90,12 +90,53 @@ func resolveBindingSemantic(ctx context.Context, rawOutput string, bindingKey st
 	resolved = strings.Trim(resolved, "\"'`")
 	resolved = strings.TrimSpace(resolved)
 
+	// Degeneration guard: reject if a single token/phrase is repeated excessively.
+	// The local model sometimes degenerates into repeating the binding key itself
+	// hundreds of times (e.g., "synthesis\nsynthesis\nsynthesis\n...").
+	if isDegenerateRepetition(resolved) {
+		fmt.Fprintf(os.Stderr, "[Response Resolver] Semantic fallback REJECTED for '%s' — degenerate repetition detected\n", bindingKey)
+		return "", fmt.Errorf("semantic resolver returned degenerate repetition for binding '%s'", bindingKey)
+	}
+
 	if resolved == "" || strings.EqualFold(resolved, "null") || strings.EqualFold(resolved, "none") || strings.EqualFold(resolved, "n/a") {
 		return "", fmt.Errorf("semantic resolver returned empty/null for binding '%s'", bindingKey)
 	}
 
 	fmt.Fprintf(os.Stderr, "[Response Resolver] Semantic fallback resolved '%s' → %q\n", bindingKey, resolved)
 	return resolved, nil
+}
+
+// isDegenerateRepetition detects when text consists of a single word or short
+// phrase repeated many times (e.g., "synthesis\nsynthesis\nsynthesis...").
+// Returns true when a single token accounts for >80% of the content and appears
+// 10+ times. This catches local model degeneration where the semantic fallback
+// resolves a binding key to the key name itself repeated hundreds of times.
+func isDegenerateRepetition(s string) bool {
+	if len(s) < 50 {
+		return false // Too short to be degenerate
+	}
+
+	// Split on whitespace and newlines, count token frequencies
+	tokens := strings.Fields(strings.ReplaceAll(s, "\n", " "))
+	if len(tokens) < 10 {
+		return false
+	}
+
+	freq := make(map[string]int)
+	for _, t := range tokens {
+		freq[strings.ToLower(t)]++
+	}
+
+	// Find the most frequent token
+	var maxCount int
+	for _, count := range freq {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+
+	// Degenerate if one token appears 10+ times AND accounts for >80% of all tokens
+	return maxCount >= 10 && float64(maxCount)/float64(len(tokens)) > 0.8
 }
 
 // formatMatchValue converts a keyMatch value to its string representation.
@@ -240,5 +281,25 @@ func collectAllKeys(data interface{}, currentPath string, results *[]keyMatch) {
 			}
 			collectAllKeys(item, indexedPath, results)
 		}
+	}
+}
+
+// isDerivedCacheBindingKey returns true if the property key is a generic data
+// reference that planners commonly use to bind to upstream tabular data outputs.
+// When these keys have 0 exact matches in the upstream JSON but a derivedCacheId
+// exists, the resolver should use the derivedCacheId instead of falling through
+// to the error-prone semantic fallback.
+//
+// Red-team FM-2 fix: The planner generates bindings like "data": "node.output.content"
+// or "data": "node.output.filtered_data", but tool outputs use keys like "rows",
+// "results", or just raw JSON arrays. The semantic fallback hallucinates garbage
+// for these generic keys. Resolving to the derivedCacheId is deterministic and correct.
+func isDerivedCacheBindingKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "content", "data", "filtered_data", "csv_data", "raw_data",
+		"result", "results", "output", "rows", "records":
+		return true
+	default:
+		return false
 	}
 }

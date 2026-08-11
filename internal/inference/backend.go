@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"tzro/internal/config"
+	"tzro/internal/embeddings"
 	"tzro/internal/telemetry"
 )
 
@@ -60,6 +61,11 @@ func StopActive() error {
 		firstErr = err
 	}
 
+	// Stop embedding sidecar
+	if err := GlobalEmbeddingSidecar.Stop(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
 	return firstErr
 }
 
@@ -81,6 +87,11 @@ func StartActive(ctx context.Context) error {
 		}
 	}()
 
+	// NOTE: When ActiveBackend is a remote endpoint, we intentionally do NOT
+	// start the local worker sidecar. CallWorker() already routes through
+	// ActiveBackend, so a local worker would waste memory and GPU. The router
+	// sidecar alone handles local classification/navigation needs.
+
 	// Start router if configured
 	routerPath := config.GetRouterModelPath()
 	if routerPath != "" {
@@ -96,11 +107,26 @@ func StartActive(ctx context.Context) error {
 		}()
 	}
 
+	// Start embedding sidecar (non-fatal — falls back to bag-of-words)
+	var embErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		embErr = GlobalEmbeddingSidecar.Start(ctx)
+		if embErr != nil {
+			fmt.Fprintf(os.Stderr, "[Inference] Embedding sidecar failed to start: %v (bag-of-words fallback)\n", embErr)
+		} else {
+			embeddings.SetDefaultEngine(GlobalEmbeddingSidecar)
+			fmt.Fprintf(os.Stderr, "[Inference] Neural embedding engine active (All-MiniLM-L6-v2)\n")
+		}
+	}()
+
 	wg.Wait()
 
-	// Worker failure is fatal; router failure is non-fatal (graceful fallback)
+	// Worker failure is fatal; router/embedding failures are non-fatal
 	if workerErr != nil {
 		return workerErr
 	}
 	return nil
 }
+

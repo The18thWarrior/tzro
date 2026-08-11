@@ -119,6 +119,9 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0059: Incremental Edge Entry Accumulation](../adr/0059-incremental-edge-entry-accumulation.md) - Incremental edge entry accumulation within Probe Node Thought Chains.
 - [ADR-0060: Generation Guard on Inference Backend](../adr/0060-generation-guard-on-inference-backend.md) - Streaming/post-generation quality gate on the Inference Backend detecting character-level and block-level repetition. Subsumes legacy `stripTrailingRepetition`.
 - [ADR-0061: Spec Compliance Gate for Codegen](../adr/0061-spec-compliance-gate-for-codegen.md) - Post-compilation functional completeness check against original task spec. Full regeneration on failure. Subsumes language-specific linting.
+- [ADR-0065: Probe Pass 1 Worker Routing](../adr/0065-probe-pass1-worker-routing.md) - Routes Probe Thought Chain Pass 1 through worker model for navigation quality. Schema-based routing: empty schema → worker, non-empty → router. Benchmark-driven reversal of original router-for-everything design.
+- [ADR-0071: Pre-Flight Validation and 4B Failure Mode Mitigations](../adr/0071-pre-flight-validation-and-4b-failure-mode-mitigations.md) - Deterministic pre-cloud validation pass (Structural Pre-Check + coverage + content liveness), assistant prefilling infrastructure, schema enrichment for Analyze Nodes, and reactive Item-Level Scatter pattern for synthesis incompleteness.
+- [ADR-0072: Mandatory Recall Injection for Single-Probe DAGs](../adr/0072-mandatory-recall-injection-for-single-probe-dags.md) - Removes the `discoveryNodesCount <= 1` exception in the Kahn Compiler. All Probe Nodes now get a downstream Recall Node, closing the VTE verification gap for single-probe research tasks.
 
 ## Ingested Sources
 

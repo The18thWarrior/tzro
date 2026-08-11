@@ -119,3 +119,68 @@ func TestGetPerformanceCoresCount_NilUsesDefault(t *testing.T) {
 		t.Errorf("getPerformanceCoresCount() with nil config returned non-positive value: %d", got)
 	}
 }
+
+// --- Slice 7: getSystemMemoryGB returns correct value ---
+
+func TestGetSystemMemoryGB_ReturnsPositiveValue(t *testing.T) {
+	gb := getSystemMemoryGB()
+	if gb <= 0 {
+		t.Errorf("getSystemMemoryGB() returned %d, expected positive value", gb)
+	}
+	// Sanity: should be at least 4GB for any modern dev machine
+	if gb < 4 {
+		t.Errorf("getSystemMemoryGB() returned %d GB, suspiciously low", gb)
+	}
+}
+
+// --- Slice 8 & 10: getWorkerParallelSlots returns correct value ---
+
+func TestGetWorkerParallelSlots(t *testing.T) {
+	tests := []struct {
+		name     string
+		memoryGB int
+		expected int
+	}{
+		{"8GB system gets 1 slot", 8, 1},
+		{"16GB system gets 1 slot", 16, 1},
+		{"23GB system gets 1 slot", 23, 1},
+		{"24GB system gets 2 slots", 24, 2},
+		{"32GB system gets 2 slots", 32, 2},
+		{"64GB system gets 2 slots", 64, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getWorkerParallelSlots(tt.memoryGB)
+			if got != tt.expected {
+				t.Errorf("getWorkerParallelSlots(%d) = %d, want %d", tt.memoryGB, got, tt.expected)
+			}
+		})
+	}
+}
+
+// --- getRouterContextSize: memory-gated router context window ---
+
+func TestGetRouterContextSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		memoryGB int
+		expected int
+	}{
+		{"8GB system gets 16K context", 8, 16384},
+		{"15GB system gets 16K context", 15, 16384},
+		{"16GB system gets 64K context", 16, 65536},
+		{"24GB system gets 64K context", 24, 65536},
+		{"32GB system gets 64K context", 32, 65536},
+		{"64GB system gets 64K context", 64, 65536},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getRouterContextSize(tt.memoryGB)
+			if got != tt.expected {
+				t.Errorf("getRouterContextSize(%d) = %d, want %d", tt.memoryGB, got, tt.expected)
+			}
+		})
+	}
+}

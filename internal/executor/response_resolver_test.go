@@ -505,6 +505,32 @@ func TestPartitionBindings(t *testing.T) {
 			t.Errorf("Expected empty maps for empty input")
 		}
 	})
+
+	// ADR-0069: plain_text_fallback is splice-eligible for probe/recall/synthesis
+	// output. The source-node-type check (isPlainTextNodeType) scopes this to
+	// safe node types at resolution time — partitionBindings only sees the tier.
+	t.Run("PlainTextFallback_IsHighConf", func(t *testing.T) {
+		resolved := map[string]ResolvedBinding{
+			"content": {
+				Value: "# Module Documentation\n\nThis module implements the inference pipeline...\n" +
+					"## Architecture\n\nThe system uses a three-layer approach with...",
+				Tier: "plain_text_fallback",
+			},
+			"path": {Value: "/docs/inference.md", Tier: "recursive_key"},
+		}
+
+		highConf, lowConf := partitionBindings(resolved)
+
+		if _, ok := highConf["content"]; !ok {
+			t.Errorf("plain_text_fallback binding should be in highConf (splice-eligible), but landed in lowConf: %v", lowConf)
+		}
+		if _, ok := highConf["path"]; !ok {
+			t.Errorf("recursive_key binding should be in highConf")
+		}
+		if len(lowConf) != 0 {
+			t.Errorf("expected 0 low-confidence bindings, got %d: %v", len(lowConf), lowConf)
+		}
+	})
 }
 
 // TestStripSchemaProperties validates the ADR-0030 schema property removal.

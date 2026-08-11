@@ -94,12 +94,22 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				if node.Type == "analyze" {
 					if node.ProbeConfig == nil {
 						node.ProbeConfig = &ProbeConfig{
-							Goal:            node.Instructions,
-							AllowedTools:    cacheTools,
-							StepBudget:      15,
-							CompactEvery:    3,
-							CompactionLevel: CompactPreserve,
+							Goal:                node.Instructions,
+							AllowedTools:        cacheTools,
+							StepBudget:          15,
+							CompactEvery:        3,
+							CompactionLevel:     CompactPreserve,
+							SourceHint:          "cache", // Phase gate discriminator — only "cache" hint activates the sql_cached_data requirement
+							RequiredToolDispatch: []string{"sql_cached_data"}, // ADR-0068: deterministic dispatch gate
 						}
+					}
+					// ADR-0068: Ensure RequiredToolDispatch is always set for analyze nodes,
+					// even when ProbeConfig was pre-populated by the planner.
+					if len(node.ProbeConfig.RequiredToolDispatch) == 0 {
+						node.ProbeConfig.RequiredToolDispatch = []string{"sql_cached_data"}
+					}
+					if node.ProbeConfig.SourceHint == "" {
+						node.ProbeConfig.SourceHint = "cache"
 					}
 					// Ensure cache tools are always present in AllowedTools
 					if !hasCacheToolsInAllowed(node.AllowedTools) {
@@ -107,6 +117,69 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 					if !hasCacheToolsInAllowed(node.ProbeConfig.AllowedTools) {
 						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, cacheTools...)
+					}
+				}
+
+				// SourceHint-driven tool provisioning (primary): the planner sets
+				// sourceHint on probe nodes to declaratively control tool injection.
+				if node.Type == "probe" && node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "web" {
+					webTools := []string{"web_search", "web_browse"}
+					if !hasWebToolsInAllowed(node.AllowedTools) {
+						node.AllowedTools = append(node.AllowedTools, webTools...)
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] SourceHint=web: injected web tools into %s\n", node.ID)
+					}
+					if !hasWebToolsInAllowed(node.ProbeConfig.AllowedTools) {
+						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, webTools...)
+					}
+				}
+
+				// Research tool propagation (fallback heuristic): ensure web tools reach
+				// probe nodes whose instructions indicate web research intent, even when
+				// the planner omitted sourceHint. Mirrors the cache tool auto-injection
+				// pattern above.
+				if node.Type == "probe" && looksLikeResearchNode(node.Instructions) {
+					webTools := []string{"web_search", "web_browse"}
+					if !hasWebToolsInAllowed(node.AllowedTools) {
+						node.AllowedTools = append(node.AllowedTools, webTools...)
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] Research heuristic fallback: injected web tools into %s\n", node.ID)
+					}
+					if node.ProbeConfig != nil && !hasWebToolsInAllowed(node.ProbeConfig.AllowedTools) {
+						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, webTools...)
+					}
+				}
+
+				// F2 guardrail: web_browse without web_search causes FUTILITY aborts.
+				// You can't browse URLs you haven't searched for. Ensure web_search
+				// is always present when web_browse is in allowedTools.
+				if node.Type == "probe" {
+					hasBrowse := false
+					hasSearch := false
+					for _, t := range node.AllowedTools {
+						if t == "web_browse" {
+							hasBrowse = true
+						}
+						if t == "web_search" {
+							hasSearch = true
+						}
+					}
+					if hasBrowse && !hasSearch {
+						node.AllowedTools = append(node.AllowedTools, "web_search")
+						fmt.Fprintf(os.Stderr, "[KahnCompiler] PlanGuardrail: injected web_search (web_browse requires web_search) into %s\n", node.ID)
+					}
+					// Mirror into ProbeConfig
+					if node.ProbeConfig != nil {
+						hasBrowse, hasSearch = false, false
+						for _, t := range node.ProbeConfig.AllowedTools {
+							if t == "web_browse" {
+								hasBrowse = true
+							}
+							if t == "web_search" {
+								hasSearch = true
+							}
+						}
+						if hasBrowse && !hasSearch {
+							node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, "web_search")
+						}
 					}
 				}
 
@@ -162,41 +235,60 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
-				if !hasPlannedSynthesisChild && (discoveryNodesCount > 1 || node.Type == "analyze") {
-					// Inject Recall Node to align discovery findings (ADR-0038)
-					// ADR-0053: Analyze nodes ALWAYS get a Recall Node, even as sole
-					// discovery nodes. Their internal probe synthesis is insufficient
-					// for data analysis results — the Recall Node's Map-Reduce
-					// strategy and downstream terminal_synthesis are required.
-					recallID := node.ID + "_recall"
-					recallThreshold := 0.9
-					if isBenchmark {
-						recallThreshold = 0.0
+				if !hasPlannedSynthesisChild {
+					// Check if this is a terminal analyze node (v3 data passthrough).
+					// Analyze nodes with SourceHint="cache" that have NO outgoing edges
+					// are terminal — their data passthrough output IS the answer.
+					// Injecting a Recall node would re-synthesize structured data into
+					// bad prose (FM-21 regression). Skip Recall for these nodes.
+					isTerminalAnalyze := false
+					if node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "cache" {
+						hasOutgoingEdge := false
+						for _, edge := range graph.Edges {
+							if edge.SourceID == node.ID {
+								hasOutgoingEdge = true
+								break
+							}
+						}
+						if !hasOutgoingEdge {
+							isTerminalAnalyze = true
+							fmt.Fprintf(os.Stderr, "[Compiler] Analyze node %s is terminal (no outgoing edges). Skipping Recall injection — data passthrough is the final output.\n", node.ID)
+						}
 					}
-					sctNodes = append(sctNodes, GraphNode{
-						ID:                  recallID,
-						Type:                "recall",
-						Action:              "synthesize",
-						Instructions:        fmt.Sprintf("Traverse the execution history of %s node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.Type, node.ID),
-						Status:              "pending",
-						ActivationThreshold: recallThreshold, // High skepticism for synthesis
-						DynamicBindings:     node.DynamicBindings,
-					})
 
-					// Probe/Analyze -> Recall edge
-					sctEdges = append(sctEdges, GraphEdge{
-						SourceID: node.ID,
-						TargetID: recallID,
-					})
-
-					execNodeMap[node.ID] = recallID
-					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
-				} else {
-					if discoveryNodesCount <= 1 {
-						fmt.Printf("[Compiler] Probe %s is the sole discovery node in the graph (discoveryNodesCount=%d). Skipping automatic Recall injection.\n", node.ID, discoveryNodesCount)
+					if isTerminalAnalyze {
+						// Terminal analyze — no Recall. Map directly.
+						execNodeMap[node.ID] = node.ID
+						bridgeNodeMap[node.ID] = node.ID
 					} else {
-						fmt.Printf("[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
+						// Inject Recall Node to align discovery findings (ADR-0038)
+						recallID := node.ID + "_recall"
+						recallThreshold := 0.9
+						if isBenchmark {
+							recallThreshold = 0.0
+						}
+						sctNodes = append(sctNodes, GraphNode{
+							ID:                  recallID,
+							Type:                "recall",
+							Action:              "synthesize",
+							Instructions:        fmt.Sprintf("Traverse the execution history of %s node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.Type, node.ID),
+							Status:              "pending",
+							ActivationThreshold: recallThreshold, // High skepticism for synthesis
+							DynamicBindings:     node.DynamicBindings,
+						})
+
+						// Probe/Analyze -> Recall edge
+						sctEdges = append(sctEdges, GraphEdge{
+							SourceID: node.ID,
+							TargetID: recallID,
+						})
+
+						execNodeMap[node.ID] = recallID
+						bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
 					}
+				} else {
+					// Probe has a planned synthesis child — skip Recall injection
+					fmt.Fprintf(os.Stderr, "[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
 					execNodeMap[node.ID] = node.ID
 					bridgeNodeMap[node.ID] = node.ID
 				}
@@ -237,6 +329,16 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	// inject a deterministic cache bridge node between it and its downstream targets.
 	sctNodes, sctEdges = injectCacheBridgeNodes(graph.Nodes, sctNodes, sctEdges, execNodeMap)
 
+	// ── Auto-inject Analyze Nodes ──
+	// For read_file action nodes referencing tabular files with no downstream
+	// analyze/probe node, inject an analyze node to reason about the data.
+	sctNodes, sctEdges = injectAnalyzeNodes(graph.Nodes, sctNodes, sctEdges, execNodeMap)
+
+	// ── Enforce Analyze Node for data tasks (validation pass) ──
+	// Catches cases where the planner skips the Analyze Node for data tasks
+	// that don't come through read_file → tabular path (e.g., direct cacheId references).
+	sctNodes, sctEdges = ensureAnalyzeForDataTasks(graph.Nodes, sctNodes, sctEdges, execNodeMap, graph.GoalPrompt)
+
 	// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 	// A node is an endpoint if it is an execution node and has no outbound edges to other high-level steps.
 	isSourceMap := make(map[string]bool)
@@ -254,28 +356,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			break
 		}
 	}
-	if !hasSynthesisLeaf && discoveryNodesCount <= 1 {
-		hasProbeLeaf := false
-		hasAnalyzeLeaf := false
-		for _, node := range sctNodes {
-			if !isSourceMap[node.ID] {
-				if node.Type == "probe" {
-					hasProbeLeaf = true
-				}
-				if node.Type == "analyze" {
-					hasAnalyzeLeaf = true
-				}
-			}
-		}
-		// ADR-0053: Analyze nodes always get a downstream synthesis step.
-		// Their internal probe synthesis is insufficient for data analysis
-		// results — the Recall Node's Map-Reduce strategy is required.
-		// Only regular probe nodes skip when they're sole leaves.
-		if hasProbeLeaf && !hasAnalyzeLeaf {
-			fmt.Printf("[Compiler] Graph has a sole probe leaf. Skipping automatic terminal_synthesis injection.\n")
-			hasSynthesisLeaf = true
-		}
-	}
+
 
 	if !hasSynthesisLeaf {
 		synthID := "terminal_synthesis"
@@ -286,7 +367,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		sctNodes = append(sctNodes, GraphNode{
 			ID:                  synthID,
 			Type:                "synthesis",
-			Instructions:        "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details.",
+			Instructions:        "Summarize and compile all prior action outputs into a final cohesive response. IMPORTANT: If you did not successfully find or read the relevant information, state that you did not find it. Do NOT guess or invent implementation details. You MUST answer using ONLY the data provided in context. Do NOT ask for more information, request clarification, or say you don't have access to data. Produce your best answer from what is available.",
 			Status:              "pending",
 			ActivationThreshold: synthThreshold,
 		})
@@ -330,7 +411,12 @@ func isSynthesisGoal(instructions string) bool {
 }
 
 // cacheTools are the tools available to cache bridge and analyze nodes.
-var cacheTools = []string{"introspect_cache", "sql_cached_data"}
+// Includes both low-level SQL tools and compound data tools that translate
+// structured parameters to SQL (preventing 4B model syntax errors).
+var cacheTools = []string{
+	"introspect_cache", "sql_cached_data",
+	"count_by", "group_by", "filter_where", "top_n", "describe_cache",
+}
 
 // referencesTabularFile returns true if the instructions contain a tabular file extension.
 func referencesTabularFile(instructions string) bool {
@@ -419,7 +505,7 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 			Action: "sql_cached_data",
 			Instructions: "Query the cached tabular data from the upstream node's Data Profile. " +
 				"Use the cacheId from the upstream output. " +
-				"Execute: SELECT * FROM cache_<id> LIMIT 100 to return a representative sample.",
+				"Execute: SELECT * FROM cache_<id> LIMIT 5 to return a representative sample.",
 			AllowedTools:        cacheTools,
 			Status:              "pending",
 			ActivationThreshold: 0.0, // Deterministic — no Edge Thought overhead
@@ -460,4 +546,337 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 	}
 
 	return sctNodes, sctEdges
+}
+
+// dataIntentPatterns are phrases that indicate the task involves data analysis
+// or aggregation. When matched AND no analyze node exists in the graph, the
+// compiler injects one to prevent raw data from entering the synthesis context.
+var dataIntentPatterns = []string{
+	"count by", "group by", "aggregate", "breakdown", "distribution",
+	"top n", "top 5", "top 10", "top 20",
+	"how many", "total number", "sum of",
+	"average", "median",
+	"filter by", "filter where",
+	"sort by", "order by", "rank",
+	"analyze the data", "analyze this data", "data analysis",
+	"sector breakdown", "by country", "by company", "by owner",
+	"lookup", "look up",
+}
+
+// ensureAnalyzeForDataTasks is a validation pass that fires after cache bridge
+// and analyze node injection. It checks if the task goal or any node instructions
+// indicate data analysis intent, and if so, verifies that at least one Analyze
+// Node exists in the compiled DAG. If not, injects one between the last
+// cache-related node and the terminal synthesis.
+func ensureAnalyzeForDataTasks(
+	originalNodes []GraphNode,
+	sctNodes []GraphNode,
+	sctEdges []GraphEdge,
+	execNodeMap map[string]string,
+	goalPrompt string,
+) ([]GraphNode, []GraphEdge) {
+	// Check 1: Does the task have data intent?
+	if !hasDataIntent(goalPrompt, originalNodes) {
+		return sctNodes, sctEdges
+	}
+
+	// Check 2: Does the graph already have an analyze node?
+	for _, node := range sctNodes {
+		if node.Type == "analyze" {
+			return sctNodes, sctEdges // already has one — no injection needed
+		}
+	}
+
+	// Check 3: Find the best node to attach the analyze node after.
+	// Priority: cache_bridge > read_file exec > any node with cache tools
+	var attachAfterID string
+	for _, node := range sctNodes {
+		if strings.HasPrefix(node.ID, "cache_bridge_") {
+			attachAfterID = node.ID
+			break
+		}
+	}
+	if attachAfterID == "" {
+		for _, node := range sctNodes {
+			if hasCacheToolsInAllowed(node.AllowedTools) {
+				attachAfterID = node.ID
+				break
+			}
+		}
+	}
+	if attachAfterID == "" {
+		// No cache-related node found — the planner may have a completely
+		// different graph structure. Don't inject blindly.
+		return sctNodes, sctEdges
+	}
+
+	// Inject analyze node
+	analyzeID := "analyze_enforced"
+	analyzeNode := GraphNode{
+		ID:           analyzeID,
+		Type:         "analyze",
+		Instructions: "Analyze the cached data to answer: " + goalPrompt,
+		AllowedTools: append([]string{}, cacheTools...),
+		ProbeConfig: &ProbeConfig{
+			Goal:                "Analyze the cached data to answer: " + goalPrompt,
+			AllowedTools:        append([]string{}, cacheTools...),
+			StepBudget:          15,
+			CompactEvery:        3,
+			CompactionLevel:     CompactPreserve,
+			TaskContext:         goalPrompt,
+			SourceHint:          "cache",
+			RequiredToolDispatch: []string{"sql_cached_data"}, // ADR-0068
+		},
+		Status:              "pending",
+		ActivationThreshold: 0.0,
+	}
+	sctNodes = append(sctNodes, analyzeNode)
+
+	// Re-wire edges: route edges leaving attachAfterID through the analyze node
+	var newEdges []GraphEdge
+	analyzeConnected := false
+	for _, edge := range sctEdges {
+		if edge.SourceID == attachAfterID {
+			if !analyzeConnected {
+				newEdges = append(newEdges, GraphEdge{
+					SourceID: attachAfterID,
+					TargetID: analyzeID,
+				})
+				analyzeConnected = true
+			}
+			newEdges = append(newEdges, GraphEdge{
+				SourceID: analyzeID,
+				TargetID: edge.TargetID,
+			})
+		} else {
+			newEdges = append(newEdges, edge)
+		}
+	}
+
+	if !analyzeConnected {
+		newEdges = append(newEdges, GraphEdge{
+			SourceID: attachAfterID,
+			TargetID: analyzeID,
+		})
+	}
+
+	fmt.Fprintf(os.Stderr, "[KahnCompiler] Enforced analyze node %s for data task (attached after %s)\n", analyzeID, attachAfterID)
+
+	return sctNodes, newEdges
+}
+
+// hasDataIntent returns true if the goal prompt or any node instructions
+// indicate the task involves data analysis or aggregation.
+func hasDataIntent(goalPrompt string, nodes []GraphNode) bool {
+	lower := strings.ToLower(goalPrompt)
+	for _, pattern := range dataIntentPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	for _, node := range nodes {
+		lower = strings.ToLower(node.Instructions)
+		for _, pattern := range dataIntentPatterns {
+			if strings.Contains(lower, pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+
+// that have no downstream analyze or probe node. For each such node, injects
+// an analyze node with cache-prefixed instructions.
+//
+// The existing hasDownstreamCacheTools guard in injectCacheBridgeNodes prevents
+// cache bridge injection when the analyze node is already downstream — the
+// analyze node gets cache tools auto-provisioned by the SCT expander (lines 94-110).
+func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdges []GraphEdge, execNodeMap map[string]string) ([]GraphNode, []GraphEdge) {
+	for _, origNode := range originalNodes {
+		// Only target read_file action nodes referencing tabular files
+		if origNode.Type != "action" || origNode.Action != "read_file" {
+			continue
+		}
+		if !referencesTabularFile(origNode.Instructions) {
+			continue
+		}
+
+		// Resolve the exec node ID for this original node
+		execID, exists := execNodeMap[origNode.ID]
+		if !exists {
+			continue
+		}
+
+		// Check if any downstream node is already an analyze or probe
+		hasDownstreamAnalyze := false
+		for _, edge := range sctEdges {
+			if edge.SourceID == execID {
+				for _, node := range sctNodes {
+					if node.ID == edge.TargetID {
+						if node.Type == "analyze" || node.Type == "probe" {
+							hasDownstreamAnalyze = true
+							break
+						}
+					}
+				}
+			}
+			// Also check nodes reachable through cache bridges
+			if !hasDownstreamAnalyze {
+				for _, edge2 := range sctEdges {
+					if strings.HasPrefix(edge2.SourceID, "cache_bridge_") && edge.SourceID == execID && edge.TargetID == edge2.SourceID {
+						for _, node := range sctNodes {
+							if node.ID == edge2.TargetID && (node.Type == "analyze" || node.Type == "probe") {
+								hasDownstreamAnalyze = true
+								break
+							}
+						}
+					}
+				}
+			}
+		}
+		if hasDownstreamAnalyze {
+			continue
+		}
+
+		// Inject analyze node
+		analyzeID := "analyze_" + origNode.ID
+		analyzeInstructions := fmt.Sprintf(
+			"Using the cached tabular data from the upstream node, answer: %s",
+			origNode.Instructions,
+		)
+		analyzeNode := GraphNode{
+			ID:           analyzeID,
+			Type:         "analyze",
+			Instructions: analyzeInstructions,
+			AllowedTools: append([]string{}, cacheTools...),
+			ProbeConfig: &ProbeConfig{
+				Goal:                analyzeInstructions,
+				AllowedTools:        append([]string{}, cacheTools...),
+				StepBudget:          15,
+				CompactEvery:        3,
+				CompactionLevel:     CompactPreserve,
+				SourceHint:          "cache",
+				RequiredToolDispatch: []string{"sql_cached_data"}, // ADR-0068
+			},
+			Status:              "pending",
+			ActivationThreshold: 0.0,
+		}
+		sctNodes = append(sctNodes, analyzeNode)
+
+		// Wire: find edges leaving execID (or its cache bridge) and re-route through analyze
+		// If execID has no outgoing edges (leaf node), just connect execID → analyze
+		var newEdges []GraphEdge
+		analyzeConnected := false
+
+		// Find the last node in the chain (either execID or its cache_bridge)
+		lastNodeID := execID
+		bridgeID := "cache_bridge_" + origNode.ID
+		for _, edge := range sctEdges {
+			if edge.SourceID == execID && edge.TargetID == bridgeID {
+				lastNodeID = bridgeID
+				break
+			}
+		}
+
+		for _, edge := range sctEdges {
+			if edge.SourceID == lastNodeID && edge.TargetID != analyzeID {
+				// Re-route through analyze
+				if !analyzeConnected {
+					newEdges = append(newEdges, GraphEdge{
+						SourceID: lastNodeID,
+						TargetID: analyzeID,
+					})
+					analyzeConnected = true
+				}
+				newEdges = append(newEdges, GraphEdge{
+					SourceID: analyzeID,
+					TargetID: edge.TargetID,
+				})
+			} else {
+				newEdges = append(newEdges, edge)
+			}
+		}
+
+		// If the last node had no outgoing edges (leaf), connect it to analyze
+		if !analyzeConnected {
+			newEdges = append(newEdges, GraphEdge{
+				SourceID: lastNodeID,
+				TargetID: analyzeID,
+			})
+		}
+
+		sctEdges = newEdges
+		fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-injected analyze node %s for tabular read_file %s\n", analyzeID, origNode.ID)
+	}
+
+	// Red-team FM-10 fix: Convert probe nodes that reference tabular files
+	// directly into analyze nodes. When the planner emits a probe (type: "probe")
+	// instead of an action node for CSV analysis, the task bypasses the structured
+	// query pipeline and falls into generic file exploration where the 4B model fails.
+	// This conversion ensures tabular data always goes through AnalyzePhases.
+	for i, node := range sctNodes {
+		if node.Type != "probe" || node.ProbeConfig == nil {
+			continue
+		}
+		// Check if probe instructions reference a tabular file
+		if !referencesTabularFile(node.Instructions) && !referencesTabularFile(node.ProbeConfig.Goal) {
+			continue
+		}
+		// Skip if already configured as a cache analyze node
+		if node.ProbeConfig.SourceHint == "cache" {
+			continue
+		}
+		// Convert probe → analyze in-place
+		sctNodes[i].Type = "analyze"
+		sctNodes[i].AllowedTools = append([]string{}, cacheTools...)
+		sctNodes[i].ProbeConfig.AllowedTools = append([]string{}, cacheTools...)
+		sctNodes[i].ProbeConfig.SourceHint = "cache"
+		sctNodes[i].ProbeConfig.CompactionLevel = CompactPreserve
+		if sctNodes[i].ProbeConfig.StepBudget < 15 {
+			sctNodes[i].ProbeConfig.StepBudget = 15
+		}
+		fmt.Fprintf(os.Stderr, "[KahnCompiler] Converted probe %s to analyze (tabular file detected in instructions)\n", node.ID)
+	}
+
+	return sctNodes, sctEdges
+}
+
+// researchPatterns are phrases that indicate a probe node is intended for
+// web research rather than codebase exploration.
+var researchPatterns = []string{
+	"web_search",
+	"web_browse",
+	"search the web",
+	"internet",
+	"find sources",
+	"web research",
+	"online",
+	"authoritative sources",
+	"urls",
+	"search for",
+	"browse",
+	"websites",
+}
+
+// looksLikeResearchNode returns true if the node's instructions indicate
+// web research intent rather than codebase exploration.
+func looksLikeResearchNode(instructions string) bool {
+	lower := strings.ToLower(instructions)
+	for _, pattern := range researchPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWebToolsInAllowed returns true if any of the tools are web research tools.
+func hasWebToolsInAllowed(tools []string) bool {
+	for _, tool := range tools {
+		if tool == "web_search" || tool == "web_browse" {
+			return true
+		}
+	}
+	return false
 }

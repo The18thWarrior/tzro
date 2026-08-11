@@ -146,6 +146,17 @@ type TzroModelSetArgs struct {
 }
 
 func handleTzroModelSet(ctx context.Context, req *mcp.CallToolRequest, args TzroModelSetArgs) (*mcp.CallToolResult, any, error) {
+	// Guard: model management is not available when the worker is a remote backend
+	cfg := config.Get()
+	if cfg.InferenceBackend.Type == "openai-compatible" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: `{"error": "Worker is configured as a remote inference backend. Model management is only available for the local llama-server sidecar."}`},
+			},
+			IsError: true,
+		}, nil, nil
+	}
+
 	// Validate: exactly one input mode
 	modes := 0
 	if args.ModelID != "" {
@@ -175,7 +186,7 @@ func handleTzroModelSet(ctx context.Context, req *mcp.CallToolRequest, args Tzro
 	}
 
 	modelsDir := config.GetModelsDir()
-	cfg := config.Get()
+	cfg = config.Get()
 	oldModelPath := cfg.GGUFModelPath
 
 	var newModelPath string
@@ -425,23 +436,14 @@ func activateModel(ctx context.Context, oldModelPath, newModelPath, modelsDir st
 // it downloads the mmproj file to the models directory in the background.
 // This enables vision features (PDF OCR, image analysis) automatically.
 func downloadCompanionMMProjIfNeeded(modelPath, modelsDir string) {
-	// Find which catalog entry matches the activated model
-	catalog := inference.GetCatalog()
-	var companion *inference.CompanionFile
-	for _, entry := range catalog {
-		if entry.CompanionMMProj == nil {
-			continue
-		}
-		candidatePath := filepath.Join(modelsDir, entry.Filename)
-		if candidatePath == modelPath {
-			companion = entry.CompanionMMProj
-			break
-		}
+	// Find which catalog entry matches the activated model by filename.
+	// Using FindModelByFilename (not full path comparison) so models loaded
+	// from directories outside modelsDir still match their catalog entry.
+	entry := inference.FindModelByFilename(filepath.Base(modelPath))
+	if entry == nil || entry.CompanionMMProj == nil {
+		return // Model not in catalog or has no companion mmproj
 	}
-
-	if companion == nil {
-		return // No companion mmproj for this model
-	}
+	companion := entry.CompanionMMProj
 
 	// Check if already downloaded
 	mmProjPath := filepath.Join(modelsDir, companion.Filename)
@@ -528,23 +530,14 @@ func downloadCompanionMMProjIfNeeded(modelPath, modelsDir string) {
 // already downloaded, it downloads the MTP GGUF to the models directory.
 // This enables MTP speculative decoding for faster inference automatically.
 func downloadCompanionMTPIfNeeded(modelPath, modelsDir string) {
-	// Find which catalog entry matches the activated model
-	catalog := inference.GetCatalog()
-	var companion *inference.CompanionFile
-	for _, entry := range catalog {
-		if entry.CompanionMTP == nil {
-			continue
-		}
-		candidatePath := filepath.Join(modelsDir, entry.Filename)
-		if candidatePath == modelPath {
-			companion = entry.CompanionMTP
-			break
-		}
+	// Find which catalog entry matches the activated model by filename.
+	// Using FindModelByFilename (not full path comparison) so models loaded
+	// from directories outside modelsDir still match their catalog entry.
+	entry := inference.FindModelByFilename(filepath.Base(modelPath))
+	if entry == nil || entry.CompanionMTP == nil {
+		return // Model not in catalog or has no companion MTP
 	}
-
-	if companion == nil {
-		return // No companion MTP for this model
-	}
+	companion := entry.CompanionMTP
 
 	// Check if already downloaded
 	mtpPath := filepath.Join(modelsDir, companion.Filename)

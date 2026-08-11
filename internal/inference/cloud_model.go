@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -53,9 +54,13 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 		Role    string      `json:"role"`
 		Content interface{} `json:"content"` // string or []ContentPart
 	}
+	type JSONSchemaWrapper struct {
+		Name   string                 `json:"name"`
+		Schema map[string]interface{} `json:"schema"`
+	}
 	type ResponseFormatStruct struct {
-		Type   string                 `json:"type"`
-		Schema map[string]interface{} `json:"schema,omitempty"`
+		Type       string             `json:"type"`
+		JSONSchema *JSONSchemaWrapper `json:"json_schema,omitempty"`
 	}
 	type CompletionRequest struct {
 		Model          string                `json:"model"`
@@ -86,7 +91,11 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 		var schemaObj map[string]interface{}
 		if json.Unmarshal([]byte(schemaStr), &schemaObj) == nil {
 			reqBody.ResponseFormat = &ResponseFormatStruct{
-				Type: "json_object",
+				Type: "json_schema",
+				JSONSchema: &JSONSchemaWrapper{
+					Name:   "response",
+					Schema: schemaObj,
+				},
 			}
 		}
 	}
@@ -112,6 +121,12 @@ func callCloudModel(ctx context.Context, messages []InferenceMessage, schemaStr 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "[Cloud API Error] status=%d model=%s bodySize=%d messages=%d\n",
+			resp.StatusCode, modelName, len(bodyBytes), len(cloudMessages))
+		for i, m := range cloudMessages {
+			cStr, _ := json.Marshal(m.Content)
+			fmt.Fprintf(os.Stderr, "  msg[%d] role=%s size=%d\n", i, m.Role, len(cStr))
+		}
 		respBytes, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("cloud API returned status %d: %s", resp.StatusCode, string(respBytes))
 	}
@@ -187,9 +202,13 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 		IncludeUsage bool `json:"include_usage"`
 	}
 
+	type JSONSchemaWrapper struct {
+		Name   string                 `json:"name"`
+		Schema map[string]interface{} `json:"schema"`
+	}
 	type ResponseFormatStruct struct {
-		Type   string                 `json:"type"`
-		Schema map[string]interface{} `json:"schema,omitempty"`
+		Type       string             `json:"type"`
+		JSONSchema *JSONSchemaWrapper `json:"json_schema,omitempty"`
 	}
 
 	type CompletionRequest struct {
@@ -227,7 +246,11 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 		var schemaObj map[string]interface{}
 		if json.Unmarshal([]byte(schemaStr), &schemaObj) == nil {
 			reqBody.ResponseFormat = &ResponseFormatStruct{
-				Type: "json_object",
+				Type: "json_schema",
+				JSONSchema: &JSONSchemaWrapper{
+					Name:   "response",
+					Schema: schemaObj,
+				},
 			}
 		}
 	}
@@ -253,6 +276,12 @@ func CallCloudModelStream(ctx context.Context, messages []InferenceMessage, sche
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "[Cloud Stream API Error] status=%d model=%s bodySize=%d messages=%d\n",
+			resp.StatusCode, modelName, len(bodyBytes), len(cloudMessages))
+		for i, m := range cloudMessages {
+			cStr, _ := json.Marshal(m.Content)
+			fmt.Fprintf(os.Stderr, "  msg[%d] role=%s size=%d\n", i, m.Role, len(cStr))
+		}
 		respBytes, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("cloud stream API returned status %d: %s", resp.StatusCode, string(respBytes))
 	}

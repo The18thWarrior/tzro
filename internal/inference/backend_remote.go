@@ -19,11 +19,12 @@ import (
 
 // RemoteOpenAIBackend targets an arbitrary OpenAI-compatible model endpoint.
 type RemoteOpenAIBackend struct {
-	url       string
-	model     string
-	apiKey    string
-	client    *http.Client
-	publisher telemetry.EventPublisher
+	url          string
+	model        string
+	apiKey       string
+	schemaFormat string // "json_object" (default) | "json_schema" (OpenAI API)
+	client       *http.Client
+	publisher    telemetry.EventPublisher
 }
 
 // NewRemoteOpenAIBackend creates a new RemoteOpenAIBackend.
@@ -39,7 +40,14 @@ func NewRemoteOpenAIBackend(cfg config.BackendConfig, publisher telemetry.EventP
 		url = "http://localhost:11434/v1" // Fallback to Ollama default
 	}
 	if !strings.HasSuffix(url, "/chat/completions") {
-		url = strings.TrimSuffix(url, "/") + "/chat/completions"
+		trimmed := strings.TrimSuffix(url, "/")
+		// If the URL already includes a versioned path (e.g. /v1), append directly.
+		// Otherwise, add the standard /v1 prefix for OpenAI-compatible APIs.
+		if strings.Contains(trimmed, "/v1") || strings.Contains(trimmed, "/v2") {
+			url = trimmed + "/chat/completions"
+		} else {
+			url = trimmed + "/v1/chat/completions"
+		}
 	}
 
 	model := cfg.Model
@@ -47,12 +55,18 @@ func NewRemoteOpenAIBackend(cfg config.BackendConfig, publisher telemetry.EventP
 		model = "qwen3.5:latest"
 	}
 
+	schemaFormat := cfg.SchemaFormat
+	if schemaFormat == "" {
+		schemaFormat = "json_object" // Default: Ollama/LMStudio convention
+	}
+
 	return &RemoteOpenAIBackend{
-		url:       url,
-		model:     model,
-		apiKey:    apiKey,
-		client:    &http.Client{}, // No fixed timeout for inference calls (relies on ctx)
-		publisher: publisher,
+		url:          url,
+		model:        model,
+		apiKey:       apiKey,
+		schemaFormat: schemaFormat,
+		client:       &http.Client{}, // No fixed timeout for inference calls (relies on ctx)
+		publisher:    publisher,
 	}
 }
 
@@ -62,6 +76,7 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 		Model          string                   `json:"model"`
 		Messages       []map[string]interface{} `json:"messages"`
 		Temperature    float64                  `json:"temperature"`
+		MaxTokens      *int                     `json:"max_tokens,omitempty"`
 		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
 	}
 
@@ -71,14 +86,11 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 		Temperature: 1.0,
 	}
 
+	// NOTE: We intentionally do NOT send max_tokens to remote backends.
+	// See CallModelStream comment for rationale.
+
 	if jsonSchema != "" {
-		var schemaObj map[string]interface{}
-		if json.Unmarshal([]byte(jsonSchema), &schemaObj) == nil {
-			reqBody.ResponseFormat = map[string]interface{}{
-				"type":   "json_object",
-				"schema": schemaObj,
-			}
-		}
+		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -132,7 +144,9 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 	if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
 		if choice, ok := choices[0].(map[string]interface{}); ok {
 			if msg, ok := choice["message"].(map[string]interface{}); ok {
-				if content, ok := msg["content"].(string); ok {
+				content, _ := msg["content"].(string)
+
+				if content != "" {
 					if tracker, ok := GetTokenTracker(ctx); ok {
 						tracker.Record(false, promptTokens, completionTokens, duration, speed)
 					}
@@ -171,6 +185,7 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		Model          string                   `json:"model"`
 		Messages       []map[string]interface{} `json:"messages"`
 		Temperature    float64                  `json:"temperature"`
+		MaxTokens      *int                     `json:"max_tokens,omitempty"`
 		Stream         bool                     `json:"stream"`
 		StreamOptions  *StreamOptionsStruct     `json:"stream_options,omitempty"`
 		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
@@ -186,14 +201,14 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		},
 	}
 
+	// NOTE: We intentionally do NOT send max_tokens to remote backends.
+	// The local engine sets very high values (65536) assuming a local sidecar
+	// that self-limits at n_ctx. Remote servers (especially thinking models)
+	// silently return empty when max_tokens + prompt_tokens exceeds context.
+	// Omitting max_tokens lets the server auto-calculate available space.
+
 	if jsonSchema != "" {
-		var schemaObj map[string]interface{}
-		if json.Unmarshal([]byte(jsonSchema), &schemaObj) == nil {
-			reqBody.ResponseFormat = map[string]interface{}{
-				"type":   "json_object",
-				"schema": schemaObj,
-			}
-		}
+		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)
@@ -221,6 +236,7 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("remote model stream HTTP server returned status %s: %s", resp.Status, string(respBody))
 	}
+
 
 	reader := bufio.NewReader(resp.Body)
 	var accumulatedContent strings.Builder
@@ -254,7 +270,8 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 			} `json:"choices"`
 			Usage *struct {
@@ -268,6 +285,10 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		}
 
 		if len(chunk.Choices) > 0 {
+			// Thinking/reasoning models stream chain-of-thought in
+			// reasoning_content and the final answer in content.
+			// Only accumulate content — reasoning_content is internal CoT
+			// that should not appear in the output.
 			contentDelta := chunk.Choices[0].Delta.Content
 			if contentDelta != "" {
 				accumulatedContent.WriteString(contentDelta)
@@ -391,4 +412,31 @@ func (b *RemoteOpenAIBackend) getPublisher() telemetry.EventPublisher {
 		return b.publisher
 	}
 	return telemetry.Default
+}
+
+// buildResponseFormat constructs the response_format payload based on the
+// configured schemaFormat. Supports two conventions:
+//   - "json_object": Ollama/LMStudio format — { type: "json_object", schema: {...} }
+//   - "json_schema" (default): OpenAI/Google/Anthropic API format — { type: "json_schema", json_schema: { name: "response", schema: {...} } }
+func (b *RemoteOpenAIBackend) buildResponseFormat(jsonSchema string) map[string]interface{} {
+	var schemaObj map[string]interface{}
+	if json.Unmarshal([]byte(jsonSchema), &schemaObj) != nil {
+		return nil
+	}
+
+	switch b.schemaFormat {
+	case "json_object":
+		return map[string]interface{}{
+			"type":   "json_object",
+			"schema": schemaObj,
+		}
+	default: // "json_schema" or empty — standard OpenAI/Google/Anthropic format
+		return map[string]interface{}{
+			"type": "json_schema",
+			"json_schema": map[string]interface{}{
+				"name":   "response",
+				"schema": schemaObj,
+			},
+		}
+	}
 }

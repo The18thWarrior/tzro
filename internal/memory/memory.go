@@ -60,7 +60,10 @@ func (sdb *SqliteDatabase) InitWithConnection(conn *sql.DB, dialect db.DialectAd
 
 	sdb.db = conn
 	sdb.dialect = dialect
-	sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	sdb.EmbeddingEngine = embeddings.DefaultEngine
+	if sdb.EmbeddingEngine == nil {
+		sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	}
 
 	// Run initialization queries provided by dialect
 	tx, err := sdb.db.Begin()
@@ -113,8 +116,11 @@ func (sdb *SqliteDatabase) Init() error {
 		sdb.dialect = &db.SqliteDialect{}
 	}
 
-	// Initialize the default Pure Go Embedding Engine for local semantic matching
-	sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	// Prefer neural embedding engine; fall back to Pure Go bag-of-words
+	sdb.EmbeddingEngine = embeddings.DefaultEngine
+	if sdb.EmbeddingEngine == nil {
+		sdb.EmbeddingEngine = embeddings.NewPureGoEmbeddingEngine()
+	}
 
 	// Enable WAL mode
 	if _, err := sdb.db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
@@ -345,6 +351,20 @@ func (sdb *SqliteDatabase) createTables() error {
 			created_at INTEGER NOT NULL,
 			completed_at INTEGER NOT NULL DEFAULT 0
 		);`,
+		`CREATE TABLE IF NOT EXISTS phase_results (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			phase_name TEXT NOT NULL,
+			summary TEXT,
+			artifacts TEXT,
+			tools_called TEXT,
+			steps_used INTEGER,
+			backtracks INTEGER DEFAULT 0,
+			backtrack_reason TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_phase_results_task ON phase_results(task_id, node_id);`,
 	}
 
 	for _, query := range queries {
@@ -1655,4 +1675,62 @@ func (sdb *SqliteDatabase) GetLatestEdgeThought(taskID string) (*EdgeThought, er
 	}
 	et.GoalAchieved = goalAchievedInt != 0
 	return &et, nil
+}
+
+// PhaseResultRecord represents a persisted phase result for checkpointing.
+type PhaseResultRecord struct {
+	TaskID          string
+	NodeID          string
+	PhaseName       string
+	Summary         string
+	Artifacts       string // JSON blob
+	ToolsCalled     string // JSON array
+	StepsUsed       int
+	Backtracks      int
+	BacktrackReason string
+}
+
+// SavePhaseResult persists a completed phase result for checkpointing.
+func (sdb *SqliteDatabase) SavePhaseResult(record PhaseResultRecord) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec(
+		`INSERT INTO phase_results (task_id, node_id, phase_name, summary, artifacts, tools_called, steps_used, backtracks, backtrack_reason)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.TaskID, record.NodeID, record.PhaseName, record.Summary,
+		record.Artifacts, record.ToolsCalled, record.StepsUsed,
+		record.Backtracks, record.BacktrackReason,
+	)
+	return err
+}
+
+// GetPhaseResults retrieves all persisted phase results for a task+node,
+// ordered by creation time. Used for resuming execution from checkpoints.
+func (sdb *SqliteDatabase) GetPhaseResults(taskID, nodeID string) ([]PhaseResultRecord, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	rows, err := sdb.db.Query(
+		`SELECT task_id, node_id, phase_name, COALESCE(summary,''), COALESCE(artifacts,''), COALESCE(tools_called,'[]'), steps_used, backtracks, COALESCE(backtrack_reason,'')
+		 FROM phase_results WHERE task_id = ? AND node_id = ? ORDER BY id ASC`,
+		taskID, nodeID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []PhaseResultRecord
+	for rows.Next() {
+		var r PhaseResultRecord
+		if err := rows.Scan(&r.TaskID, &r.NodeID, &r.PhaseName, &r.Summary, &r.Artifacts, &r.ToolsCalled, &r.StepsUsed, &r.Backtracks, &r.BacktrackReason); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }

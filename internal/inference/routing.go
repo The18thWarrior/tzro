@@ -52,7 +52,8 @@ type StructuredInferenceRequest struct {
 	StreamMeta  *StreamMeta
 	ToolNames   []string
 	TaskID      string
-	IsLowStakes bool // If true, disable thermal escalation and sticky cloud fallback (ADR-0040)
+	IsLowStakes bool   // If true, disable thermal escalation and sticky cloud fallback (ADR-0040)
+	OutputPrefix string // FM1: Injected into assistant turn before generation. Empty = no prefilling.
 }
 
 // NewSimpleRequest creates a 2-message request for classification, chat, and other
@@ -269,7 +270,10 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 			// ADR-0040: Low-stakes requests (like validators) bypass thermal escalation
 			// to avoid burning cloud tokens on simple structured extraction.
-			if !req.IsLowStakes {
+			// Remote backends skip thermal checks entirely — local thermal state is
+			// irrelevant when inference runs on a different machine.
+			isRemoteBackend := cfg.InferenceBackend.Type == "openai-compatible"
+			if !req.IsLowStakes && !isRemoteBackend {
 				proceed, escalateToCloud := CheckThermalPressure(req.TaskID, nodeID, m)
 				if !proceed {
 					if escalateToCloud && cfg.ModelMode == "cooperative" {
@@ -287,18 +291,29 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 			var localRes *InferenceResult
 			var err error
 
+			// FM1: Apply assistant prefilling when OutputPrefix is set.
+			// Prepares messages with an assistant turn containing the prefix,
+			// causing the model to continue from it rather than emitting meta-response.
+			messages := PrepareMessagesWithPrefix(req)
+
 			if ActiveBackend != nil {
 				if req.StreamMeta != nil {
-					localRes, err = ActiveBackend.CallModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta)
+					localRes, err = ActiveBackend.CallModelStream(ctx, messages, req.JSONSchema, *req.StreamMeta)
 				} else {
-					localRes, err = ActiveBackend.CallModel(ctx, req.Messages, req.JSONSchema)
+					localRes, err = ActiveBackend.CallModel(ctx, messages, req.JSONSchema)
 				}
 			} else {
 				if req.StreamMeta != nil {
-					localRes, err = m.CallLocalModelStream(ctx, req.Messages, req.JSONSchema, *req.StreamMeta)
+					localRes, err = m.CallLocalModelStream(ctx, messages, req.JSONSchema, *req.StreamMeta)
 				} else {
-					localRes, err = m.CallLocalModel(ctx, req.Messages, req.JSONSchema)
+					localRes, err = m.CallLocalModel(ctx, messages, req.JSONSchema)
 				}
+			}
+
+			// FM1: Prepend the output prefix to the result content.
+			// The model returns only the continuation; the caller expects the full output.
+			if err == nil && req.OutputPrefix != "" {
+				localRes.Content = PrependPrefixToResult(req.OutputPrefix, localRes.Content)
 			}
 
 			if err == nil {

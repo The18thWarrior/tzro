@@ -26,18 +26,29 @@ type ToolDispatch struct {
 // Wraps the terminal synthesis text with structured execution metadata.
 // All fields are computed from graph state and tool dispatch history — no LLM generation.
 type ExecutionEnvelope struct {
-	Synthesis      string   `json:"synthesis"`
-	TaskID         string   `json:"taskId"`
-	GoalPrompt     string   `json:"goalPrompt"`
-	Status         string   `json:"status"`
-	ToolsUsed      []string `json:"toolsUsed"`
-	FilesRead      []string `json:"filesRead"`
-	FilesModified  []string `json:"filesModified"`
-	NodeCount      int      `json:"nodeCount"`
-	NodesCompleted int      `json:"nodesCompleted"`
-	NodesFailed    int      `json:"nodesFailed"`
-	NodesSkipped   int      `json:"nodesSkipped"`
-	DurationMs     int64    `json:"durationMs"`
+	Synthesis      string              `json:"synthesis"`
+	TaskID         string              `json:"taskId"`
+	GoalPrompt     string              `json:"goalPrompt"`
+	Status         string              `json:"status"`
+	ToolsUsed      []string            `json:"toolsUsed"`
+	FilesRead      []string            `json:"filesRead"`
+	FilesModified  []string            `json:"filesModified"`
+	NodeCount      int                 `json:"nodeCount"`
+	NodesCompleted int                 `json:"nodesCompleted"`
+	NodesFailed    int                 `json:"nodesFailed"`
+	NodesSkipped   int                 `json:"nodesSkipped"`
+	DurationMs     int64               `json:"durationMs"`
+	Verification   *VerificationResult `json:"verification,omitempty"` // ADR-0067: populated by Verification Gate
+	Phases         []PhaseEnvelopeEntry `json:"phases,omitempty"`       // Phase Runner metadata
+}
+
+// PhaseEnvelopeEntry carries per-phase execution metadata in the Execution Envelope.
+// Populated from the Phase Manifest when a node uses the Phase Runner.
+type PhaseEnvelopeEntry struct {
+	Name        string   `json:"name"`
+	StepsUsed   int      `json:"stepsUsed"`
+	ToolsCalled []string `json:"toolsCalled"`
+	Backtracks  int      `json:"backtracks,omitempty"`
 }
 
 // fileReadTools are tool names whose "path" or "filepath" argument indicates a file was read.
@@ -115,6 +126,18 @@ func AssembleEnvelope(graph *compiler.ExecutionGraph, nodes []memory.NodeState, 
 	return env
 }
 
+// PopulatePhases adds phase-level metadata from a PhaseManifest to an envelope.
+func (env *ExecutionEnvelope) PopulatePhases(manifest PhaseManifest) {
+	for _, phase := range manifest.Phases {
+		env.Phases = append(env.Phases, PhaseEnvelopeEntry{
+			Name:        phase.PhaseName,
+			StepsUsed:   phase.StepsUsed,
+			ToolsCalled: phase.ToolsCalled,
+			Backtracks:  phase.Backtracks,
+		})
+	}
+}
+
 // findSynthesisText locates the effective terminal node and returns its RawOutput.
 // Search order: terminal_synthesis node, then last completed recall, probe, or synthesis node.
 func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState) string {
@@ -134,8 +157,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 	}
 
-	// Fallback: find the last completed node of type recall > probe > synthesis
-	var lastRecall, lastProbe, lastSynthesis string
+	// Fallback: find the last completed node of type scatter_assembly > recall > probe > synthesis
+	var lastScatterAssembly, lastRecall, lastProbe, lastSynthesis string
 	for _, n := range nodes {
 		if n.Status != "completed" {
 			continue
@@ -146,6 +169,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 
 		switch nodeTypes[n.NodeID] {
+		case "scatter_assembly":
+			lastScatterAssembly = raw
 		case "recall":
 			lastRecall = raw
 		case "probe":
@@ -155,6 +180,9 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 	}
 
+	if lastScatterAssembly != "" {
+		return lastScatterAssembly
+	}
 	if lastRecall != "" {
 		return lastRecall
 	}

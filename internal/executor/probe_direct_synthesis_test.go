@@ -19,13 +19,13 @@ type mockSynthesisEngine struct {
 	err              error
 }
 
-func (m *mockSynthesisEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string) (string, error) {
+func (m *mockSynthesisEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, _ ModelTarget) (string, error) {
 	m.lastSystemPrompt = systemPrompt
 	m.lastUserPrompt = userPrompt
 	return m.response, m.err
 }
 
-func (m *mockSynthesisEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string) (string, error) {
+func (m *mockSynthesisEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
 	if len(messages) >= 2 {
 		m.lastSystemPrompt = messages[0].Content
 		m.lastUserPrompt = messages[1].Content

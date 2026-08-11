@@ -2,6 +2,7 @@ package executor
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -240,5 +241,114 @@ func TestExecutionEngine_DispatchAccumulator(t *testing.T) {
 	empty := engine.DrainDispatches("nonexistent")
 	if len(empty) != 0 {
 		t.Errorf("expected 0 dispatches for nonexistent task, got %d", len(empty))
+	}
+}
+
+// --- Slice 9: Phase Runner metadata in Execution Envelope ---
+
+func TestExecutionEnvelope_PhasesSection(t *testing.T) {
+	// Build a simple envelope
+	graph := &compiler.ExecutionGraph{
+		TaskID:     "task-phase-1",
+		GoalPrompt: "Explore project",
+		Nodes: []compiler.GraphNode{
+			{ID: "explore", Type: "probe"},
+			{ID: "terminal_synthesis", Type: "synthesis"},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "explore", TargetID: "terminal_synthesis"},
+		},
+	}
+
+	nodes := []memory.NodeState{
+		{TaskID: "task-phase-1", NodeID: "explore", Status: "completed", RawOutput: "Explored"},
+		{TaskID: "task-phase-1", NodeID: "terminal_synthesis", Status: "completed", RawOutput: "Final synthesis"},
+	}
+
+	env := AssembleEnvelope(graph, nodes, nil, time.Now().Add(-2*time.Second))
+
+	// Populate phases from a Phase Manifest
+	manifest := PhaseManifest{
+		Phases: []PhaseResult{
+			{PhaseName: "orient", StepsUsed: 2, ToolsCalled: []string{"list_dir"}, Backtracks: 0},
+			{PhaseName: "discover", StepsUsed: 4, ToolsCalled: []string{"read_file", "search_files"}, Backtracks: 0},
+			{PhaseName: "deep_read", StepsUsed: 6, ToolsCalled: []string{"read_file", "read_file", "read_file"}, Backtracks: 1},
+			{PhaseName: "synthesize", StepsUsed: 1, ToolsCalled: []string{}, Backtracks: 0},
+		},
+		TotalStepsUsed:  13,
+		TotalBacktracks: 1,
+	}
+	env.PopulatePhases(manifest)
+
+	// Verify phases array
+	if len(env.Phases) != 4 {
+		t.Fatalf("expected 4 phases, got %d", len(env.Phases))
+	}
+
+	if env.Phases[0].Name != "orient" {
+		t.Errorf("phase 0 name: expected 'orient', got %q", env.Phases[0].Name)
+	}
+	if env.Phases[2].StepsUsed != 6 {
+		t.Errorf("phase 2 steps: expected 6, got %d", env.Phases[2].StepsUsed)
+	}
+	if env.Phases[2].Backtracks != 1 {
+		t.Errorf("phase 2 backtracks: expected 1, got %d", env.Phases[2].Backtracks)
+	}
+
+	// Verify JSON serialization includes phases
+	data, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	jsonStr := string(data)
+	if !strings.Contains(jsonStr, `"phases"`) {
+		t.Error("envelope JSON missing 'phases' key")
+	}
+	if !strings.Contains(jsonStr, `"orient"`) {
+		t.Error("envelope JSON missing phase name 'orient'")
+	}
+	if !strings.Contains(jsonStr, `"deep_read"`) {
+		t.Error("envelope JSON missing phase name 'deep_read'")
+	}
+}
+
+func TestFindSynthesisText_PrefersScatterAssembly_OverRecall(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-scatter-1",
+		Nodes: []compiler.GraphNode{
+			{ID: "probe_1", Type: "probe"},
+			{ID: "recall_1", Type: "recall"},
+			{ID: "scatter_assembly_recall_1", Type: "scatter_assembly"},
+		},
+	}
+	nodes := []memory.NodeState{
+		{TaskID: "task-scatter-1", NodeID: "probe_1", Status: "completed", RawOutput: "probe output"},
+		{TaskID: "task-scatter-1", NodeID: "recall_1", Status: "completed", RawOutput: "recall synthesis (original)"},
+		{TaskID: "task-scatter-1", NodeID: "scatter_assembly_recall_1", Status: "completed", RawOutput: "scatter assembled + smoothed output"},
+	}
+
+	result := findSynthesisText(graph, nodes)
+	if result != "scatter assembled + smoothed output" {
+		t.Errorf("expected scatter_assembly output, got %q", result)
+	}
+}
+
+func TestFindSynthesisText_FallsBackToRecall_WhenNoScatterAssembly(t *testing.T) {
+	graph := &compiler.ExecutionGraph{
+		TaskID: "task-no-scatter",
+		Nodes: []compiler.GraphNode{
+			{ID: "probe_1", Type: "probe"},
+			{ID: "recall_1", Type: "recall"},
+		},
+	}
+	nodes := []memory.NodeState{
+		{TaskID: "task-no-scatter", NodeID: "probe_1", Status: "completed", RawOutput: "probe output"},
+		{TaskID: "task-no-scatter", NodeID: "recall_1", Status: "completed", RawOutput: "recall synthesis"},
+	}
+
+	result := findSynthesisText(graph, nodes)
+	if result != "recall synthesis" {
+		t.Errorf("expected recall output, got %q", result)
 	}
 }

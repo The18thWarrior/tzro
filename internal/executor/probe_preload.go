@@ -318,6 +318,44 @@ func formatExpr(expr ast.Expr) string {
 	}
 }
 
+// webOnlyTools lists tools that operate exclusively over the network.
+// Probes restricted to these tools should NOT auto-detect local PreloadPaths,
+// because injecting local directory content contaminates web research synthesis
+// (observed: technical_deep_dive_gguf 4.75→1.00 in benchmark run 14).
+var webOnlyTools = map[string]bool{
+	"web_search": true,
+	"web_browse": true,
+}
+
+// isWebOnlyProbe returns true when every tool in allowedTools is a web-only tool.
+// When true, the probe should skip local PreloadPaths auto-detection to avoid
+// contaminating web research context with irrelevant local files.
+func isWebOnlyProbe(allowedTools []string) bool {
+	if len(allowedTools) == 0 {
+		return false
+	}
+	for _, t := range allowedTools {
+		if !webOnlyTools[t] {
+			return false
+		}
+	}
+	return true
+}
+
+// isCacheEquippedProbe returns true if the probe has cache exploration tools
+// (introspect_cache, sql_cached_data) in its allowedTools. These probes are
+// Analyze Nodes that get data through the cache bridge — preloading directory
+// content produces empty/irrelevant context (e.g., CSV directories yield 0
+// chars from preloadDirectoryContext which only reads code/doc files).
+func isCacheEquippedProbe(allowedTools []string) bool {
+	for _, t := range allowedTools {
+		if t == "introspect_cache" || t == "sql_cached_data" {
+			return true
+		}
+	}
+	return false
+}
+
 // pathPattern matches directory-like paths in text (e.g., "internal/cache/", "docs/adr/", "internal/inference/").
 // Requires at least one slash and a word character, optionally ending with a trailing slash.
 var pathPattern = regexp.MustCompile(`(?:^|\s|['"(])([a-zA-Z][a-zA-Z0-9_\-./]*/)`)

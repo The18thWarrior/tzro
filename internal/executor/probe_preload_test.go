@@ -253,3 +253,61 @@ func TestProbeConfig_PreloadPaths_IntegrationWithLastToolOutput(t *testing.T) {
 		}
 	})
 }
+
+func TestIsWebOnlyProbe(t *testing.T) {
+	tests := []struct {
+		name         string
+		allowedTools []string
+		want         bool
+	}{
+		{
+			name:         "web_search_and_web_browse",
+			allowedTools: []string{"web_search", "web_browse"},
+			want:         true,
+		},
+		{
+			name:         "web_search_only",
+			allowedTools: []string{"web_search"},
+			want:         true,
+		},
+		{
+			name:         "web_browse_only",
+			allowedTools: []string{"web_browse"},
+			want:         true,
+		},
+		{
+			name:         "mixed_web_and_file_tools",
+			allowedTools: []string{"web_search", "web_browse", "read_file"},
+			want:         false,
+		},
+		{
+			name:         "codebase_tools_only",
+			allowedTools: []string{"read_file", "list_dir", "search_files"},
+			want:         false,
+		},
+		{
+			name:         "empty_tools",
+			allowedTools: []string{},
+			want:         false,
+		},
+		{
+			name:         "nil_tools",
+			allowedTools: nil,
+			want:         false,
+		},
+		{
+			name:         "cache_tools",
+			allowedTools: []string{"introspect_cache", "sql_cached_data"},
+			want:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isWebOnlyProbe(tt.allowedTools)
+			if got != tt.want {
+				t.Errorf("isWebOnlyProbe(%v) = %v, want %v", tt.allowedTools, got, tt.want)
+			}
+		})
+	}
+}

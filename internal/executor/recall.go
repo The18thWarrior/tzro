@@ -2,12 +2,10 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
-	"tzro/internal/cache"
 	"tzro/internal/compactor"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
@@ -15,13 +13,38 @@ import (
 	"tzro/internal/symbols"
 )
 
-// RunRecall executes a Recall Node loop (ADR-0038).
+// RecallResult holds both the final synthesis and the refinedContext
+// built during the recall loop. VTE (ADR-0067) uses the refinedContext
+// for the cloud Verification Gate without storage round-trips.
+type RecallResult struct {
+	Synthesis      string
+	RefinedContext string
+}
+
+// RunRecall executes a Recall Node loop (ADR-0038, ADR-0064).
 // It traverses the execution history of specified upstream nodes to align and synthesize discoveries.
-func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID string, upstreamNodeIDs []string, goal string, engine ProbeInferenceEngine) (string, error) {
+//
+// ADR-0064 Loop Inversion: builds a deterministic baseline context from
+// compacted upstream ThoughtSteps BEFORE the agentic loop. The loop is now
+// a Refinement Pass that optionally enhances the baseline, not a mandatory
+// discovery pass.
+func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID string, upstreamNodeIDs []string, goal string, engine ProbeInferenceEngine) (RecallResult, error) {
 	fmt.Fprintf(os.Stderr, "[Recall] Node %s starting for task %s (Upstream: %v)\n", recallNodeID, taskID, upstreamNodeIDs)
+
+	// Temperature 0.6 for recall synthesis: sharper distribution reduces
+	// repetitive phrasing while min_p still provides dynamic token pruning.
+	ctx = context.WithValue(ctx, inference.TemperatureKey, 0.6)
 
 	maxSteps := 8
 	step := 0
+
+	// ADR-0064 Mechanism C: Build deterministic baseline context BEFORE the loop.
+	// This guarantees a quality floor even if the agentic loop adds nothing.
+	compactEngine := &compactor.RouterEngine{}
+	baselineContext, err := buildCompactedRecallContext(ctx, taskID, upstreamNodeIDs, compactEngine)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Recall] Warning: baseline compaction failed: %v\n", err)
+	}
 
 	// 1. Build initial manifest of discoveries (metadata + synthesis outputs)
 	manifest := ""
@@ -29,14 +52,11 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 		manifest += fmt.Sprintf("### Node: %s\n", nodeID)
 
 		// Include the upstream node's completed synthesis output first.
-		// This is the high-quality, already-synthesized result from the
-		// probe/analyze node — much more useful than raw step previews.
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok && state.RawOutput != "" {
 			manifest += fmt.Sprintf("#### Synthesis Output:\n%s\n\n", state.RawOutput)
 		}
 
 		// Fix 2 (Cache ID Pinning): Surface the correct cacheId explicitly
-		// so the model doesn't need to "discover" it from abbreviated context.
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
 			cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
 			combined := state.Output + "\n" + state.RawOutput
@@ -61,53 +81,69 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 		}
 	}
 
-	systemPrompt := fmt.Sprintf(`You are a Recall Node (Map Phase). Your goal is to align and synthesize discoveries from previous nodes.
+	// ADR-0064: Pre-populate refinedContext with the baseline (loop inversion).
+	// The agentic loop adds to this, never replaces it.
+	refinedContext := baselineContext
+
+	// ADR-0064: Updated prompt reflects Refinement Pass role (not discovery).
+	systemPrompt := fmt.Sprintf(`You are a Recall Node (Refinement Pass). Your goal is to review and refine the baseline summary of upstream discoveries.
 Target Goal: %s
 
-## Discovery Manifest (Tool Outputs from Upstream Nodes)
+## Baseline Summary (Auto-Compacted)
 %s
 
-You can use these tools to examine specific results in detail or record key facts:
+## Discovery Manifest (Metadata)
+%s
+
+You can use these tools to examine specific results in detail or add key facts:
 - <ACTION>{"tool": "fetch_details", "arguments": {"node_id": "id", "step_index": 0}}</ACTION>
 - <ACTION>{"tool": "update_refined_context", "arguments": {"fact": "key fact or signature found"}}</ACTION>
 
 On each step:
-1. Reason about which discovery metadata suggests a high-signal result.
-2. Fetch details for high-signal steps.
-3. Record critical findings using 'update_refined_context'.
-4. When you have aligned all necessary information and your 'Refined Discovery Context' is sufficient, output <SYNTHESIZE_READY>.
+1. Review the baseline summary. If it is sufficient, output <SYNTHESIZE_READY>.
+2. If the manifest shows high-signal steps not captured in the baseline, fetch details.
+3. Record additional critical findings using 'update_refined_context'.
+4. When the refined context is sufficient, output <SYNTHESIZE_READY>.
 
-You have a maximum of %d steps.`, goal, manifest, maxSteps)
+You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 
-	lastResult := "Manifest loaded."
-	refinedContext := ""
+	lastResult := "Baseline context loaded. Review it and determine if refinement is needed."
+
+	// Allowed tools for the Recall loop (for two-pass extraction)
+	recallTools := []string{"fetch_details", "update_refined_context"}
 
 	for step < maxSteps {
 		step++
 
-		// 1. Infer next action
-		// Include refinedContext in the prompt if not empty
 		currentPrompt := systemPrompt
-		if refinedContext != "" {
+		if refinedContext != "" && refinedContext != baselineContext {
 			currentPrompt += fmt.Sprintf("\n\n## Current Refined Discovery Context:\n%s", refinedContext)
 		}
 
-		rawResponse, err := engine.Infer(ctx, currentPrompt, lastResult, "")
+		rawResponse, err := engine.Infer(ctx, currentPrompt, lastResult, "", TargetWorker)
 		if err != nil {
-			return "", fmt.Errorf("recall inference failed at step %d: %w", step, err)
+			return RecallResult{}, fmt.Errorf("recall inference failed at step %d: %w", step, err)
 		}
 
-		if strings.Contains(rawResponse, "<SYNTHESIZE_READY>") {
+		// ADR-0064: Two-Pass Tool Extraction for Recall loop
+		extractedAction, extractedTool, extractedArgs, extractErr := extractToolAction(
+			ctx, engine, rawResponse, recallTools, false,
+		)
+
+		if extractErr != nil {
+			lastResult = fmt.Sprintf("Action extraction failed: %v", extractErr)
+			continue
+		}
+
+		if extractedAction == "synthesize" {
 			fmt.Fprintf(os.Stderr, "[Recall] Node %s signaled synthesis readiness at step %d\n", recallNodeID, step)
 			break
 		}
 
-		// 2. Extract and execute tool call
-		action, args := extractAction(rawResponse)
-		switch action {
+		switch extractedTool {
 		case "fetch_details":
-			nodeID, _ := args["node_id"].(string)
-			stepIdx, _ := args["step_index"].(float64)
+			nodeID, _ := extractedArgs["node_id"].(string)
+			stepIdx, _ := extractedArgs["step_index"].(float64)
 
 			stepData, err := memory.DB.GetThoughtStepByProbeAndIndex(taskID+"_"+nodeID, int(stepIdx))
 			if err != nil {
@@ -116,7 +152,7 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 				lastResult = fmt.Sprintf("### Details for %s Step %d\nTool: %s\nOutput:\n%s", nodeID, int(stepIdx), stepData.ToolName, stepData.ToolOutput)
 			}
 		case "update_refined_context":
-			fact, _ := args["fact"].(string)
+			fact, _ := extractedArgs["fact"].(string)
 			if refinedContext != "" {
 				refinedContext += "\n"
 			}
@@ -132,7 +168,7 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 				}
 			}
 		default:
-			lastResult = "No valid ACTION found. Use fetch_details, update_refined_context, or SYNTHESIZE_READY."
+			lastResult = "No valid action found. Use fetch_details, update_refined_context, or signal synthesis readiness."
 		}
 
 		// Publish progress
@@ -170,29 +206,123 @@ You have a maximum of %d steps.`, goal, manifest, maxSteps)
 		symbolRefBlock = sb.String()
 	}
 
-	// Fix 1 (Recall Context Injection): When refinedContext is empty (the local
-	// model short-circuited to SYNTHESIZE_READY without calling update_refined_context),
-	// build an enriched fallback from actual tool outputs instead of the bare manifest
-	// which only has 100-char previews of each step.
+	// ADR-0064: The refinedContext is always populated (deterministic baseline).
+	// No need for the old buildEnrichedRecallFallback.
 	synthesisInput := refinedContext
-	if strings.TrimSpace(synthesisInput) == "" {
-		synthesisInput = buildEnrichedRecallFallback(taskID, upstreamNodeIDs, manifest)
-		fmt.Fprintf(os.Stderr, "[Recall] Node %s: enriched fallback context (%d chars)\n", recallNodeID, len(synthesisInput))
+
+	// Build fact-citation constraint for research tasks.
+	// When the refined context contains structured facts from the extractive
+	// pipeline (CLAIM/SOURCE/QUOTE format), constrain the model to only use
+	// the provided facts — preventing parametric bias.
+	factConstraint := ""
+	if strings.Contains(synthesisInput, "- CLAIM:") && strings.Contains(synthesisInput, "- SOURCE:") {
+		factConstraint = `
+CRITICAL CONSTRAINT: The context below contains structured facts extracted from source documents.
+You may ONLY use the provided facts. Do NOT add information from your own knowledge.
+Every factual claim in your response MUST reference a source from the extracted facts.
+If the extracted facts are insufficient to answer the question, say so explicitly.`
 	}
 
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
 
 ## Refined Discovery Context (Verified Facts):
-%s%s
+%s%s%s
 
 Review the gathered facts and produce a comprehensive, structured final answer.
-IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.`, goal, synthesisInput, symbolRefBlock)
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.
+IMPORTANT: Begin your response with the content directly. Do NOT describe what you are about to do. Do NOT write meta-commentary like "I will now synthesize" or "The answer is below". Start with "# " followed by a descriptive heading.`, goal, synthesisInput, symbolRefBlock, factConstraint)
 
-	synthesis, err := engine.Infer(ctx, synthPrompt, lastResult, "")
-	if err != nil {
-		return "", err
+	// Synthesis escalation policy: if any upstream probe had its synthesis
+	// escalated to cloud (local model produced invalid/repetitive output),
+	// the Recall node should also use cloud for its synthesis. The local model
+	// already proved insufficient for this content type.
+	upstreamSynthEscalated := false
+	for _, nodeID := range upstreamNodeIDs {
+		steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID)
+		if err != nil {
+			continue
+		}
+		for _, s := range steps {
+			if s.ToolName == "_cloud_synthesis_escalation" {
+				upstreamSynthEscalated = true
+				break
+			}
+		}
+		if upstreamSynthEscalated {
+			break
+		}
 	}
+
+	var synthesis string
+	// P1: Hybrid Synthesis for Recall — when the synthesis input is large,
+	// use local outline + cloud expansion instead of sending the full context
+	// to the local model (which reliably produces repetitive output).
+	if len(synthesisInput) > hybridSynthesisThreshold() && !isCloudEscalationBlocked() && !upstreamSynthEscalated {
+		fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis triggered: synthesisInput=%d chars exceeds threshold=%d\n", len(synthesisInput), hybridSynthesisThreshold())
+
+		outlinePrompt := fmt.Sprintf(`You are a structured note-taker. Your goal was: %s
+
+Given the refined discovery context below, produce a CONCISE STRUCTURED OUTLINE with:
+- Section headers for each major topic
+- Key bullet points with specific data values, names, and numbers
+- Source references where available
+- NO prose paragraphs — bullet points ONLY
+- Include ALL relevant facts from the discovery context`, goal)
+
+		outline, outlineErr := engine.Infer(ctx, outlinePrompt, synthesisInput, "", TargetWorker)
+		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
+
+			expandPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
+Goal: %s
+
+Expand the structured outline below into a comprehensive, well-cited final answer.
+Preserve all data values, names, and numbers from the outline.
+Add proper prose transitions and paragraph structure.
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y].
+IMPORTANT: Begin your response with the content directly. Do NOT write meta-commentary. Start with "# " followed by a heading.%s`, goal, symbolRefBlock)
+
+			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+				{Role: "system", Content: expandPrompt},
+				{Role: "user", Content: outline},
+			}, "", taskID)
+
+			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+				fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis succeeded: outline=%d chars, expansion=%d chars\n", len(outline), len(cloudResult))
+				synthesis = cloudResult
+				goto postSynthesis
+			}
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 2 (cloud expansion) failed, falling through to standard synthesis\n")
+		} else if outlineErr != nil {
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline) failed: %v, falling through to standard synthesis\n", outlineErr)
+		}
+	}
+
+	if upstreamSynthEscalated && !isCloudEscalationBlocked() {
+		fmt.Fprintf(os.Stderr, "[Recall] Upstream probe synthesis was escalated to cloud — using cloud for Recall synthesis\n")
+		cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+			{Role: "system", Content: synthPrompt},
+			{Role: "user", Content: lastResult},
+		}, "", taskID)
+		if cloudErr != nil {
+			// Cloud failed — fall back to local
+			fmt.Fprintf(os.Stderr, "[Recall] Cloud synthesis failed (%v), falling back to local engine\n", cloudErr)
+			synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
+			if err != nil {
+				return RecallResult{}, err
+			}
+		} else {
+			synthesis = cloudResult
+		}
+	} else {
+		synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
+		if err != nil {
+			return RecallResult{}, err
+		}
+	}
+
+postSynthesis:
 
 	// Symbol Anchor Check (ADR-0047): verify synthesis references against Index
 	if len(symbolIndex) > 0 {
@@ -203,7 +333,7 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 		if anchorResult.NeedsCorrection {
 			fmt.Fprintf(os.Stderr, "[Recall] Hallucination threshold exceeded — running targeted correction pass.\n")
 			correctionPrompt := symbols.BuildCorrectionPrompt(synthesis, anchorResult.Unanchored, symbolIndex)
-			corrected, corrErr := engine.Infer(ctx, "You are a code documentation editor. Fix hallucinated symbol names.", correctionPrompt, "")
+			corrected, corrErr := engine.Infer(ctx, "You are a code documentation editor. Fix hallucinated symbol names.", correctionPrompt, "", TargetWorker)
 			if corrErr == nil && corrected != "" {
 				synthesis = corrected
 				fmt.Fprintf(os.Stderr, "[Recall] Correction pass complete. Re-checking...\n")
@@ -258,23 +388,10 @@ IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT outp
 
 	// Strip any leaked control tokens from the output
 	synthesis = stripControlTokens(synthesis)
-	return synthesis, nil
+	return RecallResult{Synthesis: synthesis, RefinedContext: refinedContext}, nil
 }
 
-func extractAction(response string) (string, map[string]interface{}) {
-	actionRe := regexp.MustCompile("(?s)<ACTION>(.*?)</ACTION>")
-	matches := actionRe.FindStringSubmatch(response)
-	if len(matches) > 1 {
-		var parsed struct {
-			Tool      string                 `json:"tool"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}
-		if err := json.Unmarshal([]byte(matches[1]), &parsed); err == nil {
-			return parsed.Tool, parsed.Arguments
-		}
-	}
-	return "", nil
-}
+
 
 func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, refinedCtx, goal string, engine ProbeInferenceEngine) (string, error) {
 	// Use the structured compactor for content-aware fact compaction.
@@ -292,61 +409,7 @@ func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, refinedCtx,
 	return result.Output, nil
 }
 
-// buildEnrichedRecallFallback constructs a rich fallback context when the Recall
-// loop's refinedContext is empty (the local model short-circuited to SYNTHESIZE_READY
-// without calling update_refined_context). Instead of falling back to the bare
-// manifest (which only has 100-char step previews), this function includes:
-//   - The upstream probe's synthesis output (from manifest)
-//   - Full tool outputs from successful probe steps (capped at 2000 chars each)
-//   - Cache introspection data if a cacheId is present
-//
-// This directly addresses the root cause of 4/5 benchmark failures where the
-// Recall node produced empty/degenerate synthesis from insufficient context.
-func buildEnrichedRecallFallback(taskID string, upstreamNodeIDs []string, manifest string) string {
-	var enriched strings.Builder
 
-	// Start with the manifest (contains synthesis output + step metadata)
-	enriched.WriteString(manifest)
-	enriched.WriteString("\n\n## Enriched Tool Outputs (Full Data)\n")
-
-	cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
-	maxOutputLen := 2000
-
-	for _, nodeID := range upstreamNodeIDs {
-		steps, err := memory.DB.GetThoughtSteps(taskID + "_" + nodeID)
-		if err != nil {
-			continue
-		}
-
-		for _, s := range steps {
-			if s.ToolName == "" || s.ToolOutput == "" {
-				continue
-			}
-			// Only include steps with substantive output (not error messages)
-			if strings.HasPrefix(s.ToolOutput, "Error") || strings.HasPrefix(s.ToolOutput, "No valid") {
-				continue
-			}
-			output := s.ToolOutput
-			if len(output) > maxOutputLen {
-				output = output[:maxOutputLen] + "\n... (truncated)"
-			}
-			enriched.WriteString(fmt.Sprintf("\n### Step %d: %s\nArguments: %s\nOutput:\n%s\n", s.StepIndex, s.ToolName, s.ToolArgs, output))
-		}
-
-		// Include cache introspection if available
-		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
-			combined := state.Output + "\n" + state.RawOutput
-			if cacheId := cacheIdRe.FindString(combined); cacheId != "" {
-				schema := cache.DefaultStore.Introspect(context.Background(), cacheId)
-				if schema != "" && !strings.HasPrefix(schema, "Error:") {
-					enriched.WriteString(fmt.Sprintf("\n### Cache Data Schema for %s\n%s\n", cacheId, truncate(schema, 3000)))
-				}
-			}
-		}
-	}
-
-	return enriched.String()
-}
 
 // controlTokens are internal control signals that should never appear in user-facing output.
 var controlTokens = []string{
@@ -399,6 +462,14 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 		return fmt.Sprintf("degenerate output (%d chars after cleaning)", len(cleaned))
 	}
 
+	// Check for Generation Guard abort marker (F3-B: guard-aborted synthesis recovery).
+	// When the GenerationGuard aborts generation mid-stream, it appends a marker
+	// to the truncated output. Detect it here so the Recall Node can escalate
+	// to cloud re-synthesis before VTE needs to catch it.
+	if strings.Contains(cleaned, "[GENERATION_ABORTED") {
+		return "generation aborted by guard"
+	}
+
 	// Check if output IS a control token (the entire output)
 	trimmed := strings.TrimSpace(output)
 	for _, token := range controlTokens {
@@ -407,19 +478,25 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 		}
 	}
 
-	// Check for repetitive content: detect 3+ occurrences of any 4-word sequence.
+	// Check for repetitive content: detect N+ occurrences of any 5-word sequence.
+	// Threshold scales with output length to avoid false positives on structural
+	// markdown repetition (e.g., repeated section headers in longer documents).
 	// ADR-0058: Skip for Analyze Nodes — tabular data naturally repeats column
-	// headers and structural patterns (e.g., "leads\n - Distinct Lead_Sources:"
-	// across data rows). These are valid output, not degeneration.
+	// headers and structural patterns. ADR-0066: 4-gram→5-gram, 3x→scaled.
 	if !cfg.isAnalyzeNode {
 		words := strings.Fields(cleaned)
-		if len(words) >= 12 { // Need at least 12 words to detect 3x repetition of 4-word sequences
+		ngramSize := 5
+		threshold := len(words) / 250
+		if threshold < 4 {
+			threshold = 4
+		}
+		if len(words) >= ngramSize*threshold {
 			ngramCounts := make(map[string]int)
-			for i := 0; i <= len(words)-4; i++ {
-				ngram := strings.Join(words[i:i+4], " ")
+			for i := 0; i <= len(words)-ngramSize; i++ {
+				ngram := strings.Join(words[i:i+ngramSize], " ")
 				ngramCounts[ngram]++
-				if ngramCounts[ngram] >= 3 {
-					return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 40), ngramCounts[ngram])
+				if ngramCounts[ngram] >= threshold {
+					return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 50), ngramCounts[ngram])
 				}
 			}
 		}
@@ -430,6 +507,82 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 	placeholders := placeholderRe.FindAllString(output, -1)
 	if len(placeholders) >= 3 {
 		return fmt.Sprintf("output contains %d template placeholders", len(placeholders))
+	}
+
+	// Check for meta-commentary degeneration (benchmark R14 regression):
+	// The 4B model sometimes produces varied-but-vacuous sentences like
+	// "The synthesis is complete. The final answer is ready. The engine is done."
+	// These dodge n-gram detection because each sentence is a unique variant.
+	// Detect by counting sentences that match meta-completion patterns and
+	// flagging when they dominate the output (>40% of sentences).
+	if !cfg.isAnalyzeNode {
+		metaPatterns := []string{
+			"synthesis is complete", "synthesis is done", "synthesis is final",
+			"synthesis is finished", "synthesis is closed", "synthesis is ended",
+			"synthesis is over", "synthesis is sealed", "synthesis is wrapped",
+			"synthesis is terminated", "synthesis is concluded", "synthesis is capped",
+			"answer is complete", "answer is done", "answer is final",
+			"answer is ready", "answer is finished", "answer is closed",
+			"answer is sealed", "answer is set", "answer is confirmed",
+			"engine is done", "engine is complete", "engine is finished",
+			"engine is closed", "engine is ended", "engine is sealed",
+			"engine has completed", "engine has finished", "engine has concluded",
+			"engine has succeeded", "engine has stopped", "engine has ceased",
+			"task is complete", "task is done", "task is finished",
+			"goal has been achieved", "goal has been fulfilled", "goal has been met",
+			"ready for use", "ready for integration",
+		}
+		lowerCleaned := strings.ToLower(cleaned)
+		// Split into sentences (rough: split on ". ")
+		sentences := strings.Split(lowerCleaned, ". ")
+		if len(sentences) >= 5 {
+			metaCount := 0
+			for _, sentence := range sentences {
+				trimmed := strings.TrimSpace(sentence)
+				if trimmed == "" {
+					continue
+				}
+				for _, pattern := range metaPatterns {
+					if strings.Contains(trimmed, pattern) {
+						metaCount++
+						break
+					}
+				}
+			}
+			metaRatio := float64(metaCount) / float64(len(sentences))
+			if metaRatio > 0.4 && metaCount >= 5 {
+				return fmt.Sprintf("meta-commentary degeneration detected (%d/%d sentences are vacuous completion phrases, ratio=%.0f%%)", metaCount, len(sentences), metaRatio*100)
+			}
+
+			// Trailing concentration check: the 4B model often produces
+			// valid content followed by a degenerate tail. The overall ratio
+			// check above misses this because the valid preamble dilutes
+			// the percentage. Check the last 30% of sentences independently.
+			tailStart := len(sentences) - len(sentences)*30/100
+			if tailStart < 0 {
+				tailStart = 0
+			}
+			tailSentences := sentences[tailStart:]
+			if len(tailSentences) >= 4 {
+				tailMetaCount := 0
+				for _, sentence := range tailSentences {
+					trimmedSent := strings.TrimSpace(sentence)
+					if trimmedSent == "" {
+						continue
+					}
+					for _, pattern := range metaPatterns {
+						if strings.Contains(trimmedSent, pattern) {
+							tailMetaCount++
+							break
+						}
+					}
+				}
+				tailRatio := float64(tailMetaCount) / float64(len(tailSentences))
+				if tailRatio > 0.6 && tailMetaCount >= 3 {
+					return fmt.Sprintf("trailing meta-commentary degeneration detected (%d/%d tail sentences are vacuous, ratio=%.0f%%)", tailMetaCount, len(tailSentences), tailRatio*100)
+				}
+			}
+		}
 	}
 
 	return ""

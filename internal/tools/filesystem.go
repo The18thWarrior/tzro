@@ -16,6 +16,7 @@ import (
 
 	ignore "github.com/sabhiram/go-gitignore"
 	"tzro/internal/cache"
+	"tzro/internal/content"
 	"tzro/internal/inference"
 )
 
@@ -127,14 +128,14 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 				// Falls through to raw read if JSON profiling fails
 			}
 
-			// If it's a PDF, parse using the ParsePDF utility
+			// If it's a PDF, parse using the content extraction pipeline
 			if ext == ".pdf" {
-				content, err := ParsePDF(ctx, resolvedPath)
-				if err != nil {
-					return ToolError(fmt.Sprintf("failed to parse PDF file '%s': %v", in.Path, err)), nil
+				extracted, extractErr := content.ExtractPDF(ctx, resolvedPath)
+				if extractErr != nil {
+					return ToolError(fmt.Sprintf("failed to parse PDF file '%s': %v", in.Path, extractErr)), nil
 				}
 
-				lines := strings.Split(content, "\n")
+				lines := strings.Split(extracted.Text, "\n")
 				totalLines := len(lines)
 				startIdx := 0
 				endIdx := totalLines
@@ -175,11 +176,48 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 					"startLine":  startIdx + 1,
 					"endLine":    startIdx + len(selectedLines),
 				})
+				result.Extracted = extracted
 
 				if truncated {
 					result.Hint = fmt.Sprintf("Output truncated at %d lines. Use startLine/endLine to read remaining content (total: %d lines).", maxLines, totalLines)
 				}
 
+				return result, nil
+			}
+
+			// Route image files through the content extraction pipeline
+			if isImageExtension(ext) {
+				extracted, extractErr := content.ExtractImage(ctx, resolvedPath)
+				if extractErr != nil {
+					return ToolError(fmt.Sprintf("failed to extract image '%s': %v", in.Path, extractErr)), nil
+				}
+
+				result := ToolSuccess(map[string]interface{}{
+					"content": extracted.Text,
+					"path":    resolvedPath,
+					"type":    string(extracted.Type),
+				})
+				result.Extracted = extracted
+				if len(extracted.Images) > 0 && extracted.Images[0].LocalPath != "" {
+					result.Hint = fmt.Sprintf("Image persisted to %s", extracted.Images[0].LocalPath)
+				}
+				return result, nil
+			}
+
+			// Route Office documents through the content extraction pipeline
+			if isOfficeExtension(ext) {
+				extracted, extractErr := content.ExtractOffice(resolvedPath)
+				if extractErr != nil {
+					return ToolError(fmt.Sprintf("failed to extract Office document '%s': %v", in.Path, extractErr)), nil
+				}
+
+				result := ToolSuccess(map[string]interface{}{
+					"content": extracted.Text,
+					"path":    resolvedPath,
+					"type":    string(extracted.Type),
+					"format":  extracted.Metadata["format"],
+				})
+				result.Extracted = extracted
 				return result, nil
 			}
 
@@ -517,6 +555,9 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 			}
 			if len(hints) > 0 {
 				result.Hint = strings.Join(hints, " ")
+			} else if len(items) > 0 {
+				// Default success-path hint: guide the probe to read relevant files
+				result.Hint = "Use read_file on files relevant to your goal. Use list_dir on subdirectories to explore deeper."
 			}
 
 			return result, nil
@@ -662,14 +703,37 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 	}
 }
 
+// isImageExtension returns true for image file extensions that can be
+// processed by the content extraction pipeline (vision model).
+func isImageExtension(ext string) bool {
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".webp", ".bmp":
+		return true
+	}
+	return false
+}
+
+// isOfficeExtension returns true for Office document extensions that can be
+// processed by the content extraction pipeline (ZIP + XML parsing).
+func isOfficeExtension(ext string) bool {
+	switch ext {
+	case ".docx", ".pptx":
+		return true
+	}
+	return false
+}
+
 // isBinaryExtension returns true for common binary file extensions that should not be searched.
+// Note: image extensions (.png, .jpg, .webp, .bmp) are handled by isImageExtension,
+// Office extensions (.docx, .pptx) are handled by isOfficeExtension,
+// and they are routed through the content extraction pipeline.
 func isBinaryExtension(ext string) bool {
 	switch ext {
 	case ".exe", ".dll", ".so", ".dylib", ".bin", ".obj", ".o",
-		".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp",
+		".gif", ".ico", // GIF/ICO are not vision-processable (animated/tiny)
 		".mp3", ".mp4", ".avi", ".mov", ".wav", ".flac",
 		".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-		".pdf", ".doc", ".docx", ".xls", ".xlsx",
+		".pdf", ".doc", ".xls", ".xlsx", ".ppt",
 		".wasm", ".db", ".sqlite":
 		return true
 	}

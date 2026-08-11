@@ -114,6 +114,7 @@ func StartServer(addr string) error {
 	mux.HandleFunc("/api/tasks/approve", corsHandler(handleTasksApprove))
 	mux.HandleFunc("/api/tasks/cancel", corsHandler(handleTasksCancel))
 	mux.HandleFunc("/api/tasks/run", corsHandler(handleTasksRun))
+	mux.HandleFunc("/api/tasks/steps", corsHandler(handleTaskSteps))
 	mux.HandleFunc("/api/apps/install", corsHandler(handleAppsInstall))
 	mux.HandleFunc("/api/apps/uninstall", corsHandler(handleAppsUninstall))
 	mux.HandleFunc("/api/apps", corsHandler(handleAppsList))
@@ -417,10 +418,10 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 						Status: ns.Status,
 						Output: ns.Output,
 					})
-					statesMap[ns.NodeID] = map[string]string{
-						"status": ns.Status,
-						"output": ns.Output,
-					}
+					// Use the full NodeState to preserve StructuredOutput,
+					// CompletedAt, RawOutput, and AnalyticalEvidence for
+					// the detail view's Execution Envelope display.
+					statesMap[ns.NodeID] = ns
 				}
 				reconstructedGraph = &compiler.ExecutionGraph{
 					TaskID:    ht.TaskID,
@@ -430,12 +431,18 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Retrieve the prompt from the tasks table (richer than TaskSummary).
+			prompt := ""
+			if taskRec, err := memory.DB.GetTask(ht.TaskID); err == nil && taskRec != nil {
+				prompt = taskRec.Prompt
+			}
+
 			list = append(list, TaskStateItem{
 				TaskID:     ht.TaskID,
 				Graph:      reconstructedGraph,
 				States:     statesMap,
 				CreatedAt:  ht.CreatedAt,
-				Prompt:     "", // Historical tasks don't retain the prompt in node_states
+				Prompt:     prompt,
 				IntentType: "task",
 				Status:     ht.Status,
 				NodeCount:  ht.NodeCount,
@@ -455,6 +462,54 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(list)
+}
+
+func handleTaskSteps(w http.ResponseWriter, r *http.Request) {
+	taskID := r.URL.Query().Get("taskId")
+	nodeID := r.URL.Query().Get("nodeId")
+	if taskID == "" || nodeID == "" {
+		http.Error(w, `{"error":"taskId and nodeId are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	probeID := taskID + "_" + nodeID
+	steps, err := memory.DB.GetThoughtSteps(probeID)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get steps"}`, http.StatusInternalServerError)
+		return
+	}
+
+	type stepResponse struct {
+		StepIndex  int    `json:"stepIndex"`
+		Thought    string `json:"thought"`
+		ToolName   string `json:"toolName,omitempty"`
+		ToolArgs   string `json:"toolArgs,omitempty"`
+		ToolOutput string `json:"toolOutput,omitempty"`
+		Truncated  bool   `json:"truncated"`
+		CreatedAt  int64  `json:"createdAt"`
+	}
+
+	result := make([]stepResponse, 0, len(steps))
+	for _, s := range steps {
+		truncated := false
+		output := s.ToolOutput
+		if len(output) > 2000 {
+			output = output[:2000]
+			truncated = true
+		}
+		result = append(result, stepResponse{
+			StepIndex:  s.StepIndex,
+			Thought:    s.Thought,
+			ToolName:   s.ToolName,
+			ToolArgs:   s.ToolArgs,
+			ToolOutput: output,
+			Truncated:  truncated,
+			CreatedAt:  s.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"steps": result})
 }
 
 func handleMemories(w http.ResponseWriter, r *http.Request) {
@@ -1818,7 +1873,8 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt        string `json:"prompt"`
 		TaskID        string `json:"taskId"`
-		SelfContained bool   `json:"selfContained"` // ADR-0054
+		SelfContained bool   `json:"selfContained"`  // ADR-0054
+		IsForeground  *bool  `json:"isForeground"`   // ADR-0063: defaults to true for CLI-initiated tasks
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1833,10 +1889,17 @@ func handleTasksRun(w http.ResponseWriter, r *http.Request) {
 		req.TaskID = fmt.Sprintf("task_%d", time.Now().Unix())
 	}
 
+	// ADR-0063: CLI/REST-submitted tasks are foreground by default (user-initiated).
+	// Only mark as background if explicitly requested via isForeground: false.
+	isForeground := true
+	if req.IsForeground != nil {
+		isForeground = *req.IsForeground
+	}
+
 	execOpts := task.ExecuteOptions{
 		TaskID:        req.TaskID,
 		IntentType:    "workflow",
-		IsForeground:  false,
+		IsForeground:  isForeground,
 		SelfContained: req.SelfContained,
 	}
 

@@ -72,6 +72,9 @@ func TestHelperProcess(t *testing.T) {
 			fmt.Println(string(b))
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "scanner error: %v\n", err)
+	}
 }
 
 func TestInitStaticConfig(t *testing.T) {

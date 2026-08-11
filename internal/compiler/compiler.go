@@ -74,6 +74,31 @@ type ProbeConfig struct {
 	PreloadPaths    []string `json:"preloadPaths,omitempty"`    // Directories to pre-load
 	PreloadMaxChars int      `json:"preloadMaxChars,omitempty"` // Character budget for preloaded content (default: 32000)
 	UpstreamContext string   `json:"upstreamContext,omitempty"` // Accumulated context from completed upstream nodes — injected by executor so the probe can see upstream outputs (e.g., cacheId from read_file)
+
+	// SubstrateMode determines how pre-computed context is assembled before the
+	// Thought Chain loop. When unset, auto-detected via lightweight GBNF classification.
+	//   "overview"  — Directory manifest, depth 2, wide coverage
+	//   "focused"   — Call Graph Index, entry-point traversal, deep
+	//   "aggregate" — Content aggregation, map-reduce if needed
+	SubstrateMode string `json:"substrateMode,omitempty"`
+
+	// SourceHint controls declarative tool provisioning at the compiler level.
+	// The Kahn Compiler uses this to auto-inject the appropriate tools and
+	// select system prompt flavor for the probe.
+	//   "web"        — inject web_search, web_browse for internet research
+	//   "filesystem" — inject read_file, list_dir, search_files (default if omitted)
+	//   "cache"      — reserved for analyze nodes (not used by SourceHint dispatch)
+	SourceHint string `json:"sourceHint,omitempty"`
+
+	// RequiredToolDispatch specifies tool names that must be dispatched at least
+	// once before synthesis is allowed. Auto-populated by the Kahn Compiler for
+	// analyze nodes (ADR-0068). Empty = no dispatch requirement.
+	RequiredToolDispatch []string `json:"requiredToolDispatch,omitempty"`
+
+	// MaxTokens controls the maximum generation tokens for DirectSynthesis mode.
+	// When 0, defaults to 4096. Scatter probes set this to 300 to stay under
+	// the 400-token attention fatigue threshold (ADR-0071).
+	MaxTokens int `json:"maxTokens,omitempty"`
 }
 
 type GraphEdge struct {
@@ -91,6 +116,7 @@ type ExecutionGraph struct {
 	MaxCycles      int             `json:"maxCycles"`
 	CreatedAt      int64           `json:"createdAt"`
 	MutationBudget *MutationBudget `json:"mutationBudget,omitempty"` // ADR-0024: per-task spawn budget
+	IsForeground   bool            `json:"isForeground,omitempty"`   // ADR-0063: foreground tasks get compute priority
 }
 
 // MutationBudget bounds dynamic graph expansion at runtime (ADR-0024).
