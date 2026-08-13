@@ -605,3 +605,99 @@ func TestExpandToSCTGraph_SingleProbeWithAction_RecallIsNotTerminal(t *testing.T
 	}
 }
 
+// testExpander implements NodeExpander for testing.
+type testExpander struct {
+	expandFunc func(node *GraphNode, graph *ExecutionGraph) (*NodeExpansionResult, error)
+}
+
+func (e *testExpander) Expand(node *GraphNode, graph *ExecutionGraph) (*NodeExpansionResult, error) {
+	return e.expandFunc(node, graph)
+}
+
+func TestActiveExpander_CustomTypeHandled(t *testing.T) {
+	// Set up a custom expander that handles "custom_analytics" nodes
+	// by splitting them into a validator + exec pair.
+	origExpander := ActiveExpander
+	defer func() { ActiveExpander = origExpander }()
+
+	ActiveExpander = &testExpander{
+		expandFunc: func(node *GraphNode, graph *ExecutionGraph) (*NodeExpansionResult, error) {
+			if node.Type != "custom_analytics" {
+				return nil, nil // fall through to built-in
+			}
+			return &NodeExpansionResult{
+				ReplacementNodes: []GraphNode{
+					{ID: node.ID + "_prep", Type: "custom_analytics", Instructions: "Prepare data"},
+					{ID: node.ID + "_run", Type: "custom_analytics", Instructions: "Run analytics"},
+				},
+				AdditionalEdges: []GraphEdge{
+					{SourceID: node.ID + "_prep", TargetID: node.ID + "_run"},
+				},
+			}, nil
+		},
+	}
+
+	graph := &ExecutionGraph{
+		TaskID: "test_custom_expander",
+		Nodes: []GraphNode{
+			{ID: "analytics1", Type: "custom_analytics", Instructions: "Analyze sales data"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Should have prep + run nodes, not the original
+	nodeIDs := make(map[string]bool)
+	for _, n := range expanded.Nodes {
+		nodeIDs[n.ID] = true
+	}
+
+	if !nodeIDs["analytics1_prep"] {
+		t.Error("expected analytics1_prep node from custom expander")
+	}
+	if !nodeIDs["analytics1_run"] {
+		t.Error("expected analytics1_run node from custom expander")
+	}
+	if nodeIDs["analytics1"] {
+		t.Error("original node should have been replaced by custom expander")
+	}
+}
+
+func TestActiveExpander_NilFallthrough(t *testing.T) {
+	// When ActiveExpander returns nil, built-in logic runs.
+	origExpander := ActiveExpander
+	defer func() { ActiveExpander = origExpander }()
+
+	ActiveExpander = &testExpander{
+		expandFunc: func(node *GraphNode, graph *ExecutionGraph) (*NodeExpansionResult, error) {
+			return nil, nil // always fall through
+		},
+	}
+
+	graph := &ExecutionGraph{
+		TaskID: "test_nil_expander",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore codebase"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Should still have probe node (built-in logic handles it)
+	found := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "p1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected probe node p1 to pass through via built-in logic")
+	}
+}

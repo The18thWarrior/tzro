@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tzro/internal/comparison"
+	"tzro/internal/executor"
 
 	"github.com/spf13/cobra"
 )
@@ -135,6 +136,7 @@ var compareCmd = &cobra.Command{
 			Pricing:   pricing,
 		}
 
+		executor.GlobalEngine.InitRegistry()
 		results, err := comparison.RunComparisonSuite(ctx, opts, callbacks)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Comparison benchmark failed: %v\n", err)

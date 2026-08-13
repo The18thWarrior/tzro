@@ -161,10 +161,16 @@ func main() {
 		Stop: func() error { return nil },
 	})
 
-	// 5.25. Register Hooks Globally
+	// 5.25. Initialize Strategy Registry (ADR-0069)
+	fmt.Println("[Init] Initializing Strategy Registry...")
+	executor.GlobalEngine.InitRegistry()
+
+
+	// 5.26. Register Hooks Globally
 	fmt.Println("[Init] Registering global hooks...")
 	executor.GlobalEngine.RegisterHook(&executor.McpApprovalHook{})
 	executor.GlobalEngine.RegisterHook(&executor.ClientToolHook{})
+
 
 	// 5.5. Initialize background cron scheduler and run Boot Recovery
 	fmt.Println("[Init] Starting background cron scheduler & recovering interrupted workflows...")

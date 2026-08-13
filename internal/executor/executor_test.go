@@ -585,6 +585,7 @@ func TestKahnLevelBranchPruningAndSkipPropagation(t *testing.T) {
 
 	// Run execution
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	ctx := context.Background()
 	err = engine.ExecuteGraph(ctx, graph, levels)
 	if err != nil {

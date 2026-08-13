@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,7 +18,9 @@ import (
 	"tzro/internal/notification"
 	"tzro/internal/skills"
 	"tzro/internal/stream"
+	"tzro/internal/strategy"
 	"tzro/internal/telemetry"
+	"tzro/internal/templates"
 	"tzro/internal/tools"
 )
 
@@ -28,6 +29,33 @@ type HookAction string
 type SubTaskSpawner func(ctx context.Context, action string, inputs map[string]interface{}, parentTaskID, parentNodeID string) (string, error)
 
 var SpawnSubTask SubTaskSpawner
+
+// ---------------------------------------------------------------------------
+// Execution-scoped parameters — carried via context.Context to delegates
+// ---------------------------------------------------------------------------
+
+// executionParamsKey is the context key for executionParams.
+type executionParamsKey struct{}
+
+// executionParams bundles pre-computed values shared across node dispatch.
+// Stored in context.Context so delegates can extract them without signature changes.
+type executionParams struct {
+	activeHooks        []ExecutionHook
+	executionTier      string
+	meta               inference.StreamMeta
+	interpolatedPrompt string
+	nodeDelay          time.Duration
+}
+
+// getExecutionParams extracts executionParams from context, returning zero-value
+// params if not set (safe for branch nodes which skip pre-flight).
+func getExecutionParams(ctx context.Context) *executionParams {
+	if p, ok := ctx.Value(executionParamsKey{}).(*executionParams); ok {
+		return p
+	}
+	return &executionParams{}
+}
+
 
 const (
 	ActionContinue HookAction = "continue"
@@ -59,6 +87,9 @@ type ExecutionEngine struct {
 	mutex          sync.Mutex
 	Sequential     bool // If true, execute nodes one by one (ADR-0040)
 
+	// ADR-0069: Strategy Registry for composable node types.
+	Registry *strategy.StrategyRegistry
+
 	// ADR-0055: In-memory tool dispatch accumulator for Execution Envelope assembly.
 	// Keyed by taskID. Populated at tool call sites, drained at task completion.
 	dispatches map[string][]ToolDispatch
@@ -68,6 +99,125 @@ type ExecutionEngine struct {
 	// Keyed by taskID. Populated after VerifyTaskOutput, drained at envelope assembly.
 	verificationResults map[string]*VerificationResult
 	verificationMu      sync.Mutex
+}
+
+// activeRegistry is the package-level strategy registry, set during InitRegistry.
+// This avoids passing the registry through every function signature during the
+// Strangler Fig migration. Legacy code (e.g., executor_context.go) reads this
+// to look up ContextRole without needing a reference to ExecutionEngine.
+var activeRegistry *strategy.StrategyRegistry
+
+// InitRegistry creates and populates the strategy registry with built-in
+// strategies, then injects executor-backed DelegateFuncs so that
+// strategy.Execute dispatches to the existing extracted methods.
+func (e *ExecutionEngine) InitRegistry() {
+	reg := strategy.NewStrategyRegistry()
+	strategy.RegisterBuiltins(reg)
+
+	// Wire DelegateFuncs — bridge from strategy.Execute → executor methods.
+	// Each delegate captures `e` and calls the extracted execute*Node method.
+	// As strategies mature and own their logic, delegates are removed.
+	e.wireStrategyDelegates(reg)
+
+	e.Registry = reg
+	activeRegistry = reg
+
+	// ADR-0069: Wire ActiveExpander so custom strategy CompilationRules
+	// participate in graph expansion.
+	compiler.ActiveExpander = &strategyNodeExpander{registry: reg}
+}
+
+// strategyNodeExpander implements compiler.NodeExpander by delegating to
+// the strategy registry's CompilationRules.
+type strategyNodeExpander struct {
+	registry *strategy.StrategyRegistry
+}
+
+// Expand checks if the strategy for this node type has CompilationRules.
+// Returns nil to fall through to the compiler's built-in logic.
+func (e *strategyNodeExpander) Expand(node *compiler.GraphNode, graph *compiler.ExecutionGraph) (*compiler.NodeExpansionResult, error) {
+	s, ok := e.registry.Get(node.Type)
+	if !ok {
+		return nil, nil
+	}
+	rules := s.CompilationRules()
+	if rules == nil || rules.Expand == nil {
+		return nil, nil
+	}
+	result, err := rules.Expand(node, graph)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	// Convert strategy.ExpansionResult → compiler.NodeExpansionResult
+	return &compiler.NodeExpansionResult{
+		ReplacementNodes: result.ReplacementNodes,
+		AdditionalNodes:  result.AdditionalNodes,
+		AdditionalEdges:  result.AdditionalEdges,
+		ModifiedNode:     result.ModifiedNode,
+	}, nil
+}
+
+// wireStrategyDelegates injects DelegateFuncs into each registered strategy.
+// This is the Strangler Fig wiring — strategies delegate to executor methods.
+//
+// BranchStrategy is the first type to graduate from delegate to strategy-owned
+// Execute. It is replaced entirely, not wired with a delegate.
+func (e *ExecutionEngine) wireStrategyDelegates(reg *strategy.StrategyRegistry) {
+	// Branch — GRADUATED: replaced with strategy-owned BranchStrategy
+	e.replaceBranchWithOwnedStrategy(reg)
+
+	// Semantic Validator — GRADUATED: replaced with strategy-owned SemanticValidatorStrategy
+	if base := findBaseStrategy(reg, "semantic_validator"); base != nil {
+		_ = reg.Replace(NewSemanticValidatorStrategy(e, base))
+	}
+
+	// Deterministic — GRADUATED: replaced with strategy-owned DeterministicStrategy
+	if base := findBaseStrategy(reg, "deterministic"); base != nil {
+		_ = reg.Replace(NewDeterministicStrategy(e, base))
+	}
+
+	// Probe — GRADUATED: replaced with strategy-owned ProbeAnalyzeStrategy
+	if base := findBaseStrategy(reg, "probe"); base != nil {
+		_ = reg.Replace(NewProbeAnalyzeStrategy(e, base, "probe"))
+	}
+
+	// Analyze — GRADUATED: shares ProbeAnalyzeStrategy with probe
+	if base := findBaseStrategy(reg, "analyze"); base != nil {
+		_ = reg.Replace(NewProbeAnalyzeStrategy(e, base, "analyze"))
+	}
+
+	// Recall — GRADUATED: replaced with strategy-owned RecallStrategy
+	if base := findBaseStrategy(reg, "recall"); base != nil {
+		_ = reg.Replace(NewRecallStrategy(e, base))
+	}
+
+	// Synthesis — GRADUATED: replaced with strategy-owned SynthesisStrategy
+	if base := findBaseStrategy(reg, "synthesis"); base != nil {
+		_ = reg.Replace(NewSynthesisStrategy(e, base))
+	}
+
+	// Sub-DAG — GRADUATED: replaced with strategy-owned SubDAGStrategy
+	if base := findBaseStrategy(reg, "sub_dag"); base != nil {
+		_ = reg.Replace(NewSubDAGStrategy(e, base))
+	}
+
+	// Scatter Assembly — GRADUATED: replaced with strategy-owned ScatterAssemblyStrategy
+	if base := findBaseStrategy(reg, "scatter_assembly"); base != nil {
+		_ = reg.Replace(NewScatterAssemblyStrategy(e, base))
+	}
+}
+
+// GetNodeTypeReferenceCard returns the dynamic NodeTypeReferenceCard built from
+// all registered strategies' PlannerCards. Falls back to the static template
+// constant when the registry hasn't been initialized (e.g., during tests).
+func GetNodeTypeReferenceCard() string {
+	if activeRegistry != nil {
+		return activeRegistry.BuildReferenceCard()
+	}
+	return templates.NodeTypeReferenceCard
 }
 
 // RecordDispatch appends a tool dispatch record for a task.
@@ -525,44 +675,20 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	}
 
 	// 0.1 Branch / Condition Evaluation Seam
+	// Branch is special: evaluated BEFORE pre-flight to avoid unnecessary
+	// interpolation and tier detection for condition-only nodes.
 	if node.Condition != "" || node.Type == "branch" {
-		satisfied, err := e.evaluateBranchCondition(ctx, graph, node)
-		if err != nil {
-			return fmt.Errorf("failed to evaluate branch condition for node %s: %w", node.ID, err)
-		}
-
-		if satisfied {
-			fmt.Fprintf(os.Stderr, "[Executor] Branch node %s condition satisfied!\n", node.ID)
-			_ = memory.DB.SetNodeState(taskID, node.ID, "completed", "Condition satisfied")
-			e.getPublisher().PublishEvent("node_completed", taskID, node.ID, "Condition satisfied")
-			if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": "Condition satisfied"}); err == nil {
-				e.getPublisher().PublishStream(stream.StreamChunk{
-					Source:  "executor",
-					TaskID:  taskID,
-					NodeID:  node.ID,
-					Type:    "node_state",
-					Content: string(statePayload),
-				})
+		if e.Registry != nil {
+			if s, ok := e.Registry.Get("branch"); ok {
+				return e.dispatchViaStrategy(ctx, graph, node, s, activeHooks, nodeDelay)
 			}
-			return nil
-		} else {
-			fmt.Fprintf(os.Stderr, "[Executor] Branch node %s condition NOT satisfied. Skipping branch and propagating skip...\n", node.ID)
-			_ = memory.DB.SetNodeState(taskID, node.ID, "skipped", "Condition not satisfied")
-			e.getPublisher().PublishEvent("node_skipped", taskID, node.ID, "Condition not satisfied")
-			if statePayload, err := json.Marshal(map[string]string{"status": "skipped", "output": "Condition not satisfied"}); err == nil {
-				e.getPublisher().PublishStream(stream.StreamChunk{
-					Source:  "executor",
-					TaskID:  taskID,
-					NodeID:  node.ID,
-					Type:    "node_state",
-					Content: string(statePayload),
-				})
-			}
-			e.propagateSkip(graph, node.ID)
-			return nil
 		}
+		// Fallback if registry not initialized
+		return e.executeBranchNode(ctx, graph, node)
 	}
 
+
+	// 1. Pre-flight: compute shared execution parameters
 	cfg := config.Get()
 	var executionTier string = "Local Tactician"
 	if cfg.ModelMode == "cloud" || inference.GlobalLocalModel.IsForceCloud(taskID) {
@@ -585,1339 +711,28 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	interpolatedPrompt := InterpolateVariables(node.Instructions, taskID)
 	fmt.Fprintf(os.Stderr, "[Executor] Interpolated instruction: %s\n", interpolatedPrompt)
 
-	// 1.1 Semantic Validator node: parameters extraction ONLY
-	if node.Type == "semantic_validator" {
-		// Update node state to running
-		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, fmt.Sprintf("Started %s Validator", node.Action))
+	// 2. Registry-based Strategy Dispatch (ADR-0069)
+	// Store pre-computed params in context for delegate extraction.
+	ctx = context.WithValue(ctx, executionParamsKey{}, &executionParams{
+		activeHooks:        activeHooks,
+		executionTier:      executionTier,
+		meta:               meta,
+		interpolatedPrompt: interpolatedPrompt,
+		nodeDelay:          nodeDelay,
+	})
 
-		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
+	if e.Registry != nil && node.Type != "action" {
+		if s, ok := e.Registry.Get(node.Type); ok {
+			return e.dispatchViaStrategy(ctx, graph, node, s, activeHooks, nodeDelay)
 		}
-
-		schemaStr, schemaErr := tools.GetSchema(node.Action)
-		if schemaErr != nil {
-			fmt.Fprintf(os.Stderr, "[Executor Warning] Failed to get schema for action %s: %v. Using fallback.\n", node.Action, schemaErr)
-			schemaStr = ""
-		}
-
-		accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
-		staticBase := buildStaticBaseInstruction(true)
-
-		var inferenceResult string
-		var err error
-
-		// ===== ADR-0030: Proactive Binding Splice =====
-		// Resolve bindings and partition by confidence tier BEFORE inference.
-		// High-confidence values (recursive_key, fuzzy_key) are stripped from the
-		// schema so the model never generates them — they get spliced back after
-		// Pass 2. Low-confidence values (semantic_fallback) are injected as prompt
-		// hints only (existing behavior).
-		var highConfBindings map[string]string
-		validatorSchemaStr := schemaStr // schema the model will see (may be stripped)
-
-		if len(node.DynamicBindings) > 0 {
-			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
-			if len(resolved) > 0 {
-				var lowConfBindings map[string]string
-				highConfBindings, lowConfBindings = partitionBindings(resolved)
-
-				// Strip high-confidence params from the inference schema
-				if len(highConfBindings) > 0 {
-					keys := make([]string, 0, len(highConfBindings))
-					for k := range highConfBindings {
-						keys = append(keys, k)
-					}
-					validatorSchemaStr = stripSchemaProperties(schemaStr, keys)
-					highConfJSON, _ := json.MarshalIndent(highConfBindings, "", "  ")
-					fmt.Fprintf(os.Stderr, "[Executor ADR-0030] Stripped %d high-confidence params from schema for %s: %s\n", len(highConfBindings), node.ID, string(highConfJSON))
-				}
-
-				// Inject low-confidence bindings as prompt hints (existing behavior)
-				if len(lowConfBindings) > 0 {
-					lowConfJSON, _ := json.MarshalIndent(lowConfBindings, "", "  ")
-					fmt.Fprintf(os.Stderr, "[Executor] Low-confidence bindings for %s (prompt hint only): %s\n", node.ID, string(lowConfJSON))
-				}
-			}
-		}
-
-		// ===== PASS 1: Free-form XML extraction (no grammar constraint) =====
-		// The LLM generates tool parameters as loose XML tags. This is where the
-		// semantic reasoning happens — understanding context, resolving references,
-		// extracting correct values. No grammar masking means maximum decoding freedom.
-		var xmlResult string
-		maxRetries := 3
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			instruction := fmt.Sprintf("Extract structured tool parameters for '%s' in XML format `<params><argName>value</argName>...</params>`. Do NOT nest the params tag inside itself.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
-
-			// Red-team FM-12 fix: Anchor SQLite dialect in the validator instruction
-			// when the target tool is sql_cached_data. Cloud models default to PostgreSQL.
-			if node.Action == "sql_cached_data" {
-				instruction += "\n\nIMPORTANT: The SQL engine is SQLite. You MUST use SQLite syntax:" +
-					"\n- Use GROUP_CONCAT(column) instead of STRING_AGG(column, separator)" +
-					"\n- Use GROUP_CONCAT(DISTINCT column) instead of STRING_AGG(DISTINCT column, separator)" +
-					"\n- Use LIKE instead of ILIKE (SQLite LIKE is case-insensitive for ASCII)" +
-					"\n- Use 1/0 instead of TRUE/FALSE for boolean values"
-			}
-
-			// Inject low-confidence bindings as prompt hints (high-confidence are already stripped)
-			if len(node.DynamicBindings) > 0 {
-				resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
-				if len(resolved) > 0 {
-					_, lowConf := partitionBindings(resolved)
-					if len(lowConf) > 0 {
-						resolvedJSON, _ := json.MarshalIndent(lowConf, "", "  ")
-						instruction += "\n\n## RESOLVED UPSTREAM VALUES (use these exact values for the corresponding parameters):\n" + string(resolvedJSON)
-						fmt.Fprintf(os.Stderr, "[Executor] DynamicBindings (low-confidence hint) for %s: %s\n", node.ID, string(resolvedJSON))
-					}
-				}
-			}
-
-			msgs := buildSegmentedMessages(staticBase, accumulatedCtx, validatorSchemaStr, instruction, true)
-
-			req := inference.StructuredInferenceRequest{
-				Messages:    msgs,
-				JSONSchema:  "", // No GBNF constraint — free-form XML generation
-				StreamMeta:  &meta,
-				TaskID:      taskID,
-				IsLowStakes: true,
-			}
-
-			isBenchmark := ctx.Value("is_benchmark") != nil
-			useCloud := IsForceCloud(taskID) && !isCloudEscalationBlocked()
-			// Skip confidence check when cloud escalation is blocked (local_only mode)
-			// — the check is only meaningful when cloud is available as a fallback.
-			if !useCloud && !isBenchmark && !isCloudEscalationBlocked() && attempt == 1 {
-				sufficient, _ := assessConfidenceTier(ctx, msgs, schemaStr, taskID)
-				checkAndUpdateConfidence(taskID, sufficient)
-				if !sufficient {
-					useCloud = true
-					e.getPublisher().PublishEvent("confidence_insufficient", taskID, node.ID, "Escalating to cloud")
-				}
-			}
-
-			if useCloud {
-				xmlResult, err = retryWithCloud(ctx, msgs, schemaStr, taskID)
-			} else {
-				// Executor Pass 1 (XML extraction): enable thinking mode for
-				// this single-shot call. The model reasons once about accumulated
-				// context before producing the tool call — high ROI vs probe
-				// where thinking multiplies across 15-20 steps.
-				thinkCtx := context.WithValue(ctx, inference.ThinkingEnabledKey, true)
-				thinkCtx = context.WithValue(thinkCtx, inference.MaxTokensKey, 4096)
-				xmlResult, err = inference.ExecuteWorkerStructured(thinkCtx, req)
-			}
-
-			if err != nil {
-				return fmt.Errorf("semantic_validator pass 1 (XML extraction) failed: %w", err)
-			}
-
-			// Sanity check: does the output contain any XML-like structure?
-			if strings.Contains(xmlResult, "<") && strings.Contains(xmlResult, ">") {
-				break
-			}
-
-			// Also accept if the LLM returned JSON directly (some models do this)
-			if strings.Contains(xmlResult, "{") && strings.Contains(xmlResult, "}") {
-				break
-			}
-
-			if attempt < maxRetries {
-				interpolatedPrompt += fmt.Sprintf("\n\nValidation failed on attempt %d: Invalid XML format or missing arguments. Please try again.", attempt)
-				continue
-			}
-		}
-
-		fmt.Fprintf(os.Stderr, "[Executor] Pass 1 XML result for %s: %s\n", node.ID, xmlResult)
-
-		// ===== PASS 2: GBNF-constrained JSON refinement =====
-		// Take the raw XML output and convert it to schema-valid JSON using grammar
-		// constraints. The prompt is small (just the XML + schema) so it's fast.
-		// Falls back to deterministic XML parsing if GBNF refinement fails.
-		//
-		// Guard: Skip GBNF refinement when Pass 1 output exceeds 4K chars.
-		// GBNF refinement is designed for short parameter extraction (path, query,
-		// count, etc.) — not for passing multi-kilobyte content blobs verbatim.
-		// The 4B router model will summarize large content instead of preserving it,
-		// destroying probe synthesis output. The deterministic XML parser handles
-		// large content correctly.
-		const maxGBNFRefinementInputChars = 4096
-		skipGBNFRefinement := len(xmlResult) > maxGBNFRefinementInputChars
-		if skipGBNFRefinement {
-			fmt.Fprintf(os.Stderr, "[Executor] Skipping GBNF refinement for %s — Pass 1 output too large (%d chars > %d limit), using XML parser\n", node.ID, len(xmlResult), maxGBNFRefinementInputChars)
-		}
-
-		// F1 gate: Skip GBNF Pass 2 when Pass 1 already produced valid JSON
-		// matching the tool schema. Deterministic structural check — no LLM
-		// self-assessment. Prevents Pass 2 from clobbering correct parameters
-		// (observed: cloud-extracted paths overwritten with "{path}/" templates).
-		if !skipGBNFRefinement && schemaStr != "" {
-			pass1Args := extractToolArguments(xmlResult)
-			if len(pass1Args) > 0 && pass1SatisfiesSchema(pass1Args, schemaStr, node.ID) {
-				skipGBNFRefinement = true
-				fmt.Fprintf(os.Stderr, "[Executor] Skipping GBNF refinement for %s — Pass 1 output already satisfies tool schema\n", node.ID)
-			}
-		}
-		if schemaStr != "" && !skipGBNFRefinement {
-			refinementSystem := "You are a precise data format converter. Convert the provided XML tool arguments into a valid JSON object matching the schema. " +
-				"Preserve all values exactly as they appear in the XML. Do NOT add, remove, or modify any values."
-
-			// Red-team FM-11 fix: Anchor known cacheIds in the refinement prompt
-			// so the model picks from real values instead of hallucinating fake IDs.
-			if strings.Contains(schemaStr, "cacheId") {
-				knownCaches := extractCacheIdsFromContext(accumulatedCtx)
-				if len(knownCaches) > 0 {
-					refinementSystem += fmt.Sprintf(
-						"\nIMPORTANT: Valid cache IDs are: %s. For the cacheId field, use one of these EXACT values. Do NOT invent cache IDs.",
-						strings.Join(knownCaches, ", "))
-				}
-			}
-
-			// Use the stripped schema for Pass 2 as well — high-confidence params aren't in the XML output
-			refinementUser := fmt.Sprintf("Convert the following XML tool arguments for '%s' into the JSON schema format.\n\n"+
-				"XML INPUT:\n%s\n\n"+
-				"TARGET JSON SCHEMA:\n%s\n\n"+
-				"Return ONLY a valid JSON object matching the schema with a top-level \"tool_arguments\" key.",
-				node.Action, xmlResult, validatorSchemaStr)
-
-			refineMeta := inference.StreamMeta{
-				StreamID: fmt.Sprintf("refine_%s_%s", taskID, node.ID),
-				Source:   "executor",
-				TaskID:   taskID,
-				NodeID:   node.ID,
-			}
-
-			refineReq := inference.NewSimpleRequest(refinementSystem, refinementUser, validatorSchemaStr)
-			refineReq.StreamMeta = &refineMeta
-			refineReq.TaskID = taskID
-
-			refineCtx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
-			// FM-18 fix: Use 4B worker for GBNF refinement, not 1B router.
-			// The 1B router echoes JSON field names as values (e.g., groupCol="groupCol")
-			// because it lacks the semantic capacity to resolve values from context.
-			refineResult, refineErr := inference.ExecuteWorkerStructured(refineCtx, refineReq)
-			if refineErr == nil {
-				var check map[string]interface{}
-				if json.Unmarshal([]byte(refineResult), &check) == nil {
-					// Recursively unwrap nested tool_arguments (model sometimes double-wraps)
-					unwrapped := extractToolArguments(refineResult)
-					// Store flat args — tool_arguments wrapping is a GBNF schema concern,
-					// not a state storage concern. Re-wrapping caused double nesting that
-					// bloated interpolated context for downstream nodes.
-					flatJSON, _ := json.MarshalIndent(unwrapped, "", "  ")
-					inferenceResult = string(flatJSON)
-					fmt.Fprintf(os.Stderr, "[Executor] Pass 2 GBNF refinement succeeded for %s: %s\n", node.ID, inferenceResult)
-				} else {
-					fmt.Fprintf(os.Stderr, "[Executor Warning] Pass 2 GBNF produced invalid JSON, falling back to XML parse: %s\n", refineResult)
-					args := extractToolArguments(xmlResult)
-					parsedJSON, _ := json.Marshal(map[string]interface{}{"tool_arguments": args})
-					inferenceResult = string(parsedJSON)
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "[Executor Warning] Pass 2 GBNF failed: %v. Falling back to XML parse.\n", refineErr)
-				args := extractToolArguments(xmlResult)
-				parsedJSON, _ := json.Marshal(map[string]interface{}{"tool_arguments": args})
-				inferenceResult = string(parsedJSON)
-			}
-		} else {
-			args := extractToolArguments(xmlResult)
-			parsedJSON, _ := json.Marshal(map[string]interface{}{"tool_arguments": args})
-			inferenceResult = string(parsedJSON)
-		}
-		fmt.Fprintf(os.Stderr, "[Executor] Final validator output for %s: %s\n", node.ID, inferenceResult)
-
-		// ADR-0030: Splice high-confidence bindings into the final JSON.
-		// These values were stripped from the schema before inference, so the model
-		// never attempted to generate them. We merge them back deterministically.
-		// Note: binding names may differ from schema property names (e.g.
-		// "receipt_code_path" vs "receipt_path"). This is intentional — the splice
-		// ensures the correct resolved value reaches the tool even when the model
-		// hallucinated a placeholder. Extra synonym keys are harmless noise.
-		if len(highConfBindings) > 0 {
-			var parsedResult map[string]interface{}
-			if json.Unmarshal([]byte(inferenceResult), &parsedResult) == nil {
-				for paramName, val := range highConfBindings {
-					parsedResult[paramName] = val
-					fmt.Fprintf(os.Stderr, "[Executor ADR-0030] Spliced '%s' = %q (tier: high-confidence)\n", paramName, val)
-				}
-				splicedJSON, _ := json.MarshalIndent(parsedResult, "", "  ")
-				inferenceResult = string(splicedJSON)
-				fmt.Fprintf(os.Stderr, "[Executor] Validator output after proactive splice for %s: %s\n", node.ID, inferenceResult)
-			}
-		}
-
-		// Run AfterNode hooks
-		var nodeAfterAction HookAction = ActionContinue
-		for _, h := range activeHooks {
-			action, err := h.AfterNode(ctx, taskID, node, &inferenceResult)
-			if err != nil {
-				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
-			}
-			if action == ActionAbort {
-				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
-			}
-			if action == ActionPause {
-				nodeAfterAction = ActionPause
-			}
-		}
-
-		if nodeAfterAction == ActionPause {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
-			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
-			return ErrTaskPaused
-		}
-
-		if nodeDelay > 0 {
-			time.Sleep(nodeDelay)
-		}
-
-		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
-		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-		// Store clean validator output (without tier prefix) for downstream
-		// variable interpolation via {{nodes.X_validator.output.Y}}.
-		// Previously only deterministic/probe paths called SetNodeRawOutput,
-		// causing GetNodeStateTolerant to fall back to tier-prefixed Output
-		// for validator nodes — which broke JSON property lookups.
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, inferenceResult)
-		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-		return nil
 	}
 
-	// 1.2 Deterministic execution node: tool execution ONLY
-	if node.Type == "deterministic" {
-		// Update node state to running
-		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, fmt.Sprintf("Executing %s", node.Action))
+	// 3. Action node fallthrough — default execution path.
+	// "action" type is registered in the strategy registry for metadata (PlannerCard,
+	// ContextRole) but delegates are NOT wired because action nodes use the inline
+	// inference + tool dispatch pipeline below. This will be the last type extracted.
+	fmt.Fprintf(os.Stderr, "[Executor] Action fallthrough for node %s (type=%s, action=%s)\n", node.ID, node.Type, node.Action)
 
-		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-
-		// P0 Fix (13:00): Add inference step for deterministic nodes using accumulated context.
-		// Instead of parsing args from interpolated text (fragile), use the same context-aware
-		// GBNF bridge extraction that generic action nodes use. Fall back to extractToolArguments on error.
-		schemaStr, schemaErr := tools.GetSchema(node.Action)
-		if schemaErr != nil {
-			fmt.Fprintf(os.Stderr, "[Executor Warning] Failed to get GBNF schema for deterministic action %s: %v\n", node.Action, schemaErr)
-			schemaStr = ""
-		}
-
-		accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
-		var toolArguments map[string]interface{}
-
-		if accumulatedCtx != "" && schemaStr != "" {
-			// Use segmented 4-message structure for KV cache prefix sharing (ADR-0021)
-			staticBase := buildStaticBaseInstruction(false)
-			detInstruction := fmt.Sprintf("Extract structured tool parameters for '%s'.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
-			detMsgs := buildSegmentedMessages(staticBase, accumulatedCtx, schemaStr, detInstruction, false)
-
-			detReq := inference.StructuredInferenceRequest{
-				Messages:    detMsgs,
-				JSONSchema:  schemaStr,
-				StreamMeta:  &meta,
-				TaskID:      taskID,
-				IsLowStakes: true,
-			}
-
-			// FM-18 fix: Use 4B worker for deterministic args inference.
-			// Extracting tool params from accumulated context requires semantic
-			// understanding that the 1B router lacks.
-			detResult, detErr := inference.ExecuteWorkerStructured(ctx, detReq)
-			if detErr == nil {
-				// Use extractToolArguments which handles recursive tool_arguments unwrapping
-				toolArguments = extractToolArguments(detResult)
-				fmt.Fprintf(os.Stderr, "[Executor] Deterministic args via context-aware inference: %v\n", toolArguments)
-			} else {
-				fmt.Fprintf(os.Stderr, "[Executor Warning] Deterministic inference failed, falling back to interpolation: %v\n", detErr)
-				toolArguments = extractToolArguments(interpolatedPrompt)
-			}
-		} else {
-			// No accumulated context or no schema — fall back to legacy extraction
-			toolArguments = extractToolArguments(interpolatedPrompt)
-		}
-
-		// Safety net: apply coercion pipeline
-		coerceNumericArguments(toolArguments, interpolatedPrompt)
-		coerceStringArguments(toolArguments, interpolatedPrompt, node.Action)
-		resolveInterpolatedArguments(toolArguments, interpolatedPrompt, node.Instructions, taskID, graph)
-
-		// Red-team FM-9 fix: Guard against deterministic inference overriding the
-		// validator's cacheId with a stale/wrong one from accumulated context.
-		// The interpolated prompt contains the validator's JSON output — if it has
-		// a cacheId, that's the authoritative value.
-		if inferredCacheId, ok := toolArguments["cacheId"].(string); ok && inferredCacheId != "" {
-			validatorCacheId := extractCacheIdFromText(interpolatedPrompt)
-			if validatorCacheId != "" && validatorCacheId != inferredCacheId {
-				fmt.Fprintf(os.Stderr, "[Executor] FM-9 Guard: deterministic inference changed cacheId %q → %q, restoring validator value\n", validatorCacheId, inferredCacheId)
-				toolArguments["cacheId"] = validatorCacheId
-			}
-		}
-
-		// Hard-override any dynamically bound params with resolved upstream values.
-		// ADR-0030: High-confidence tiers override unconditionally; low-confidence
-		// (semantic_fallback) only overrides null/empty (existing behavior).
-		if len(node.DynamicBindings) > 0 {
-			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
-			for paramName, rb := range resolved {
-				if rb.Value != "" && rb.Value != "null" {
-					existingVal, exists := toolArguments[paramName]
-					existingStr := fmt.Sprintf("%v", existingVal)
-					if rb.Tier == "recursive_key" || rb.Tier == "fuzzy_key" || rb.Tier == "kv_line" {
-						// High-confidence: override unconditionally
-						fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Overriding exec arg '%s': %q -> %q (tier: %s)\n", paramName, existingStr, rb.Value, rb.Tier)
-						toolArguments[paramName] = rb.Value
-					} else if exists && (existingStr == "null" || existingStr == "" || existingStr == "<nil>") {
-						// Low-confidence: only override nulls
-						fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Overriding exec arg '%s': %q -> %q (tier: %s, null-only)\n", paramName, existingStr, rb.Value, rb.Tier)
-						toolArguments[paramName] = rb.Value
-					}
-				}
-			}
-		}
-
-		fmt.Fprintf(os.Stderr, "[Executor] Deterministic tool arguments extracted: %v\n", toolArguments)
-
-		// Red-team FM-18 fix: Detect validator field-name hallucination.
-		// When the 4B model fails to resolve a value from context, it sometimes
-		// echoes the JSON field name as the value (e.g., groupCol="groupCol",
-		// aggCol="groupCol"). Detect this by checking if any string value matches
-		// a known tool schema field name, and clear it if so.
-		schemaFieldNames := map[string]bool{
-			"cacheId": true, "groupCol": true, "aggCol": true, "aggFunc": true,
-			"column": true, "orderCol": true, "direction": true, "operator": true,
-			"value": true, "n": true, "sql": true,
-		}
-		for paramName, paramVal := range toolArguments {
-			if strVal, ok := paramVal.(string); ok && schemaFieldNames[strVal] {
-				fmt.Fprintf(os.Stderr, "[Executor] FM-18 Guard: param %q has value %q (echoed field name), clearing\n", paramName, strVal)
-				delete(toolArguments, paramName)
-			}
-		}
-
-		// Tool-existence validation with classification fallback.
-		// If the planner hallucinated a tool name, try to classify it to a real tool.
-		if tools.GetTool(node.Action) == nil {
-			resolved := classifyToolName(ctx, node.Action, node.Instructions)
-			if resolved != "" {
-				fmt.Fprintf(os.Stderr, "[Executor] Tool validation: hallucinated '%s' → classified as '%s'\n", node.Action, resolved)
-				node.Action = resolved
-			} else {
-				return fmt.Errorf("tool '%s' is not registered and could not be classified to a known tool", node.Action)
-			}
-		}
-		// Red-team FM-11 fix: Final cacheId validation before tool dispatch.
-		// If the cacheId doesn't match any known cache from accumulated context,
-		// replace it. This catches cases where both validator and inference hallucinate.
-		// FM-14 fix: Also accept derived cache IDs (cache_derived_[hex]{16}) created
-		// by MaterializeDerivedTable for GROUP BY results.
-		if cacheIdArg, ok := toolArguments["cacheId"].(string); ok && cacheIdArg != "" {
-			// Format validation: cacheId must match cache_\d{10,} or cache_derived_[hex]{16}.
-			// File paths, column names, and other hallucinated values are rejected.
-			cacheIdPattern := regexp.MustCompile(`^cache_(?:\d{10,}|derived_[a-f0-9]{16})$`)
-			if !cacheIdPattern.MatchString(cacheIdArg) {
-				knownCaches := extractCacheIdsFromContext(accumulatedCtx)
-				if len(knownCaches) > 0 {
-					fmt.Fprintf(os.Stderr, "[Executor] FM-11 Guard: cacheId %q fails format check, replacing with %q\n", cacheIdArg, knownCaches[0])
-					toolArguments["cacheId"] = knownCaches[0]
-				} else {
-					fmt.Fprintf(os.Stderr, "[Executor] FM-11 Guard: cacheId %q fails format check and no known caches available\n", cacheIdArg)
-				}
-			} else {
-				knownCaches := extractCacheIdsFromContext(accumulatedCtx)
-				if len(knownCaches) > 0 {
-					found := false
-					for _, kc := range knownCaches {
-						if kc == cacheIdArg {
-							found = true
-							break
-						}
-					}
-					if !found {
-						fmt.Fprintf(os.Stderr, "[Executor] FM-11 Guard: cacheId %q not in known set %v, replacing with %q\n", cacheIdArg, knownCaches, knownCaches[0])
-						toolArguments["cacheId"] = knownCaches[0]
-						// Also fix any SQL that references the old cacheId
-						if sqlArg, ok := toolArguments["sql"].(string); ok && sqlArg != "" {
-							toolArguments["sql"] = strings.ReplaceAll(sqlArg, cacheIdArg, knownCaches[0])
-						}
-					}
-				}
-			}
-		}
-
-		output, err := tools.Call(ctx, node.Action, toolArguments)
-		if err != nil {
-			return fmt.Errorf("tool '%s' execution failed: %w", node.Action, err)
-		}
-
-		// Run AfterNode hooks
-		var nodeAfterAction HookAction = ActionContinue
-		for _, h := range activeHooks {
-			action, err := h.AfterNode(ctx, taskID, node, &output)
-			if err != nil {
-				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
-			}
-			if action == ActionAbort {
-				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
-			}
-			if action == ActionPause {
-				nodeAfterAction = ActionPause
-			}
-		}
-
-		if nodeAfterAction == ActionPause {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
-			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
-			return ErrTaskPaused
-		}
-
-		var compactedOutput string
-		var derivedCacheID string
-		if isCompactionDisabled(ctx) {
-			compactedOutput = output
-		} else {
-			var cacheID string
-			compactedOutput, cacheID, err = cache.Process(ctx, output, interpolatedPrompt)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[Executor Compactor Warning] Failed to process payload in cache: %v\n", err)
-			} else if cacheID != "" {
-				derivedCacheID = cacheID
-				fmt.Fprintf(os.Stderr, "[Executor Compactor] Payload > 12KB. Saved to SQLite and disk cache -> CacheID: %s\n", cacheID)
-				e.getPublisher().PublishEvent("cache_envelope_created", taskID, node.ID, fmt.Sprintf("Cached %s output to SQLite and disk (%dKB) -> CacheID: %s", node.Action, len(output)/1024, cacheID))
-			}
-		}
-
-		if nodeDelay > 0 {
-			time.Sleep(nodeDelay)
-		}
-
-		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
-		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-		// P0 Fix: Store clean tool output separately for downstream interpolation.
-		// The display-formatted nodeStatus contains tier prefix + compacted output,
-		// which corrupts JSON property lookups in interpolateVariables.
-		// Red-team FM-3 fix: When the compactor created a derived cacheId (e.g.,
-		// filter_where result > 12KB), inject it as a top-level JSON field so
-		// downstream binding resolution finds the filtered cacheId, not the original.
-		rawOutputToStore := output
-		if derivedCacheID != "" {
-			rawOutputToStore = injectCacheIdIntoRawOutput(output, derivedCacheID)
-		}
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, rawOutputToStore)
-		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-		return nil
-	}
-
-	// 1.3 Probe/Analyze node: autonomous Thought Chain exploration (ADR-0019)
-	// Analyze nodes use the same Thought Chain execution but with a data-analysis-specific
-	// system prompt and cache tools instead of filesystem exploration tools.
-	if node.Type == "probe" || node.Type == "analyze" {
-		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, strings.Title(node.Type)+": "+node.Instructions)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-
-		probeConfig := compiler.ProbeConfig{
-			Goal:         node.Instructions,
-			AllowedTools: node.AllowedTools,
-			StepBudget:   20, // Unified default — matches probe.go
-			CompactEvery: 3,
-		}
-		if node.ProbeConfig != nil {
-			probeConfig = *node.ProbeConfig
-		}
-
-		// Fix 4 (Probe allowedTools Enrichment): Runtime expansion of cache tools
-		// for probes/analyze nodes that need to query cached data. Three triggers:
-		//
-		// (a) Probe has read_file in allowedTools — it may encounter tabular data
-		//     at runtime, which the Data Profiler will cache automatically.
-		//     No need to regex-match file extensions in instructions; the profiler
-		//     at filesystem.go:IsTabularExtension detects this natively.
-		// (b) Upstream completed nodes contain cacheId + dataProfile markers,
-		//     meaning tabular data was already read and cached — the analyze node
-		//     needs SQL tools to query it.
-		// (c) The node's instructions contain a cacheId pattern directly.
-		if (node.Type == "probe" || node.Type == "analyze") && !isAnalyzeConfig(probeConfig.AllowedTools) {
-			shouldExpand := false
-
-			// (a) Probe has read_file — may encounter tabular data at runtime
-			for _, t := range probeConfig.AllowedTools {
-				if t == "read_file" {
-					shouldExpand = true
-					break
-				}
-			}
-
-			// (b) Upstream completed nodes already produced cached tabular data
-			if !shouldExpand {
-				states := memory.DB.GetAllNodeStates(taskID)
-				for _, state := range states {
-					if state.Status == "completed" {
-						raw := state.RawOutput
-						if raw == "" {
-							raw = state.Output
-						}
-						if strings.Contains(raw, "cacheId") && strings.Contains(raw, "dataProfile") {
-							shouldExpand = true
-							break
-						}
-					}
-				}
-			}
-
-			// (c) Instructions contain a cacheId pattern (cache_NNNN)
-			if !shouldExpand {
-				cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
-				if cacheIdRe.MatchString(node.Instructions) {
-					shouldExpand = true
-				}
-			}
-
-			if shouldExpand {
-				probeConfig.AllowedTools = append(probeConfig.AllowedTools,
-					"introspect_cache",
-					"count_by", "group_by", "filter_where", "top_n", "describe_cache",
-				)
-				node.AllowedTools = probeConfig.AllowedTools
-				fmt.Fprintf(os.Stderr, "[Executor] Expanded probe allowedTools with cache + compound data tools for %s\n", node.ID)
-			}
-		}
-
-		// Inject the original task spec/goal so the Probe knows the actual
-		// requirements (e.g., target language) even when the workspace context
-		// suggests different patterns. Only set if not already provided by planner.
-		if probeConfig.TaskContext == "" && graph.GoalPrompt != "" {
-			probeConfig.TaskContext = graph.GoalPrompt
-		}
-
-		// Inject accumulated context from completed upstream nodes so the
-		// probe/analyze Thought Chain can see outputs from prior DAG steps
-		// (e.g., cacheId from an upstream read_file execution). Without this,
-		// analyze nodes have no way to discover the cacheId and must guess,
-		// causing futility aborts when all cache lookups fail.
-		if probeConfig.UpstreamContext == "" {
-			upstreamCtx := buildAccumulatedContext(taskID, graph, node.Type)
-			if upstreamCtx != "" {
-				// Enrich analyze nodes with introspect_cache schema so the probe
-				// sees the actual data shape (flat JSON array) and column names,
-				// enabling correct SQL query generation.
-				if isAnalyzeConfig(node.AllowedTools) {
-					upstreamCtx = enrichCacheBridgeContext(ctx, upstreamCtx, node.Instructions)
-				}
-				probeConfig.UpstreamContext = upstreamCtx
-				fmt.Fprintf(os.Stderr, "[Executor] Injected %d chars of upstream context into %s node %s\n", len(upstreamCtx), node.Type, node.ID)
-			}
-		}
-
-		// Auto-detect PreloadPaths from probe instructions if not explicitly set.
-		// Scans the goal text for directory-like paths (e.g., "internal/cache/",
-		// "docs/adr/") and resolves them against the project root. Only existing
-		// directories are added. This universal mechanism gives every probe
-		// pre-loaded context without requiring the planner to know about PreloadPaths.
-		//
-		// Skip for web-only probes: when allowedTools is exclusively web tools
-		// (web_search, web_browse), injecting local directory content contaminates
-		// the synthesis context and causes degenerate output (benchmark R14:
-		// technical_deep_dive_gguf 4.75→1.00 regression from preloading docs/).
-		//
-		// Skip for analyze nodes (SourceHint="cache"): these get data through
-		// the cache bridge — preloading directory content produces empty/irrelevant
-		// context. Uses SourceHint (authoritative) instead of tool-presence
-		// heuristic (isCacheEquippedProbe) which falsely triggers when Fix 4
-		// runtime-injects cache tools into regular probes.
-		isCacheAnalyzeNode := probeConfig.SourceHint == "cache"
-		if len(probeConfig.PreloadPaths) == 0 && !isWebOnlyProbe(probeConfig.AllowedTools) && !isCacheAnalyzeNode {
-			probeConfig.PreloadPaths = detectPreloadPaths(probeConfig.Goal, probeConfig.TaskContext)
-		} else if isWebOnlyProbe(probeConfig.AllowedTools) {
-			fmt.Fprintf(os.Stderr, "[Probe] Skipping PreloadPaths auto-detection for web-only probe %s (allowedTools: %v)\n", node.ID, probeConfig.AllowedTools)
-		} else if isCacheAnalyzeNode {
-			fmt.Fprintf(os.Stderr, "[Probe] Skipping PreloadPaths auto-detection for cache analyze node %s (SourceHint=cache)\n", node.ID)
-		}
-
-		// Collect binding keys that downstream nodes need from this probe's output.
-		// Scan all nodes' DynamicBindings for references to this probe node (format:
-		// "probeNodeId.output.propertyName") and extract the property names. These
-		// keys will be injected into the synthesis schema so the GBNF grammar forces
-		// the local model to produce them as structured JSON fields.
-		var downstreamBindingKeys []string
-		bindingKeySet := make(map[string]bool)
-		for _, otherNode := range graph.Nodes {
-			for _, rawBinding := range otherNode.DynamicBindings {
-				bindingPath := fmt.Sprintf("%v", rawBinding)
-				parts := strings.SplitN(bindingPath, ".", 3) // ["nodeId", "output", "propertyName"]
-				if len(parts) == 3 && parts[0] == node.ID && parts[1] == "output" {
-					key := parts[2]
-					if !bindingKeySet[key] && key != "synthesis" {
-						bindingKeySet[key] = true
-						downstreamBindingKeys = append(downstreamBindingKeys, key)
-					}
-				}
-			}
-		}
-		if len(downstreamBindingKeys) > 0 {
-			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: downstream binding keys: %v\n", node.ID, downstreamBindingKeys)
-		}
-
-		probeEngine := ProbeInferenceEngine(&ProbeInference{})
-		if config.GetProbeUseWorkerModel() {
-			fmt.Fprintf(os.Stderr, "[Executor] Probe %s: using worker model for step inference (probeUseWorkerModel=true)\n", node.ID)
-			// When probeUseWorkerModel is set, we still use ProbeInference — the call sites
-			// control routing via ModelTarget. The config flag is vestigial; TargetAuto already
-			// routes unconstrained calls to worker.
-		}
-		synthesisEngine := &ProbeInference{}
-		// ADR-0055: Inject dispatch recorder so probe tool calls are captured
-		probeCtx := context.WithValue(ctx, DispatchRecorderKey, func(toolName string, args map[string]interface{}) {
-			e.RecordDispatch(taskID, toolName, args)
-		})
-
-		var synthesis string
-		var err error
-
-		if config.GetUsePhaseRunner() {
-			// Phase Runner dispatch — route by SourceHint.
-			//
-			// DirectSynthesis promotion (port from RunProbe:374-419):
-			// When PreloadPaths content fits within the local model's effective
-			// context budget, bypass the PhaseRunner and run single-shot synthesis.
-			//
-			// Threshold: 28K chars ≈ 8K tokens. The 4B model has a 16K context
-			// window; 8K tokens for content leaves 8K for system prompt + output.
-			// At 200K (the original value), 52K files consumed 15K tokens and
-			// left ~1K for output → hallucination (benchmark: cache_function_index).
-			const maxDirectSynthesisChars = 28_000
-			if len(probeConfig.PreloadPaths) > 0 && !probeConfig.DirectSynthesis && probeConfig.SourceHint != "web" && probeConfig.SourceHint != "cache" {
-				fullContent := preloadDirectoryContext(probeConfig.PreloadPaths, 10*1024*1024)
-				if len(fullContent) > 0 && len(fullContent) <= maxDirectSynthesisChars {
-					// Promote to DirectSynthesis — write to temp file, bypass PhaseRunner
-					contextFile := filepath.Join(probeConfig.PreloadPaths[0], ".preload_context_full.md")
-					if writeErr := os.WriteFile(contextFile, []byte(fullContent), 0644); writeErr == nil {
-						probeConfig.DirectSynthesis = true
-						probeConfig.ContextFile = contextFile
-						defer os.Remove(contextFile)
-						fmt.Fprintf(os.Stderr, "[Executor] Probe %s: preload content (%d chars) fits DirectSynthesis cap — promoting\n",
-							node.ID, len(fullContent))
-					}
-				} else if len(fullContent) > maxDirectSynthesisChars {
-					// Content exceeds DirectSynthesis cap — inject truncated preload
-					// as TaskContext for the orient phase to use
-					maxChars := probeConfig.PreloadMaxChars
-					if maxChars <= 0 {
-						maxChars = 32768
-					}
-					if len(fullContent) > maxChars {
-						fullContent = fullContent[:maxChars]
-					}
-					probeConfig.TaskContext = fmt.Sprintf("%s\n\nPre-loaded source context (%d chars, truncated):\n%s",
-						probeConfig.TaskContext, len(fullContent), fullContent)
-					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: preload content (%d chars) exceeds DirectSynthesis cap (%d) — injecting %d chars into TaskContext for PhaseRunner\n",
-						node.ID, len(fullContent), maxDirectSynthesisChars, len(fullContent))
-				}
-			}
-
-			if probeConfig.DirectSynthesis {
-				// Bypass PhaseRunner — run single-shot synthesis via legacy path
-				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: DirectSynthesis promoted — bypassing PhaseRunner\n", node.ID)
-				synthesis, err = RunProbe(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-			} else {
-				switch probeConfig.SourceHint {
-				case "web":
-					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ResearchPhases (SourceHint=web)\n", node.ID)
-					synthesis, err = RunResearchPhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-				case "cache":
-					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to AnalyzePhases (SourceHint=cache)\n", node.ID)
-					synthesis, err = RunAnalyzePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-				default:
-					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases\n", node.ID)
-					synthesis, err = RunProbePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-				}
-			}
-		} else {
-			// Legacy flat Thought Chain loop
-			synthesis, err = RunProbe(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-		}
-
-		if err != nil {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
-			return fmt.Errorf("probe node %s execution failed: %w", node.ID, err)
-		}
-
-		// Run AfterNode hooks
-		var nodeAfterAction HookAction = ActionContinue
-		for _, h := range activeHooks {
-			action, err := h.AfterNode(ctx, taskID, node, &synthesis)
-			if err != nil {
-				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
-			}
-			if action == ActionAbort {
-				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
-			}
-			if action == ActionPause {
-				nodeAfterAction = ActionPause
-			}
-		}
-
-		if nodeAfterAction == ActionPause {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
-			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
-			return ErrTaskPaused
-		}
-
-		// Preserve cacheIds for downstream nodes. When a probe reads a CSV,
-		// the Data Profiler caches the data and returns a cacheId in the tool
-		// result, but the probe's synthesis is prose that strips this.
-		// Downstream analyze nodes need the cacheId to query via sql_cached_data.
-		//
-		// Sources checked:
-		// 1. Upstream context (passed to this probe)
-		// 2. Ephemeral query DB's _cache_tables (materialized during this task)
-		cacheIdRe := regexp.MustCompile(`cache_\d{10,}`)
-		synthesisCacheIds := cacheIdRe.FindAllString(synthesis, -1)
-		synthesisCacheSet := make(map[string]bool)
-		for _, id := range synthesisCacheIds {
-			synthesisCacheSet[id] = true
-		}
-
-		var allDiscovered []string
-		seen := make(map[string]bool)
-
-		// Source 1: upstream context
-		if probeConfig.UpstreamContext != "" {
-			for _, id := range cacheIdRe.FindAllString(probeConfig.UpstreamContext, -1) {
-				if !synthesisCacheSet[id] && !seen[id] {
-					allDiscovered = append(allDiscovered, id)
-					seen[id] = true
-				}
-			}
-		}
-
-		// Source 2: ephemeral query DB — tables materialized recently
-		// (the probe may have created them internally via read_file →
-		// Data Profiler). Scoped to last 60 seconds to avoid picking up
-		// stale tables from prior task runs.
-		if qdb := cache.QueryDB(); qdb != nil {
-			cutoff := time.Now().Add(-60 * time.Second).Format(time.RFC3339)
-			rows, err := qdb.Query("SELECT table_name FROM _cache_tables WHERE created_at > ? ORDER BY created_at DESC LIMIT 3", cutoff)
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var tableName string
-					if rows.Scan(&tableName) == nil {
-						if !synthesisCacheSet[tableName] && !seen[tableName] && cacheIdRe.MatchString(tableName) {
-							allDiscovered = append(allDiscovered, tableName)
-							seen[tableName] = true
-						}
-					}
-				}
-				if err := rows.Err(); err != nil {
-					fmt.Fprintf(os.Stderr, "[Executor] Cache table discovery rows error: %v\n", err)
-				}
-			}
-		}
-
-		if len(allDiscovered) > 0 {
-			synthesis += "\n\n## Data Cache Reference\n"
-			for _, id := range allDiscovered {
-				synthesis += fmt.Sprintf("cacheId: %s (use sql_cached_data to query)\n", id)
-				synthesis += "dataProfile: available via introspect_cache\n"
-			}
-			fmt.Fprintf(os.Stderr, "[Executor] Appended %d cacheIds to probe %s synthesis for downstream discovery\n", len(allDiscovered), node.ID)
-		}
-
-		nodeStatus := fmt.Sprintf("[Probe] %s", synthesis)
-		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
-		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-		return nil
-	}
-
-	// 1.4 Recall node: discovery-synthesis alignment (ADR-0038)
-	if node.Type == "recall" {
-		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Recall: "+node.Instructions)
-
-		// Identify all upstream probe nodes recursively to ensure full context recall (ADR-0041)
-		var upstreamNodeIDs []string
-		visited := make(map[string]bool)
-		var findProbes func(string)
-		findProbes = func(currentID string) {
-			if visited[currentID] {
-				return
-			}
-			visited[currentID] = true
-			for _, edge := range graph.Edges {
-				if edge.TargetID == currentID {
-					parentID := edge.SourceID
-					// Check if parent is a probe
-					for _, n := range graph.Nodes {
-						if n.ID == parentID && (n.Type == "probe" || n.Type == "analyze") {
-							upstreamNodeIDs = append(upstreamNodeIDs, parentID)
-						}
-					}
-					findProbes(parentID)
-				}
-			}
-		}
-		findProbes(node.ID)
-
-		recallEngine := &ProbeInference{}
-		recallResult, err := e.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
-		if err != nil {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
-			return fmt.Errorf("recall node %s execution failed: %w", node.ID, err)
-		}
-
-		// ADR-0067: Verified Task Execution — evaluate and optionally re-synthesize
-		synthesis := recallResult.Synthesis
-		var verificationResult *VerificationResult
-		finalSynthesis, vResult, vErr := VerifyTaskOutput(
-			ctx,
-			&DefaultCloudVerifier{},
-			graph.GoalPrompt,
-			recallResult.Synthesis,
-			recallResult.RefinedContext,
-			false, // scatterAttempted: first pass, scatter not yet attempted
-		)
-		if vErr == nil {
-			synthesis = finalSynthesis
-			verificationResult = vResult
-		} else {
-			fmt.Fprintf(os.Stderr, "[Recall] VTE error (non-fatal): %v\n", vErr)
-		}
-
-		// ADR-0071: Item-Level Scatter — if VTE detects missing items,
-		// spawn targeted scatter probes to fill the gaps.
-		if verificationResult != nil && len(verificationResult.ScatterItems) > 0 && graph.MutationBudget != nil {
-			// Write refinedContext to temp file for scatter probes
-			tmpFile, tmpErr := os.CreateTemp("", "scatter_ctx_*.txt")
-			if tmpErr == nil {
-				_, _ = tmpFile.WriteString(recallResult.RefinedContext)
-				_ = tmpFile.Close()
-				ctxPath := tmpFile.Name()
-
-				// Set context file path on each ScatterSpec
-				for i := range verificationResult.ScatterItems {
-					verificationResult.ScatterItems[i].ContextFilePath = ctxPath
-				}
-
-				assemblyID, scatterIDs, spawnErr := SpawnScatterProbes(
-					graph, node.ID, verificationResult.ScatterItems, graph.MutationBudget,
-				)
-				if spawnErr == nil && assemblyID != "" {
-					fmt.Fprintf(os.Stderr, "[Recall] Scatter spawned: %d probes + assembly %s\n",
-						len(scatterIDs), assemblyID)
-
-					// Mark recall node as completed with the original synthesis —
-					// the scatter_assembly node will produce the final output.
-					nodeStatus := fmt.Sprintf("[Recall] %s", synthesis)
-					_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-					_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
-					e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-					if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-						e.getPublisher().PublishStream(stream.StreamChunk{
-							Source:  "executor",
-							TaskID:  taskID,
-							NodeID:  node.ID,
-							Type:    "node_state",
-							Content: string(statePayload),
-						})
-					}
-					return nil // Ready queue picks up scatter probes + assembly
-				}
-				if spawnErr != nil {
-					fmt.Fprintf(os.Stderr, "[Recall] Scatter spawn failed: %v\n", spawnErr)
-				}
-				// If spawn returned no probes (budget exhausted), fall through to normal completion
-			} else {
-				fmt.Fprintf(os.Stderr, "[Recall] Failed to create scatter context temp file: %v\n", tmpErr)
-			}
-		}
-
-		// Stash verification result for envelope assembly
-		if verificationResult != nil {
-			e.stashVerificationResult(taskID, verificationResult)
-		}
-
-		// Run AfterNode hooks
-		var nodeAfterAction HookAction = ActionContinue
-		for _, h := range activeHooks {
-			action, err := h.AfterNode(ctx, taskID, node, &synthesis)
-			if err != nil {
-				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
-			}
-			if action == ActionAbort {
-				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
-			}
-			if action == ActionPause {
-				nodeAfterAction = ActionPause
-			}
-		}
-
-		if nodeAfterAction == ActionPause {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
-			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
-			return ErrTaskPaused
-		}
-
-		nodeStatus := fmt.Sprintf("[Recall] %s", synthesis)
-		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
-		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-		return nil
-	}
-	// 1.45 Scatter assembly node: collect scatter probe outputs, assemble, smooth, re-verify (ADR-0071)
-	if node.Type == "scatter_assembly" {
-		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Scatter Assembly: "+node.Instructions)
-
-		recallNodeID := node.Instructions // Instructions stores the recall node ID
-
-		// 1. Read recall node's original synthesis
-		recallSynthesis := ""
-		if state, ok := memory.DB.GetNodeState(taskID, recallNodeID); ok {
-			recallSynthesis = state.RawOutput
-			if recallSynthesis == "" {
-				recallSynthesis = state.Output
-			}
-		}
-
-		// 2. Find all upstream scatter probe outputs
-		scatterOutputs := make(map[string]string)
-		for _, edge := range graph.Edges {
-			if edge.TargetID == node.ID && strings.HasPrefix(edge.SourceID, "scatter_probe_") {
-				if state, ok := memory.DB.GetNodeState(taskID, edge.SourceID); ok && state.Status == "completed" {
-					// Extract the goal item from the probe node's config
-					goalItem := ""
-					for _, n := range graph.Nodes {
-						if n.ID == edge.SourceID && n.ProbeConfig != nil {
-							goalItem = n.ProbeConfig.Goal
-							break
-						}
-					}
-					rawOutput := state.RawOutput
-					if rawOutput == "" {
-						rawOutput = state.Output
-					}
-					if goalItem != "" && strings.TrimSpace(rawOutput) != "" {
-						scatterOutputs[goalItem] = rawOutput
-					}
-				}
-			}
-		}
-
-		fmt.Fprintf(os.Stderr, "[ScatterAssembly] Assembling %d scatter outputs with recall synthesis (%d chars)\n",
-			len(scatterOutputs), len(recallSynthesis))
-
-		// 3. Deterministic assembly
-		assembled := assembleScatterOutput(recallSynthesis, scatterOutputs)
-
-		// 4. Smoothing pass (single inference)
-		smoothingEngine := &ProbeInference{}
-		smoothed, err := smoothAssembly(ctx, assembled, smoothingEngine)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[ScatterAssembly] Smoothing error (non-fatal): %v\n", err)
-			smoothed = assembled
-		}
-
-		synthesis := smoothed
-
-		// 5. Re-run VTE with scatterAttempted=true (prevents re-scatter)
-		finalSynthesis, vResult, vErr := VerifyTaskOutput(
-			ctx,
-			&DefaultCloudVerifier{},
-			graph.GoalPrompt,
-			smoothed,
-			recallSynthesis, // Use original recall synthesis as refinedContext for cloud
-			true, // scatterAttempted: second pass
-		)
-		if vErr == nil {
-			synthesis = finalSynthesis
-			if vResult != nil {
-				e.stashVerificationResult(taskID, vResult)
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "[ScatterAssembly] VTE error (non-fatal): %v\n", vErr)
-		}
-
-		nodeStatus := fmt.Sprintf("[ScatterAssembly] %s", synthesis)
-		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
-		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-
-		// Clean up scatter context temp file if it exists
-		for _, edge := range graph.Edges {
-			if edge.TargetID == node.ID && strings.HasPrefix(edge.SourceID, "scatter_probe_") {
-				for _, n := range graph.Nodes {
-					if n.ID == edge.SourceID && n.ProbeConfig != nil && n.ProbeConfig.ContextFile != "" {
-						if strings.HasPrefix(n.ProbeConfig.ContextFile, os.TempDir()) {
-							_ = os.Remove(n.ProbeConfig.ContextFile)
-							fmt.Fprintf(os.Stderr, "[ScatterAssembly] Cleaned up temp context file: %s\n", n.ProbeConfig.ContextFile)
-						}
-						break // All scatter probes share the same context file
-					}
-				}
-				break
-			}
-		}
-
-		return nil
-	}
-
-	// 1.5 Sub-DAG node: spawn an isolated child task via SubTaskSpawner
-	if node.Type == "sub_dag" {
-		_ = memory.DB.SetNodeState(taskID, node.ID, "waiting_on_child", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, fmt.Sprintf("Spawning child task for Sub-DAG '%s'", node.Action))
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "waiting_on_child", "output": ""}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-
-		if SpawnSubTask == nil {
-			return fmt.Errorf("SpawnSubTask is not initialized; cannot execute sub_dag node")
-		}
-
-		// Inject dynamic bindings into inputs if present
-		finalInputs := make(map[string]interface{})
-		for k, v := range node.Inputs {
-			finalInputs[k] = v
-		}
-		if len(node.DynamicBindings) > 0 {
-			resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
-			for paramName, rb := range resolved {
-				if rb.Value != "" && rb.Value != "null" {
-					finalInputs[paramName] = rb.Value
-				}
-			}
-		}
-
-		output, err := SpawnSubTask(ctx, node.Action, finalInputs, taskID, node.ID)
-		if err != nil {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "failed", err.Error())
-			return fmt.Errorf("sub_dag node '%s' execution failed: %w", node.Action, err)
-		}
-
-		// Run AfterNode hooks
-		var nodeAfterAction HookAction = ActionContinue
-		for _, h := range activeHooks {
-			action, err := h.AfterNode(ctx, taskID, node, &output)
-			if err != nil {
-				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
-			}
-			if action == ActionAbort {
-				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
-			}
-			if action == ActionPause {
-				nodeAfterAction = ActionPause
-			}
-		}
-
-		if nodeAfterAction == ActionPause {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
-			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
-			return ErrTaskPaused
-		}
-
-		if nodeDelay > 0 {
-			time.Sleep(nodeDelay)
-		}
-
-		nodeStatus := fmt.Sprintf("[SubDAG] %s", output)
-		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
-		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-		return nil
-	}
-
-	// 1.4 Synthesis node: final summary compilation ONLY
-	if node.Type == "synthesis" {
-		// Update node state to running
-		_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
-		e.getPublisher().PublishEvent("node_started", taskID, node.ID, "Synthesizing final response")
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "running", "output": ""}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-
-		systemPrompt := "You are the Local Tactician Node Executor. " +
-			"Compile all prior action outputs and query results into a final cohesive response. " +
-			"The accumulated context below contains data retrieved by prior nodes — use it directly. " +
-			"If query results are provided, include the actual data values in your response."
-		accumulatedCtx := buildAccumulatedContext(taskID, graph, "synthesis")
-		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", interpolatedPrompt)
-
-		req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
-		// ADR-0045: Token-level streaming gated by compiler-set StreamOutput flag.
-		// DefaultNodeFields sets StreamOutput=true for synthesis nodes.
-		if node.StreamOutput {
-			req.StreamMeta = &meta
-		}
-		req.TaskID = taskID
-
-		// Synthesis nodes are the end of the line — give them the full context
-		// window for generation. The llama.cpp server naturally caps at n_ctx
-		// minus prompt tokens, so this effectively means "generate until done".
-		synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 65536)
-		inferenceResult, err := inference.ExecuteWorkerStructured(synthCtx, req)
-		if err != nil {
-			return fmt.Errorf("synthesis node execution failed: %w", err)
-		}
-
-		// Run AfterNode hooks
-		var nodeAfterAction HookAction = ActionContinue
-		for _, h := range activeHooks {
-			action, err := h.AfterNode(ctx, taskID, node, &inferenceResult)
-			if err != nil {
-				return fmt.Errorf("AfterNode hook error for node %s: %w", node.ID, err)
-			}
-			if action == ActionAbort {
-				return fmt.Errorf("AfterNode hook aborted execution for node %s", node.ID)
-			}
-			if action == ActionPause {
-				nodeAfterAction = ActionPause
-			}
-		}
-
-		if nodeAfterAction == ActionPause {
-			_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
-			e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
-			return ErrTaskPaused
-		}
-
-		if nodeDelay > 0 {
-			time.Sleep(nodeDelay)
-		}
-
-		// ADR-0067: Verified Task Execution for terminal synthesis nodes.
-		// Without VTE here, flat DAGs (e.g., datanal tasks with no Recall node)
-		// rely entirely on the 4B model for final output, which often degenerates.
-		// Run the same verification pipeline as Recall nodes to catch and fix bad output.
-		if graph.GoalPrompt != "" {
-			finalSynthesis, _, vErr := VerifyTaskOutput(
-				ctx,
-				&DefaultCloudVerifier{},
-				graph.GoalPrompt,
-				inferenceResult,
-				accumulatedCtx, // use the same context that fed the synthesis
-				false,
-			)
-			if vErr == nil {
-				inferenceResult = finalSynthesis
-			} else {
-				fmt.Fprintf(os.Stderr, "[TerminalSynthesis] VTE error (non-fatal): %v\n", vErr)
-			}
-		}
-
-		nodeStatus := fmt.Sprintf("[%s] %s", executionTier, inferenceResult)
-		_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
-		_ = memory.DB.SetNodeRawOutput(taskID, node.ID, inferenceResult)
-		e.getPublisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-
-		if statePayload, err := json.Marshal(map[string]string{"status": "completed", "output": nodeStatus}); err == nil {
-			e.getPublisher().PublishStream(stream.StreamChunk{
-				Source:  "executor",
-				TaskID:  taskID,
-				NodeID:  node.ID,
-				Type:    "node_state",
-				Content: string(statePayload),
-			})
-		}
-		return nil
-	}
-
-	fmt.Fprintf(os.Stderr, "[Executor] Executing Action Node: %s (Type: %s, Action: %s)\n", node.ID, node.Type, node.Action)
 
 	// Update node state to running
 	_ = memory.DB.SetNodeState(taskID, node.ID, "running", "")
@@ -3270,6 +2085,13 @@ func isPlainTextNodeType(graph *compiler.ExecutionGraph, nodeID string) bool {
 	}
 	for _, node := range graph.Nodes {
 		if node.ID == nodeID || node.ID == baseID {
+			// ADR-0069: Use strategy registry ContextRole when available.
+			if activeRegistry != nil {
+				if s, ok := activeRegistry.Get(node.Type); ok {
+					return s.ContextRole().ProducesPlainText
+				}
+			}
+			// Fallback: legacy hardcoded check
 			switch node.Type {
 			case "probe", "synthesis", "recall":
 				return true

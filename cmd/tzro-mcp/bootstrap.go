@@ -97,12 +97,17 @@ func bootstrapEngine() {
 		sentinel.Start()
 	}
 
-	// 8. Register Hooks Globally
+	// 8. Initialize Strategy Registry (ADR-0069)
+	executor.GlobalEngine.InitRegistry()
+
+
+	// 9. Register Hooks Globally
 	executor.GlobalEngine.RegisterHook(&executor.McpApprovalHook{})
 	executor.GlobalEngine.RegisterHook(channel.GlobalChannelToolHook) // v2: bidirectional dispatch
 	executor.GlobalEngine.RegisterHook(&executor.ClientToolHook{})    // v1 fallback
 
-	// 9. Start Proactivity AttentionScheduler
+
+	// 10. Start Proactivity AttentionScheduler
 	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewObserverDaemon())
 	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewCompactorDaemon())
 	_ = proactivity.GlobalScheduler.RegisterDaemon(proactivity.NewReconcilerDaemon())

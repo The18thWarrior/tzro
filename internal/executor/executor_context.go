@@ -195,16 +195,28 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		// results). Capping them at 256 chars destroys the research data before
 		// synthesis ever sees it. In this case, give exec nodes a proportional
 		// budget based on their output size within a shared ceiling.
-		hasRecallOrProbe := false
+		hasDataCarrier := false
 		for _, cn := range completed {
 			ntype := nodeTypeMap[cn.nodeID]
+			// ADR-0069: Use ContextRole when available
+			if activeRegistry != nil {
+				if s, ok := activeRegistry.Get(ntype); ok {
+					role := s.ContextRole()
+					if role.IsPrimaryDataCarrier || role.HasThoughtSteps {
+						hasDataCarrier = true
+						break
+					}
+					continue
+				}
+			}
+			// Legacy fallback
 			if ntype == "recall" || ntype == "probe" || ntype == "analyze" {
-				hasRecallOrProbe = true
+				hasDataCarrier = true
 				break
 			}
 		}
 
-		if !hasRecallOrProbe {
+		if !hasDataCarrier {
 			// Flat DAG: proportional budgets for deterministic exec nodes.
 			// Ceiling: min(nodeCount * 4096, 32000) — same formula as standard path.
 			flatCeiling := len(completed) * 4096
@@ -308,6 +320,9 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		}
 
 		// Compute total weight for tiered allocation
+		// Tiered per-node budgets by ContextWeight.
+		// ADR-0069: When the Strategy Registry is available, weights are derived
+		// from ContextRole.ContextWeight. Legacy fallback uses the original map.
 		typeWeights := map[string]int{
 			"recall":        8,
 			"action":        6, // covers validators (action type with _validator suffix)
@@ -315,6 +330,21 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			"deterministic": 1,
 		}
 		defaultWeight := 4 // for unknown types (synthesis, sub_dag, etc.)
+
+		// Override with ContextWeight from registry when available.
+		// ContextWeight is a float64 multiplier; convert to integer weight
+		// for proportional budget allocation (multiply by 4 to preserve
+		// relative ordering: recall=2.0→8, probe=1.5→6, etc.)
+		if activeRegistry != nil {
+			for _, s := range activeRegistry.List() {
+				role := s.ContextRole()
+				w := int(role.ContextWeight * 4)
+				if w < 1 {
+					w = 1
+				}
+				typeWeights[s.Type()] = w
+			}
+		}
 
 		totalWeight := 0
 		nodeWeights := make([]int, len(completed))
@@ -338,7 +368,16 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			// Without this, CompactContent can misclassify recall output as code
 			// and strip it to 0 chars via ExtractSkeleton.
 			ntype := nodeTypeMap[cn.nodeID]
-			if ntype == "recall" {
+			// ADR-0069: IsPrimaryDataCarrier nodes get unlimited budget
+			isPrimary := false
+			if activeRegistry != nil {
+				if s, ok := activeRegistry.Get(ntype); ok {
+					isPrimary = s.ContextRole().IsPrimaryDataCarrier
+				}
+			} else if ntype == "recall" {
+				isPrimary = true // legacy fallback
+			}
+			if isPrimary {
 				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
 				continue
 			}

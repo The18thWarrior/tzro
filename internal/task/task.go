@@ -486,7 +486,7 @@ Do NOT add \"dynamicBindings\" — data flow between nodes is handled automatica
 Output the COMPLETE modified JSON graph. Do NOT include markdown code fences, HTML, or conversational text. Output raw JSON only.
 The output must be a valid JSON object with "taskId", "maxCycles", "nodes", and "edges" fields.`,
 		templateCategory, string(tmplJSON),
-		templates.NodeTypeReferenceCard,
+		executor.GetNodeTypeReferenceCard(),
 		toolsListStr, skillsListStr, repoMap)
 
 	isTzroDAG := strings.Contains(taskID, "tzro_dag_case_")

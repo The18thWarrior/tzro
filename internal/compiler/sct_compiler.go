@@ -11,6 +11,13 @@ import (
 // tabularExtRe detects tabular file extension references in node instructions.
 var tabularExtRe = regexp.MustCompile(`\.(csv|tsv|xlsx|xls)\b`)
 
+// ActiveExpander is the strategy-aware node expander, set during executor
+// initialization when the strategy registry is populated. When non-nil,
+// ExpandToSCTGraph consults it for each node before falling back to built-in
+// expansion logic. This allows custom Agent App strategies to inject
+// compilation rules without modifying the compiler.
+var ActiveExpander NodeExpander
+
 // ExpandToSCTGraph dynamically expands a simplified Strategy Plan (high-level DAG)
 // into a fine-grained execution graph with paired Semantic-Validator, execution, and synthesis nodes.
 func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string, error)) (*ExecutionGraph, error) {
@@ -32,6 +39,34 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 
 	for _, node := range graph.Nodes {
+		// ADR-0069: Custom strategy compilation rules take precedence over
+		// built-in type switching. If ActiveExpander handles a node type,
+		// its result replaces the built-in expansion logic entirely.
+		if ActiveExpander != nil {
+			if result, err := ActiveExpander.Expand(&node, graph); err != nil {
+				return nil, fmt.Errorf("custom expansion for node %q failed: %w", node.ID, err)
+			} else if result != nil {
+				if len(result.ReplacementNodes) > 0 {
+					sctNodes = append(sctNodes, result.ReplacementNodes...)
+					// Map original ID to last replacement node for edge rewiring
+					lastID := result.ReplacementNodes[len(result.ReplacementNodes)-1].ID
+					execNodeMap[node.ID] = lastID
+					if len(result.ReplacementNodes) > 1 {
+						bridgeNodeMap[node.ID] = result.ReplacementNodes[0].ID
+					}
+				} else if result.ModifiedNode != nil {
+					sctNodes = append(sctNodes, *result.ModifiedNode)
+					execNodeMap[node.ID] = result.ModifiedNode.ID
+				} else {
+					sctNodes = append(sctNodes, node)
+					execNodeMap[node.ID] = node.ID
+				}
+				sctNodes = append(sctNodes, result.AdditionalNodes...)
+				sctEdges = append(sctEdges, result.AdditionalEdges...)
+				continue
+			}
+		}
+
 		// Only expand "action" or "deterministic" steps that require execution
 		if node.Type == "action" || node.Type == "deterministic" {
 			validatorID := node.ID + "_validator"
