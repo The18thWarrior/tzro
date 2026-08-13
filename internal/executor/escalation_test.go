@@ -103,6 +103,7 @@ func TestEscalationHook_ResumedAfterApproval(t *testing.T) {
 	hook := &EscalationHook{ApprovedLevel: 1}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	graph := &compiler.ExecutionGraph{

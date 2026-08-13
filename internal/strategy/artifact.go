@@ -206,24 +206,32 @@ func GetArtifact[T any](store *ArtifactStore, key ArtifactKey[T]) (T, bool) {
 		return zero, false
 	}
 
-	// Try serialized layer (lazy deserialization from WASM/external)
+	// Try serialized layer — copy the data under RLock, then release
+	var dataCopy json.RawMessage
 	if data, ok := store.serialized[key.Name]; ok {
-		store.mu.RUnlock()
-		var val T
-		if err := json.Unmarshal(data, &val); err != nil {
-			var zero T
-			return zero, false
-		}
-		// Cache in typed layer for subsequent access
-		store.mu.Lock()
-		store.typed[key.Name] = val
-		store.mu.Unlock()
-		return val, true
+		dataCopy = make(json.RawMessage, len(data))
+		copy(dataCopy, data)
+	}
+	store.mu.RUnlock()
+
+	if dataCopy == nil {
+		var zero T
+		return zero, false
 	}
 
-	store.mu.RUnlock()
-	var zero T
-	return zero, false
+	// Deserialize outside any lock (may be expensive)
+	var val T
+	if err := json.Unmarshal(dataCopy, &val); err != nil {
+		var zero T
+		return zero, false
+	}
+
+	// Cache in typed layer under write lock
+	store.mu.Lock()
+	store.typed[key.Name] = val
+	store.mu.Unlock()
+
+	return val, true
 }
 
 // SetArtifact stores a typed artifact with compile-time type safety.

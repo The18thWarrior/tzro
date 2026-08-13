@@ -59,6 +59,7 @@ func TestReadyQueueLinearDAGExecutesInOrder(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	ctx := context.Background()
 
 	err := engine.ExecuteGraphReactive(ctx, graph)
@@ -125,6 +126,7 @@ func TestReadyQueueParallelDAGFiresConcurrently(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)
@@ -203,6 +205,7 @@ func TestReadyQueueResumesFromCheckpoint(t *testing.T) {
 	_ = memory.DB.SetNodeRawOutput("task-rq-resume", "A", `{"status":"ok"}`)
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)
@@ -250,6 +253,7 @@ func TestReadyQueueSkipPropagation(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	// Graph: A → B → C (A skipped → B and C should propagate skip)

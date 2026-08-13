@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"tzro/internal/compiler"
 	"tzro/internal/inference"
 	"tzro/internal/strategy"
+	"tzro/internal/stream"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,14 +19,14 @@ import (
 // terminal synthesis nodes (ADR-0067).
 type SynthesisStrategy struct {
 	strategy.BaseStrategy
-	engine *ExecutionEngine
+	publishState func(pub interface{ PublishStream(stream.StreamChunk) }, taskID, nodeID, status, output string)
 }
 
 // NewSynthesisStrategy creates a SynthesisStrategy.
 func NewSynthesisStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy) *SynthesisStrategy {
 	return &SynthesisStrategy{
 		BaseStrategy: *base,
-		engine:       engine,
+		publishState: publishNodeState,
 	}
 }
 
@@ -41,7 +41,7 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 	// Set initial running state
 	_ = nr.State().SetNodeState("running", "")
 	nr.Publisher().PublishEvent("node_started", taskID, node.ID, "Synthesizing final response")
-	s.engine.publishNodeStateStream(taskID, node.ID, "running", "")
+	s.publishState(nr.Publisher(), taskID, node.ID, "running", "")
 
 	systemPrompt := "You are the Local Tactician Node Executor. " +
 		"Compile all prior action outputs and query results into a final cohesive response. " +
@@ -99,27 +99,6 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 	}, nil
 }
 
-// Type returns the node type identifier.
-func (s *SynthesisStrategy) Type() string { return s.BaseStrategy.Type() }
-
-// PlannerCard delegates to embedded BaseStrategy.
-func (s *SynthesisStrategy) PlannerCard() *strategy.PlannerCard { return s.BaseStrategy.PlannerCard() }
-
-// CompilationRules delegates to embedded BaseStrategy.
-func (s *SynthesisStrategy) CompilationRules() *strategy.CompilationRules {
-	return s.BaseStrategy.CompilationRules()
-}
-
-// ContextRole delegates to embedded BaseStrategy.
-func (s *SynthesisStrategy) ContextRole() *strategy.ContextRole { return s.BaseStrategy.ContextRole() }
-
-// EdgeThoughtPolicy delegates to embedded BaseStrategy.
-func (s *SynthesisStrategy) EdgeThoughtPolicy() *strategy.EdgeThoughtConfig {
-	return s.BaseStrategy.EdgeThoughtPolicy()
-}
-
-// StagePlan returns nil — synthesis uses imperative Execute.
-func (s *SynthesisStrategy) StagePlan(node *compiler.GraphNode) *strategy.StagePlanDef { return nil }
-
 // Compile-time interface check.
 var _ strategy.NodeStrategy = (*SynthesisStrategy)(nil)
+

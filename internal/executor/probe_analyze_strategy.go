@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"tzro/internal/compiler"
+	"tzro/internal/inference"
 	"tzro/internal/strategy"
+	"tzro/internal/stream"
 )
 
 // ---------------------------------------------------------------------------
@@ -15,19 +18,21 @@ import (
 
 // ProbeAnalyzeStrategy runs autonomous Thought Chain exploration for both
 // "probe" (filesystem/codebase) and "analyze" (structured/tabular data) nodes.
-// The Execute method calls the engine's domain-core function and returns the
+// The Execute method calls the injected core function and returns the
 // synthesis output. The dispatch envelope handles state, hooks, and events.
 type ProbeAnalyzeStrategy struct {
 	strategy.BaseStrategy
-	engine   *ExecutionEngine
-	nodeType string // "probe" or "analyze"
+	runCore      func(ctx context.Context, graph *compiler.ExecutionGraph, node *compiler.GraphNode, executionTier string, meta inference.StreamMeta, interpolatedPrompt string) (string, error)
+	publishState func(pub interface{ PublishStream(stream.StreamChunk) }, taskID, nodeID, status, output string)
+	nodeType     string // "probe" or "analyze"
 }
 
 // NewProbeAnalyzeStrategy creates a ProbeAnalyzeStrategy for the given node type.
 func NewProbeAnalyzeStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy, nodeType string) *ProbeAnalyzeStrategy {
 	return &ProbeAnalyzeStrategy{
 		BaseStrategy: *base,
-		engine:       engine,
+		runCore:      engine.runProbeAnalyzeCore,
+		publishState: publishNodeState,
 		nodeType:     nodeType,
 	}
 }
@@ -42,10 +47,10 @@ func (s *ProbeAnalyzeStrategy) Execute(ctx context.Context, nr *strategy.NodeRun
 	// Set initial running state
 	_ = nr.State().SetNodeState("running", "")
 	nr.Publisher().PublishEvent("node_started", taskID, node.ID, capitalize(s.nodeType)+": "+node.Instructions)
-	s.engine.publishNodeStateStream(taskID, node.ID, "running", "")
+	s.publishState(nr.Publisher(), taskID, node.ID, "running", "")
 
 	// Run the domain-core probe logic (config, expansion, Thought Chain, cacheId preservation)
-	synthesis, err := s.engine.runProbeAnalyzeCore(ctx, graph, node, nr.ExecutionTier(), nr.Meta(), nr.InterpolatedPrompt())
+	synthesis, err := s.runCore(ctx, graph, node, nr.ExecutionTier(), nr.Meta(), nr.InterpolatedPrompt())
 	if err != nil {
 		return &strategy.ExecutionResult{
 			Output:    fmt.Sprintf("probe node %s execution failed: %v", node.ID, err),
@@ -67,36 +72,11 @@ func capitalize(s string) string {
 	if s == "" {
 		return s
 	}
-	return string(s[0]-32) + s[1:]
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// Type returns the node type identifier.
+// Type returns the node type identifier (overrides BaseStrategy for polymorphism).
 func (s *ProbeAnalyzeStrategy) Type() string { return s.nodeType }
-
-// PlannerCard delegates to embedded BaseStrategy.
-func (s *ProbeAnalyzeStrategy) PlannerCard() *strategy.PlannerCard {
-	return s.BaseStrategy.PlannerCard()
-}
-
-// CompilationRules delegates to embedded BaseStrategy.
-func (s *ProbeAnalyzeStrategy) CompilationRules() *strategy.CompilationRules {
-	return s.BaseStrategy.CompilationRules()
-}
-
-// ContextRole delegates to embedded BaseStrategy.
-func (s *ProbeAnalyzeStrategy) ContextRole() *strategy.ContextRole {
-	return s.BaseStrategy.ContextRole()
-}
-
-// EdgeThoughtPolicy delegates to embedded BaseStrategy.
-func (s *ProbeAnalyzeStrategy) EdgeThoughtPolicy() *strategy.EdgeThoughtConfig {
-	return s.BaseStrategy.EdgeThoughtPolicy()
-}
-
-// StagePlan returns nil — probe uses imperative Execute.
-func (s *ProbeAnalyzeStrategy) StagePlan(node *compiler.GraphNode) *strategy.StagePlanDef {
-	return nil
-}
 
 // Compile-time interface check.
 var _ strategy.NodeStrategy = (*ProbeAnalyzeStrategy)(nil)

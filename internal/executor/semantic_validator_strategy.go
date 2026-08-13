@@ -6,7 +6,9 @@ import (
 	"os"
 
 	"tzro/internal/compiler"
+	"tzro/internal/inference"
 	"tzro/internal/strategy"
+	"tzro/internal/stream"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,14 +21,16 @@ import (
 // escalation and F1 gate for schema satisfaction.
 type SemanticValidatorStrategy struct {
 	strategy.BaseStrategy
-	engine *ExecutionEngine
+	runCore      func(ctx context.Context, graph *compiler.ExecutionGraph, node *compiler.GraphNode, executionTier string, meta inference.StreamMeta, interpolatedPrompt string) (string, error)
+	publishState func(pub interface{ PublishStream(stream.StreamChunk) }, taskID, nodeID, status, output string)
 }
 
 // NewSemanticValidatorStrategy creates a SemanticValidatorStrategy.
 func NewSemanticValidatorStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy) *SemanticValidatorStrategy {
 	return &SemanticValidatorStrategy{
 		BaseStrategy: *base,
-		engine:       engine,
+		runCore:      engine.runSemanticValidatorCore,
+		publishState: publishNodeState,
 	}
 }
 
@@ -41,10 +45,10 @@ func (s *SemanticValidatorStrategy) Execute(ctx context.Context, nr *strategy.No
 	_ = nr.State().SetNodeState("running", "")
 	nr.Publisher().PublishEvent("node_started", taskID, node.ID,
 		fmt.Sprintf("Started %s Validator", node.Action))
-	s.engine.publishNodeStateStream(taskID, node.ID, "running", "")
+	s.publishState(nr.Publisher(), taskID, node.ID, "running", "")
 
 	// Run the domain-core parameter extraction logic
-	inferenceResult, err := s.engine.runSemanticValidatorCore(ctx, graph, node, nr.ExecutionTier(), nr.Meta(), nr.InterpolatedPrompt())
+	inferenceResult, err := s.runCore(ctx, graph, node, nr.ExecutionTier(), nr.Meta(), nr.InterpolatedPrompt())
 	if err != nil {
 		return &strategy.ExecutionResult{
 			Output:    fmt.Sprintf("semantic validator %s failed: %v", node.ID, err),
@@ -64,34 +68,6 @@ func (s *SemanticValidatorStrategy) Execute(ctx context.Context, nr *strategy.No
 		Output:    output,
 		Directive: strategy.DirectiveContinue,
 	}, nil
-}
-
-// Type returns the node type identifier.
-func (s *SemanticValidatorStrategy) Type() string { return s.BaseStrategy.Type() }
-
-// PlannerCard delegates to embedded BaseStrategy.
-func (s *SemanticValidatorStrategy) PlannerCard() *strategy.PlannerCard {
-	return s.BaseStrategy.PlannerCard()
-}
-
-// CompilationRules delegates to embedded BaseStrategy.
-func (s *SemanticValidatorStrategy) CompilationRules() *strategy.CompilationRules {
-	return s.BaseStrategy.CompilationRules()
-}
-
-// ContextRole delegates to embedded BaseStrategy.
-func (s *SemanticValidatorStrategy) ContextRole() *strategy.ContextRole {
-	return s.BaseStrategy.ContextRole()
-}
-
-// EdgeThoughtPolicy delegates to embedded BaseStrategy.
-func (s *SemanticValidatorStrategy) EdgeThoughtPolicy() *strategy.EdgeThoughtConfig {
-	return s.BaseStrategy.EdgeThoughtPolicy()
-}
-
-// StagePlan returns nil — semantic_validator uses imperative Execute.
-func (s *SemanticValidatorStrategy) StagePlan(node *compiler.GraphNode) *strategy.StagePlanDef {
-	return nil
 }
 
 // Compile-time interface check.

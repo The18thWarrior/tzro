@@ -409,6 +409,7 @@ func TestExecutionEngineTelemetryIsolation(t *testing.T) {
 	engine := &ExecutionEngine{
 		Publisher: mockPub,
 	}
+	engine.InitRegistry()
 
 	graph := &compiler.ExecutionGraph{
 		TaskID: "task-test-telemetry",
@@ -585,6 +586,7 @@ func TestKahnLevelBranchPruningAndSkipPropagation(t *testing.T) {
 
 	// Run execution
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.InitRegistry()
 	ctx := context.Background()
 	err = engine.ExecuteGraph(ctx, graph, levels)

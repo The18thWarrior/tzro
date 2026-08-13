@@ -7,54 +7,33 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// NodeExecuteFunc — Strangler Fig delegation pattern
-// ---------------------------------------------------------------------------
-
-// NodeExecuteFunc is the delegate signature for bridging existing executor
-// logic into the NodeStrategy interface. During the Strangler Fig migration,
-// built-in strategies store a delegate function injected by the executor at
-// registration time. The delegate captures the executor's methods and state,
-// allowing strategies to dispatch to existing code without importing the
-// executor package (which would create a circular dependency).
-//
-// Once a strategy's logic is fully extracted into its own Execute method,
-// the delegate is removed and the strategy owns its implementation directly.
-type NodeExecuteFunc func(ctx context.Context, taskID string, node *compiler.GraphNode, graph *compiler.ExecutionGraph) (*ExecutionResult, error)
-
-// ---------------------------------------------------------------------------
-// BaseStrategy — shared skeleton for Strangler Fig stubs
+// BaseStrategy — shared skeleton for built-in strategies
 // ---------------------------------------------------------------------------
 
 // BaseStrategy provides default implementations for NodeStrategy methods
-// that most built-in strategies share during the Strangler Fig migration.
-// Concrete strategies embed this and override only what they need.
+// that most built-in strategies share. Concrete strategies embed this and
+// override Execute (and optionally Type for polymorphic strategies).
 type BaseStrategy struct {
-	NodeType     string
-	Card         *PlannerCard
-	Rules        *CompilationRules
-	Role         *ContextRole
-	ThoughtCfg   *EdgeThoughtConfig
-	DelegateFunc NodeExecuteFunc // Injected by executor at registration
+	NodeType   string
+	Card       *PlannerCard
+	Rules      *CompilationRules
+	Role       *ContextRole
+	ThoughtCfg *EdgeThoughtConfig
 }
 
 func (s *BaseStrategy) Type() string { return s.NodeType }
 
 func (s *BaseStrategy) StagePlan(node *compiler.GraphNode) *StagePlanDef { return nil }
 
+// Execute is the default implementation for strategies that haven't been
+// extracted into their own concrete types. Returns DirectiveHalt to signal
+// that dispatch should not proceed.
 func (s *BaseStrategy) Execute(ctx context.Context, nr *NodeRuntime) (*ExecutionResult, error) {
-	if s.DelegateFunc != nil {
-		result, err := s.DelegateFunc(ctx, nr.TaskID(), nr.Node(), nr.Graph())
-		if result != nil {
-			result.DelegateHandled = true
-		}
-		return result, err
-	}
 	return &ExecutionResult{
 		Output:    "strategy not yet implemented",
 		Directive: DirectiveHalt,
 	}, nil
 }
-
 
 func (s *BaseStrategy) EdgeThoughtPolicy() *EdgeThoughtConfig { return s.ThoughtCfg }
 
@@ -67,11 +46,6 @@ func (s *BaseStrategy) ContextRole() *ContextRole {
 		return s.Role
 	}
 	return &ContextRole{}
-}
-
-// SetDelegate sets the executor-injected delegate function.
-func (s *BaseStrategy) SetDelegate(fn NodeExecuteFunc) {
-	s.DelegateFunc = fn
 }
 
 // ---------------------------------------------------------------------------
@@ -285,8 +259,9 @@ func NewDeterministicStrategy() *BaseStrategy {
 // ---------------------------------------------------------------------------
 
 // RegisterBuiltins registers all built-in strategies into the registry.
-// Called by the executor at startup. Each strategy is created with metadata
-// only — the delegate functions are injected separately by the executor.
+// Called by the executor at startup. Each strategy starts as a metadata-only
+// BaseStrategy, then gets replaced with a concrete strategy implementation
+// by the executor's wireStrategies method.
 func RegisterBuiltins(r *StrategyRegistry) error {
 	builtins := []NodeStrategy{
 		NewProbeStrategy(),

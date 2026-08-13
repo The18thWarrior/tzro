@@ -324,9 +324,9 @@ func (e *ExecutionEngine) buildNodeRuntime(
 // state management, hook evaluation, and event publishing.
 //
 // Two modes:
-//   - DelegateHandled=true: The delegate managed the full lifecycle internally.
+//   - SelfManaged=true: The strategy managed the full lifecycle internally.
 //     The envelope only handles propagation (propagateSkip) and flow signals.
-//   - DelegateHandled=false: Strategy-owned execution. The envelope manages
+//   - SelfManaged=false: Strategy returns output only. The envelope manages
 //     the full ceremony: running → completed/failed/skipped state transitions,
 //     AfterNode hooks with output modification, and event publishing.
 func (e *ExecutionEngine) dispatchViaStrategy(
@@ -345,9 +345,9 @@ func (e *ExecutionEngine) dispatchViaStrategy(
 		return err
 	}
 
-	// Delegate mode: delegate already handled state, events, and hooks.
+	// Self-managed mode: strategy already handled state, events, and hooks.
 	// Only handle propagation and flow signals.
-	if result.DelegateHandled {
+	if result.SelfManaged {
 		switch result.Directive {
 		case strategy.DirectiveSkipDownstream:
 			e.propagateSkip(graph, node.ID)
@@ -422,8 +422,14 @@ func (e *ExecutionEngine) dispatchViaStrategy(
 // publishNodeStateStream publishes a node_state stream chunk. Factored out
 // to avoid repeating the JSON marshal + StreamChunk construction everywhere.
 func (e *ExecutionEngine) publishNodeStateStream(taskID, nodeID, status, output string) {
+	publishNodeState(e.getPublisher(), taskID, nodeID, status, output)
+}
+
+// publishNodeState is the standalone version of publishNodeStateStream.
+// Strategies use this via their EventPublisher instead of needing *ExecutionEngine.
+func publishNodeState(pub interface{ PublishStream(stream.StreamChunk) }, taskID, nodeID, status, output string) {
 	if statePayload, err := json.Marshal(map[string]string{"status": status, "output": output}); err == nil {
-		e.getPublisher().PublishStream(stream.StreamChunk{
+		pub.PublishStream(stream.StreamChunk{
 			Source:  "executor",
 			TaskID:  taskID,
 			NodeID:  nodeID,

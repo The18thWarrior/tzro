@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"tzro/internal/compiler"
 	"tzro/internal/memory"
 	"tzro/internal/strategy"
 )
@@ -20,14 +19,14 @@ import (
 // recall synthesis, runs a smoothing inference pass, and re-verifies.
 type ScatterAssemblyStrategy struct {
 	strategy.BaseStrategy
-	engine *ExecutionEngine
+	stashVerification func(taskID string, result *VerificationResult)
 }
 
 // NewScatterAssemblyStrategy creates a ScatterAssemblyStrategy.
 func NewScatterAssemblyStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy) *ScatterAssemblyStrategy {
 	return &ScatterAssemblyStrategy{
-		BaseStrategy: *base,
-		engine:       engine,
+		BaseStrategy:      *base,
+		stashVerification: engine.stashVerificationResult,
 	}
 }
 
@@ -56,7 +55,8 @@ func (s *ScatterAssemblyStrategy) Execute(ctx context.Context, nr *strategy.Node
 	scatterOutputs := make(map[string]string)
 	for _, edge := range graph.Edges {
 		if edge.TargetID == node.ID && strings.HasPrefix(edge.SourceID, "scatter_probe_") {
-			if state, ok := s.engine.getNodeStateForScatter(taskID, edge.SourceID); ok && state.status == "completed" {
+			state, ok := memory.DB.GetNodeState(taskID, edge.SourceID)
+			if ok && state.Status == "completed" {
 				// Extract the goal item from the probe node's config
 				goalItem := ""
 				for _, n := range graph.Nodes {
@@ -65,9 +65,9 @@ func (s *ScatterAssemblyStrategy) Execute(ctx context.Context, nr *strategy.Node
 						break
 					}
 				}
-				rawOutput := state.rawOutput
+				rawOutput := state.RawOutput
 				if rawOutput == "" {
-					rawOutput = state.output
+					rawOutput = state.Output
 				}
 				if goalItem != "" && strings.TrimSpace(rawOutput) != "" {
 					scatterOutputs[goalItem] = rawOutput
@@ -104,7 +104,7 @@ func (s *ScatterAssemblyStrategy) Execute(ctx context.Context, nr *strategy.Node
 	if vErr == nil {
 		synthesis = finalSynthesis
 		if vResult != nil {
-			s.engine.stashVerificationResult(taskID, vResult)
+			s.stashVerification(taskID, vResult)
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "[ScatterAssemblyStrategy] VTE error (non-fatal): %v\n", vErr)
@@ -131,55 +131,6 @@ func (s *ScatterAssemblyStrategy) Execute(ctx context.Context, nr *strategy.Node
 		Output:    fmt.Sprintf("[ScatterAssembly] %s", synthesis),
 		Directive: strategy.DirectiveContinue,
 	}, nil
-}
-
-// scatterNodeState holds the minimal state needed for scatter assembly.
-type scatterNodeState struct {
-	status    string
-	output    string
-	rawOutput string
-}
-
-// getNodeStateForScatter retrieves node state for scatter assembly.
-// This bridges memory.DB access without exposing the full memory package.
-func (e *ExecutionEngine) getNodeStateForScatter(taskID, nodeID string) (scatterNodeState, bool) {
-	state, ok := memory.DB.GetNodeState(taskID, nodeID)
-	if !ok {
-		return scatterNodeState{}, false
-	}
-	return scatterNodeState{
-		status:    state.Status,
-		output:    state.Output,
-		rawOutput: state.RawOutput,
-	}, true
-}
-
-// Type returns the node type identifier.
-func (s *ScatterAssemblyStrategy) Type() string { return s.BaseStrategy.Type() }
-
-// PlannerCard delegates to embedded BaseStrategy.
-func (s *ScatterAssemblyStrategy) PlannerCard() *strategy.PlannerCard {
-	return s.BaseStrategy.PlannerCard()
-}
-
-// CompilationRules delegates to embedded BaseStrategy.
-func (s *ScatterAssemblyStrategy) CompilationRules() *strategy.CompilationRules {
-	return s.BaseStrategy.CompilationRules()
-}
-
-// ContextRole delegates to embedded BaseStrategy.
-func (s *ScatterAssemblyStrategy) ContextRole() *strategy.ContextRole {
-	return s.BaseStrategy.ContextRole()
-}
-
-// EdgeThoughtPolicy delegates to embedded BaseStrategy.
-func (s *ScatterAssemblyStrategy) EdgeThoughtPolicy() *strategy.EdgeThoughtConfig {
-	return s.BaseStrategy.EdgeThoughtPolicy()
-}
-
-// StagePlan returns nil — scatter_assembly uses imperative Execute.
-func (s *ScatterAssemblyStrategy) StagePlan(node *compiler.GraphNode) *strategy.StagePlanDef {
-	return nil
 }
 
 // Compile-time interface check.

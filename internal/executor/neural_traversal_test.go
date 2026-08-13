@@ -87,6 +87,7 @@ func TestNeuralTraversalSpawnsThenContinues(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)
@@ -188,6 +189,7 @@ func TestNeuralTraversalHaltSkipsDownstream(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)
@@ -249,6 +251,7 @@ func TestNeuralTraversalNoThresholdSkipsEdgeThought(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)
@@ -325,6 +328,7 @@ func TestNeuralTraversalHookFiringOnEdge(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
@@ -426,6 +430,7 @@ func TestNeuralTraversalNilBudgetSpawnsSuccessfully(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)
@@ -502,6 +507,7 @@ func TestActionNodeClassificationFallback(t *testing.T) {
 	}()
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)
@@ -605,6 +611,7 @@ func TestNeuralTraversalFailureDampening(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{EdgeThoughtGen: mockInference}
+	engine.InitRegistry()
 	err := engine.ExecuteGraphReactive(context.Background(), graph)
 	if err != nil {
 		t.Fatalf("ExecuteGraphReactive failed: %v", err)

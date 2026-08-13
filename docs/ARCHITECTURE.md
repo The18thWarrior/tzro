@@ -76,14 +76,17 @@ graph TD
 
     subgraph "Durable DAG Execution Engine"
         Planner -->|1. Generate Abstract Graph JSON| Compiler[Go Graph Compiler]
-        Compiler -->|2. Kahn Topo-Sort & SCT Node Injections| Runner[Go Graph Executor]
-        Runner -->|3. GBNF Structured Translation| Local[Local Step Executor]
+        Compiler -->|2. Kahn Topo-Sort & Strategy Expansion| Runner[Go Graph Executor]
+        Runner -->|3. Strategy Registry Lookup| Registry[Strategy Registry]
+        Registry -->|NodeStrategy.Execute| Local[Local Step Executor]
         Local -->|4. Tool Invocation| Host[Stdio MCP Host Daemon]
+        Registry -.->|PlannerCards| Planner
+        Registry -.->|CompilationRules| Compiler
     end
 
     subgraph "Context & Memory Systems"
-        Host -->|Large Result >12KB| Cache[Disk-Backed JQ Cache]
-        Host -->|Standard Result| Compactor[5-Layer Compaction Pipeline]
+        Host -->|Large Result >12KB| Cache[SQL Cache Store]
+        Host -->|Standard Result| Compactor[Structured Compactor]
         Compactor -->|Compacted Context| Local
         Local -->|Memory Read/Write| Mem[Tabular KV Memory]
         Local -->|Relational Graph-RAG| KG[Knowledge Graph SQLite]
@@ -118,23 +121,28 @@ graph TD
 The compiler reads the Strategist's **Abstract Graph** and dynamically builds a fine-grained Strategist-Compiler-Translator (SCT) execution graph:
 1. **Validation:** Asserts that the graph is free of cyclic loops.
 2. **Topological Sorting:** Groups execution nodes into parallel levels utilizing Kahn's algorithm.
-3. **SCT Node Injections:**
+3. **Strategy-Driven Node Expansion (v1.2.0, ADR-0069):** Each registered **Node Strategy** declares **CompilationRules** with an `Expand` function. The compiler iterates over graph nodes and calls `strategy.CompilationRules().Expand(node, graph)` to perform type-specific transformations:
    - **Semantic Validator Nodes (`semantic_validator`):** Prepended to each tool-dependent node. They parse loose XML parameter structures from the model and coerce them into strict JSON matching the tool's schema.
    - **Deterministic Nodes (`deterministic`):** Execute the actual tool using the coerced parameters without LLM intervention.
+   - **Recall Nodes (`recall`):** Auto-injected after probe/analyze nodes to separate exploration from synthesis (ADR-0037).
    - **Terminal Synthesis Node (`synthesis`):** Injected at the leaf of the graph to summarize the results of all executions into a cohesive natural-language summary.
+   - The `ExpansionResult` contract supports `ReplacementNodes` (replace a node entirely, e.g., action → validator+exec pair), `AdditionalNodes` (inject siblings, e.g., probe → recall), `AdditionalEdges`, and `ModifiedNode` (apply defaults/mutations).
 4. **Proactive Binding Splice:** Strips deterministically-known parameter variables from the schema before the model plans, then splices them back in after parameter generation to prevent extraction failures.
 5. **Docgen Category Routing (v0.8.0):** The planner system prompt now includes explicit `Documentation & Exploration Rules (CategoryDocgen)` that mandate a single probe node for documentation generation, function indexing, and architecture analysis tasks. This prevents the planner from misrouting docgen tasks through multi-step action node pipelines, which fail because action nodes cannot observe intermediate exploration results.
 6. **Plan Template Registry (v1.1.0, ADR-0048):** Replaces freeform LLM graph generation with a template-based mutation approach. The GBNF-constrained template classifier (`internal/classifier/template_classifier.go`) routes each prompt to a canonical DAG template (explore-only, research, data-analysis, multi-tool, etc.) from the `internal/templates/registry.go`. The planner then mutates the selected template rather than generating a graph from scratch, reducing hallucinated node types and improving plan quality. Post-mutation binding validation repairs any `DynamicBindings` referencing hallucinated or renamed node IDs.
+7. **Dynamic Planner Reference Card (v1.2.0):** The **Strategy Registry** generates a `NodeTypeReferenceCard` dynamically from all registered strategies' `PlannerCard` metadata via `BuildReferenceCard()`. Custom strategies installed via **Agent Apps** automatically appear in the planner's prompt alongside built-in types.
 
 ### 3.3. Durable Execution Engine & Checkpointing
 
-The executor processes sorted levels concurrently using Go goroutines:
+The executor processes sorted levels concurrently using Go goroutines. Since v1.2.0 (ADR-0069), all node dispatch routes through the **Strategy Registry** and **dispatch envelope** — the executor has zero hardcoded node type knowledge.
+
+- **Strategy-Based Dispatch (v1.2.0, ADR-0069):** For each ready node, the executor calls `Registry.Get(node.Type)` to retrieve the `NodeStrategy`, constructs a `NodeRuntime` (see §3.14), and calls `dispatchViaStrategy()`. The dispatch envelope wraps `strategy.Execute()` with directive processing, state management, hook evaluation, and event publishing. Two modes support the Strangler Fig migration: strategy-owned mode (envelope manages ceremony) and delegate-handled mode (legacy code manages its own lifecycle).
 - **State Checkpointing:** Node outcomes are persisted to the SQLite database immediately upon completion. If a crash or restart occurs, the task is resumed from the last completed level.
 - **Cycle Budgets:** A counter (`MaxCycles`) decrements on loop executions, terminating the engine if it reaches zero to avoid infinite looping charges.
 - **Weighted Circuit Breaker (v0.7.3):** The executor computes a time budget per task based on the node composition of the DAG. Each node type has a defined budget (probe: 10min, action: 5min, deterministic/synthesis: 90s). A configurable `circuitBreakerMultiplier` (default 1.0) scales the total budget. When the budget expires, remaining pending nodes are marked `timed_out` and the `terminal_synthesis` node is preserved to produce a coherent final output.
 - **Tool Name Classification Fallback (v0.7.3):** At execution time, if a node references a tool that doesn't exist in the registry, the executor uses local inference to classify the hallucinated name to the closest real tool before failing.
 - **Failure Dampening Initialization (v0.8.0):** The executor automatically initializes the mutation budget (`maxSpawns` and `remainingSpawns`) if unset by the planner, preventing unbounded node spawning. Consecutive failure counters are tracked per-task and reset on successful activation.
-- **Two-Tier Context Budget (v0.9.0, ADR-0043/0044):** The accumulated context assembly now uses tiered per-node output budgets based on node type: recall(8x) > validator(6x) > action(4x) > probe(2x) > deterministic(1x). A dynamic ceiling of `min(nodeCount × 4096, 32000)` characters bounds total context size. Synthesis nodes use a dedicated 16K ceiling with proportional budgets when total untruncated content exceeds the ceiling (ADR-0044, v1.1.0 hardening).
+- **Two-Tier Context Budget (v0.9.0, ADR-0043/0044):** The accumulated context assembly now uses tiered per-node output budgets derived from each strategy's `ContextRole.ContextWeight` (see §3.14.4). A dynamic ceiling of `min(nodeCount × 4096, 32000)` characters bounds total context size. Synthesis nodes use a dedicated 16K ceiling with proportional budgets when total untruncated content exceeds the ceiling (ADR-0044, v1.1.0 hardening).
 - **Spawn Depth Tracking (v0.9.0):** `countSpawnDepth()` tracks nested spawn ancestry by counting `spawned_` prefix levels in node IDs. `canSpawnAtDepth()` enforces `MutationBudget.MaxDepth` to prevent infinite recursive spawning. Spawned nodes always use single-shot mode (never multi-branch).
 - **PreFlect Hook (v0.9.0):** The `PreFlectHook` execution hook injects corrective micro-skills (SOPs) into node instructions before execution. It queries the skill store for skills matching the node's tool action and prepends their SOP content, implementing proactive "pre-flight correction" for known failure modes.
 - **Verified Task Execution (v1.1.0, ADR-0067/0071):** A verification gate runs after terminal synthesis to validate output quality. Stage 1 performs a structural pre-check (non-empty synthesis, valid format). Stage 2 sends a cloud rubric evaluation scoring goal alignment, factual accuracy, coherence, and completeness on a 0–1 scale. Rejected outputs trigger a cloud re-synthesis fallback. If the privacy level blocks cloud access, only Stage 1 (structural pre-check) is applied. Scatter probes fill detected coverage gaps by spawning targeted sub-probes for missing items.
@@ -271,6 +279,232 @@ The `internal/codegen/` package provides a static DAG pipeline for single-file c
 - **Code Cleaning:** `CleanGeneratedCode` strips markdown fences from LLM output and enforces the `CodeMaxLines` cap (default 500, configurable via `codeMaxLines` in engine config).
 - **`write_file` Tool:** A filesystem tool with `ValidateWritePath` (allows writing to non-existent paths), automatic parent directory creation, backup-on-overwrite with LRU eviction at 50 files, and binary content rejection.
 - **Design Goal:** Structurally encourages compact, single-responsibility files by capping output and requiring a spec + filepath per invocation.
+
+### 3.14. Node Strategy Framework (v1.2.0, ADR-0069)
+
+The **Node Strategy** abstraction is the composable framework that decouples node execution logic from the DAG executor. Every node type — probe, analyze, recall, synthesis, semantic_validator, action, branch, sub_dag, scatter_assembly, deterministic — implements the `NodeStrategy` interface and registers in the **Strategy Registry**. The executor dispatches to strategies via registry lookup with **zero hardcoded node type knowledge**.
+
+#### 3.14.1. NodeStrategy Interface
+
+The central abstraction with seven methods:
+
+```mermaid
+classDiagram
+    class NodeStrategy {
+        <<interface>>
+        +Type() string
+        +Execute(ctx, NodeRuntime) ExecutionResult
+        +StagePlan(node) StagePlanDef
+        +EdgeThoughtPolicy() EdgeThoughtConfig
+        +PlannerCard() PlannerCard
+        +CompilationRules() CompilationRules
+        +ContextRole() ContextRole
+    }
+
+    class BaseStrategy {
+        +NodeType string
+        +Card PlannerCard
+        +Rules CompilationRules
+        +Role ContextRole
+        +ThoughtCfg EdgeThoughtConfig
+        +DelegateFunc NodeExecuteFunc
+        +SetDelegate(fn)
+    }
+
+    class BranchStrategy {
+        +engine ExecutionEngine
+        +Execute(ctx, nr) ExecutionResult
+    }
+
+    class SubDAGStrategy {
+        +engine ExecutionEngine
+        +Execute(ctx, nr) ExecutionResult
+    }
+
+    NodeStrategy <|.. BaseStrategy : implements
+    NodeStrategy <|.. BranchStrategy : implements
+    NodeStrategy <|.. SubDAGStrategy : implements
+```
+
+- **`Type()`** — canonical string identifier (e.g., `"probe"`, `"analyze"`).
+- **`Execute()`** — imperative execution logic. Called when `StagePlan()` returns nil.
+- **`StagePlan()`** — declarative stage sequence. When non-nil, the executor runs stages in order.
+- **`EdgeThoughtPolicy()`** — strategy-owned confidence evaluation on outgoing edges.
+- **`PlannerCard()`** — compact description injected into the planner's prompt.
+- **`CompilationRules()`** — type-specific graph expansion rules for the Kahn Compiler.
+- **`ContextRole()`** — accumulated context budgeting and compaction behavior.
+
+#### 3.14.2. Strategy Registry
+
+A runtime map (`map[string]NodeStrategy`) of node type strings to implementations. Built-in strategies are registered at executor startup via `RegisterBuiltins()`. Agent App strategies are registered at install time via the Package Manager.
+
+The registry generates the strategic planner's `NodeTypeReferenceCard` dynamically from each strategy's `PlannerCard` via `BuildReferenceCard()`. Custom node types automatically appear in the planner's prompt alongside built-in types.
+
+The 10 built-in strategies:
+
+| Type | Planner-Facing | Primary Role |
+|:---|:---|:---|
+| `probe` | Yes | Autonomous codebase/log exploration via Thought Chain |
+| `analyze` | Yes | Data analysis via SQL cache tools |
+| `recall` | Yes | Upstream probe findings alignment (refinement pass) |
+| `synthesis` | Yes | Final consolidation of all upstream outputs |
+| `semantic_validator` | Yes | XML→JSON parameter extraction bridge |
+| `action` | Yes | Single known tool execution |
+| `branch` | Yes | Conditional — skip downstream if condition not met |
+| `sub_dag` | Yes | Invoke pre-built macro node templates |
+| `scatter_assembly` | No (internal) | Item-Level Scatter post-processing |
+| `deterministic` | No (internal) | Direct tool dispatch (legacy) |
+
+#### 3.14.3. Node Runtime — Capability Decomposition
+
+The **NodeRuntime** is the capability object provided to every strategy during execution. It decomposes executor internals into 7 focused interfaces — strategies use only what they need.
+
+```mermaid
+graph LR
+    subgraph NodeRuntime["NodeRuntime"]
+        IP["InferenceProvider"]
+        TD["ToolDispatcher"]
+        SP["StatePersister"]
+        DM["DAGMutator"]
+        EP["EventPublisher"]
+        CP["ConfigProvider"]
+        UP["UpstreamProvider"]
+    end
+
+    subgraph Adapters["Concrete Adapters"]
+        A1["executorInferenceProvider"]
+        A2["executorToolDispatcher"]
+        A3["executorStatePersister"]
+        A4["executorDAGMutator"]
+        A5["executorEventPublisher"]
+        A6["executorConfigProvider"]
+        A7["executorUpstreamProvider"]
+    end
+
+    IP --- A1
+    TD --- A2
+    SP --- A3
+    DM --- A4
+    EP --- A5
+    CP --- A6
+    UP --- A7
+```
+
+| Interface | Responsibility | Key Methods |
+|:---|:---|:---|
+| `InferenceProvider` | Local/cloud LLM calls | `CallModel`, `CallModelStream`, `IsCloud` |
+| `ToolDispatcher` | Tool execution + proactivity gating | `Dispatch`, `GetSchema`, `ListAvailable` |
+| `StatePersister` | Node state + thought step DB ops | `SetNodeState`, `PersistThoughtStep`, `PersistPhaseResult` |
+| `DAGMutator` | Spawn nodes, propagate skip, child tasks | `SpawnNode`, `PropagateSkip`, `SpawnChildTask` |
+| `EventPublisher` | Telemetry + StreamBus events | `PublishEvent`, `PublishStream` |
+| `ConfigProvider` | Execution Policy + Node Policy access | `GetExecutionPolicy`, `GetNodePolicy` |
+| `UpstreamProvider` | Accumulated context + binding resolution | `AccumulatedContext`, `ResolveBinding`, `GetUpstreamOutput` |
+
+Go-native strategies receive concrete implementations with zero serialization overhead. WASM/external strategies receive serializing adapters.
+
+#### 3.14.4. ContextRole & Accumulated Context
+
+The `ContextRole` on each strategy controls how its output participates in the accumulated context pipeline, eliminating all `node.Type` switching in the context builder:
+
+| Field | Purpose | Example |
+|:---|:---|:---|
+| `IsPrimaryDataCarrier` | Never compact in accumulated context | recall = `true` |
+| `HasThoughtSteps` | Extract thought steps for synthesis enrichment | probe, analyze = `true` |
+| `ContextWeight` | Proportional weight for budget allocation | recall=2.0, action=1.5, probe=0.5, deterministic=0.25 |
+| `ProducesPlainText` | Use entire output as resolved value (plain_text_fallback) | probe, recall, synthesis = `true` |
+
+#### 3.14.5. Dispatch Envelope & Flow Directives
+
+The executor wraps every strategy call in a **dispatch envelope** (`dispatchViaStrategy`) that handles state management, hooks, and flow control:
+
+```mermaid
+sequenceDiagram
+    participant RQ as Ready Queue
+    participant EX as Executor
+    participant REG as Strategy Registry
+    participant ST as NodeStrategy
+    participant ENV as Dispatch Envelope
+    participant DB as SQLite
+
+    RQ->>EX: Node ready (deps met)
+    EX->>REG: Get(node.Type)
+    REG-->>EX: strategy
+    EX->>ENV: dispatchViaStrategy(strategy, hooks)
+    ENV->>ST: Execute(ctx, NodeRuntime)
+    
+    alt Strategy-Owned (branch, sub_dag)
+        ST-->>ENV: ExecutionResult{Output, Directive}
+        ENV->>DB: SetNodeState("completed", output)
+        ENV->>ENV: Run AfterNode hooks
+    else DelegateFunc (probe, recall, etc.)
+        ST-->>ENV: ExecutionResult{DelegateHandled: true}
+        ENV->>ENV: Handle propagation only
+    end
+```
+
+| Directive | Meaning | Envelope Action |
+|:---|:---|:---|
+| `DirectiveContinue` | Normal completion | Run hooks → persist state → publish events |
+| `DirectiveSkipDownstream` | Condition not met | Set "skipped" → propagateSkip to children |
+| `DirectivePause` | Awaiting external input | Set "pending" → return `ErrTaskPaused` |
+| `DirectiveRetry` | Re-execute (escalation) | Retry with cloud model |
+| `DirectiveHalt` | Fatal error | Set "failed" → return error |
+
+#### 3.14.6. Declarative Execution: Stage Plans
+
+Strategies can declare a **Stage Plan** — a sequence of composable **Stages** — instead of imperative `Execute`. Each stage gets scoped tools, a step budget, a model target, and a recovery strategy. Data flows via summary accumulation and the typed **Artifact Store**.
+
+```mermaid
+graph LR
+    subgraph StagePlan["Probe Node Stage Plan"]
+        S1["Orient\ntools: list_dir, read_file\nbudget: 3"]
+        S2["Discover\ntools: read_file, search_files\nbudget: 10"]
+        S3["Deep-Read\ntools: read_file\nbudget: 5"]
+        S4["Synthesize\ntools: none\nbudget: 1"]
+
+        S1 -->|"summary + artifacts"| S2
+        S2 -->|"summary + artifacts"| S3
+        S3 -->|"summary + artifacts"| S4
+    end
+```
+
+- **Artifact Store:** A dual-layer typed/serialized data store for passing structured outputs between stages. Go-native access uses compile-time-safe generics (`ArtifactKey[T]`) with zero serialization cost. JSON wire format layer exists for WASM/external strategies. Well-known keys: `terminalSynthesis`, `refinedContext`, `directoryManifest`, `analyticalEvidence`, `edgeEntries`, `symbolIndex`.
+- **Recovery strategies:** `RecoveryFail` (abort), `RecoveryRetry` (retry up to budget), `RecoverySkip` (skip and continue), `RecoveryBacktrack` (re-enter previous stage with error context).
+
+#### 3.14.7. Strangler Fig Migration
+
+The migration from monolithic executor switch-cases to strategy-owned execution uses the **Strangler Fig** pattern:
+
+1. **BaseStrategy** provides default implementations and a `DelegateFunc` field — a function injected by the executor that captures existing methods.
+2. Built-in strategies start as metadata-only stubs with `DelegateFunc` pointing to existing executor code.
+3. Strategies are incrementally extracted — when a strategy owns its `Execute` method, the delegate is removed.
+4. The dispatch envelope detects `DelegateHandled=true` to skip ceremony for legacy delegates.
+
+Current state: `branch` and `sub_dag` are fully strategy-owned. The remaining 8 strategies use `DelegateFunc` during the migration.
+
+#### 3.14.8. Extensibility via Agent Apps
+
+Custom strategies are installed via **Agent Apps** (`.tzroapp` archives). The **Package Manager** registers custom strategies at install time. Custom planner cards automatically appear in the planner's reference card. The executor dispatches to custom strategies identically to built-in ones.
+
+```mermaid
+graph TB
+    subgraph BuiltIn["Built-In (10 strategies)"]
+        BI["probe | analyze | recall | synthesis\nsemantic_validator | action | branch\nsub_dag | scatter_assembly | deterministic"]
+    end
+
+    subgraph AgentApp["Agent App (.tzroapp)"]
+        AA["Custom Strategy + Tools + Micro-Skills"]
+    end
+
+    subgraph SR["Strategy Registry"]
+        REG["map[string]NodeStrategy"]
+        RC["BuildReferenceCard()"]
+    end
+
+    BuiltIn -->|"RegisterBuiltins()"| SR
+    AgentApp -->|"Package Manager install"| SR
+    RC -.->|"Dynamic planner prompt"| Planner["Strategic Planner"]
+```
 
 ---
 
@@ -491,7 +725,7 @@ The strategizing agent returns a graph payload conforming to this schema:
         "type": "object",
         "properties": {
           "id": { "type": "string" },
-          "type": { "type": "string", "enum": ["action", "conditional", "loop", "probe", "synthesis", "deterministic", "semantic_validator"] },
+          "type": { "type": "string", "enum": ["action", "probe", "analyze", "recall", "synthesis", "branch", "sub_dag", "scatter_assembly", "deterministic", "semantic_validator"] },
           "action": { "type": "string" },
           "instructions": { "type": "string" },
           "allowedTools": { "type": "array", "items": { "type": "string" } },

@@ -130,12 +130,12 @@ type ExecutionResult struct {
 	// Artifacts contains typed outputs available to downstream strategies.
 	Artifacts *ArtifactStore
 
-	// DelegateHandled is set to true by BaseStrategy.Execute when a delegate
-	// function managed the full execution lifecycle (state, events, hooks).
-	// When true, the dispatch envelope skips state management and hook
-	// processing to avoid double-writes. Strategy-owned Execute methods
-	// leave this false (default) so the envelope handles ceremony.
-	DelegateHandled bool
+	// SelfManaged is set to true when a strategy manages its own execution
+	// lifecycle (state persistence, events, hooks) internally. When true,
+	// the dispatch envelope skips state management and hook processing to
+	// avoid double-writes. Most strategies leave this false (default) so
+	// the envelope handles ceremony.
+	SelfManaged bool
 }
 
 

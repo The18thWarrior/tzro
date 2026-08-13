@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"tzro/internal/compiler"
 	"tzro/internal/memory"
 	"tzro/internal/strategy"
+	"tzro/internal/stream"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,14 +19,18 @@ import (
 // and scatter probe spawning (ADR-0071) when gaps are detected.
 type RecallStrategy struct {
 	strategy.BaseStrategy
-	engine *ExecutionEngine
+	runRecall          func(ctx context.Context, taskID, recallNodeID string, upstreamNodeIDs []string, goal string, engine ProbeInferenceEngine) (RecallResult, error)
+	publishState       func(pub interface{ PublishStream(stream.StreamChunk) }, taskID, nodeID, status, output string)
+	stashVerification  func(taskID string, result *VerificationResult)
 }
 
-// NewRecallStrategy creates a RecallStrategy.
+// NewRecallStrategy creates a RecallStrategy with injected dependencies.
 func NewRecallStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy) *RecallStrategy {
 	return &RecallStrategy{
-		BaseStrategy: *base,
-		engine:       engine,
+		BaseStrategy:      *base,
+		runRecall:         engine.RunRecall,
+		publishState:      publishNodeState,
+		stashVerification: engine.stashVerificationResult,
 	}
 }
 
@@ -34,7 +38,7 @@ func NewRecallStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy) *Re
 // and optionally spawns scatter probes. Returns the synthesis output.
 //
 // Special case: when scatter probes are spawned, the strategy handles state
-// directly (DelegateHandled=true) because the recall node completes immediately
+// directly (SelfManaged=true) because the recall node completes immediately
 // while the scatter_assembly node handles the final output.
 func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) (*strategy.ExecutionResult, error) {
 	node := nr.Node()
@@ -69,7 +73,7 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 	findProbes(node.ID)
 
 	recallEngine := &ProbeInference{}
-	recallResult, err := s.engine.RunRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
+	recallResult, err := s.runRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
 	if err != nil {
 		return &strategy.ExecutionResult{
 			Output:    fmt.Sprintf("recall node %s execution failed: %v", node.ID, err),
@@ -123,12 +127,12 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 				_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
 				_ = memory.DB.SetNodeRawOutput(taskID, node.ID, synthesis)
 				nr.Publisher().PublishEvent("node_completed", taskID, node.ID, nodeStatus)
-				s.engine.publishNodeStateStream(taskID, node.ID, "completed", nodeStatus)
+				s.publishState(nr.Publisher(), taskID, node.ID, "completed", nodeStatus)
 
 				return &strategy.ExecutionResult{
-					Output:          nodeStatus,
-					Directive:       strategy.DirectiveContinue,
-					DelegateHandled: true, // Signal envelope to skip ceremony
+					Output:      nodeStatus,
+					Directive:   strategy.DirectiveContinue,
+					SelfManaged: true, // Signal envelope to skip ceremony
 				}, nil
 			}
 			if spawnErr != nil {
@@ -141,7 +145,7 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 
 	// Stash verification result for envelope assembly
 	if verificationResult != nil {
-		s.engine.stashVerificationResult(taskID, verificationResult)
+		s.stashVerification(taskID, verificationResult)
 	}
 
 	// Normal completion — envelope handles hooks + state
@@ -150,28 +154,6 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		Directive: strategy.DirectiveContinue,
 	}, nil
 }
-
-// Type returns the node type identifier.
-func (s *RecallStrategy) Type() string { return s.BaseStrategy.Type() }
-
-// PlannerCard delegates to embedded BaseStrategy.
-func (s *RecallStrategy) PlannerCard() *strategy.PlannerCard { return s.BaseStrategy.PlannerCard() }
-
-// CompilationRules delegates to embedded BaseStrategy.
-func (s *RecallStrategy) CompilationRules() *strategy.CompilationRules {
-	return s.BaseStrategy.CompilationRules()
-}
-
-// ContextRole delegates to embedded BaseStrategy.
-func (s *RecallStrategy) ContextRole() *strategy.ContextRole { return s.BaseStrategy.ContextRole() }
-
-// EdgeThoughtPolicy delegates to embedded BaseStrategy.
-func (s *RecallStrategy) EdgeThoughtPolicy() *strategy.EdgeThoughtConfig {
-	return s.BaseStrategy.EdgeThoughtPolicy()
-}
-
-// StagePlan returns nil — recall uses imperative Execute.
-func (s *RecallStrategy) StagePlan(node *compiler.GraphNode) *strategy.StagePlanDef { return nil }
 
 // Compile-time interface check.
 var _ strategy.NodeStrategy = (*RecallStrategy)(nil)

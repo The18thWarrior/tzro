@@ -105,6 +105,7 @@ func TestHooksSequencing(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	graph := &compiler.ExecutionGraph{
@@ -164,6 +165,7 @@ func TestHooksActionSkipAndPropagation(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	// A: skipped by hook, C: downstream of A -> should be skipped via propagation
@@ -224,6 +226,7 @@ func TestHooksActionAbort(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	graph := &compiler.ExecutionGraph{
@@ -277,6 +280,7 @@ func TestHooksActionPauseAndResume(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	graph := &compiler.ExecutionGraph{
@@ -351,6 +355,7 @@ func TestHooksOutputMutation(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	graph := &compiler.ExecutionGraph{
@@ -410,6 +415,7 @@ func TestHooksConcurrencySafety(t *testing.T) {
 	}
 
 	engine := &ExecutionEngine{}
+	engine.InitRegistry()
 	engine.RegisterHook(hook)
 
 	var wg sync.WaitGroup

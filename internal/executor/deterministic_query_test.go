@@ -643,6 +643,9 @@ func TestDeterministicPath_MaterializesDerived(t *testing.T) {
 	for rows.Next() {
 		hasDerived = true
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows iteration error: %v", err)
+	}
 	if !hasDerived {
 		t.Error("expected a derived table to be created for GROUP BY query")
 	}

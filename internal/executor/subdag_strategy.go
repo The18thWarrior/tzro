@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"tzro/internal/compiler"
 	"tzro/internal/strategy"
+	"tzro/internal/stream"
 )
 
 // ---------------------------------------------------------------------------
@@ -19,15 +19,14 @@ import (
 // persistence, AfterNode hooks, and event publishing.
 type SubDAGStrategy struct {
 	strategy.BaseStrategy
-	engine *ExecutionEngine
+	publishState func(pub interface{ PublishStream(stream.StreamChunk) }, taskID, nodeID, status, output string)
 }
 
-// NewSubDAGStrategy creates a SubDAGStrategy with engine reference needed for
-// dynamic binding resolution.
+// NewSubDAGStrategy creates a SubDAGStrategy.
 func NewSubDAGStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy) *SubDAGStrategy {
 	return &SubDAGStrategy{
 		BaseStrategy: *base,
-		engine:       engine,
+		publishState: publishNodeState,
 	}
 }
 
@@ -42,7 +41,7 @@ func (s *SubDAGStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 	_ = nr.State().SetNodeState("waiting_on_child", "")
 	nr.Publisher().PublishEvent("node_started", taskID, node.ID,
 		fmt.Sprintf("Spawning child task for Sub-DAG '%s'", node.Action))
-	s.engine.publishNodeStateStream(taskID, node.ID, "waiting_on_child", "")
+	s.publishState(nr.Publisher(), taskID, node.ID, "waiting_on_child", "")
 
 	if SpawnSubTask == nil {
 		return &strategy.ExecutionResult{
@@ -83,28 +82,6 @@ func (s *SubDAGStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		Directive: strategy.DirectiveContinue,
 	}, nil
 }
-
-// Type returns the node type identifier.
-func (s *SubDAGStrategy) Type() string { return s.BaseStrategy.Type() }
-
-// PlannerCard delegates to embedded BaseStrategy.
-func (s *SubDAGStrategy) PlannerCard() *strategy.PlannerCard { return s.BaseStrategy.PlannerCard() }
-
-// CompilationRules delegates to embedded BaseStrategy.
-func (s *SubDAGStrategy) CompilationRules() *strategy.CompilationRules {
-	return s.BaseStrategy.CompilationRules()
-}
-
-// ContextRole delegates to embedded BaseStrategy.
-func (s *SubDAGStrategy) ContextRole() *strategy.ContextRole { return s.BaseStrategy.ContextRole() }
-
-// EdgeThoughtPolicy delegates to embedded BaseStrategy.
-func (s *SubDAGStrategy) EdgeThoughtPolicy() *strategy.EdgeThoughtConfig {
-	return s.BaseStrategy.EdgeThoughtPolicy()
-}
-
-// StagePlan returns nil — sub_dag uses imperative Execute.
-func (s *SubDAGStrategy) StagePlan(node *compiler.GraphNode) *strategy.StagePlanDef { return nil }
 
 // Compile-time interface check.
 var _ strategy.NodeStrategy = (*SubDAGStrategy)(nil)
