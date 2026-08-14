@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"tzro/internal/compiler"
 	cfgpkg "tzro/internal/config"
@@ -48,11 +49,13 @@ func classifyProbeGoal(goal string) string {
 		}
 	}
 
-	// Focused patterns: specific function/module analysis, deep dives
+	// Focused patterns: specific function/module analysis, deep dives, git history exploration
 	focusedKeywords := []string{
 		"explain how", "trace the", "follow the", "debug",
 		"how does", "call graph", "entry point", "specific",
 		"deep dive", "detailed analysis of",
+		"commit history", "git log", "regression", "who changed",
+		"what changed", "evolution of", "improvement arc",
 	}
 	for _, kw := range focusedKeywords {
 		if strings.Contains(lower, kw) {
@@ -261,13 +264,13 @@ func normalizeToolArguments(toolName string, args map[string]interface{}) map[st
 }
 
 // rescueEmptyPathFromThought attempts to extract a file/directory path from the
-// model's nextThought text when filesystem tool arguments are missing or empty.
+// model's nextThought text when filesystem or git tool arguments are missing or empty.
 // The 4B local model frequently describes what it wants to read in its reasoning
 // (e.g., "Read CONTEXT.md", "explore internal/compiler") but fails to populate
 // the arguments JSON correctly. This function recovers those paths.
 func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, thought string) map[string]interface{} {
-	// Only rescue for filesystem tools
-	fsTools := map[string]bool{"read_file": true, "list_dir": true, "search_files": true}
+	// Only rescue for filesystem and git tools that take a path parameter
+	fsTools := map[string]bool{"read_file": true, "list_dir": true, "search_files": true, "git_log": true, "git_diff": true}
 	if !fsTools[toolName] {
 		return args
 	}
@@ -300,6 +303,161 @@ func rescueEmptyPathFromThought(toolName string, args map[string]interface{}, th
 		}
 		args["path"] = extracted
 		fmt.Fprintf(os.Stderr, "[Probe] Rescued empty path from thought: '%s' for tool '%s'\n", extracted, toolName)
+	}
+
+	return args
+}
+
+// rescueRefFromThought extracts git ref, branch names, tags, or commit hashes from thought text
+// for git_show and git_diff when ref is missing or empty.
+func rescueRefFromThought(toolName string, args map[string]interface{}, thought string) map[string]interface{} {
+	if toolName != "git_show" && toolName != "git_diff" {
+		return args
+	}
+
+	if refVal, exists := args["ref"]; exists {
+		if refStr, ok := refVal.(string); ok && strings.TrimSpace(refStr) != "" {
+			return args
+		}
+	}
+
+	lower := strings.ToLower(thought)
+
+	// Natural language ref phrases
+	refPatterns := []struct {
+		re *regexp.Regexp
+	}{
+		{regexp.MustCompile(`(?i)(?:changes\s+since|diff\s+against|diff\s+with|show\s+commit|inspect\s+commit|commit)\s+([a-zA-Z0-9_\-./~^]+)`)},
+	}
+
+	for _, p := range refPatterns {
+		if matches := p.re.FindStringSubmatch(thought); len(matches) > 1 {
+			candidate := strings.Trim(matches[1], `'".,;()[]`)
+			if candidate != "" && !isCommonNonRefWord(candidate) {
+				args["ref"] = candidate
+				fmt.Fprintf(os.Stderr, "[Probe] Rescued git ref from thought: '%s' for tool '%s'\n", candidate, toolName)
+				return args
+			}
+		}
+	}
+
+	// Hex patterns (7+ hex digits, e.g. commit hashes)
+	hexRe := regexp.MustCompile(`\b([0-9a-fA-F]{7,40})\b`)
+	if matches := hexRe.FindStringSubmatch(thought); len(matches) > 1 {
+		args["ref"] = matches[1]
+		fmt.Fprintf(os.Stderr, "[Probe] Rescued commit hash ref from thought: '%s' for tool '%s'\n", matches[1], toolName)
+		return args
+	}
+
+	// Keywords implying HEAD
+	if strings.Contains(lower, "latest commit") || strings.Contains(lower, "most recent commit") || strings.Contains(lower, "recent commit") || strings.Contains(lower, "head") {
+		args["ref"] = "HEAD"
+		return args
+	}
+
+	// Default fallback for git_show
+	if toolName == "git_show" {
+		args["ref"] = "HEAD"
+	}
+
+	return args
+}
+
+func isCommonNonRefWord(s string) bool {
+	lower := strings.ToLower(s)
+	switch lower {
+	case "the", "a", "an", "this", "that", "to", "in", "for", "and", "or", "history", "log", "repo", "repository", "files", "changes":
+		return true
+	}
+	return false
+}
+
+// rescueMaxCountFromThought extracts commit count limits from thought text
+// for git_log when maxCount is missing or unset.
+func rescueMaxCountFromThought(toolName string, args map[string]interface{}, thought string) map[string]interface{} {
+	if toolName != "git_log" {
+		return args
+	}
+
+	if countVal, exists := args["maxCount"]; exists {
+		if countInt, ok := countVal.(int); ok && countInt > 0 {
+			return args
+		}
+		if countFloat, ok := countVal.(float64); ok && countFloat > 0 {
+			return args
+		}
+	}
+
+	// Match patterns like "last 5 commits", "recent 10", "past 20 commits"
+	countRe := regexp.MustCompile(`(?i)(?:last|recent|past)\s+(\d+)\s*(?:commits?|entries|logs?|changes)?`)
+	if matches := countRe.FindStringSubmatch(thought); len(matches) > 1 {
+		if n, err := strconv.Atoi(matches[1]); err == nil && n > 0 {
+			args["maxCount"] = n
+			fmt.Fprintf(os.Stderr, "[Probe] Rescued maxCount from thought: %d for tool '%s'\n", n, toolName)
+			return args
+		}
+	}
+
+	return args
+}
+
+// rescueFileGlobFromThought extracts fileGlob patterns from thought text
+// for search_files when fileGlob is missing.
+func rescueFileGlobFromThought(toolName string, args map[string]interface{}, thought string) map[string]interface{} {
+	if toolName != "search_files" {
+		return args
+	}
+
+	if globVal, exists := args["fileGlob"]; exists {
+		if globStr, ok := globVal.(string); ok && strings.TrimSpace(globStr) != "" {
+			return args
+		}
+	}
+
+	// 1. Explicit glob pattern like *.ts, *.go, *.md, *.py, *.json
+	globRe := regexp.MustCompile(`(?i)\*(\.[a-zA-Z0-9_]+)\b`)
+	if matches := globRe.FindStringSubmatch(thought); len(matches) > 1 {
+		glob := "*" + strings.ToLower(matches[1])
+		args["fileGlob"] = glob
+		fmt.Fprintf(os.Stderr, "[Probe] Rescued fileGlob from thought: '%s' for tool '%s'\n", glob, toolName)
+		return args
+	}
+
+	// 2. Extension pattern like "in .md files", ".go files"
+	extRe := regexp.MustCompile(`(?i)(?:in\s+)?(\.[a-zA-Z0-9_]+)\s+files?\b`)
+	if matches := extRe.FindStringSubmatch(thought); len(matches) > 1 {
+		glob := "*" + strings.ToLower(matches[1])
+		args["fileGlob"] = glob
+		fmt.Fprintf(os.Stderr, "[Probe] Rescued fileGlob extension from thought: '%s' for tool '%s'\n", glob, toolName)
+		return args
+	}
+
+	// 3. Natural language language names: "Go files", "Python files", "TypeScript files", "Markdown files", "Rust files", etc.
+	lower := strings.ToLower(thought)
+	langMap := []struct {
+		pattern string
+		glob    string
+	}{
+		{"go file", "*.go"},
+		{"python file", "*.py"},
+		{"typescript file", "*.ts"},
+		{"ts file", "*.ts"},
+		{"javascript file", "*.js"},
+		{"js file", "*.js"},
+		{"markdown file", "*.md"},
+		{"md file", "*.md"},
+		{"rust file", "*.rs"},
+		{"json file", "*.json"},
+		{"yaml file", "*.yaml"},
+		{"yml file", "*.yml"},
+	}
+
+	for _, lm := range langMap {
+		if strings.Contains(lower, lm.pattern) {
+			args["fileGlob"] = lm.glob
+			fmt.Fprintf(os.Stderr, "[Probe] Rescued fileGlob from language name: '%s' for tool '%s'\n", lm.glob, toolName)
+			return args
+		}
 	}
 
 	return args

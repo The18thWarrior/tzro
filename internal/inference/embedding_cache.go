@@ -29,7 +29,7 @@ func NewEmbeddingCache(modelID string) *EmbeddingCache {
 	// Open dedicated SQLite DB for embedding cache
 	dbPath := filepath.Join(config.ResolvePath(".tzro"), "embedding_cache.db")
 	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[EmbeddingCache] Failed to open DB: %v\n", err)
 		return c

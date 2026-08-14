@@ -39,7 +39,7 @@ func RunAnalyzePhases(
 	synthesisEngine ProbeInferenceEngine,
 	downstreamBindingKeys []string,
 ) (string, error) {
-	runner := buildAnalyzePhaseRunner(config)
+	runner, resolvedKeyColumns := buildAnalyzePhaseRunner(config)
 
 	results, err := runner.Run(ctx, taskID, probeID, engine, synthesisEngine)
 	if err != nil {
@@ -48,6 +48,17 @@ func RunAnalyzePhases(
 
 	if len(results) == 0 {
 		return "", fmt.Errorf("analyze phases produced no results")
+	}
+
+	// Persist resolved key columns for downstream evidence pruning
+	if len(*resolvedKeyColumns) > 0 {
+		if colJSON, err := json.Marshal(*resolvedKeyColumns); err == nil {
+			if dbErr := memory.DB.SetNodeKeyColumns(taskID, probeID, string(colJSON)); dbErr != nil {
+				fmt.Fprintf(os.Stderr, "[AnalyzePhases] Failed to persist key columns: %v\n", dbErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "[AnalyzePhases] Persisted key columns: %v\n", *resolvedKeyColumns)
+			}
+		}
 	}
 
 	manifest := runner.BuildManifest(results)
@@ -162,9 +173,10 @@ func autoIngestTabularFile(ctx context.Context, filePath string) (string, error)
 	return cacheID, nil
 }
 
-func buildAnalyzePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
+func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]string) {
 	var schemaIntrospected bool
 	var queryBuilderCalls int
+	var keyColumns []string // Populated by embedding override in schema_orient transition
 
 	// ADR-0058 port: State for cache ID guardrails.
 	// Extract known cacheIds from upstream context so we can auto-populate
@@ -382,6 +394,7 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 									if len(embCols) > 0 {
 										intent.SelectColumns = embCols
 										preBuiltOps = IntentToOperations(intent)
+										keyColumns = embCols // Capture for downstream persistence
 										fmt.Fprintf(os.Stderr, "[AnalyzePhases] Embedding override: selectColumns=%v\n", embCols)
 									}
 								}
@@ -441,7 +454,7 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	// Suppress unused variable warnings
 	_ = schemaIntrospected
 
-	return runner
+	return runner, &keyColumns
 }
 
 // analyzePromptOpts holds optional parameters for buildPhaseAnalyzePrompt.

@@ -2,6 +2,23 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-13T19:10:00-07:00] tdd | Read-Only Git & Grep Tools for Probe Nodes
+
+- **Activity**: Implemented read-only git tools (`git_log`, `git_diff`, `git_show`), upgraded `search_files` with `fileGlob` and ripgrep/Go dual-backend, and added probe argument rescue and classification logic per `docs/superpowers/specs/2026-08-13-readonly-git-grep-probe-tools-design.md`.
+- **Key Deliverables**:
+  1. `internal/tools/git.go`: `NewGitLogTool`, `NewGitDiffTool`, `NewGitShowTool` with shared `gitExec` infrastructure, zero-arg defaults, and stat-first routing for outputs exceeding 500 lines.
+  2. `internal/tools/filesystem.go`: Upgraded `NewSearchFilesTool` with `fileGlob` support and cached `rg` execution with Go fallback.
+  3. `internal/tools/tools.go`: Registered the three git tools in `Init()`.
+  4. `internal/executor/probe_tools.go`: Extended `rescueEmptyPathFromThought` for git tools; added `rescueRefFromThought`, `rescueMaxCountFromThought`, `rescueFileGlobFromThought`; and added git keywords to `classifyProbeGoal`.
+  5. `internal/executor/probe.go`: Wired new rescue functions into the Thought Chain argument normalization loop.
+  6. `internal/strategy/builtin.go`: Updated Probe strategy PlannerCard with git tools critical rule.
+  7. `CONTEXT.md`: Added Git Tools to Language glossary.
+- **Testing**:
+  - `internal/tools/git_test.go`: 12 tests covering log, diff, show, zero-args, stat-first fallback, non-git dir rejection, and path boundary validation.
+  - `internal/tools/filesystem_test.go`: Tests for `fileGlob` filtering and Go fallback path.
+  - `internal/executor/probe_tools_test.go`: Tests for ref, count, and glob extraction from thought text, path rescue for git tools, and goal classification.
+- **Verification**: `go test ./...` passed across the entire codebase.
+
 ## [2026-08-07T12:25:00-07:00] grill-with-docs | Plan Template Registry Design (ADR-0048 updated)
 
 - **Activity**: Grill-with-docs session stress-testing the Plan Template Registry handoff against the domain model, codebase, and existing ADRs. 10 design questions resolved covering insertion point, storage format, classification mechanism, mutation authority, structural invariants, prompt mechanics, escape hatch, template categories, and benchmark interaction.

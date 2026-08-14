@@ -68,6 +68,7 @@ func NewProbeStrategy() *BaseStrategy {
 			CriticalRules: []string{
 				"For open-ended exploration, ALWAYS use probe. Never chain multiple action nodes for what a probe can explore autonomously.",
 				"Set probeConfig.sourceHint='web' for internet research. Default is 'filesystem'.",
+				"Add git_log, git_diff, git_show to allowedTools when the goal involves commit history, code changes, regressions, or evolution.",
 			},
 		},
 		Role: &ContextRole{

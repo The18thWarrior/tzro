@@ -286,10 +286,33 @@ func StripMarkdownFences(content string) string {
 	return content
 }
 
-// CleanGeneratedCode strips markdown fences and validates line count.
-// Returns the cleaned content and an error if the line count exceeds maxLines.
+// StripExecutionTierPrefix removes known execution tier prefixes from content.
+// These prefixes are observability metadata added by the executor strategies
+// (e.g., [Local Tactician], [Cloud Fallback]) and must not appear in
+// consumer-facing output or generated code files.
+func StripExecutionTierPrefix(content string) string {
+	prefixes := []string{
+		"[Local Tactician] ",
+		"[Cloud Fallback] ",
+		"[Recall] ",
+		"[Local] ",
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(content, p) {
+			return content[len(p):]
+		}
+	}
+	return content
+}
+
+// CleanGeneratedCode strips execution tier prefixes, markdown fences, and
+// validates line count. Returns the cleaned content and an error if the line
+// count exceeds maxLines.
 func CleanGeneratedCode(rawContent string, maxLines int) (string, error) {
-	content := StripMarkdownFences(rawContent)
+	// Strip execution tier prefix before fence stripping — the prefix
+	// appears at position 0, before any markdown fences or code content.
+	content := StripExecutionTierPrefix(rawContent)
+	content = StripMarkdownFences(content)
 
 	// Count lines
 	lineCount := strings.Count(content, "\n")

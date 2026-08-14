@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	ignore "github.com/sabhiram/go-gitignore"
@@ -19,6 +21,27 @@ import (
 	"tzro/internal/content"
 	"tzro/internal/inference"
 )
+
+var (
+	rgPath         string
+	rgInitOnce     sync.Once
+	rgOverridePath string
+)
+
+func getRipgrepPath() string {
+	if rgOverridePath != "" {
+		if rgOverridePath == "nonexistent_rg_binary" {
+			return ""
+		}
+		return rgOverridePath
+	}
+	rgInitOnce.Do(func() {
+		if p, err := exec.LookPath("rg"); err == nil {
+			rgPath = p
+		}
+	})
+	return rgPath
+}
 
 // fileReadGoalContextKey is the context key type for probe goal propagation.
 // When the probe executor sets this before tool calls, read_file will
@@ -566,7 +589,8 @@ func NewListDirTool(validator *PathValidator) *BaseAgentTool {
 }
 
 // NewSearchFilesTool creates the search_files tool.
-// Grep-like pattern search across files. Returns file paths, line numbers, and matching context.
+// Grep-like pattern search across files using ripgrep when available, with
+// automatic fallback to Go filepath.WalkDir.
 func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 	return &BaseAgentTool{
 		name:        "search_files",
@@ -575,12 +599,14 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 			"path":       map[string]interface{}{"type": "string"},
 			"pattern":    map[string]interface{}{"type": "string"},
 			"maxResults": map[string]interface{}{"type": "integer"},
+			"fileGlob":   map[string]interface{}{"type": "string"},
 		}, []string{"path", "pattern"}),
 		executeFn: func(ctx context.Context, input json.RawMessage) (*ToolResult, error) {
 			var in struct {
 				Path       string `json:"path"`
 				Pattern    string `json:"pattern"`
 				MaxResults *int   `json:"maxResults"`
+				FileGlob   string `json:"fileGlob"`
 			}
 			if err := json.Unmarshal(input, &in); err != nil {
 				return nil, err
@@ -614,6 +640,23 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 				maxResults = *in.MaxResults
 			}
 
+			// 1. Try Ripgrep backend if available
+			if rgBin := getRipgrepPath(); rgBin != "" {
+				rgMatches, handled, rgErr := searchFilesWithRipgrep(ctx, rgBin, resolvedPath, in.Pattern, in.FileGlob, maxResults)
+				if handled {
+					if rgErr != nil {
+						return ToolError(rgErr.Error()), nil
+					}
+					return ToolSuccess(map[string]interface{}{
+						"pattern":    in.Pattern,
+						"path":       resolvedPath,
+						"matches":    rgMatches,
+						"matchCount": len(rgMatches),
+					}), nil
+				}
+			}
+
+			// 2. Go fallback path
 			// Load gitignore if available
 			var matcher *ignore.GitIgnore
 			roots := validator.resolveRoots()
@@ -646,6 +689,14 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 				}
 				if len(matches) >= maxResults {
 					return filepath.SkipAll
+				}
+
+				// Apply fileGlob filter if specified
+				if in.FileGlob != "" {
+					matched, err := filepath.Match(in.FileGlob, d.Name())
+					if err == nil && !matched {
+						return nil
+					}
 				}
 
 				// Skip binary files by checking extension
@@ -701,6 +752,73 @@ func NewSearchFilesTool(validator *PathValidator) *BaseAgentTool {
 			}), nil
 		},
 	}
+}
+
+type rgMatchItem struct {
+	Type string `json:"type"`
+	Data struct {
+		Path struct {
+			Text string `json:"text"`
+		} `json:"path"`
+		Lines struct {
+			Text string `json:"text"`
+		} `json:"lines"`
+		LineNumber int `json:"line_number"`
+	} `json:"data"`
+}
+
+func searchFilesWithRipgrep(ctx context.Context, rgBin, resolvedPath, pattern, fileGlob string, maxResults int) ([]interface{}, bool, error) {
+	rgArgs := []string{"--json", fmt.Sprintf("--max-count=%d", maxResults)}
+	if fileGlob != "" {
+		rgArgs = append(rgArgs, "--glob", fileGlob)
+	}
+	rgArgs = append(rgArgs, "--", pattern, resolvedPath)
+
+	cmd := exec.CommandContext(ctx, rgBin, rgArgs...)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			// Exit code 1 means no matches found
+			if exitErr.ExitCode() == 1 {
+				return []interface{}{}, true, nil
+			}
+			// Exit code 2 indicates regex or flag syntax error
+			if exitErr.ExitCode() == 2 {
+				return nil, true, fmt.Errorf("invalid regex pattern '%s': %s", pattern, strings.TrimSpace(string(exitErr.Stderr)))
+			}
+		}
+		// Any other error -> fall back to Go walkdir
+		return nil, false, err
+	}
+
+	var matches []interface{}
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, `"type":"match"`) {
+			continue
+		}
+		var item rgMatchItem
+		if err := json.Unmarshal([]byte(line), &item); err == nil && item.Type == "match" {
+			filePath := item.Data.Path.Text
+			relPath, relErr := filepath.Rel(resolvedPath, filePath)
+			if relErr == nil && relPath != "" {
+				filePath = relPath
+			}
+			matches = append(matches, map[string]interface{}{
+				"file":    filepath.ToSlash(filePath),
+				"line":    item.Data.LineNumber,
+				"content": strings.TrimRight(item.Data.Lines.Text, "\r\n"),
+			})
+			if len(matches) >= maxResults {
+				break
+			}
+		}
+	}
+	if matches == nil {
+		matches = []interface{}{}
+	}
+	return matches, true, nil
 }
 
 // isImageExtension returns true for image file extensions that can be

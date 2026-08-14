@@ -391,6 +391,10 @@ func (sdb *SqliteDatabase) createTables() error {
 	if err := sdb.ensureColumnExistsTx(tx, "node_states", "structured_output", "TEXT"); err != nil {
 		return fmt.Errorf("failed to migrate node_states structured_output schema: %w", err)
 	}
+	// Key columns — embedding-resolved column names for evidence pruning
+	if err := sdb.ensureColumnExistsTx(tx, "node_states", "key_columns", "TEXT"); err != nil {
+		return fmt.Errorf("failed to migrate node_states key_columns schema: %w", err)
+	}
 
 	// Dynamic Workflow Orchestration column migrations (PRD: Dynamic Workflow Orchestration)
 	if err := sdb.ensureColumnExistsTx(tx, "workflows", "orchestration_mode", "TEXT DEFAULT 'static'"); err != nil {
@@ -668,6 +672,35 @@ func (sdb *SqliteDatabase) SetNodeStructuredOutput(taskID, nodeID, structuredOut
 
 	_, err := sdb.db.Exec("UPDATE node_states SET structured_output = ? WHERE task_id = ? AND node_id = ?", structuredOutput, taskID, nodeID)
 	return err
+}
+
+// SetNodeKeyColumns stores the embedding-resolved key column names for an
+// analyze node. These columns represent the user-relevant data dimensions
+// and are used to prune evidence rows during context assembly.
+func (sdb *SqliteDatabase) SetNodeKeyColumns(taskID, nodeID, keyColumnsJSON string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	_, err := sdb.db.Exec("UPDATE node_states SET key_columns = ? WHERE task_id = ? AND node_id = ?", keyColumnsJSON, taskID, nodeID)
+	return err
+}
+
+// GetNodeKeyColumns retrieves the key column names for a specific node.
+// Returns nil if no key columns are stored.
+func (sdb *SqliteDatabase) GetNodeKeyColumns(taskID, nodeID string) ([]string, error) {
+	sdb.mutex.RLock()
+	defer sdb.mutex.RUnlock()
+
+	var raw string
+	err := sdb.db.QueryRow("SELECT COALESCE(key_columns, '') FROM node_states WHERE task_id = ? AND node_id = ?", taskID, nodeID).Scan(&raw)
+	if err != nil || raw == "" {
+		return nil, err
+	}
+	var cols []string
+	if err := json.Unmarshal([]byte(raw), &cols); err != nil {
+		return nil, nil // Silently ignore malformed JSON
+	}
+	return cols, nil
 }
 
 // GetNodeAnalyticalEvidence retrieves analytical evidence for a specific node.

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"tzro/internal/compiler"
@@ -96,7 +97,8 @@ func AssembleEnvelope(graph *compiler.ExecutionGraph, nodes []memory.NodeState, 
 
 	// Find effective terminal node for synthesis text.
 	// Priority: terminal_synthesis > last recall > last probe > last synthesis-type
-	env.Synthesis = findSynthesisText(graph, nodes)
+	// Strip execution tier prefix from the consumer-facing synthesis.
+	env.Synthesis = stripExecutionTierPrefix(findSynthesisText(graph, nodes))
 
 	// Extract tools used and file paths from dispatches
 	toolSet := make(map[string]bool)
@@ -136,6 +138,23 @@ func (env *ExecutionEnvelope) PopulatePhases(manifest PhaseManifest) {
 			Backtracks:  phase.Backtracks,
 		})
 	}
+}
+
+// stripExecutionTierPrefix removes known execution tier prefixes from content.
+// These prefixes are observability metadata (e.g., "[Local Tactician] ") and
+// must not appear in consumer-facing MCP output.
+func stripExecutionTierPrefix(content string) string {
+	for _, p := range []string{
+		"[Local Tactician] ",
+		"[Cloud Fallback] ",
+		"[Recall] ",
+		"[Local] ",
+	} {
+		if strings.HasPrefix(content, p) {
+			return content[len(p):]
+		}
+	}
+	return content
 }
 
 // findSynthesisText locates the effective terminal node and returns its RawOutput.

@@ -320,6 +320,84 @@ func TestTwoPassToolOnlySchema_ValidJSON(t *testing.T) {
 	}
 }
 
+// --- Test: buildExtractionSchema injects tool enum constraint ---
+
+func TestBuildExtractionSchema_ToolEnum(t *testing.T) {
+	schema := buildExtractionSchema([]string{"read_file", "search_files", "list_dir"}, false)
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("schema is not valid JSON: %v\nschema: %s", err, schema)
+	}
+
+	props := parsed["properties"].(map[string]interface{})
+
+	// Check action enum has both values
+	actionProp := props["action"].(map[string]interface{})
+	actionEnum := actionProp["enum"].([]interface{})
+	if len(actionEnum) != 2 {
+		t.Errorf("expected 2 action enum values, got %d", len(actionEnum))
+	}
+
+	// Check tool has enum constraint with all 3 tools
+	toolProp := props["tool"].(map[string]interface{})
+	toolEnum, ok := toolProp["enum"].([]interface{})
+	if !ok {
+		t.Fatal("expected tool property to have enum constraint")
+	}
+	if len(toolEnum) != 3 {
+		t.Errorf("expected 3 tool enum values, got %d", len(toolEnum))
+	}
+	expectedTools := map[string]bool{"read_file": true, "search_files": true, "list_dir": true}
+	for _, v := range toolEnum {
+		name := v.(string)
+		if !expectedTools[name] {
+			t.Errorf("unexpected tool in enum: %q", name)
+		}
+	}
+}
+
+func TestBuildExtractionSchema_ForceTool(t *testing.T) {
+	schema := buildExtractionSchema([]string{"read_file"}, true)
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("schema is not valid JSON: %v", err)
+	}
+
+	props := parsed["properties"].(map[string]interface{})
+	actionProp := props["action"].(map[string]interface{})
+	actionEnum := actionProp["enum"].([]interface{})
+	if len(actionEnum) != 1 || actionEnum[0] != "tool_call" {
+		t.Errorf("expected single 'tool_call' action enum, got %v", actionEnum)
+	}
+
+	toolProp := props["tool"].(map[string]interface{})
+	toolEnum := toolProp["enum"].([]interface{})
+	if len(toolEnum) != 1 || toolEnum[0] != "read_file" {
+		t.Errorf("expected single 'read_file' tool enum, got %v", toolEnum)
+	}
+}
+
+func TestBuildExtractionSchema_EmptyTools(t *testing.T) {
+	schema := buildExtractionSchema(nil, false)
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(schema), &parsed); err != nil {
+		t.Fatalf("schema is not valid JSON: %v", err)
+	}
+
+	props := parsed["properties"].(map[string]interface{})
+	toolProp := props["tool"].(map[string]interface{})
+	// Should NOT have enum when no tools provided
+	if _, hasEnum := toolProp["enum"]; hasEnum {
+		t.Error("expected no enum constraint when allowedTools is empty")
+	}
+	if toolProp["type"] != "string" {
+		t.Errorf("expected type=string, got %v", toolProp["type"])
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

@@ -24,6 +24,9 @@ func GetAllowedPaths() []string {
 			return
 		}
 		cleaned := filepath.Clean(abs)
+		if real, err := filepath.EvalSymlinks(cleaned); err == nil {
+			cleaned = filepath.Clean(real)
+		}
 		if !seen[cleaned] {
 			seen[cleaned] = true
 			paths = append(paths, cleaned)
@@ -79,7 +82,11 @@ func NewPathValidator(allowedRoots []string) *PathValidator {
 		if err != nil {
 			continue
 		}
-		cleaned = append(cleaned, filepath.Clean(abs))
+		c := filepath.Clean(abs)
+		if real, err := filepath.EvalSymlinks(c); err == nil {
+			c = filepath.Clean(real)
+		}
+		cleaned = append(cleaned, c)
 	}
 	return &PathValidator{staticRoots: cleaned, dynamic: true}
 }
@@ -223,12 +230,23 @@ func (v *PathValidator) ValidateWritePath(requestedPath string) (string, error) 
 		return "", fmt.Errorf("path %s is outside all allowed roots", requestedPath)
 	}
 
-	// File doesn't exist — check that the absolute path (without symlink resolution)
-	// falls within at least one allowed root. This is safe because we're creating a
-	// new file, and the parent directory must already exist (or will be created within
-	// the allowed root).
+	// File doesn't exist — resolve symlinks on the nearest existing ancestor directory
+	// so that temp directories (e.g. /var -> /private/var) match allowed roots correctly.
+	checkPath := absPath
+	parent := filepath.Dir(absPath)
+	for parent != "" && parent != "/" && parent != "." {
+		if _, err := os.Stat(parent); err == nil {
+			if realParent, err := filepath.EvalSymlinks(parent); err == nil {
+				rel, _ := filepath.Rel(parent, absPath)
+				checkPath = filepath.Clean(filepath.Join(realParent, rel))
+			}
+			break
+		}
+		parent = filepath.Dir(parent)
+	}
+
 	for _, root := range roots {
-		if isInsideRoot(absPath, root) {
+		if isInsideRoot(checkPath, root) || isInsideRoot(absPath, root) {
 			return absPath, nil
 		}
 	}

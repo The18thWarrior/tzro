@@ -363,6 +363,89 @@ func TestSearchFiles_ReturnsEmptyForNoMatch(t *testing.T) {
 	}
 }
 
+func TestSearchFiles_FileGlob(t *testing.T) {
+	root, v := setupFilesystemTestFixtures(t)
+	tool := NewSearchFilesTool(v)
+
+	// In setupFilesystemTestFixtures, searchable.go has "world" and readme.txt has "line1"
+	// Create another file with "world" but with .txt extension
+	if err := os.WriteFile(filepath.Join(root, "world.txt"), []byte("hello world in txt\n"), 0644); err != nil {
+		t.Fatalf("failed to create world.txt: %v", err)
+	}
+
+	// Search for "world" scoped only to *.go
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":     root,
+		"pattern":  "world",
+		"fileGlob": "*.go",
+	})
+	if err != nil {
+		t.Fatalf("unexpected call error: %v", err)
+	}
+
+	var res ToolResult
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	matches := data["matches"].([]interface{})
+	if len(matches) == 0 {
+		t.Fatalf("expected matches in .go files")
+	}
+
+	for _, m := range matches {
+		matchMap := m.(map[string]interface{})
+		fileName := matchMap["file"].(string)
+		if !strings.HasSuffix(fileName, ".go") {
+			t.Errorf("expected only .go files with fileGlob='*.go', got: %s", fileName)
+		}
+	}
+}
+
+func TestSearchFiles_GoFallback(t *testing.T) {
+	root, v := setupFilesystemTestFixtures(t)
+	tool := NewSearchFilesTool(v)
+
+	// Force disable ripgrep by overriding hook / testing Go fallback explicitly
+	oldRg := rgOverridePath
+	rgOverridePath = "nonexistent_rg_binary"
+	defer func() { rgOverridePath = oldRg }()
+
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":     root,
+		"pattern":  "hello",
+		"fileGlob": "*.go",
+	})
+	if err != nil {
+		t.Fatalf("unexpected call error: %v", err)
+	}
+
+	var res ToolResult
+	if err := json.Unmarshal([]byte(result), &res); err != nil {
+		t.Fatalf("failed to parse result: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success, got error: %s", res.Error)
+	}
+
+	data := res.Data.(map[string]interface{})
+	matches := data["matches"].([]interface{})
+	if len(matches) == 0 {
+		t.Fatalf("expected matches in Go fallback")
+	}
+	for _, m := range matches {
+		matchMap := m.(map[string]interface{})
+		fileName := matchMap["file"].(string)
+		if !strings.HasSuffix(fileName, ".go") {
+			t.Errorf("expected only .go matches in fallback, got: %s", fileName)
+		}
+	}
+}
+
 // ==========================================
 // Registration test
 // ==========================================

@@ -1,0 +1,226 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{autogen2023,crewai2024,langchain2023}
+\citation{phi3technical2024,llama3herd2024}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:introduction}{{1}{1}{Introduction}{section.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces \textsc  {tzro} system architecture. The green region shows the local execution pipeline (86\% of inference calls). The blue region shows cloud model involvement, used only for T0/T2 planning and Verified Task Execution (14\% of calls). The orange layer provides knowledge and inference services to the pipeline.}}{2}{figure.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:architecture}{{1}{2}{\textsc {tzro} system architecture. The green region shows the local execution pipeline (86\% of inference calls). The blue region shows cloud model involvement, used only for T0/T2 planning and Verified Task Execution (14\% of calls). The orange layer provides knowledge and inference services to the pipeline}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}System Overview}{2}{section.2}\protected@file@percent }
+\newlabel{sec:system_overview}{{2}{2}{System Overview}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Task Lifecycle}{2}{subsection.2.1}\protected@file@percent }
+\citation{kahn1962}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Node Strategy Architecture}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Domain Language}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Durable DAG Compilation}{3}{section.3}\protected@file@percent }
+\newlabel{sec:dag_compilation}{{3}{3}{Durable DAG Compilation}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}The Kahn Compiler}{3}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:kahn_compiler}{{3.1}{3}{The Kahn Compiler}{subsection.3.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Plan Template Registry}{3}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:plan_templates}{{3.2}{3}{Plan Template Registry}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Durable Checkpointing}{4}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Dynamic Graph Mutation}{4}{subsection.3.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Local-First Cost Arbitrage}{4}{section.4}\protected@file@percent }
+\newlabel{sec:cost_arbitrage}{{4}{4}{Local-First Cost Arbitrage}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}The Routing Hypothesis}{4}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:routing_hypothesis}{{4.1}{4}{The Routing Hypothesis}{subsection.4.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Complexity Tier: Task-Level Routing}{4}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:complexity_tier}{{4.2}{4}{Complexity Tier: Task-Level Routing}{subsection.4.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Confidence Tier: Per-Node Routing}{5}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:confidence_tier}{{4.3}{5}{Confidence Tier: Per-Node Routing}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Corrective Micro-Skills}{5}{subsection.4.4}\protected@file@percent }
+\newlabel{sec:corrective_skills}{{4.4}{5}{Corrective Micro-Skills}{subsection.4.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Task Sizing as a Design Principle}{5}{subsection.4.5}\protected@file@percent }
+\newlabel{sec:task_sizing}{{4.5}{5}{Task Sizing as a Design Principle}{subsection.4.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Cost Analysis}{6}{subsection.4.6}\protected@file@percent }
+\newlabel{sec:cost_numbers}{{4.6}{6}{Cost Analysis}{subsection.4.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Bounded Autonomous Exploration}{6}{section.5}\protected@file@percent }
+\newlabel{sec:bounded_exploration}{{5}{6}{Bounded Autonomous Exploration}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Probe Nodes}{6}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:probe_nodes}{{5.1}{6}{Probe Nodes}{subsection.5.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Three-Pass Thought Chain}{6}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:thought_chain}{{5.2}{6}{Three-Pass Thought Chain}{subsection.5.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Three-Pass Thought Chain within a Probe Node. Pass~1 (Worker, 4B) produces unconstrained reasoning. Pass~2 (Router, 1B) extracts a structured action via GBNF grammar. On \texttt  {synthesize}, Pass~3 (Worker) validates completeness before allowing early termination. The separation of reasoning from structure extraction is the key reliability insight: the single-pass approach failed $\sim $90\% of the time.}}{7}{figure.caption.7}\protected@file@percent }
+\newlabel{fig:thought_chain}{{2}{7}{Three-Pass Thought Chain within a Probe Node. Pass~1 (Worker, 4B) produces unconstrained reasoning. Pass~2 (Router, 1B) extracts a structured action via GBNF grammar. On \texttt {synthesize}, Pass~3 (Worker) validates completeness before allowing early termination. The separation of reasoning from structure extraction is the key reliability insight: the single-pass approach failed $\sim $90\% of the time}{figure.caption.7}{}}
+\@writefile{toc}{\contentsline {paragraph}{Pass 1: Worker (unconstrained reasoning).}{7}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Pass 2: Router (GBNF-constrained extraction).}{7}{section*.4}\protected@file@percent }
+\newlabel{sec:synthesis_gate}{{5.2}{7}{Pass 3: Synthesis Validation Gate}{section*.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{Pass 3: Synthesis Validation Gate.}{7}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Durability.}{7}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Phase Runner}{7}{subsection.5.3}\protected@file@percent }
+\newlabel{sec:phase_runner}{{5.3}{7}{Phase Runner}{subsection.5.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Tool hooks.}{8}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Substrate Mode Classification}{8}{subsection.5.4}\protected@file@percent }
+\newlabel{sec:substrate_mode}{{5.4}{8}{Substrate Mode Classification}{subsection.5.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Recall Node and Refinement Pass}{9}{subsection.5.5}\protected@file@percent }
+\newlabel{sec:recall_node}{{5.5}{9}{Recall Node and Refinement Pass}{subsection.5.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{The Synthesis Cliff.}{9}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Recall Loop Inversion.}{9}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Symbol Anchor Check.}{9}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}Lessons Learned}{9}{subsection.5.6}\protected@file@percent }
+\newlabel{sec:exploration_lessons}{{5.6}{9}{Lessons Learned}{subsection.5.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Flat loops hit an attention ceiling.}{9}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Separation of reasoning and structure is essential.}{9}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Deterministic floors outperform agentic discovery.}{10}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Content-Aware Context Management}{10}{section.6}\protected@file@percent }
+\newlabel{sec:context_management}{{6}{10}{Content-Aware Context Management}{section.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Compaction Pipeline}{10}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Accumulated Context Budgeting}{10}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Binding Resolution}{10}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Generation Guard}{10}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Code Generation Quality Gates}{11}{section.7}\protected@file@percent }
+\newlabel{sec:codegen_quality}{{7}{11}{Code Generation Quality Gates}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Edit Loop}{11}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Verified Task Execution}{11}{section.8}\protected@file@percent }
+\newlabel{sec:verified_execution}{{8}{11}{Verified Task Execution}{section.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}The Pipeline}{11}{subsection.8.1}\protected@file@percent }
+\citation{autogen2023,crewai2024}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Verified Task Execution pipeline. Stages 1--2 are local deterministic checks ($<$10ms total). Stage 3 is a single cloud call that both evaluates quality and produces a re-synthesis if rejected---no additional round-trip. The design key: combining verification and correction in one call saves latency while catching the 4B model's output variance.}}{12}{figure.caption.15}\protected@file@percent }
+\newlabel{fig:vte_pipeline}{{3}{12}{Verified Task Execution pipeline. Stages 1--2 are local deterministic checks ($<$10ms total). Stage 3 is a single cloud call that both evaluates quality and produces a re-synthesis if rejected---no additional round-trip. The design key: combining verification and correction in one call saves latency while catching the 4B model's output variance}{figure.caption.15}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Per-Node Micro-Skill Injection and Background Agents}{12}{section.9}\protected@file@percent }
+\newlabel{sec:micro_skills}{{9}{12}{Per-Node Micro-Skill Injection and Background Agents}{section.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}Procedural Micro-Skills}{12}{subsection.9.1}\protected@file@percent }
+\newlabel{sec:procedural_skills}{{9.1}{12}{Procedural Micro-Skills}{subsection.9.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}Corrective Micro-Skills}{12}{subsection.9.2}\protected@file@percent }
+\newlabel{sec:corrective_skills_detail}{{9.2}{12}{Corrective Micro-Skills}{subsection.9.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.3}Observer Agent}{13}{subsection.9.3}\protected@file@percent }
+\newlabel{sec:observer_agent}{{9.3}{13}{Observer Agent}{subsection.9.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.4}Sentinel Agent}{13}{subsection.9.4}\protected@file@percent }
+\newlabel{sec:sentinel_agent}{{9.4}{13}{Sentinel Agent}{subsection.9.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.5}Proactivity Ladder}{13}{subsection.9.5}\protected@file@percent }
+\newlabel{sec:proactivity_ladder}{{9.5}{13}{Proactivity Ladder}{subsection.9.5}{}}
+\citation{bfcl2024}
+\@writefile{toc}{\contentsline {section}{\numberline {10}Evaluation}{14}{section.10}\protected@file@percent }
+\newlabel{sec:evaluation}{{10}{14}{Evaluation}{section.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.1}Phase 1: Cooperative Engine Benchmarks (May--June 2026)}{14}{subsection.10.1}\protected@file@percent }
+\newlabel{sec:eval_phase1}{{10.1}{14}{Phase 1: Cooperative Engine Benchmarks (May--June 2026)}{subsection.10.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Phase 1 improvement arc (May 2026). Pass rates on BFCL-derived cooperative engine benchmarks. Raw data deleted; values sourced from wiki post-mortem analyses.}}{14}{table.caption.16}\protected@file@percent }
+\newlabel{tab:phase1_arc}{{1}{14}{Phase 1 improvement arc (May 2026). Pass rates on BFCL-derived cooperative engine benchmarks. Raw data deleted; values sourced from wiki post-mortem analyses}{table.caption.16}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.2}Phase 2: Quality-Scored Benchmark Suite (July--August 2026)}{14}{subsection.10.2}\protected@file@percent }
+\newlabel{sec:eval_phase2}{{10.2}{14}{Phase 2: Quality-Scored Benchmark Suite (July--August 2026)}{subsection.10.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Task categories.}{15}{section*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Quality scoring.}{15}{section*.18}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.3}The Quality Improvement Arc}{15}{subsection.10.3}\protected@file@percent }
+\newlabel{sec:eval_quality_arc}{{10.3}{15}{The Quality Improvement Arc}{subsection.10.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Phase 2 quality improvement arc. Average quality scores across 25 tasks per run. The same 4B model (Agents-A1-4B, GGUF Q8\_0) was used for all runs; only infrastructure changed.}}{15}{table.caption.19}\protected@file@percent }
+\newlabel{tab:phase2_arc}{{2}{15}{Phase 2 quality improvement arc. Average quality scores across 25 tasks per run. The same 4B model (Agents-A1-4B, GGUF Q8\_0) was used for all runs; only infrastructure changed}{table.caption.19}{}}
+\newlabel{fig:arc_phase1}{{4a}{16}{Phase 1: BFCL-derived pass rates}{figure.caption.20}{}}
+\newlabel{sub@fig:arc_phase1}{{a}{16}{Phase 1: BFCL-derived pass rates}{figure.caption.20}{}}
+\newlabel{fig:arc_phase2}{{4b}{16}{Phase 2: LLM-as-judge quality scores}{figure.caption.20}{}}
+\newlabel{sub@fig:arc_phase2}{{b}{16}{Phase 2: LLM-as-judge quality scores}{figure.caption.20}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces The full improvement arc across both evaluation phases. \textbf  {Left}: Phase 1 (May 2026) tracked binary pass/fail on BFCL-derived parameter extraction tasks, improving from 21\% to 65\% through incremental infrastructure additions. \textbf  {Right}: Phase 2 (July--August 2026) used continuous 1.0--5.0 quality scoring on the 25-task suite, showing the regression from the Recall Node overhaul (Run 11, 2.64) and recovery through VTE (Run 28, 4.53). The same 4B model was used throughout both phases.}}{16}{figure.caption.20}\protected@file@percent }
+\newlabel{fig:improvement_arc}{{4}{16}{The full improvement arc across both evaluation phases. \textbf {Left}: Phase 1 (May 2026) tracked binary pass/fail on BFCL-derived parameter extraction tasks, improving from 21\% to 65\% through incremental infrastructure additions. \textbf {Right}: Phase 2 (July--August 2026) used continuous 1.0--5.0 quality scoring on the 25-task suite, showing the regression from the Recall Node overhaul (Run 11, 2.64) and recovery through VTE (Run 28, 4.53). The same 4B model was used throughout both phases}{figure.caption.20}{}}
+\@writefile{toc}{\contentsline {paragraph}{The August 4 regression (4.20 $\to $ 2.64).}{16}{section*.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{The August 5 recovery (2.64 $\to $ 3.83 in one day).}{16}{section*.22}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{The August 11--12 final push (3.93 $\to $ 4.53).}{16}{section*.23}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Key takeaway.}{16}{section*.24}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.4}Quality Results by Category}{16}{subsection.10.4}\protected@file@percent }
+\newlabel{sec:eval_category_results}{{10.4}{16}{Quality Results by Category}{subsection.10.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Per-task distribution (Run 28).}{16}{section*.26}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Quality results by task category. ``Dedicated runs'' counts category-specific benchmark iterations beyond the 28 full-suite runs.}}{17}{table.caption.25}\protected@file@percent }
+\newlabel{tab:category_results}{{3}{17}{Quality results by task category. ``Dedicated runs'' counts category-specific benchmark iterations beyond the 28 full-suite runs}{table.caption.25}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.5}Cost Analysis}{17}{subsection.10.5}\protected@file@percent }
+\newlabel{sec:eval_cost}{{10.5}{17}{Cost Analysis}{subsection.10.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Token consumption and cost analysis for Run 28 (25 tasks, cooperative mode).}}{17}{table.caption.27}\protected@file@percent }
+\newlabel{tab:cost_analysis}{{4}{17}{Token consumption and cost analysis for Run 28 (25 tasks, cooperative mode)}{table.caption.27}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.6}Latency Profile}{17}{subsection.10.6}\protected@file@percent }
+\newlabel{sec:eval_latency}{{10.6}{17}{Latency Profile}{subsection.10.6}{}}
+\citation{react2023}
+\citation{autogen2023}
+\citation{crewai2024}
+\citation{langchain2023}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Representative wall-clock execution times from Run 28.}}{18}{table.caption.28}\protected@file@percent }
+\newlabel{tab:latency}{{5}{18}{Representative wall-clock execution times from Run 28}{table.caption.28}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {10.7}Category-Specific Analysis}{18}{subsection.10.7}\protected@file@percent }
+\newlabel{sec:eval_category_deep}{{10.7}{18}{Category-Specific Analysis}{subsection.10.7}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.7.1}Data Analysis: The Hardest Category}{18}{subsubsection.10.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.7.2}Web Research: Phase Runner as the Unlock}{18}{subsubsection.10.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {10.7.3}Documentation: From 1.00 to 4.75 in One Day}{18}{subsubsection.10.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}Related Work}{18}{section.11}\protected@file@percent }
+\newlabel{sec:related_work}{{11}{18}{Related Work}{section.11}{}}
+\@writefile{toc}{\contentsline {paragraph}{Agent architectures and reasoning.}{18}{section*.29}\protected@file@percent }
+\citation{reflexion2023}
+\citation{dspy2023}
+\citation{phi3technical2024}
+\citation{llama3herd2024}
+\citation{mixtral2024}
+\citation{agentsa1_2025}
+\citation{routellm2024}
+\citation{frugalgpt2023}
+\citation{speculative2023}
+\citation{ggerganov_llamacpp}
+\citation{outlines2024}
+\citation{temporal2022}
+\citation{toolformer2023}
+\citation{toolllm2023}
+\citation{bfcl2024}
+\citation{gorilla2023}
+\citation{sweagent2024}
+\citation{swebench2024}
+\@writefile{toc}{\contentsline {paragraph}{Small model capabilities.}{19}{section*.30}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Model routing and cost optimization.}{19}{section*.31}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Constrained decoding and structured output.}{19}{section*.32}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Durable execution.}{19}{section*.33}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Tool-use and function calling.}{19}{section*.34}\protected@file@percent }
+\citation{rag2020}
+\@writefile{toc}{\contentsline {paragraph}{Retrieval-augmented generation.}{20}{section*.35}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12}Discussion and Lessons Learned}{20}{section.12}\protected@file@percent }
+\newlabel{sec:discussion}{{12}{20}{Discussion and Lessons Learned}{section.12}{}}
+\@writefile{toc}{\contentsline {paragraph}{1.\ Infrastructure dominates parameters.}{20}{section*.36}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{2.\ Nine compensatory mechanisms is the wrong abstraction.}{20}{section*.37}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{3.\ Domain language prevents architectural drift.}{20}{section*.38}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{4.\ Evaluation methodology must evolve with the system.}{20}{section*.39}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {12.1}Limitations}{20}{subsection.12.1}\protected@file@percent }
+\newlabel{sec:limitations}{{12.1}{20}{Limitations}{subsection.12.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{Data analysis remains weak.}{20}{section*.40}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{LLM-as-judge limitations and inter-rater disagreement.}{20}{section*.41}\protected@file@percent }
+\bibstyle{plain}
+\bibdata{references}
+\bibcite{phi3technical2024}{{1}{}{{}}{{}}}
+\bibcite{langchain2023}{{2}{}{{}}{{}}}
+\bibcite{frugalgpt2023}{{3}{}{{}}{{}}}
+\bibcite{ggerganov_llamacpp}{{4}{}{{}}{{}}}
+\bibcite{llama3herd2024}{{5}{}{{}}{{}}}
+\@writefile{toc}{\contentsline {paragraph}{Single-model evaluation.}{21}{section*.42}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Single-evaluator benchmark.}{21}{section*.43}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Privacy-quality tradeoff.}{21}{section*.44}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Hardware specificity.}{21}{section*.45}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {13}Conclusion}{21}{section.13}\protected@file@percent }
+\newlabel{sec:conclusion}{{13}{21}{Conclusion}{section.13}{}}
+\bibcite{agentsa1_2025}{{6}{}{{}}{{}}}
+\bibcite{mixtral2024}{{7}{}{{}}{{}}}
+\bibcite{swebench2024}{{8}{}{{}}{{}}}
+\bibcite{kahn1962}{{9}{}{{}}{{}}}
+\bibcite{dspy2023}{{10}{}{{}}{{}}}
+\bibcite{speculative2023}{{11}{}{{}}{{}}}
+\bibcite{rag2020}{{12}{}{{}}{{}}}
+\bibcite{crewai2024}{{13}{}{{}}{{}}}
+\bibcite{routellm2024}{{14}{}{{}}{{}}}
+\bibcite{gorilla2023}{{15}{}{{}}{{}}}
+\bibcite{toolllm2023}{{16}{}{{}}{{}}}
+\bibcite{toolformer2023}{{17}{}{{}}{{}}}
+\bibcite{reflexion2023}{{18}{}{{}}{{}}}
+\bibcite{temporal2022}{{19}{}{{}}{{}}}
+\bibcite{outlines2024}{{20}{}{{}}{{}}}
+\bibcite{autogen2023}{{21}{}{{}}{{}}}
+\bibcite{bfcl2024}{{22}{}{{}}{{}}}
+\bibcite{sweagent2024}{{23}{}{{}}{{}}}
+\bibcite{react2023}{{24}{}{{}}{{}}}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Domain Glossary}{23}{appendix.A}\protected@file@percent }
+\newlabel{app:glossary}{{A}{23}{Domain Glossary}{appendix.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Selected domain glossary entries with anti-terms.}}{23}{table.caption.47}\protected@file@percent }
+\newlabel{tab:glossary}{{6}{23}{Selected domain glossary entries with anti-terms}{table.caption.47}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Architecture Decision Record Index}{23}{appendix.B}\protected@file@percent }
+\newlabel{app:adr_index}{{B}{23}{Architecture Decision Record Index}{appendix.B}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Selected ADRs referenced in this paper. The full index is available in the repository.}}{23}{table.caption.48}\protected@file@percent }
+\providecommand\NAT@force@numbers{}\NAT@force@numbers
+\@writefile{toc}{\contentsline {section}{\numberline {C}Benchmark Run Index}{24}{appendix.C}\protected@file@percent }
+\newlabel{app:benchmark_index}{{C}{24}{Benchmark Run Index}{appendix.C}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Complete Phase 2 benchmark run index. All runs use the same 4B model; only infrastructure changed between runs.}}{24}{table.caption.49}\protected@file@percent }
+\newlabel{tab:run_index}{{8}{24}{Complete Phase 2 benchmark run index. All runs use the same 4B model; only infrastructure changed between runs}{table.caption.49}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}System Configuration}{24}{appendix.D}\protected@file@percent }
+\newlabel{app:system_config}{{D}{24}{System Configuration}{appendix.D}{}}
+\gdef \@abspage@last{24}

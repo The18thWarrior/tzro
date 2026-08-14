@@ -272,7 +272,10 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	if t.Category == CategoryCodegen {
 		fmt.Fprintf(os.Stderr, "[Comparison] Codegen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
 	} else if t.Category == CategoryDocgen {
-		fmt.Fprintf(os.Stderr, "[Comparison] Docgen task %s: write_file scoped to %s\n", t.ID, testOutputDir)
+		// Register git_log tool for docgen tasks that need git history access
+		// (e.g. holdout changelog generation task).
+		tools.Register(tools.NewGitLogTool(readValidator))
+		fmt.Fprintf(os.Stderr, "[Comparison] Docgen task %s: write_file scoped to %s, git_log registered\n", t.ID, testOutputDir)
 	} else if t.Category == CategoryResearch {
 		// Research tasks use web_search and web_browse for internet research.
 		// Register these tools so the DAG planner can include them.
@@ -451,6 +454,21 @@ func sanitizeSynthesisOutput(raw string, minChars int) string {
 	}
 
 	cleaned := raw
+
+	// Strip execution tier prefixes (e.g., "[Local Tactician] ", "[Cloud Fallback] ")
+	// that are observability metadata and must not appear in evaluated output.
+	tierPrefixes := []string{
+		"[Local Tactician] ",
+		"[Cloud Fallback] ",
+		"[Recall] ",
+		"[Local] ",
+	}
+	for _, p := range tierPrefixes {
+		if strings.HasPrefix(cleaned, p) {
+			cleaned = cleaned[len(p):]
+			break
+		}
+	}
 
 	// Strip <thinking>...</thinking> blocks (greedy, handles newlines)
 	thinkingRe := regexp.MustCompile(`(?s)<thinking>.*?</thinking>`)

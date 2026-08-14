@@ -266,13 +266,16 @@ func Init(configPath string) error {
 	Register(&ComposeLayoutTool{})
 	Register(&TerminalSynthesisTool{})
 
-	// Register filesystem tools with path validation security boundary
+	// Register filesystem and git tools with path validation security boundary
 	fsValidator := NewPathValidator(GetAllowedPaths())
 	Register(NewReadFileTool(fsValidator))
 	Register(NewListDirTool(fsValidator))
 	Register(NewSearchFilesTool(fsValidator))
 	Register(NewPeekFileTool(fsValidator))
 	Register(NewWriteFileTool(fsValidator))
+	Register(NewGitLogTool(fsValidator))
+	Register(NewGitDiffTool(fsValidator))
+	Register(NewGitShowTool(fsValidator))
 
 	// 1. Register cache tools statically
 	Register(&FunctionTool{

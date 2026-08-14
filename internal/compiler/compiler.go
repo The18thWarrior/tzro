@@ -99,6 +99,13 @@ type ProbeConfig struct {
 	// When 0, defaults to 4096. Scatter probes set this to 300 to stay under
 	// the 400-token attention fatigue threshold (ADR-0071).
 	MaxTokens int `json:"maxTokens,omitempty"`
+
+	// KeyColumns holds the column names identified by ResolveSelectColumns as
+	// relevant to the user's query. Set by AnalyzePhases after embedding-based
+	// column resolution. Used by the Probe Query Results bridge to prune
+	// evidence rows to only these columns, preventing name/value hallucination
+	// from compaction-induced data loss.
+	KeyColumns []string `json:"keyColumns,omitempty"`
 }
 
 type GraphEdge struct {

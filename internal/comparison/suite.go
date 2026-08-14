@@ -24,6 +24,18 @@ var datanalTaskDataFS embed.FS
 //go:embed testdata/research_tasks.json
 var researchTaskDataFS embed.FS
 
+//go:embed testdata/holdout_codegen_tasks.json
+var holdoutCodegenTaskDataFS embed.FS
+
+//go:embed testdata/holdout_docgen_tasks.json
+var holdoutDocgenTaskDataFS embed.FS
+
+//go:embed testdata/holdout_datanal_tasks.json
+var holdoutDatanalTaskDataFS embed.FS
+
+//go:embed testdata/holdout_research_tasks.json
+var holdoutResearchTaskDataFS embed.FS
+
 //go:embed testdata/codegen_seeds/*
 var codegenSeedsFS embed.FS
 
@@ -77,6 +89,49 @@ func LoadTasksByCategory(category string, tierFilter int) ([]ComparisonTask, err
 	return filtered, nil
 }
 
+// LoadHoldoutTasks loads holdout benchmark tasks for a given category.
+// If tierFilter > 0, only tasks matching that tier are returned.
+func LoadHoldoutTasks(category string, tierFilter int) ([]ComparisonTask, error) {
+	var data []byte
+	var err error
+
+	switch category {
+	case CategoryCodegen:
+		data, err = holdoutCodegenTaskDataFS.ReadFile("testdata/holdout_codegen_tasks.json")
+	case CategoryDatanal:
+		data, err = holdoutDatanalTaskDataFS.ReadFile("testdata/holdout_datanal_tasks.json")
+	case CategoryResearch:
+		data, err = holdoutResearchTaskDataFS.ReadFile("testdata/holdout_research_tasks.json")
+	case CategoryDocgen, "":
+		data, err = holdoutDocgenTaskDataFS.ReadFile("testdata/holdout_docgen_tasks.json")
+	default:
+		return nil, fmt.Errorf("unknown task category: %q", category)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read embedded holdout task definitions for %s: %w", category, err)
+	}
+
+	var tasks []ComparisonTask
+	if err := json.Unmarshal(data, &tasks); err != nil {
+		return nil, fmt.Errorf("failed to parse holdout task definitions: %w", err)
+	}
+
+	if tierFilter <= 0 {
+		return tasks, nil
+	}
+
+	var filtered []ComparisonTask
+	for _, t := range tasks {
+		if t.Tier == tierFilter {
+			filtered = append(filtered, t)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("no holdout tasks found for category %s tier %d", category, tierFilter)
+	}
+	return filtered, nil
+}
+
 // ReadSeedFile reads a codegen seed file from embedded testdata.
 // The name should match the seedFile field in a codegen task (e.g. "validate_struct.go").
 func ReadSeedFile(name string) ([]byte, error) {
@@ -85,18 +140,6 @@ func ReadSeedFile(name string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read seed file %q: %w", name, err)
 	}
 	return data, nil
-}
-
-// SuiteOptions configures a comparison benchmark run.
-type SuiteOptions struct {
-	Category      string       // "" = both docgen and codegen; or "docgen" / "codegen" for single category
-	Tier          int          // 0 = all tiers, 1-5 = specific tier
-	Condition     string       // "" = all conditions, or specific condition ID
-	TaskID        string       // "" = all tasks, or specific task ID
-	OutputDir     string       // Directory to write results
-	Pricing       PricingTable // Cloud model pricing
-	JudgeEndpoint string       // Override judge API endpoint (for testing)
-	ReactEndpoint string       // Override ReAct API endpoint (for testing)
 }
 
 // SuiteCallbacks provides optional progress callbacks.
@@ -155,11 +198,17 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 
 	var groups []categoryGroup
 
+	// Select the loader: holdout set or development set
+	loadTasks := LoadTasksByCategory
+	if opts.Holdout {
+		loadTasks = LoadHoldoutTasks
+	}
+
 	switch opts.Category {
 	case CategoryAll:
-		// Run both categories with their respective condition sets
+		// Run all categories with their respective condition sets
 		for _, cat := range []string{CategoryDocgen, CategoryCodegen, CategoryDatanal, CategoryResearch} {
-			tasks, err := LoadTasksByCategory(cat, opts.Tier)
+			tasks, err := loadTasks(cat, opts.Tier)
 			if err != nil {
 				// If a category has no tasks for this tier, skip it rather than failing
 				fmt.Fprintf(os.Stderr, "[Comparison] Skipping %s: %v\n", cat, err)
@@ -172,7 +221,7 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 			return nil, fmt.Errorf("no tasks found for any category at tier %d", opts.Tier)
 		}
 	default:
-		tasks, err := LoadTasksByCategory(opts.Category, opts.Tier)
+		tasks, err := loadTasks(opts.Category, opts.Tier)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load tasks: %w", err)
 		}
@@ -271,6 +320,11 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 
 				taskResults = append(taskResults, result)
 
+				// Stamp holdout flag on results
+				if opts.Holdout {
+					taskResults[len(taskResults)-1].Holdout = true
+				}
+
 				if callbacks != nil && callbacks.OnTaskComplete != nil {
 					callbacks.OnTaskComplete(result)
 				}
@@ -296,7 +350,11 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 						taskResults[i].OutputText, task.ExpectedAnswer)
 				}
 
-				score, notes, err = JudgeOutputWithOptions(ctx, judgeOutput, task.QualityRubric, opts.JudgeEndpoint, g.category)
+				score, notes, err = JudgeOutputWithOptions(ctx, judgeOutput, task.QualityRubric, JudgeOptions{
+					Endpoint: opts.JudgeEndpoint,
+					Category: g.category,
+					Model:    opts.JudgeModel,
+				})
 
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[Comparison] Judge error for %s/%s: %v\n",

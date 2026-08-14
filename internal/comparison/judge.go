@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -164,19 +165,19 @@ func JudgeSystemPromptForCategory(category string) string {
 // Returns per-criterion scores and an overall composite score.
 // Judge tokens are tracked separately (not part of condition tracking).
 func JudgeOutput(ctx context.Context, outputText string, rubric QualityRubric) (float64, string, error) {
-	return JudgeOutputWithOptions(ctx, outputText, rubric, "", "")
+	return JudgeOutputWithOptions(ctx, outputText, rubric, JudgeOptions{})
 }
 
 // JudgeOutputWithEndpoint is like JudgeOutput but allows overriding the API endpoint (for testing).
 func JudgeOutputWithEndpoint(ctx context.Context, outputText string, rubric QualityRubric, endpoint string) (float64, string, error) {
-	return JudgeOutputWithOptions(ctx, outputText, rubric, endpoint, "")
+	return JudgeOutputWithOptions(ctx, outputText, rubric, JudgeOptions{Endpoint: endpoint})
 }
 
-// JudgeOutputWithOptions is the full-featured judge function supporting category-aware prompts
-// and endpoint overrides.
-func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric QualityRubric, endpoint string, category string) (float64, string, error) {
+// JudgeOutputWithOptions is the full-featured judge function supporting category-aware prompts,
+// endpoint overrides, and configurable judge models via OpenRouter.
+func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric QualityRubric, opts JudgeOptions) (float64, string, error) {
 	// Select the appropriate system prompt
-	sysPrompt := JudgeSystemPromptForCategory(category)
+	sysPrompt := JudgeSystemPromptForCategory(opts.Category)
 
 	// Build the rubric description
 	rubricText := "Quality Rubric (score each 1-5):\n"
@@ -185,7 +186,7 @@ func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric Quali
 	}
 
 	contentLabel := "Generated Output"
-	switch category {
+	switch opts.Category {
 	case CategoryCodegen:
 		contentLabel = "Generated Code"
 	case CategoryDatanal:
@@ -201,9 +202,12 @@ func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric Quali
 	var responseText string
 	var err error
 
-	if endpoint != "" {
+	if opts.Model != "" {
+		// OpenRouter path: configurable judge model
+		responseText, err = callOpenRouterJudge(ctx, opts.Model, userMessage, sysPrompt)
+	} else if opts.Endpoint != "" {
 		// Testing path: direct HTTP call to the provided endpoint
-		responseText, err = callJudgeEndpoint(ctx, endpoint, userMessage, sysPrompt)
+		responseText, err = callJudgeEndpoint(ctx, opts.Endpoint, userMessage, sysPrompt)
 	} else {
 		// Production path: use the standard cloud model
 		messages := []inference.InferenceMessage{
@@ -360,4 +364,94 @@ func callJudgeEndpoint(ctx context.Context, endpoint, userMessage, sysPrompt str
 	}
 
 	return result.Choices[0].Message.Content, nil
+}
+
+// callOpenRouterJudge sends a judge request via OpenRouter's OpenAI-compatible API.
+// Supports any model available on OpenRouter (e.g. "anthropic/claude-sonnet-4").
+// Includes a single retry with 5s backoff for robustness during benchmark runs.
+func callOpenRouterJudge(ctx context.Context, model, userMessage, sysPrompt string) (string, error) {
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("OPENROUTER_API_KEY environment variable is required when using --judge-model")
+	}
+
+	type Message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type Request struct {
+		Model       string    `json:"model"`
+		Messages    []Message `json:"messages"`
+		Temperature float64   `json:"temperature"`
+	}
+
+	reqBody := Request{
+		Model: model,
+		Messages: []Message{
+			{Role: "system", Content: sysPrompt},
+			{Role: "user", Content: userMessage},
+		},
+		Temperature: 0.1,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	const endpoint = "https://openrouter.ai/api/v1/chat/completions"
+	client := &http.Client{Timeout: 120 * time.Second}
+
+	// Single retry with 5s backoff
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			time.Sleep(5 * time.Second)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("OpenRouter API returned status %d: %s", resp.StatusCode, string(respBody))
+			continue
+		}
+
+		var result struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return "", fmt.Errorf("failed to decode OpenRouter response: %w", err)
+		}
+
+		if len(result.Choices) == 0 {
+			return "", fmt.Errorf("empty choices from OpenRouter API")
+		}
+
+		return result.Choices[0].Message.Content, nil
+	}
+
+	return "", fmt.Errorf("OpenRouter judge failed after retry: %w", lastErr)
 }

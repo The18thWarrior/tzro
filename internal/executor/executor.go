@@ -303,6 +303,10 @@ var GlobalEngine = &ExecutionEngine{
 	ProgressGuard:  &GoalProgressGuard{},
 }
 
+func init() {
+	GlobalEngine.InitRegistry()
+}
+
 const CacheExplorationGuide = `
 
 ### DISK-BACKED CACHE EXPLORATION GUIDE
@@ -320,6 +324,10 @@ If you need to analyze, filter, paginate, or count records from the cache, you M
 // It executes nodes at the same Kahn level in parallel via goroutines,
 // writing states to memory and pushing audit events to the observer.
 func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.ExecutionGraph, levels [][]string) error {
+	if e.Registry == nil {
+		e.InitRegistry()
+	}
+
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 

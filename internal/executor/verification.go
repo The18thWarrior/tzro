@@ -30,6 +30,8 @@ type VerificationResult struct {
 	PreCheckResult   string        `json:"structuralPreCheck"`          // "passed" | "failed"
 	Source           string        `json:"source"`                      // "local_precheck" | "cloud_verification"
 	ScatterItems     []ScatterSpec `json:"scatterItems,omitempty"`      // ADR-0071: missing items needing scatter probes
+	ReExplore        bool          `json:"reExplore,omitempty"`         // When true, upstream data collection was insufficient — re-run exploration
+	ReExploreHint    string        `json:"reExploreHint,omitempty"`     // Guidance for the re-explore phase (what data to collect)
 }
 
 // verificationRubricSchema is the JSON schema passed to the cloud model's
@@ -45,7 +47,9 @@ const verificationRubricSchema = `{
     "coherence": { "type": "number" },
     "completeness": { "type": "number" },
     "reason": { "type": "string" },
-    "reSynthesis": { "type": "string" }
+    "reSynthesis": { "type": "string" },
+    "reExplore": { "type": "boolean" },
+    "reExploreHint": { "type": "string" }
   },
   "required": ["accepted", "goalAlignment", "factualGrounding", "coherence", "completeness", "reason", "reSynthesis"]
 }`
@@ -195,7 +199,9 @@ Your job:
 - Set "accepted" to true if ALL scores >= 0.6
 - IMPORTANT: When setting "accepted" to false, you MUST provide a "reSynthesis" field containing a COMPLETE, COMPREHENSIVE replacement answer synthesized from the exploration context. The reSynthesis must be a full document that directly fulfills the goal — not a summary or brief note. It should be at least as long and detailed as the exploration context warrants. Never produce a short reSynthesis — the rejected output will be discarded and your reSynthesis will be used as the final output. When accepting, set reSynthesis to an empty string.
 
-Be strict but fair. Accept well-structured output that addresses the goal with minor gaps. Reject output containing meta-commentary about the task, fabricated data, or missing key requirements.`
+Be strict but fair. Accept well-structured output that addresses the goal with minor gaps. Reject output containing meta-commentary about the task, fabricated data, or missing key requirements.
+
+RE-EXPLORE DETECTION: If the output reports tool failures, query errors, or explores the local filesystem instead of answering the research question (e.g., "I searched for files but found no results", "The tool returned an error", meta-commentary about internal diagnostics), set "reExplore" to true and provide a "reExploreHint" describing what data needs to be collected. This signals that the data collection phase was insufficient and should be re-run — re-synthesis alone cannot fix a data gap. Only set reExplore when the failure is clearly about missing data, not about poor writing quality.`
 
 // Verify calls the cloud model to evaluate and optionally re-synthesize.
 func (v *DefaultCloudVerifier) Verify(ctx context.Context, goal, synthesis, refinedContext string) (*VerificationResult, error) {
@@ -334,6 +340,17 @@ func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthes
 	// Rejected — use re-synthesis if available
 	fmt.Fprintf(os.Stderr, "[VTE] REJECTED: %s (goal=%.2f, fact=%.2f, cohr=%.2f, comp=%.2f)\n",
 		vResult.Reason, vResult.GoalAlignment, vResult.FactualGrounding, vResult.Coherence, vResult.Completeness)
+
+	// Re-Explore: if the cloud verifier detected insufficient data collection
+	// (tool failures, filesystem exploration instead of web research, etc.),
+	// signal re-explore to the consuming strategy. Re-synthesis can't fix a
+	// data gap — the upstream exploration needs to be re-run.
+	if vResult.ReExplore {
+		fmt.Fprintf(os.Stderr, "[VTE] Re-explore signaled: %s\n", vResult.ReExploreHint)
+		vResult.PreCheckResult = "passed"
+		vResult.Source = "cloud_verification"
+		return synthesis, vResult, nil
+	}
 
 	if vResult.ReSynthesis != "" {
 		fmt.Fprintf(os.Stderr, "[VTE] Using cloud re-synthesis (%d chars)\n", len(vResult.ReSynthesis))

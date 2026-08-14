@@ -73,6 +73,7 @@ type ComparisonTask struct {
 	Tier        int      `json:"tier"`
 	Prompt      string   `json:"prompt"`
 	TargetPaths []string `json:"targetPaths,omitempty"`
+	Tags        []string `json:"tags,omitempty"` // Metadata for report slicing (e.g. "novel", "holdout")
 	// Code-generation specific fields (category=codegen)
 	Spec           string        `json:"spec,omitempty"`     // Specification for tzro_code
 	Filepath       string        `json:"filepath,omitempty"` // Target file path for code generation
@@ -83,10 +84,32 @@ type ComparisonTask struct {
 	ExpectedAnswer string        `json:"expectedAnswer,omitempty"` // Pre-computed ground truth for data analysis tasks
 }
 
+// JudgeOptions configures the LLM-as-judge evaluation.
+type JudgeOptions struct {
+	Endpoint string // Override judge API endpoint (for testing)
+	Category string // Task category for prompt selection
+	Model    string // OpenRouter model ID (e.g. "anthropic/claude-sonnet-4"); empty = default Gemini
+}
+
+// SuiteOptions configures a comparison benchmark run.
+type SuiteOptions struct {
+	Category      string       // "" = both docgen and codegen; or "docgen" / "codegen" for single category
+	Tier          int          // 0 = all tiers, 1-5 = specific tier
+	Condition     string       // "" = all conditions, or specific condition ID
+	TaskID        string       // "" = all tasks, or specific task ID
+	OutputDir     string       // Directory to write results
+	Pricing       PricingTable // Cloud model pricing
+	JudgeEndpoint string       // Override judge API endpoint (for testing)
+	ReactEndpoint string       // Override ReAct API endpoint (for testing)
+	JudgeModel    string       // OpenRouter model ID for judging; empty = default Gemini
+	Holdout       bool         // Load holdout tasks instead of development set
+}
+
 // ComparisonResult captures metrics for one condition × task execution run.
 type ComparisonResult struct {
 	TaskID        string               `json:"taskId"`
 	TaskTier      int                  `json:"taskTier"`
+	Holdout       bool                 `json:"holdout,omitempty"`
 	Condition     string               `json:"condition"`
 	CloudTokens   inference.TokenUsage `json:"cloudTokens"`
 	LocalTokens   inference.TokenUsage `json:"localTokens"`

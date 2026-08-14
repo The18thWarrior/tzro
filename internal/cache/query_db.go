@@ -216,10 +216,35 @@ func MaterializeDerivedTable(parentCacheID, sql, resultJSON string, taskID strin
 
 	tableName := sanitizeTableName(derivedID)
 
-	// Build CREATE TABLE — all columns as TEXT for derived tables
+	// Infer column types from the first record's values.
+	// Aggregation results (COUNT, SUM, AVG) come through as json.Number or
+	// float64 — storing them as TEXT causes lexicographic sorting artifacts
+	// (e.g., "9" > "214"). Detect numeric values and use INTEGER/REAL.
+	columnTypes := make(map[string]string, len(columns))
+	for _, col := range columns {
+		colType := "TEXT"
+		if val, ok := records[0][col]; ok && val != nil {
+			switch v := val.(type) {
+			case float64:
+				if v == float64(int64(v)) {
+					colType = "INTEGER"
+				} else {
+					colType = "REAL"
+				}
+			case json.Number:
+				if _, err := v.Int64(); err == nil {
+					colType = "INTEGER"
+				} else {
+					colType = "REAL"
+				}
+			}
+		}
+		columnTypes[col] = colType
+	}
+
 	var colDefs []string
 	for _, col := range columns {
-		colDefs = append(colDefs, fmt.Sprintf("%s TEXT", sanitizeColumnName(col)))
+		colDefs = append(colDefs, fmt.Sprintf("%s %s", sanitizeColumnName(col), columnTypes[col]))
 	}
 	createSQL := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", tableName, strings.Join(colDefs, ", "))
 
@@ -265,6 +290,34 @@ func MaterializeDerivedTable(parentCacheID, sql, resultJSON string, taskID strin
 			val, exists := record[col]
 			if !exists || val == nil {
 				values[i] = nil
+			} else if columnTypes[col] == "INTEGER" {
+				// Preserve numeric type for INTEGER columns
+				switch v := val.(type) {
+				case float64:
+					values[i] = int64(v)
+				case json.Number:
+					if n, err := v.Int64(); err == nil {
+						values[i] = n
+					} else {
+						values[i] = fmt.Sprintf("%v", val)
+					}
+				default:
+					values[i] = fmt.Sprintf("%v", val)
+				}
+			} else if columnTypes[col] == "REAL" {
+				// Preserve numeric type for REAL columns
+				switch v := val.(type) {
+				case float64:
+					values[i] = v
+				case json.Number:
+					if f, err := v.Float64(); err == nil {
+						values[i] = f
+					} else {
+						values[i] = fmt.Sprintf("%v", val)
+					}
+				default:
+					values[i] = fmt.Sprintf("%v", val)
+				}
 			} else {
 				values[i] = fmt.Sprintf("%v", val)
 			}

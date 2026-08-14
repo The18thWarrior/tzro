@@ -903,6 +903,9 @@ func RunProbe(
 				}
 				args = normalizeToolArguments(toolName, args)
 				args = rescueEmptyPathFromThought(toolName, args, chainStep.NextThought)
+				args = rescueRefFromThought(toolName, args, chainStep.NextThought)
+				args = rescueMaxCountFromThought(toolName, args, chainStep.NextThought)
+				args = rescueFileGlobFromThought(toolName, args, chainStep.NextThought)
 
 				// Inject probe goal into context so read_file can
 				// goal-compress large outputs (ADR-0019 extension).
@@ -1009,7 +1012,7 @@ func RunProbe(
 								}
 								var resultRows []map[string]interface{}
 								if err := json.Unmarshal([]byte(result), &resultRows); err == nil {
-									const maxEvidenceRows = 5
+									const maxEvidenceRows = 100
 									capped := len(resultRows) > maxEvidenceRows
 									totalRows := len(resultRows)
 									if capped {

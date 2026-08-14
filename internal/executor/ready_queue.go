@@ -35,6 +35,10 @@ const contextKeyNodeID contextKeyType = "nodeID"
 //
 // The method locks the engine mutex to prevent concurrent graph execution.
 func (e *ExecutionEngine) ExecuteGraphReactive(ctx context.Context, graph *compiler.ExecutionGraph) error {
+	if e.Registry == nil {
+		e.InitRegistry()
+	}
+
 	// ADR-0063: Background tasks must wait for all foreground activity to clear
 	// before acquiring compute resources. This prevents background work from
 	// competing with foreground tasks for the sidecar inference slot.

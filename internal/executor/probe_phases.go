@@ -55,6 +55,13 @@ func RunProbePhases(
 // buildProbePhaseRunner constructs a PhaseRunner with the Probe-specific
 // phase template from the design spec.
 func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
+	// Route to web-specific template when AllowedTools is web-only.
+	// Detection: contains web_search or web_browse, and does NOT contain
+	// any filesystem tools (read_file, list_dir, search_files).
+	if isWebOnlyProbe(config.AllowedTools) {
+		return buildWebProbePhaseRunner(config)
+	}
+
 	// Determine tool sets for each phase based on config.AllowedTools
 	orientTools := filterTools(config.AllowedTools, []string{"list_dir", "search_files"})
 	discoverTools := filterTools(config.AllowedTools, []string{"list_dir", "search_files", "read_file"})
@@ -195,6 +202,70 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	return runner
 }
 
+
+// buildWebProbePhaseRunner constructs a PhaseRunner with a 2-phase template
+// designed for web research probes: Search → Browse.
+//
+// Unlike the codebase probe template (orient → discover → deep_read), web
+// research has no filesystem navigation. The search phase issues diverse
+// queries; the browse phase reads top results and extracts structured facts.
+func buildWebProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
+	fmt.Fprintf(os.Stderr, "[ProbePhases] Using web-specific phase template (search → browse)\n")
+
+	var searchesDone int
+
+	runner := &PhaseRunner{
+		// No ToolFixup needed — web tools are stateless, no deduplication required.
+		Phases: map[string]*Phase{
+			"search": {
+				Name:         "search",
+				AllowedTools: filterTools(config.AllowedTools, []string{"web_search"}),
+				SystemPrompt: buildPhaseProbePrompt("search", config.Goal, config.TaskContext),
+				StepBudget:   4,
+				MinToolCalls: 2, // At least 2 search queries for source diversity
+				Pass1Target:  TargetRouter,
+				Recovery: PhaseRecovery{
+					MaxRetries:   1,
+					OnExhaustion: ExhaustionSkip,
+					OnError:      ErrorFail,
+				},
+				Transition: func(step int, result PhaseResult, err error) string {
+					for _, tool := range result.ToolsCalled {
+						if tool == "web_search" {
+							searchesDone++
+						}
+					}
+					if searchesDone >= 2 {
+						return "browse"
+					}
+					return ""
+				},
+			},
+			"browse": {
+				Name:         "browse",
+				AllowedTools: filterTools(config.AllowedTools, []string{"web_search", "web_browse"}),
+				SystemPrompt: buildPhaseProbePrompt("browse", config.Goal, config.TaskContext),
+				StepBudget:   8,
+				MinToolCalls: 3, // Browse at least 3 sources for substantive content
+				Pass1Target:  TargetRouter,
+				Recovery: PhaseRecovery{
+					MaxRetries:   0,
+					OnExhaustion: ExhaustionSkip,
+					OnError:      ErrorFail,
+				},
+				Transition: func(step int, result PhaseResult, err error) string {
+					return "" // terminal — synthesis handled by downstream recall/synthesis node
+				},
+			},
+		},
+		InitialPhase: "search",
+		MaxCycles:    2,
+		Goal:         config.Goal,
+	}
+
+	return runner
+}
+
 // buildPhaseProbePrompt constructs a phase-specific system prompt for Probe nodes.
 func buildPhaseProbePrompt(phase, goal, taskContext string) string {
 	var b strings.Builder
@@ -216,6 +287,16 @@ func buildPhaseProbePrompt(phase, goal, taskContext string) string {
 		b.WriteString("You are producing a final synthesis of your exploration findings. ")
 		b.WriteString("PHASE: SYNTHESIZE — produce a comprehensive, accurate response. ")
 		b.WriteString("You have NO tools. Use only the accumulated phase results. ")
+	case "search":
+		b.WriteString("You are conducting web research to find authoritative sources. ")
+		b.WriteString("PHASE: SEARCH — issue diverse search queries to find primary sources, official documentation, and authoritative references. ")
+		b.WriteString("Use web_search ONLY. Issue at least 2 different search queries covering different aspects of the topic. ")
+		b.WriteString("Do NOT synthesize yet — focus on finding sources. ")
+	case "browse":
+		b.WriteString("You are extracting structured information from web sources. ")
+		b.WriteString("PHASE: BROWSE — read the most relevant URLs from your search results and extract key facts, data, and quotes. ")
+		b.WriteString("Use web_browse to read pages and web_search for follow-up queries. ")
+		b.WriteString("Focus on extracting verifiable facts with source attribution. Do NOT fabricate information. ")
 	}
 
 	b.WriteString(fmt.Sprintf("\n\nGoal: %s", goal))
@@ -238,9 +319,11 @@ func filterTools(available []string, allowed []string) []string {
 			filtered = append(filtered, t)
 		}
 	}
-	// If no overlap, return the allowed set as default
+	// If no overlap, return the probe's configured tools (available) rather
+	// than the phase's hardcoded preferences (allowed). The probe's AllowedTools
+	// is the authoritative constraint — phase preferences are advisory.
 	if len(filtered) == 0 {
-		return allowed
+		return available
 	}
 	return filtered
 }

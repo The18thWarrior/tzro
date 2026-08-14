@@ -679,7 +679,6 @@ func TestRunProbe_AdaptiveMinStepAllowsEarlySynthesis(t *testing.T) {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 	}
-	os.Setenv("TZRO_DIR", tempDir)
 
 	// Mock engine: 8 tool call responses + synthesis signal + synthesis pass.
 	// Note: The tool calls will fail because the paths are in a different tempDir

@@ -22,6 +22,8 @@ var (
 	compareTask        string
 	comparePromptPrice float64
 	compareComplPrice  float64
+	compareJudgeModel  string
+	compareHoldout     bool
 )
 
 var compareCmd = &cobra.Command{
@@ -84,6 +86,11 @@ var compareCmd = &cobra.Command{
 
 		fmt.Fprintf(out, "=== COMPARISON BENCHMARK ===\n")
 		fmt.Fprintf(out, "Output:     %s\n", compareOutputDir)
+		if compareHoldout {
+			fmt.Fprintf(out, "Task Set:   Holdout (generalization test)\n")
+		} else {
+			fmt.Fprintf(out, "Task Set:   Development\n")
+		}
 		if compareCategory != "" {
 			fmt.Fprintf(out, "Category:   %s only\n", compareCategory)
 		} else {
@@ -101,6 +108,11 @@ var compareCmd = &cobra.Command{
 		}
 		if compareTask != "" {
 			fmt.Fprintf(out, "Task:       %s only\n", compareTask)
+		}
+		if compareJudgeModel != "" {
+			fmt.Fprintf(out, "Judge:      %s (via OpenRouter)\n", compareJudgeModel)
+		} else {
+			fmt.Fprintf(out, "Judge:      Default (Gemini)\n")
 		}
 		fmt.Fprintf(out, "Pricing:    $%.4f/1K prompt, $%.4f/1K completion\n", pricing.PromptPer1KTokens, pricing.CompletionPer1KTokens)
 		fmt.Fprintf(out, "Time:       %s\n", time.Now().Format("2006-01-02 15:04:05"))
@@ -134,6 +146,8 @@ var compareCmd = &cobra.Command{
 			TaskID:    compareTask,
 			OutputDir: compareOutputDir,
 			Pricing:   pricing,
+			JudgeModel: compareJudgeModel,
+			Holdout:    compareHoldout,
 		}
 
 		executor.GlobalEngine.InitRegistry()
@@ -185,6 +199,8 @@ func init() {
 	compareCmd.Flags().IntVarP(&compareTier, "tier", "t", 0, "Run a specific tier (1-5), or 0 for all")
 	compareCmd.Flags().StringVarP(&compareCondition, "condition", "c", "", "Run a specific condition (cloud_react, local_react, cloud_dag, local_only, cooperative, tzro_code, cloud_code)")
 	compareCmd.Flags().StringVar(&compareTask, "task", "", "Run a specific task ID")
+	compareCmd.Flags().StringVar(&compareJudgeModel, "judge-model", "", "OpenRouter model ID for judging (e.g. anthropic/claude-sonnet-4). Requires OPENROUTER_API_KEY env var.")
+	compareCmd.Flags().BoolVar(&compareHoldout, "holdout", false, "Run holdout benchmark tasks instead of the development set")
 	compareCmd.Flags().Float64Var(&comparePromptPrice, "prompt-price", defaultPricing.PromptPer1KTokens, "Price per 1K prompt tokens (USD)")
 	compareCmd.Flags().Float64Var(&compareComplPrice, "completion-price", defaultPricing.CompletionPer1KTokens, "Price per 1K completion tokens (USD)")
 

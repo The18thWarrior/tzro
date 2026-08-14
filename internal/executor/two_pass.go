@@ -25,6 +25,9 @@ import (
 // TwoPassActionSchema is the GBNF-constrained JSON schema for the extraction
 // pass (Pass 2). Intentionally minimal — just action, tool, arguments.
 // The reasoning, confidence, and synthesis fields belong to Pass 1.
+// NOTE: This constant is retained for backward compatibility (tests, JSON
+// validation). Production code uses buildExtractionSchema which injects an
+// enum constraint on the "tool" field from allowedTools.
 const TwoPassActionSchema = `{
 	"type": "object",
 	"properties": {
@@ -45,6 +48,7 @@ const TwoPassActionSchema = `{
 // are empty). This fixes the ADR-0065 regression where the Router
 // over-classified Worker reasoning as "synthesize" (R-12: 0 edge entries
 // across all 5 tasks vs R-9: 63 edge entries when both passes ran on Worker).
+// NOTE: Retained for backward compatibility. Production uses buildExtractionSchema.
 const TwoPassToolOnlySchema = `{
 	"type": "object",
 	"properties": {
@@ -57,6 +61,46 @@ const TwoPassToolOnlySchema = `{
 	},
 	"required": ["action", "tool", "arguments"]
 }`
+
+// buildExtractionSchema dynamically builds the GBNF JSON schema with the
+// "tool" field constrained to an enum of allowedTools. This prevents the
+// model from hallucinating invalid tool names (e.g., "go get", "text_analysis")
+// at the grammar level — the GBNF physically cannot produce tokens outside
+// the enum values.
+//
+// When allowedTools is empty, falls back to unconstrained "type": "string".
+func buildExtractionSchema(allowedTools []string, forceTool bool) string {
+	// Build action enum
+	actionEnum := `["tool_call", "synthesize"]`
+	if forceTool {
+		actionEnum = `["tool_call"]`
+	}
+
+	// Build tool constraint — enum if we have allowed tools, plain string otherwise
+	toolConstraint := `{ "type": "string" }`
+	if len(allowedTools) > 0 {
+		// Build JSON array of tool names
+		quoted := make([]string, len(allowedTools))
+		for i, t := range allowedTools {
+			b, _ := json.Marshal(t) // JSON-safe quoting
+			quoted[i] = string(b)
+		}
+		toolConstraint = fmt.Sprintf(`{ "type": "string", "enum": [%s] }`, strings.Join(quoted, ", "))
+	}
+
+	return fmt.Sprintf(`{
+	"type": "object",
+	"properties": {
+		"action": {
+			"type": "string",
+			"enum": %s
+		},
+		"tool": %s,
+		"arguments": { "type": "object" }
+	},
+	"required": ["action", "tool", "arguments"]
+}`, actionEnum, toolConstraint)
+}
 
 // extractToolAction runs the GBNF-constrained extraction pass (Pass 2) on
 // reasoning output from Pass 1. It determines: call a tool, or synthesize?
@@ -101,13 +145,15 @@ func extractToolAction(
 	}
 
 	// Select schema and prompt based on forceTool mode.
-	var systemPrompt, schema string
+	// Schema is built dynamically to constrain the "tool" field to an enum
+	// of allowedTools — prevents hallucinated tool names at the GBNF level.
+	schema := buildExtractionSchema(allowedTools, forceTool)
+	var systemPrompt string
 	if forceTool {
 		systemPrompt = fmt.Sprintf(
 			"You are a precise action extractor.%s Given the reasoning below, extract the tool call: "+
 				"select a tool from [%s] and extract its SPECIFIC arguments from the reasoning. "+
 				"Do NOT leave arguments empty. Output ONLY the JSON object.", goalCtx, toolList)
-		schema = TwoPassToolOnlySchema
 	} else {
 		systemPrompt = fmt.Sprintf(
 			"You are a precise action extractor.%s Given the reasoning below, determine the action: "+
@@ -115,7 +161,6 @@ func extractToolAction(
 				"do NOT leave arguments empty, extract the actual parameters from the reasoning) "+
 				"or 'synthesize' (if the reasoning indicates all information has been gathered). "+
 				"Output ONLY the JSON object.", goalCtx, toolList)
-		schema = TwoPassActionSchema
 	}
 
 	messages := []inference.InferenceMessage{
@@ -149,8 +194,9 @@ func extractToolAction(
 		return "", "", nil, fmt.Errorf("two-pass extraction produced empty tool name")
 	}
 
-	// Validate tool name against allowed list — the 4B model sometimes
-	// sets tool="tool_call" (the action type) instead of an actual tool name.
+	// Defense-in-depth: validate tool name against allowed list.
+	// With the GBNF enum constraint this should rarely fire, but keeps
+	// the safety net for edge cases (e.g., empty allowedTools, grammar bugs).
 	if len(allowedTools) > 0 {
 		validTool := false
 		for _, t := range allowedTools {
@@ -161,7 +207,7 @@ func extractToolAction(
 		}
 		if !validTool {
 			// Fall back to first allowed tool with any args extracted
-			fmt.Fprintf(os.Stderr, "[TwoPass] Invalid tool %q — falling back to %q\n",
+			fmt.Fprintf(os.Stderr, "[TwoPass] Invalid tool %q — falling back to %q (defense-in-depth)\n",
 				parsed.Tool, allowedTools[0])
 			parsed.Tool = allowedTools[0]
 		}
