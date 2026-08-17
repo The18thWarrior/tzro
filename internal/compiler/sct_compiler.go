@@ -80,6 +80,34 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				}
 			}
 
+			// Auto-wire DynamicBindings for document sink tools (e.g. write_file)
+			// when following upstream probe, analyze, recall, or synthesis nodes.
+			// The content parameter binds directly to upstream synthesis output,
+			// allowing ADR-0030 Proactive Splice to strip content from the validator schema
+			// and splice the full text deterministically after path extraction.
+			if node.Action == "write_file" {
+				if node.DynamicBindings == nil {
+					node.DynamicBindings = make(map[string]interface{})
+				}
+				if _, hasContent := node.DynamicBindings["content"]; !hasContent {
+					for _, edge := range graph.Edges {
+						if edge.TargetID == node.ID {
+							upstreamID := edge.SourceID
+							for _, orig := range graph.Nodes {
+								if orig.ID == upstreamID {
+									if orig.Type == "probe" || orig.Type == "analyze" || orig.Type == "recall" || orig.Type == "synthesis" || isSynthesisGoal(orig.Instructions) {
+										node.DynamicBindings["content"] = fmt.Sprintf("%s.output", upstreamID)
+										fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-wired DynamicBinding content for %s -> %s.output\n", node.ID, upstreamID)
+									}
+									break
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+
 			// 1. Semantic Validator node
 			threshold := node.ActivationThreshold
 			if (node.Type == "synthesis" || isSynthesisGoal(node.Instructions)) && threshold < 0.9 {
@@ -291,12 +319,26 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 						}
 					}
 
+					shouldInjectRecall := true
 					if isTerminalAnalyze {
-						// Terminal analyze — no Recall. Map directly.
+						shouldInjectRecall = false
+					} else if discoveryNodesCount > 1 {
+						// ADR-0079: Dependency-Gated Recall Injection for multi-probe graphs.
+						// In multi-probe exploration graphs, only inject intermediate Recall if
+						// this probe directly feeds an intermediate Tool Sink or dynamic branch.
+						feedsToolSink := probeFeedsToolSinkInGraph(graph, node.ID)
+						if !feedsToolSink {
+							shouldInjectRecall = false
+							fmt.Fprintf(os.Stderr, "[Compiler] Multi-probe graph (%d discovery nodes): probe %s does not feed a tool sink. Skipping intermediate Recall injection.\n", discoveryNodesCount, node.ID)
+						}
+					}
+
+					if !shouldInjectRecall {
+						// Terminal analyze or intermediate probe in multi-probe exploration fan-out — no Recall. Map directly.
 						execNodeMap[node.ID] = node.ID
 						bridgeNodeMap[node.ID] = node.ID
 					} else {
-						// Inject Recall Node to align discovery findings (ADR-0038)
+						// Inject Recall Node to align discovery findings (ADR-0038, ADR-0079)
 						recallID := node.ID + "_recall"
 						recallThreshold := 0.9
 						if isBenchmark {
@@ -382,18 +424,38 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 
 	// 3. Inject terminal synthesis node
-	// Planning Awareness: Check if the graph already ends in a synthesis-type node.
-	// If the planner manually added a synthesis step at the end, we don't need a double summary.
-	hasSynthesisLeaf := false
+	// Per-leaf classification: inject terminal_synthesis iff any terminal leaf
+	// is neither a write/save sink nor already a synthesis/recall type node.
+	// ADR-run32: hasSynthesisLeaf + isSynthesisGoal(instructions) caused false
+	// positives when an analyze node with "synthesize" in its instructions became
+	// a leaf, suppressing synthesis injection for actual exec leaves.
+	var leafNodes []GraphNode
 	for _, node := range sctNodes {
-		if (node.Type == "synthesis" || isSynthesisGoal(node.Instructions)) && !isSourceMap[node.ID] {
-			hasSynthesisLeaf = true
+		if !isSourceMap[node.ID] {
+			leafNodes = append(leafNodes, node)
+		}
+	}
+
+	needsSynthesis := false
+	for _, leaf := range leafNodes {
+		isSink := isToolSinkNode(leaf)
+		isSynthType := leaf.Type == "synthesis" || leaf.Type == "recall"
+		isCacheAnalyze := leaf.Type == "analyze" && leaf.ProbeConfig != nil && leaf.ProbeConfig.SourceHint == "cache"
+		if !isSink && !isSynthType && !isCacheAnalyze {
+			needsSynthesis = true
 			break
 		}
 	}
 
+	allLeavesAreToolSinks := len(leafNodes) > 0 && !needsSynthesis
+	for _, leaf := range leafNodes {
+		if !isToolSinkNode(leaf) {
+			allLeavesAreToolSinks = false
+			break
+		}
+	}
 
-	if !hasSynthesisLeaf {
+	if needsSynthesis {
 		synthID := "terminal_synthesis"
 		synthThreshold := 0.7
 		if isBenchmark {
@@ -416,6 +478,8 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				})
 			}
 		}
+	} else if allLeavesAreToolSinks {
+		fmt.Printf("[Compiler] All terminal leaves are tool sinks (%d leaves). Skipping automatic terminal_synthesis injection.\n", len(leafNodes))
 	} else {
 		fmt.Printf("[Compiler] Graph already has a synthesis leaf. Skipping automatic terminal_synthesis injection.\n")
 	}
@@ -915,3 +979,66 @@ func hasWebToolsInAllowed(tools []string) bool {
 	}
 	return false
 }
+
+func isToolSinkAction(action string) bool {
+	switch action {
+	case "write_file", "patch_file", "edit_file", "replace_file_content", "append_file",
+		"save_memory", "save_artifact", "postgres_insert", "db_insert", "db_query_exec",
+		"git_commit":
+		return true
+	default:
+		return false
+	}
+}
+
+func isToolSinkNode(node GraphNode) bool {
+	if isToolSinkAction(node.Action) {
+		return true
+	}
+	if node.Type == "deterministic" || node.Type == "action" {
+		if strings.HasPrefix(node.Action, "write_") || strings.HasPrefix(node.Action, "save_") || strings.HasPrefix(node.Action, "patch_") || strings.HasPrefix(node.Action, "edit_") {
+			return true
+		}
+	}
+	return false
+}
+
+func probeFeedsToolSinkInGraph(graph *ExecutionGraph, probeNodeID string) bool {
+	if graph == nil {
+		return false
+	}
+	visited := make(map[string]bool)
+	var queue []string
+
+	for _, edge := range graph.Edges {
+		if edge.SourceID == probeNodeID {
+			queue = append(queue, edge.TargetID)
+		}
+	}
+
+	for len(queue) > 0 {
+		currID := queue[0]
+		queue = queue[1:]
+		if visited[currID] {
+			continue
+		}
+		visited[currID] = true
+
+		for _, n := range graph.Nodes {
+			if n.ID == currID {
+				if isToolSinkAction(n.Action) {
+					return true
+				}
+				if n.Type == "action" {
+					for _, edge := range graph.Edges {
+						if edge.SourceID == currID {
+							queue = append(queue, edge.TargetID)
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+

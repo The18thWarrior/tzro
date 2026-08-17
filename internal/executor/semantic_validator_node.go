@@ -130,13 +130,11 @@ func (e *ExecutionEngine) runSemanticValidatorCore(
 			if useCloud {
 				xmlResult, err = retryWithCloud(ctx, msgs, schemaStr, taskID)
 			} else {
-				// Executor Pass 1 (XML extraction): enable thinking mode for
-				// this single-shot call. The model reasons once about accumulated
-				// context before producing the tool call — high ROI vs probe
-				// where thinking multiplies across 15-20 steps.
-				thinkCtx := context.WithValue(ctx, inference.ThinkingEnabledKey, true)
-				thinkCtx = context.WithValue(thinkCtx, inference.MaxTokensKey, 4096)
-				xmlResult, err = inference.ExecuteWorkerStructured(thinkCtx, req)
+				// Executor Pass 1 (XML extraction): standard structured extraction
+				// without thinking mode. Validator nodes perform deterministic
+				// translation and parameter extraction — not open-ended reasoning.
+				pass1Ctx := context.WithValue(ctx, inference.MaxTokensKey, 4096)
+				xmlResult, err = inference.ExecuteWorkerStructured(pass1Ctx, req)
 			}
 
 			if err != nil {

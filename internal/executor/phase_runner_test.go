@@ -124,21 +124,14 @@ func (m *MockPhaseEngine) InferMessages(ctx context.Context, messages []inferenc
 func TestPhaseRunner_SinglePhase_ExecutesAndReturnsResult(t *testing.T) {
 	engine := NewMockPhaseEngine()
 	engine.PhaseResponses["test_phase"] = []MockPhaseStep{
-		{
-			Reasoning:  "I should list the directory to orient myself.\n<ACTION>{\"tool\":\"list_dir\",\"arguments\":{\"path\":\"/tmp\"}}</ACTION>",
-			ToolName:   "list_dir",
-			ToolArgs:   map[string]interface{}{"path": "/tmp"},
-			ToolResult: "file1.go\nfile2.go",
-		},
-		{
-			Reasoning:  "Found files, let me read one.\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"/tmp/file1.go\"}}</ACTION>",
-			ToolName:   "read_file",
-			ToolArgs:   map[string]interface{}{"path": "/tmp/file1.go"},
-			ToolResult: "package main\nfunc main() {}",
-		},
+		{Reasoning: "Final synthesis report"},
 	}
 
-	// Create a single-phase runner
+	items := []QueueItem{
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/tmp"}},
+		{Tool: "read_file", Args: map[string]interface{}{"path": "/tmp/file1.go"}},
+	}
+
 	runner := &PhaseRunner{
 		Phases: map[string]*Phase{
 			"test_phase": {
@@ -147,13 +140,13 @@ func TestPhaseRunner_SinglePhase_ExecutesAndReturnsResult(t *testing.T) {
 				SystemPrompt: "You are exploring a codebase.",
 				StepBudget:   3,
 				Pass1Target:  TargetWorker,
+				Driver:       NewDeterministicQueueDriver(items),
 				Recovery: PhaseRecovery{
 					MaxRetries:   0,
 					OnExhaustion: ExhaustionSkip,
 					OnError:      ErrorFail,
 				},
 				Transition: func(step int, result PhaseResult, err error) string {
-					// Terminal phase — never transitions
 					return ""
 				},
 			},
@@ -180,9 +173,9 @@ func TestPhaseRunner_SinglePhase_ExecutesAndReturnsResult(t *testing.T) {
 		t.Errorf("expected PhaseName='test_phase', got %q", result.PhaseName)
 	}
 
-	// Should have used 3 steps (2 tool steps + 1 synthesis step)
-	if result.StepsUsed != 3 {
-		t.Errorf("expected StepsUsed=3, got %d", result.StepsUsed)
+	// Should have used 2 steps
+	if result.StepsUsed != 2 {
+		t.Errorf("expected StepsUsed=2, got %d", result.StepsUsed)
 	}
 
 	// ToolsCalled should contain the tools we used
@@ -201,13 +194,12 @@ func TestPhaseRunner_SinglePhase_ExecutesAndReturnsResult(t *testing.T) {
 // producing tool calls.
 func TestPhaseRunner_SinglePhase_RespectsStepBudget(t *testing.T) {
 	engine := NewMockPhaseEngine()
-	// Provide more steps than the budget allows
-	engine.PhaseResponses["bounded"] = []MockPhaseStep{
-		{Reasoning: "step 1", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/"}, ToolResult: "a/"},
-		{Reasoning: "step 2", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/a"}, ToolResult: "b/"},
-		{Reasoning: "step 3", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/a/b"}, ToolResult: "c/"},
-		{Reasoning: "step 4", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/a/b/c"}, ToolResult: "d/"},
-		{Reasoning: "step 5", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/a/b/c/d"}, ToolResult: "e/"},
+	items := []QueueItem{
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/"}},
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/a"}},
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/a/b"}},
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/a/b/c"}},
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/a/b/c/d"}},
 	}
 
 	runner := &PhaseRunner{
@@ -218,6 +210,7 @@ func TestPhaseRunner_SinglePhase_RespectsStepBudget(t *testing.T) {
 				SystemPrompt: "Explore.",
 				StepBudget:   2, // Only allow 2 steps
 				Pass1Target:  TargetRouter,
+				Driver:       NewDeterministicQueueDriver(items),
 				Recovery: PhaseRecovery{
 					OnExhaustion: ExhaustionSkip,
 					OnError:      ErrorFail,
@@ -239,7 +232,7 @@ func TestPhaseRunner_SinglePhase_RespectsStepBudget(t *testing.T) {
 		t.Fatalf("expected 1 PhaseResult, got %d", len(results))
 	}
 
-	// Should stop at budget (2), not process all 5 mock steps
+	// Should stop at budget (2)
 	if results[0].StepsUsed > 2 {
 		t.Errorf("expected StepsUsed ≤ 2, got %d", results[0].StepsUsed)
 	}
@@ -250,24 +243,11 @@ func TestPhaseRunner_SinglePhase_RespectsStepBudget(t *testing.T) {
 func TestPhaseRunner_TwoPhaseTransition_CarriesContext(t *testing.T) {
 	engine := NewMockPhaseEngine()
 
-	// Orient phase: 1 step then transition
-	engine.PhaseResponses["orient"] = []MockPhaseStep{
-		{
-			Reasoning:  "Listing top-level directory.\n<ACTION>{\"tool\":\"list_dir\",\"arguments\":{\"path\":\"/project\"}}</ACTION>",
-			ToolName:   "list_dir",
-			ToolArgs:   map[string]interface{}{"path": "/project"},
-			ToolResult: "src/\ndocs/\nREADME.md",
-		},
+	orientItems := []QueueItem{
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/project"}},
 	}
-
-	// Discover phase: 1 step then synthesize
-	engine.PhaseResponses["discover"] = []MockPhaseStep{
-		{
-			Reasoning:  "Reading README for overview.\n<ACTION>{\"tool\":\"read_file\",\"arguments\":{\"path\":\"/project/README.md\"}}</ACTION>",
-			ToolName:   "read_file",
-			ToolArgs:   map[string]interface{}{"path": "/project/README.md"},
-			ToolResult: "# My Project\nA Go toolkit.",
-		},
+	discoverItems := []QueueItem{
+		{Tool: "read_file", Args: map[string]interface{}{"path": "/project/README.md"}},
 	}
 
 	orientTransitioned := false
@@ -279,12 +259,12 @@ func TestPhaseRunner_TwoPhaseTransition_CarriesContext(t *testing.T) {
 				SystemPrompt: "Orient: scan top-level structure.",
 				StepBudget:   3,
 				Pass1Target:  TargetRouter,
+				Driver:       NewDeterministicQueueDriver(orientItems),
 				Recovery: PhaseRecovery{
 					OnExhaustion: ExhaustionSkip,
 					OnError:      ErrorFail,
 				},
 				Transition: func(step int, result PhaseResult, err error) string {
-					// Transition to discover after any list_dir call
 					for _, tool := range result.ToolsCalled {
 						if tool == "list_dir" {
 							orientTransitioned = true
@@ -300,6 +280,7 @@ func TestPhaseRunner_TwoPhaseTransition_CarriesContext(t *testing.T) {
 				SystemPrompt: "Discover: read key files.",
 				StepBudget:   5,
 				Pass1Target:  TargetRouter,
+				Driver:       NewDeterministicQueueDriver(discoverItems),
 				Recovery: PhaseRecovery{
 					OnExhaustion: ExhaustionSkip,
 					OnError:      ErrorFail,
@@ -346,24 +327,6 @@ func TestPhaseRunner_TwoPhaseTransition_CarriesContext(t *testing.T) {
 	if results[1].Summary == "" {
 		t.Error("expected discover phase summary to be non-empty")
 	}
-
-	// Verify the engine received calls for both phases
-	orientCalls := 0
-	discoverCalls := 0
-	for _, call := range engine.CallLog {
-		switch call.PhaseName {
-		case "orient":
-			orientCalls++
-		case "discover":
-			discoverCalls++
-		}
-	}
-	if orientCalls == 0 {
-		t.Error("expected at least 1 inference call during orient phase")
-	}
-	if discoverCalls == 0 {
-		t.Error("expected at least 1 inference call during discover phase")
-	}
 }
 
 // TestPhaseRunner_ThreePhaseSequential tests a simple linear pipeline
@@ -371,14 +334,11 @@ func TestPhaseRunner_TwoPhaseTransition_CarriesContext(t *testing.T) {
 func TestPhaseRunner_ThreePhaseSequential(t *testing.T) {
 	engine := NewMockPhaseEngine()
 
-	engine.PhaseResponses["orient"] = []MockPhaseStep{
-		{Reasoning: "scan", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/"}, ToolResult: "a/ b/"},
+	orientItems := []QueueItem{
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/"}},
 	}
-	engine.PhaseResponses["discover"] = []MockPhaseStep{
-		{Reasoning: "read", ToolName: "read_file", ToolArgs: map[string]interface{}{"path": "/a"}, ToolResult: "content"},
-	}
-	engine.PhaseResponses["synthesize"] = []MockPhaseStep{
-		// No tools — synthesize phase has no tools, should immediately synthesize
+	discoverItems := []QueueItem{
+		{Tool: "read_file", Args: map[string]interface{}{"path": "/a"}},
 	}
 
 	runner := &PhaseRunner{
@@ -386,6 +346,7 @@ func TestPhaseRunner_ThreePhaseSequential(t *testing.T) {
 			"orient": {
 				Name: "orient", AllowedTools: []string{"list_dir"}, SystemPrompt: "Orient.",
 				StepBudget: 2, Pass1Target: TargetRouter,
+				Driver:     NewDeterministicQueueDriver(orientItems),
 				Recovery:   PhaseRecovery{OnExhaustion: ExhaustionSkip, OnError: ErrorFail},
 				Transition: func(step int, result PhaseResult, err error) string {
 					if len(result.ToolsCalled) > 0 {
@@ -397,6 +358,7 @@ func TestPhaseRunner_ThreePhaseSequential(t *testing.T) {
 			"discover": {
 				Name: "discover", AllowedTools: []string{"read_file"}, SystemPrompt: "Discover.",
 				StepBudget: 3, Pass1Target: TargetRouter,
+				Driver:     NewDeterministicQueueDriver(discoverItems),
 				Recovery:   PhaseRecovery{OnExhaustion: ExhaustionSkip, OnError: ErrorFail},
 				Transition: func(step int, result PhaseResult, err error) string {
 					if len(result.ToolsCalled) > 0 {
@@ -408,6 +370,7 @@ func TestPhaseRunner_ThreePhaseSequential(t *testing.T) {
 			"synthesize": {
 				Name: "synthesize", AllowedTools: []string{}, SystemPrompt: "Synthesize findings.",
 				StepBudget: 1, Pass1Target: TargetWorker,
+				Driver:     NewDeterministicQueueDriver(nil),
 				Recovery:   PhaseRecovery{OnExhaustion: ExhaustionSkip, OnError: ErrorFail},
 				Transition: func(step int, result PhaseResult, err error) string { return "" },
 			},
@@ -442,11 +405,10 @@ func TestPhaseRunner_ThreePhaseSequential(t *testing.T) {
 // cleanly (no error) since there's no transition to a next phase.
 func TestPhaseRunner_ExhaustionSkip_SkipsPhaseOnBudgetExhaustion(t *testing.T) {
 	engine := NewMockPhaseEngine()
-
-	engine.PhaseResponses["orient"] = []MockPhaseStep{
-		{Reasoning: "s1", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/"}, ToolResult: "a/"},
-		{Reasoning: "s2", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/a"}, ToolResult: "b/"},
-		{Reasoning: "s3", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/b"}, ToolResult: "c/"},
+	items := []QueueItem{
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/"}},
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/a"}},
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/b"}},
 	}
 
 	runner := &PhaseRunner{
@@ -454,6 +416,7 @@ func TestPhaseRunner_ExhaustionSkip_SkipsPhaseOnBudgetExhaustion(t *testing.T) {
 			"orient": {
 				Name: "orient", AllowedTools: []string{"list_dir"}, SystemPrompt: "Orient.",
 				StepBudget: 2, Pass1Target: TargetRouter,
+				Driver:     NewDeterministicQueueDriver(items),
 				Recovery:   PhaseRecovery{OnExhaustion: ExhaustionSkip, OnError: ErrorFail},
 				Transition: func(step int, result PhaseResult, err error) string {
 					// Never triggers — budget exhausts first
@@ -487,9 +450,9 @@ func TestPhaseRunner_ExhaustionSkip_SkipsPhaseOnBudgetExhaustion(t *testing.T) {
 // OnExhaustion=Fail returns an error when budget is exhausted.
 func TestPhaseRunner_ExhaustionFail_ReturnsError(t *testing.T) {
 	engine := NewMockPhaseEngine()
-	engine.PhaseResponses["critical"] = []MockPhaseStep{
-		{Reasoning: "s1", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/"}, ToolResult: "a/"},
-		{Reasoning: "s2", ToolName: "list_dir", ToolArgs: map[string]interface{}{"path": "/a"}, ToolResult: "b/"},
+	items := []QueueItem{
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/"}},
+		{Tool: "list_dir", Args: map[string]interface{}{"path": "/a"}},
 	}
 
 	runner := &PhaseRunner{
@@ -497,6 +460,7 @@ func TestPhaseRunner_ExhaustionFail_ReturnsError(t *testing.T) {
 			"critical": {
 				Name: "critical", AllowedTools: []string{"list_dir"}, SystemPrompt: "Must complete.",
 				StepBudget: 1, Pass1Target: TargetRouter,
+				Driver:     NewDeterministicQueueDriver(items),
 				Recovery: PhaseRecovery{
 					OnExhaustion: ExhaustionFail,
 					OnError:      ErrorFail,

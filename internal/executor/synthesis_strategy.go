@@ -69,7 +69,11 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 	}
 
 	// ADR-0067: Verified Task Execution for terminal synthesis nodes.
-	if graph.GoalPrompt != "" {
+	// Skip VTE for source_code nodes — the CompilationGateHook handles quality
+	// validation for code. VTE text re-synthesis would consume cloud tokens that
+	// block the post-DAG compilation repair gate (conditions.go:840 checks
+	// TotalTokens == 0). See codegen regression analysis (run 28→33).
+	if graph.GoalPrompt != "" && node.OutputFormat != "source_code" {
 		finalSynthesis, _, vErr := VerifyTaskOutput(
 			ctx,
 			&DefaultCloudVerifier{},

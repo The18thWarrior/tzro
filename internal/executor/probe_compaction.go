@@ -151,9 +151,13 @@ func compactThoughtChain(ctx context.Context, probeID, taskID string, currentSte
 		}
 	}
 
-	// Use RouterEngine for reasoning compression (fast, cheap via 1B router).
-	// Tool outputs are handled deterministically — never LLM-compressed.
-	compactEngine := &compactor.RouterEngine{}
+	// ADR-benchmark-30: Disable LLM reasoning compression. Edge thoughts
+	// contain non-actionable reasoning ("I should synthesize...") that the
+	// router LLM inflates rather than compresses (50% of tasks in run 30
+	// showed content inflation, e.g. 1,415→4,877 chars). Deterministic-only
+	// mode preserves tool outputs (the actual value) without LLM overhead.
+	// Tool outputs are always handled deterministically regardless of engine.
+	var compactEngine compactor.CompactEngine // nil = deterministic only
 	// Budget: reserve ~3K tokens for system prompt + recent steps + user prompt.
 	// Compaction summary gets ~13K tokens of the router's 16K window ≈ ~52K chars.
 	const compactionBudgetChars = 52000

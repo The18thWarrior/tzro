@@ -203,3 +203,32 @@ func TestRunCompilationGate_ValidTypeScriptWithShim(t *testing.T) {
 		t.Errorf("valid TypeScript with process.env shim should pass, got: %s", result.Reason)
 	}
 }
+
+func TestSanitizeSourceCode_StripsConversationalPreamble(t *testing.T) {
+	rawGo := `Here is the complete updated Go code with all original public methods preserved:
+
+package models
+
+import "errors"
+
+type User struct {
+	ID string
+}
+`
+	sanitizedGo := SanitizeSourceCode(rawGo, "go")
+	if !strings.HasPrefix(strings.TrimSpace(sanitizedGo), "package models") {
+		t.Errorf("expected Go code to start with 'package models', got:\n%s", sanitizedGo)
+	}
+
+	rawTS := `Sure! Below is the requested TypeScript event emitter implementation:
+
+export interface EventMap {
+	[event: string]: unknown[];
+}
+`
+	sanitizedTS := SanitizeSourceCode(rawTS, "typescript")
+	if !strings.HasPrefix(strings.TrimSpace(sanitizedTS), "export interface EventMap") {
+		t.Errorf("expected TS code to start with 'export interface EventMap', got:\n%s", sanitizedTS)
+	}
+}
+

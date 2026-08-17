@@ -307,8 +307,9 @@ func (g *RepetitionGuard) checkCompressionRatio(s string) bool {
 	ratio := compressionRatio(window)
 
 	// Select threshold based on content mode
-	threshold := 0.35 // code: valid Go Strategy patterns / TS interfaces compress to ~0.30-0.40,
-	                   // degenerate repetition loops compress to ~0.05-0.15
+	threshold := 0.20 // code: varied idiomatic Go compresses to ~0.18-0.40,
+	                   // pure-degenerate repetition (same block 100x) to ~0.02-0.10.
+	                   // ADR-run32: lowered from 0.35 to give valid Go handlers more headroom.
 	switch g.contentMode {
 	case ContentModeProse:
 		threshold = 0.50 // prose: valid prose compresses to ~0.45-0.60, degenerate to ~0.05-0.15

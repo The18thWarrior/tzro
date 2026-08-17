@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
+	"tzro/internal/compiler"
 	"tzro/internal/memory"
 	"tzro/internal/strategy"
 	"tzro/internal/stream"
@@ -81,22 +83,80 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		}, nil
 	}
 
-	// ADR-0067: Verified Task Execution — evaluate and optionally re-synthesize
+	// ADR-0067 / ADR-0078 / ADR-0079: Verified Task Execution — evaluate with mode awareness
 	synthesis := recallResult.Synthesis
 	var verificationResult *VerificationResult
-	finalSynthesis, vResult, vErr := VerifyTaskOutput(
+
+	isTerminal := isTerminalRecall(graph, node.ID)
+	feedsSink := recallFeedsToolSink(graph, node.ID)
+
+	vMode := ModeMilestone
+	vGoal := node.Instructions
+	if isTerminal {
+		vMode = ModeTerminal
+		vGoal = graph.GoalPrompt
+	}
+
+	finalSynthesis, vResult, vErr := VerifyTaskOutputWithOptions(
 		ctx,
 		&DefaultCloudVerifier{},
-		graph.GoalPrompt,
+		vGoal,
 		recallResult.Synthesis,
 		recallResult.RefinedContext,
-		false, // first pass, scatter not yet attempted
+		VerificationOpts{
+			Mode:          vMode,
+			FeedsToolSink: feedsSink,
+		},
 	)
 	if vErr == nil {
 		synthesis = finalSynthesis
 		verificationResult = vResult
 	} else {
 		fmt.Fprintf(os.Stderr, "[RecallStrategy] VTE error (non-fatal): %v\n", vErr)
+	}
+
+	// ADR-0078: In-place Re-Explore recovery if signaled
+	if verificationResult != nil && verificationResult.ReExplore && len(upstreamNodeIDs) > 0 {
+		fmt.Fprintf(os.Stderr, "[RecallStrategy] In-place re-exploration triggered for upstream nodes %v with hint: %s\n",
+			upstreamNodeIDs, verificationResult.ReExploreHint)
+
+		for _, upstreamID := range upstreamNodeIDs {
+			for _, upstreamNode := range graph.Nodes {
+				if upstreamNode.ID == upstreamID && (upstreamNode.Type == "probe" || upstreamNode.Type == "research") {
+					stepBudget := 10
+					if upstreamNode.ProbeConfig != nil && upstreamNode.ProbeConfig.StepBudget > 0 {
+						stepBudget = upstreamNode.ProbeConfig.StepBudget
+					}
+					reProbeConfig := compiler.ProbeConfig{
+						Goal:         upstreamNode.Instructions + "\nHint: " + verificationResult.ReExploreHint,
+						TaskContext:  graph.GoalPrompt,
+						AllowedTools: upstreamNode.AllowedTools,
+						StepBudget:   stepBudget,
+					}
+					reSynth, reErr := RunProbePhases(ctx, taskID, upstreamID, reProbeConfig, recallEngine, recallEngine, nil)
+					if reErr == nil && reSynth != "" {
+						fmt.Fprintf(os.Stderr, "[RecallStrategy] Upstream probe %s re-exploration succeeded (%d chars)\n",
+							upstreamID, len(reSynth))
+						freshRecall, freshErr := s.runRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
+						if freshErr == nil && freshRecall.Synthesis != "" {
+							if len(freshRecall.Synthesis) >= 200 && !strings.Contains(freshRecall.Synthesis, "[GENERATION_ABORTED]") {
+								synthesis = freshRecall.Synthesis
+								verificationResult.Accepted = true
+								break
+							}
+						}
+					} else {
+						fmt.Fprintf(os.Stderr, "[RecallStrategy] Upstream probe %s re-exploration failed: %v — falling back to safety re-synthesis\n",
+							upstreamID, reErr)
+					}
+				}
+			}
+		}
+
+		// Ensure we never return rejected broken local synthesis
+		if !verificationResult.Accepted && verificationResult.ReSynthesis != "" {
+			synthesis = verificationResult.ReSynthesis
+		}
 	}
 
 	// ADR-0071: Item-Level Scatter — if VTE detects missing items,
@@ -157,3 +217,68 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 
 // Compile-time interface check.
 var _ strategy.NodeStrategy = (*RecallStrategy)(nil)
+
+func isToolSinkAction(action string) bool {
+	switch action {
+	case "write_file", "save_memory", "postgres_insert", "db_insert", "db_query_exec":
+		return true
+	default:
+		return false
+	}
+}
+
+func recallFeedsToolSink(graph *compiler.ExecutionGraph, recallNodeID string) bool {
+	if graph == nil {
+		return false
+	}
+	visited := make(map[string]bool)
+	var queue []string
+
+	for _, edge := range graph.Edges {
+		if edge.SourceID == recallNodeID {
+			queue = append(queue, edge.TargetID)
+		}
+	}
+
+	for len(queue) > 0 {
+		currID := queue[0]
+		queue = queue[1:]
+		if visited[currID] {
+			continue
+		}
+		visited[currID] = true
+
+		for _, n := range graph.Nodes {
+			if n.ID == currID {
+				if isToolSinkAction(n.Action) {
+					return true
+				}
+				// Also check if node is an exec node for a tool sink
+				if strings.HasSuffix(n.ID, "_exec") && isToolSinkAction(n.Action) {
+					return true
+				}
+				// Add downstream targets
+				for _, edge := range graph.Edges {
+					if edge.SourceID == currID {
+						queue = append(queue, edge.TargetID)
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func isTerminalRecall(graph *compiler.ExecutionGraph, recallNodeID string) bool {
+	if graph == nil {
+		return true
+	}
+	for _, edge := range graph.Edges {
+		if edge.SourceID == recallNodeID {
+			return false
+		}
+	}
+	return true
+}
+
+

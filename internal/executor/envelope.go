@@ -158,7 +158,8 @@ func stripExecutionTierPrefix(content string) string {
 }
 
 // findSynthesisText locates the effective terminal node and returns its RawOutput.
-// Search order: terminal_synthesis node, then last completed recall, probe, or synthesis node.
+// Search order: terminal_synthesis node, then last completed recall, probe, or synthesis node,
+// falling back to the last completed execution/action node.
 func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState) string {
 	// Build a node type lookup from the graph
 	nodeTypes := make(map[string]string)
@@ -176,8 +177,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 	}
 
-	// Fallback: find the last completed node of type scatter_assembly > recall > probe > synthesis
-	var lastScatterAssembly, lastRecall, lastProbe, lastSynthesis string
+	// Fallback: find the last completed node of type scatter_assembly > recall > probe > synthesis > last completed
+	var lastScatterAssembly, lastRecall, lastProbe, lastSynthesis, lastCompleted string
 	for _, n := range nodes {
 		if n.Status != "completed" {
 			continue
@@ -186,6 +187,7 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		if raw == "" {
 			raw = n.Output
 		}
+		lastCompleted = raw
 
 		switch nodeTypes[n.NodeID] {
 		case "scatter_assembly":
@@ -208,7 +210,10 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 	if lastProbe != "" {
 		return lastProbe
 	}
-	return lastSynthesis
+	if lastSynthesis != "" {
+		return lastSynthesis
+	}
+	return lastCompleted
 }
 
 // extractFilePath pulls the file path from tool arguments.
@@ -238,7 +243,7 @@ func sortedKeys(m map[string]bool) []string {
 }
 
 // findTerminalNodeID identifies which node should receive the Execution Envelope.
-// Same priority as findSynthesisText: terminal_synthesis > last recall > last probe > last synthesis.
+// Same priority as findSynthesisText: terminal_synthesis > last recall > last probe > last synthesis > last completed.
 func findTerminalNodeID(graph *compiler.ExecutionGraph, nodes []memory.NodeState) string {
 	nodeTypes := make(map[string]string)
 	for _, gn := range graph.Nodes {
@@ -252,12 +257,13 @@ func findTerminalNodeID(graph *compiler.ExecutionGraph, nodes []memory.NodeState
 		}
 	}
 
-	// Fallback: last completed recall > probe > synthesis
-	var lastRecall, lastProbe, lastSynthesis string
+	// Fallback: last completed recall > probe > synthesis > last completed
+	var lastRecall, lastProbe, lastSynthesis, lastCompleted string
 	for _, n := range nodes {
 		if n.Status != "completed" {
 			continue
 		}
+		lastCompleted = n.NodeID
 		switch nodeTypes[n.NodeID] {
 		case "recall":
 			lastRecall = n.NodeID
@@ -274,5 +280,8 @@ func findTerminalNodeID(graph *compiler.ExecutionGraph, nodes []memory.NodeState
 	if lastProbe != "" {
 		return lastProbe
 	}
-	return lastSynthesis
+	if lastSynthesis != "" {
+		return lastSynthesis
+	}
+	return lastCompleted
 }

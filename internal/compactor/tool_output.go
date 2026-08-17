@@ -72,9 +72,6 @@ func CompactToolOutputs(ctx context.Context, steps []ToolOutputStep, budget int,
 			remaining = 0
 		}
 		perStepBudget = remaining / nonExemptCount
-		if perStepBudget < 500 {
-			perStepBudget = 500
-		}
 	}
 
 	var parts []string
@@ -131,11 +128,21 @@ func CompactToolOutputs(ctx context.Context, steps []ToolOutputStep, budget int,
 	}, nil
 }
 
+type contextKey string
+
+// CompactorGoalKey allows passing the research/probe goal to deterministic text compactor.
+const CompactorGoalKey contextKey = "compactor_goal"
+
 // compactToolOutput compacts a single tool output using content-aware strategies.
 func compactToolOutput(ctx context.Context, output string, budget int, engine CompactEngine, llmCalls *int) string {
 	segments := SegmentContent(output)
 	if len(segments) == 0 {
 		return output
+	}
+
+	goal := ""
+	if g, ok := ctx.Value(CompactorGoalKey).(string); ok {
+		goal = g
 	}
 
 	var parts []string
@@ -155,7 +162,7 @@ func compactToolOutput(ctx context.Context, output string, budget int, engine Co
 				parts = append(parts, TruncateTabular(seg.Content, 4096))
 			}
 		case SegmentText:
-			// LLM fact-extraction for text content
+			// LLM fact-extraction for text content (if engine explicitly provided)
 			if engine != nil && utf8.RuneCountInString(seg.Content) > 200 {
 				summarized, err := engine.CompactToolOutput(ctx, seg.Content)
 				if err == nil {
@@ -163,16 +170,24 @@ func compactToolOutput(ctx context.Context, output string, budget int, engine Co
 					parts = append(parts, summarized)
 					continue
 				}
-				// Failure cascade: fall back to deterministic truncation
+				// Failure cascade: fall back to deterministic hybrid compaction
 			}
 			if budget > 0 {
-				parts = append(parts, TruncateTextMiddleOut(seg.Content, budget))
+				if goal != "" {
+					parts = append(parts, CompactTextHybrid(seg.Content, goal, budget))
+				} else {
+					parts = append(parts, TruncateTextMiddleOut(seg.Content, budget))
+				}
 			} else {
 				parts = append(parts, seg.Content)
 			}
 		default:
 			if budget > 0 {
-				parts = append(parts, TruncateTextMiddleOut(seg.Content, budget))
+				if goal != "" {
+					parts = append(parts, CompactTextHybrid(seg.Content, goal, budget))
+				} else {
+					parts = append(parts, TruncateTextMiddleOut(seg.Content, budget))
+				}
 			} else {
 				parts = append(parts, seg.Content)
 			}

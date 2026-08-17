@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"tzro/internal/compiler"
 	cfgpkg "tzro/internal/config"
+	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/symbols"
 	"tzro/internal/tools"
@@ -66,6 +68,106 @@ func classifyProbeGoal(goal string) string {
 	return "" // Unknown → Thought Chain fallback
 }
 
+// SearchQueriesSchema constrains token generation to a JSON array of search query strings.
+const SearchQueriesSchema = `{
+	"type": "array",
+	"items": { "type": "string" }
+}`
+
+// GenerateSearchQueries uses a single 1-shot Worker call with GBNF array grammar
+// to decompose a research goal into 2 to 3 distinct search queries.
+// Falls back to deterministic clause extraction if inference fails or yields < 2 queries.
+func GenerateSearchQueries(ctx context.Context, engine ProbeInferenceEngine, goal string) ([]string, error) {
+	if strings.TrimSpace(goal) == "" {
+		return nil, nil
+	}
+
+	systemPrompt := `You are a search query optimizer for a technical research agent.
+Given the user's research goal, generate 2 to 3 distinct, high-precision search query strings designed to find authoritative, factual information from different angles (e.g. core concepts, comparisons, recent developments, specific technical names).
+
+Output ONLY a JSON array of query strings with no other text, e.g. ["query 1", "query 2", "query 3"].`
+
+	userPrompt := fmt.Sprintf("Research Goal: %q\n\nGenerate 2-3 distinct web search queries:", goal)
+
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	if engine != nil {
+		res, err := engine.InferMessages(ctx, messages, SearchQueriesSchema, TargetWorker)
+		if err == nil {
+			var parsed []string
+			if json.Unmarshal([]byte(strings.TrimSpace(res)), &parsed) == nil && len(parsed) >= 2 {
+				var valid []string
+				for _, q := range parsed {
+					qTrim := strings.TrimSpace(q)
+					if qTrim != "" {
+						valid = append(valid, qTrim)
+					}
+				}
+				if len(valid) >= 2 {
+					return valid, nil
+				}
+			}
+		}
+	}
+
+	// Fallback to deterministic query decomposition
+	return extractSearchQueryVariantsFromGoal(goal), nil
+}
+
+// extractSearchQueryVariantsFromGoal splits a research goal into 2-3 diverse search queries
+// using deterministic heuristics (splitting on conjunctions, punctuation, and comparative clauses).
+func extractSearchQueryVariantsFromGoal(goal string) []string {
+	base := extractSearchQueryFromGoal(goal)
+	if base == "" {
+		base = goal
+	}
+
+	var queries []string
+	seen := make(map[string]bool)
+
+	addQuery := func(q string) {
+		q = strings.TrimSpace(q)
+		q = strings.Trim(q, ".,;:-_\"'")
+		if len(q) > 3 && !seen[strings.ToLower(q)] {
+			seen[strings.ToLower(q)] = true
+			queries = append(queries, q)
+		}
+	}
+
+	// Add primary query
+	addQuery(base)
+
+	// Split by conjunctions (" and ", " vs ", " versus ", " compared to ", " or ")
+	conjunctions := []string{
+		" and compare it to ", " and compare to ", " and compare with ",
+		" compared to ", " versus ", " vs. ", " vs ", " and ", " as well as ",
+	}
+	for _, conj := range conjunctions {
+		if idx := strings.Index(strings.ToLower(base), conj); idx > 0 {
+			part1 := base[:idx]
+			part2 := base[idx+len(conj):]
+			addQuery(part1)
+			addQuery(part2)
+			break
+		}
+	}
+
+	// If still only 1 query, check for punctuation split (e.g., semicolon, comma)
+	if len(queries) < 2 {
+		parts := strings.FieldsFunc(base, func(r rune) bool {
+			return r == ';' || r == ',' || r == '-'
+		})
+		for _, p := range parts {
+			addQuery(p)
+		}
+	}
+
+	return queries
+}
+
 // extractSearchQueryFromGoal derives a web search query from the probe goal text.
 // Extracts the first meaningful sentence/clause (up to 100 chars), stripping
 // common instruction prefixes like "Search for", "Find", "Research".
@@ -87,9 +189,14 @@ func extractSearchQueryFromGoal(goal string) string {
 			break
 		}
 	}
-	// Take the first sentence (up to period, newline, or 100 chars)
-	for i, c := range q {
-		if c == '.' || c == '\n' {
+	// Take the first sentence (up to period followed by whitespace, newline, or 100 chars)
+	for i := 0; i < len(q); i++ {
+		c := q[i]
+		if c == '\n' {
+			q = q[:i]
+			break
+		}
+		if c == '.' && (i+1 == len(q) || q[i+1] == ' ' || q[i+1] == '\t' || q[i+1] == '\n') {
 			q = q[:i]
 			break
 		}
@@ -99,6 +206,42 @@ func extractSearchQueryFromGoal(goal string) string {
 		}
 	}
 	return strings.TrimSpace(q)
+}
+
+// parseActionFromResponse parses <ACTION>tool_name(args)</ACTION> or <ACTION>{"tool":"...", ...}</ACTION> or signals synthesis readiness.
+func parseActionFromResponse(response string) (action, toolName string, args map[string]interface{}) {
+	if strings.Contains(response, "<SYNTHESIZE_READY>") {
+		return "synthesize", "", nil
+	}
+	// Check for <ACTION>{"tool": "...", "arguments": {...}}</ACTION>
+	jsonRe := regexp.MustCompile(`(?s)<ACTION>\s*(\{.*?\})\s*</ACTION>`)
+	if m := jsonRe.FindStringSubmatch(response); len(m) == 2 {
+		var parsed struct {
+			Tool      string                 `json:"tool"`
+			Arguments map[string]interface{} `json:"arguments"`
+		}
+		if json.Unmarshal([]byte(m[1]), &parsed) == nil && parsed.Tool != "" {
+			if parsed.Arguments == nil {
+				parsed.Arguments = make(map[string]interface{})
+			}
+			return "tool_call", parsed.Tool, parsed.Arguments
+		}
+	}
+	// Check for <ACTION>tool_name(args)</ACTION>
+	re := regexp.MustCompile(`(?s)<ACTION>\s*([a-zA-Z0-9_-]+)\((.*?)\)\s*</ACTION>`)
+	if m := re.FindStringSubmatch(response); len(m) == 3 {
+		tool := m[1]
+		rawArgs := strings.TrimSpace(m[2])
+		var parsedArgs map[string]interface{}
+		if rawArgs != "" {
+			_ = json.Unmarshal([]byte(rawArgs), &parsedArgs)
+		}
+		if parsedArgs == nil {
+			parsedArgs = make(map[string]interface{})
+		}
+		return "tool_call", tool, parsedArgs
+	}
+	return "synthesize", "", nil
 }
 
 // goalImpliesExtraction returns true when the goal text suggests the user

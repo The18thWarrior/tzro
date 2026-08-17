@@ -326,3 +326,50 @@ func TestCompressionRatio_EmptyString(t *testing.T) {
 		t.Errorf("expected empty string ratio = 1.0, got %.4f", ratio)
 	}
 }
+
+// --- Slice 3a RED (Run 32 fix): ContentModeCode calibration ---
+
+// TestRepetitionGuard_CodeMode_IdiomaticGoErrors_NeverAborts verifies that
+// a realistic Go file with 6 HTTP handlers each containing the canonical
+// "if err != nil { http.Error(...) }" pattern does NOT trigger GuardAbort.
+// Regression: ContentModeCode flate threshold 0.35 caught valid Go (ratio ~0.30).
+func TestRepetitionGuard_CodeMode_IdiomaticGoErrors_NeverAborts(t *testing.T) {
+	guard := NewRepetitionGuardWithMode(ContentModeCode)
+
+	var b strings.Builder
+	b.WriteString("package main\n\nimport \"net/http\"\n\n")
+	for i := 0; i < 6; i++ {
+		fmt.Fprintf(&b, `func handler%d(w http.ResponseWriter, r *http.Request) {
+	data, err := fetchData%d()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Write(data)
+}
+
+`, i, i)
+	}
+
+	action := guard.OnChunk(b.String())
+	if action == GuardAbort {
+		ratio := compressionRatio(b.String())
+		t.Errorf("GuardAbort must not fire for idiomatic Go error handling (compression ratio=%.4f); "+
+			"valid Go compresses to 0.28-0.40, degenerate to <0.20", ratio)
+	}
+}
+
+// TestRepetitionGuard_CodeMode_DegenerateLoop_Aborts verifies that a genuine
+// degenerate pattern (deeply nested empty loops) still triggers GuardAbort
+// after the threshold recalibration.
+func TestRepetitionGuard_CodeMode_DegenerateLoop_Aborts(t *testing.T) {
+	guard := NewRepetitionGuardWithMode(ContentModeCode)
+	// Deeply nested empty for loops compress extremely well (ratio ~0.05-0.10)
+	degenerate := "package main\n\nfunc main() {\n" + strings.Repeat("\tfor {\n", 200) + strings.Repeat("\t}\n", 200) + "}\n"
+	action := guard.OnChunk(degenerate)
+	if action != GuardAbort {
+		ratio := compressionRatio(degenerate)
+		t.Errorf("expected GuardAbort for degenerate nested loop (compression ratio=%.4f); "+
+			"should be well below 0.20 threshold", ratio)
+	}
+}

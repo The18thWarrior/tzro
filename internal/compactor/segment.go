@@ -186,33 +186,39 @@ func looksTabular(content string) bool {
 // looksLikeCode checks for source code patterns.
 func looksLikeCode(content string) bool {
 	codeIndicators := 0
+	hasRealCodePattern := false
 	lines := strings.SplitN(content, "\n", 30)
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		// Function declarations
+		// Function / class / type declarations
 		if strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "def ") ||
 			strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "class ") ||
-			strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "interface ") {
+			strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "interface ") ||
+			strings.HasPrefix(trimmed, "pub fn ") || strings.HasPrefix(trimmed, "const ") ||
+			strings.HasPrefix(trimmed, "let ") || strings.HasPrefix(trimmed, "var ") {
 			codeIndicators += 2
+			hasRealCodePattern = true
 		}
 		// Braces and brackets
-		if strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "}") {
+		if strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "}") ||
+			strings.HasSuffix(trimmed, "};") || strings.HasSuffix(trimmed, "()") {
 			codeIndicators++
+			hasRealCodePattern = true
 		}
 		// Import/package statements
 		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "package ") ||
 			strings.HasPrefix(trimmed, "from ") || strings.HasPrefix(trimmed, "#include") {
 			codeIndicators += 2
+			hasRealCodePattern = true
 		}
-		// Comments
-		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") ||
-			strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, `"""`) {
+		// Code comments (C-style or docstrings, avoiding markdown headers)
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, `"""`) {
 			codeIndicators++
 		}
 	}
 
-	return codeIndicators >= 4
+	return hasRealCodePattern && codeIndicators >= 3
 }
 
 // TruncateTabular keeps the header row, first N sample rows, and a summary line.

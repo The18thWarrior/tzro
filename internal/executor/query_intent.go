@@ -1,28 +1,32 @@
 package executor
 
-// query_intent.go — GBNF-constrained QueryIntent extraction for the
+// query_intent.go — Embedding-based QueryIntent extraction for the
 // Analyze Node query phase.
 //
-// Instead of asking the 4B model to compose query_builder operations
-// from scratch (which it consistently fails at), we run a fast GBNF
-// extraction pass to pull structured keywords from the goal, then
-// deterministically map them into query_builder operations.
+// Uses semantic similarity (cosine distance) against pre-defined canonical
+// operation patterns to classify the user's goal into query operations.
+// All decisions are made via a single batch embedding call (~10ms),
+// replacing the previous 5-step LLM inference pipeline (5-25s).
 //
-// The model extracts; code composes.
+// Key architectural principle: the LLM never sees raw data values.
+// Column names come from the schema. Filter values come from the
+// goal text via string extraction. Operation classification comes
+// from embedding similarity against canonical patterns.
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"tzro/internal/cache"
+	"tzro/internal/embeddings"
 	"tzro/internal/inference"
 )
 
-// QueryIntent is the GBNF-constrained extraction target.
-// The model fills in fields from the goal + column context.
+// QueryIntent is the extraction target for embedding-based intent classification.
 type QueryIntent struct {
 	// Multi-filter support (ADR-0076: Deterministic Query Path)
 	Filters   []FilterClause `json:"filters,omitempty"`
@@ -46,62 +50,91 @@ type QueryIntent struct {
 
 	// Select specific columns (empty = all)
 	SelectColumns []string `json:"selectColumns,omitempty"`
+
+	// Result limit (0 = no limit)
+	Limit int `json:"limit,omitempty"`
 }
 
-// queryIntentSchema is the GBNF-constraining JSON schema for intent extraction.
-// Enum constraints prevent hallucination of operators and functions.
-const queryIntentSchema = `{
-  "type": "object",
-  "properties": {
-    "filterColumn":   { "type": "string" },
-    "filterOperator": { "type": "string", "enum": ["=", "!=", "LIKE", ">", "<", ">=", "<=", "IS NULL", "IS NOT NULL"] },
-    "filterValue":    { "type": "string" },
-    "groupColumn":    { "type": "string" },
-    "aggFunction":    { "type": "string", "enum": ["COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT"] },
-    "aggColumn":      { "type": "string" },
-    "orderColumn":    { "type": "string" },
-    "orderDirection": { "type": "string", "enum": ["ASC", "DESC"] },
-    "selectColumns":  { "type": "array", "items": { "type": "string" } }
-  }
-}`
+// --- Embedding Operation Patterns ---
+// Canonical phrases for each query operation type. Embedded alongside goal
+// phrases and compared via cosine similarity for operation classification.
+// Prefixed with "embed" to avoid conflict with deterministic_query.go regex patterns.
 
-// buildIntentExtractionPrompt builds the system prompt for the GBNF extraction pass.
-func buildIntentExtractionPrompt(columns []string) string {
-	return fmt.Sprintf(`You are extracting structured query parameters from a data analysis goal.
-
-The dataset has these columns: %s
-
-Extract ONLY data query operations from the goal:
-- filterColumn: a column name from the list above to filter on (e.g., "account_name", "Country")
-- filterOperator: the comparison operator
-- filterValue: the value to match (e.g., "Walmart", "Yes")
-- groupColumn: a column name to group by
-- aggFunction/aggColumn: aggregate function and column
-- orderColumn/orderDirection: sorting column and direction
-- selectColumns: specific columns to return
-
-CRITICAL RULES:
-- filterColumn MUST be one of the column names listed above. NEVER use file paths, filenames, or non-column values.
-- filterValue is the data value to match, NOT a file path or filename.
-- Ignore any file reading instructions (like "Read the CSV file at..."). Focus only on the data analysis question.
-- Leave fields empty ("") if not needed.
-- For aggColumn, use "*" for COUNT(*).
-- Respond with ONLY valid JSON matching the schema.`, strings.Join(columns, ", "))
+var embedGroupPatterns = []string{
+	"group by column",
+	"breakdown by category",
+	"for each unique value",
+	"count per category",
+	"distribution across groups",
+	"categorize records by field",
+	"split results by column",
+	"aggregate by group",
+	"group all records by",
+	"count by each",
 }
 
-// ExtractQueryIntent runs incremental GBNF-constrained inference passes to
-// extract structured query parameters from the goal text.
+var embedFilterPatterns = []string{
+	"where column equals specific value",
+	"only include rows matching criteria",
+	"filter records for a specific named value",
+	"rows where field equals value",
+	"restrict to entries with a specific value",
+	"find rows matching exact value",
+}
+
+var embedDescPatterns = []string{
+	"top results ranked highest",
+	"most frequent first",
+	"sorted by count descending",
+	"largest values first",
+	"highest to lowest",
+	"ranked from most to least",
+}
+
+var embedAscPatterns = []string{
+	"lowest values first",
+	"sorted ascending order",
+	"smallest to largest",
+	"least to most",
+	"fewest first",
+	"earliest to latest",
+}
+
+var embedLimitPatterns = []string{
+	"top five results only",
+	"first ten items",
+	"show only three results",
+	"limit to a specific number of results",
+	"return the top few ranked",
+	"best twenty records",
+}
+
+// limitNumberRe extracts a number adjacent to limit keywords like "top", "first".
+var limitNumberRe = regexp.MustCompile(`(?i)\b(?:top|first|bottom|last|best|worst|show|limit\s+(?:to)?)\s+(\d+)\b`)
+
+// operationScores holds cosine similarity scores from embedding classification.
+type operationScores struct {
+	groupScore  float32
+	filterScore float32
+	descScore   float32
+	ascScore    float32
+	limitScore  float32
+}
+
+// ExtractQueryIntent uses embedding-based classification to extract structured
+// query parameters from the goal text. No LLM inference needed — operations
+// are detected by cosine similarity against pre-defined canonical patterns,
+// and columns are resolved by literal matching against the schema.
 //
-// Instead of asking the 4B model to generate the full QueryIntent JSON in
-// one shot (which stochastically truncates or misses fields), we decompose
-// into tiny micro-extractions. Each step picks ONE value from a small enum,
-// which the 4B model handles near-deterministically (~0.1s per step).
+// This replaces the previous multi-step GBNF extraction pipeline (Steps 1a-5)
+// that used 5 sequential LLM inference calls. The embedding approach is:
+//   - ~10ms (vs 5-25s for LLM inference)
+//   - Deterministic (same input → same output)
+//   - Zero hallucination risk (no generative model involved)
+//   - Handles paraphrasing naturally via semantic similarity
 //
-// Steps:
-//   1. filterColumn: pick from column enum + "none"
-//   2. filterValue: extract free-text value (only if filter needed)
-//   3. groupColumn: pick from column enum + "none"
-//   4. orderColumn + direction (only if group or filter present)
+// Key principle: the LLM never sees raw data values. Column names come from
+// the schema. Filter values are extracted from the goal text only.
 func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*QueryIntent, error) {
 	columns := cache.GetCacheColumns(cacheId)
 	if len(columns) == 0 {
@@ -109,212 +142,316 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 	}
 
 	intent := &QueryIntent{}
-	columnList := strings.Join(columns, ", ")
 
-	// Step 1a: Binary gate — does this task need filtering at all?
-	needsFilter, err := extractBinaryDecision(ctx, goal,
-		"Does the user's question require filtering rows WHERE a column equals a SPECIFIC NAMED value?\n\nAnswer \"yes\" ONLY if the user mentions a specific data value to match (e.g., \"Walmart\", \"Yes\", \"USA\").\nAnswer \"no\" if the user just wants grouping, counting, or breakdowns without a specific filter value.\n\nExamples:\n- \"Find leads where account_name is Walmart\" → yes (specific value: Walmart)\n- \"leads where Target_Account equals Yes\" → yes (specific value: Yes)\n- \"Count leads for each country\" → no (just grouping)\n- \"Group by sector and show percentages\" → no (just grouping)\n- \"For each account owner, count their leads\" → no (just grouping)")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[QueryIntent] Step 1a (needsFilter) failed: %v\n", err)
-	} else if needsFilter {
-		// Step 1b: Which column to filter on?
-		filterCol, err := extractColumnFromEnum(ctx, goal, columns,
-			fmt.Sprintf("The dataset has columns: %s\n\nWhich column should be used for the filter?", columnList))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[QueryIntent] Step 1b (filterColumn) failed: %v\n", err)
-		} else {
-			intent.FilterColumn = matchColumnName(filterCol, columns)
+	// Split goal into phrases for independent embedding comparison.
+	phrases := splitGoalIntoPhrases(goal)
+	if len(phrases) == 0 {
+		phrases = []string{goal}
+	}
 
-			// Step 1c: What value to filter for?
-			if intent.FilterColumn != "" {
-				filterVal, err := extractFilterValue(ctx, goal, intent.FilterColumn)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "[QueryIntent] Step 1c (filterValue) failed: %v\n", err)
-				} else if strings.EqualFold(filterVal, "unknown") || filterVal == "" {
-					// Value extractor couldn't find a literal value in the goal text.
-					// This means the binary gate was a false positive — discard filter.
-					fmt.Fprintf(os.Stderr, "[QueryIntent] Step 1c: discarding filter (value=%q indicates false positive gate)\n", filterVal)
-					intent.FilterColumn = ""
-				} else {
-					intent.FilterValue = filterVal
-					intent.FilterOperator = "=" // Default
-				}
+	// Classify operations via embedding similarity.
+	scores := classifyOpsViaEmbedding(ctx, phrases)
+
+	fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding scores: group=%.3f filter=%.3f desc=%.3f asc=%.3f limit=%.3f\n",
+		scores.groupScore, scores.filterScore, scores.descScore, scores.ascScore, scores.limitScore)
+
+	// Thresholds for operation activation.
+	const groupThreshold float32 = 0.45
+	const filterThreshold float32 = 0.55
+	const limitThreshold float32 = 0.45
+
+	goalLower := strings.ToLower(goal)
+
+	// --- GROUP BY ---
+	if scores.groupScore >= groupThreshold {
+		col := resolveColumnLiteral(goalLower, columns)
+		if col != "" {
+			intent.GroupColumn = col
+			fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: GROUP BY %s (score=%.3f)\n", col, scores.groupScore)
+		}
+	}
+
+	// --- FILTER ---
+	if scores.filterScore >= filterThreshold {
+		// Find a column different from the group column for filtering.
+		col := resolveFilterColumnLiteral(goalLower, columns, intent.GroupColumn)
+		if col != "" {
+			intent.FilterColumn = col
+			intent.FilterOperator = "="
+			// Extract filter value from goal text ONLY — never from data.
+			intent.FilterValue = extractLiteralValue(goal, col)
+			if intent.FilterValue == "" {
+				// No literal value in goal → false positive. Discard filter.
+				fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: filter column=%s but no literal value in goal — discarding\n", col)
+				intent.FilterColumn = ""
+				intent.FilterOperator = ""
+			} else {
+				fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: FILTER %s = %q (score=%.3f)\n", col, intent.FilterValue, scores.filterScore)
 			}
 		}
 	}
 
-	// Step 3: Extract group column
-	groupCol, err := extractColumnFromEnum(ctx, goal, columns,
-		fmt.Sprintf("The dataset has columns: %s\n\nDoes the user's question require grouping rows by a column (e.g., GROUP BY column)? This is needed when the user asks for breakdowns, distributions, or per-category counts. If yes, return the column name. If no grouping is needed, return \"none\".", columnList))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[QueryIntent] Step 3 (groupColumn) failed: %v\n", err)
-	} else if groupCol != "" && groupCol != "none" {
-		intent.GroupColumn = matchColumnName(groupCol, columns)
-	}
-
-	// Step 4: Extract order direction (only if we have group or filter)
+	// --- ORDER direction ---
 	if intent.GroupColumn != "" || intent.FilterColumn != "" {
-		orderDir, err := extractOrderDirection(ctx, goal)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[QueryIntent] Step 4 (orderDirection) failed: %v\n", err)
+		if scores.descScore > scores.ascScore {
+			intent.OrderDirection = "DESC"
 		} else {
-			intent.OrderDirection = orderDir
-			// Default order column to group column for aggregation queries
-			if intent.GroupColumn != "" {
-				intent.OrderColumn = intent.GroupColumn
-			}
+			intent.OrderDirection = "ASC"
+		}
+		intent.OrderColumn = intent.GroupColumn
+		if intent.OrderColumn == "" {
+			intent.OrderColumn = intent.FilterColumn
+		}
+		fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: ORDER BY %s %s (desc=%.3f asc=%.3f)\n",
+			intent.OrderColumn, intent.OrderDirection, scores.descScore, scores.ascScore)
+	}
+
+	// --- LIMIT ---
+	if scores.limitScore >= limitThreshold {
+		n := extractLimitNumber(goal)
+		if n > 0 {
+			intent.Limit = n
+			fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: LIMIT %d (score=%.3f)\n", n, scores.limitScore)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "[QueryIntent] Extracted: filter=%s %s %q, group=%s, agg=%s(%s), order=%s %s, select=%v\n",
+	fmt.Fprintf(os.Stderr, "[QueryIntent] Extracted: filter=%s %s %q, group=%s, agg=%s(%s), order=%s %s, limit=%d, select=%v\n",
 		intent.FilterColumn, intent.FilterOperator, intent.FilterValue,
 		intent.GroupColumn,
 		intent.AggFunction, intent.AggColumn,
 		intent.OrderColumn, intent.OrderDirection,
+		intent.Limit,
 		intent.SelectColumns)
 
 	return intent, nil
 }
 
-// extractColumnFromEnum asks the 4B model to pick a single column from the
-// schema's column list (or "none"). Uses a GBNF enum constraint — the model
-// can ONLY output one of the known column names, making this near-deterministic.
-// Routed to the 4B worker (not 1B router) because column selection is a semantic
-// task: the model must understand that "Walmart" maps to account_name, not name1.
-func extractColumnFromEnum(ctx context.Context, goal string, columns []string, systemPrompt string) (string, error) {
-	// Build GBNF enum from column names + "none"
-	enumValues := make([]string, 0, len(columns)+1)
-	enumValues = append(enumValues, "none")
-	enumValues = append(enumValues, columns...)
+// classifyOpsViaEmbedding batch-embeds goal phrases alongside canonical
+// operation patterns and returns the max cosine similarity for each category.
+// Falls back to bag-of-words similarity when the embedding sidecar is unavailable.
+func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationScores {
+	if !inference.GlobalEmbeddingSidecar.IsAvailable() {
+		return classifyOpsViaBagOfWords(phrases)
+	}
 
-	// Marshal enum values for JSON schema
-	enumJSON, _ := json.Marshal(enumValues)
+	// Batch embed everything in one call: [phrases..., patterns...]
+	allTexts := make([]string, 0,
+		len(phrases)+len(embedGroupPatterns)+len(embedFilterPatterns)+
+			len(embedDescPatterns)+len(embedAscPatterns)+len(embedLimitPatterns))
 
-	schema := fmt.Sprintf(`{
-  "type": "object",
-  "properties": {
-    "column": { "type": "string", "enum": %s }
-  },
-  "required": ["column"]
-}`, string(enumJSON))
+	allTexts = append(allTexts, phrases...)
+	pEnd := len(phrases)
 
-	req := inference.NewSimpleRequest(systemPrompt, goal, schema)
-	// Not IsLowStakes — semantic column selection requires 4B worker reasoning.
+	allTexts = append(allTexts, embedGroupPatterns...)
+	gEnd := pEnd + len(embedGroupPatterns)
 
-	result, err := inference.ExecuteWorkerStructured(ctx, req)
+	allTexts = append(allTexts, embedFilterPatterns...)
+	fEnd := gEnd + len(embedFilterPatterns)
+
+	allTexts = append(allTexts, embedDescPatterns...)
+	dEnd := fEnd + len(embedDescPatterns)
+
+	allTexts = append(allTexts, embedAscPatterns...)
+	aEnd := dEnd + len(embedAscPatterns)
+
+	allTexts = append(allTexts, embedLimitPatterns...)
+
+	vecs, err := inference.GlobalEmbeddingSidecar.EmbedBatch(ctx, allTexts)
 	if err != nil {
-		return "", err
+		fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding failed, falling back to bag-of-words: %v\n", err)
+		return classifyOpsViaBagOfWords(phrases)
 	}
 
-	var parsed struct {
-		Column string `json:"column"`
-	}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		return "", fmt.Errorf("column enum parse failed: %w", err)
+	if len(vecs) != len(allTexts) {
+		fmt.Fprintf(os.Stderr, "[QueryIntent] Vector count mismatch: got %d, want %d\n", len(vecs), len(allTexts))
+		return classifyOpsViaBagOfWords(phrases)
 	}
 
-	return parsed.Column, nil
+	phraseVecs := vecs[:pEnd]
+	groupVecs := vecs[pEnd:gEnd]
+	filterVecs := vecs[gEnd:fEnd]
+	descVecs := vecs[fEnd:dEnd]
+	ascVecs := vecs[dEnd:aEnd]
+	limitVecs := vecs[aEnd:]
+
+	return operationScores{
+		groupScore:  maxCategorySim(phraseVecs, groupVecs),
+		filterScore: maxCategorySim(phraseVecs, filterVecs),
+		descScore:   maxCategorySim(phraseVecs, descVecs),
+		ascScore:    maxCategorySim(phraseVecs, ascVecs),
+		limitScore:  maxCategorySim(phraseVecs, limitVecs),
+	}
 }
 
-// extractFilterValue asks the 4B model to extract the literal value to filter
-// on. This is a free-text extraction (not enum-constrained) since filter values
-// are arbitrary data values like "Walmart", "Yes", "USA".
-func extractFilterValue(ctx context.Context, goal string, filterColumn string) (string, error) {
-	systemPrompt := fmt.Sprintf(`Extract the filter value from the user's question.
-
-The user wants to filter the column "%s". What EXACT value do they specify?
-
-RULES:
-- Return ONLY a value that appears LITERALLY in the user's question text
-- Examples: "Walmart", "Yes", "USA", "eCommerce"
-- Do NOT invent values from sample data or column names
-- Do NOT return file paths, column names, or SQL syntax
-- If no specific value is mentioned, return "unknown"`, filterColumn)
-
-	schema := `{
-  "type": "object",
-  "properties": {
-    "value": { "type": "string" }
-  },
-  "required": ["value"]
-}`
-
-	req := inference.NewSimpleRequest(systemPrompt, goal, schema)
-	req.IsLowStakes = true
-
-	result, err := inference.ExecuteRouterStructured(ctx, req)
-	if err != nil {
-		return "", err
+// maxCategorySim computes the maximum cosine similarity between any phrase
+// vector and any pattern vector in a category.
+func maxCategorySim(phraseVecs, patternVecs [][]float32) float32 {
+	var best float32
+	for _, pv := range phraseVecs {
+		for _, cv := range patternVecs {
+			sim := inference.GlobalEmbeddingSidecar.CosineSimilarity(pv, cv)
+			if sim > best {
+				best = sim
+			}
+		}
 	}
-
-	var parsed struct {
-		Value string `json:"value"`
-	}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		return "", fmt.Errorf("filter value parse failed: %w", err)
-	}
-
-	return parsed.Value, nil
+	return best
 }
 
-// extractBinaryDecision asks a yes/no question using a GBNF enum constraint.
-// The model can ONLY output "yes" or "no" — maximally deterministic.
-func extractBinaryDecision(ctx context.Context, goal string, systemPrompt string) (bool, error) {
-	schema := `{
-  "type": "object",
-  "properties": {
-    "answer": { "type": "string", "enum": ["yes", "no"] }
-  },
-  "required": ["answer"]
-}`
+// classifyOpsViaBagOfWords is a fallback when the neural embedding sidecar is
+// unavailable. Uses the bag-of-words cosine similarity from the embeddings package.
+func classifyOpsViaBagOfWords(phrases []string) operationScores {
+	fmt.Fprintf(os.Stderr, "[QueryIntent] Using bag-of-words fallback for operation classification\n")
 
-	req := inference.NewSimpleRequest(systemPrompt, goal, schema)
-	req.IsLowStakes = true
-
-	result, err := inference.ExecuteRouterStructured(ctx, req)
-	if err != nil {
-		return false, err
+	bowMax := func(patterns []string) float32 {
+		var best float64
+		for _, p := range phrases {
+			for _, pat := range patterns {
+				score := embeddings.CosineSimilarity(p, pat)
+				if score > best {
+					best = score
+				}
+			}
+		}
+		return float32(best)
 	}
 
-	var parsed struct {
-		Answer string `json:"answer"`
+	return operationScores{
+		groupScore:  bowMax(embedGroupPatterns),
+		filterScore: bowMax(embedFilterPatterns),
+		descScore:   bowMax(embedDescPatterns),
+		ascScore:    bowMax(embedAscPatterns),
+		limitScore:  bowMax(embedLimitPatterns),
 	}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		return false, fmt.Errorf("binary decision parse failed: %w", err)
-	}
-
-	return parsed.Answer == "yes", nil
 }
 
-// extractOrderDirection asks the 4B model whether results should be sorted
-// ascending or descending. Simple binary enum — near-deterministic.
-func extractOrderDirection(ctx context.Context, goal string) (string, error) {
-	schema := `{
-  "type": "object",
-  "properties": {
-    "direction": { "type": "string", "enum": ["ASC", "DESC"] }
-  },
-  "required": ["direction"]
-}`
-
-	systemPrompt := "Based on the user's question, should the results be sorted in ascending (ASC) or descending (DESC) order? If the user mentions 'top', 'highest', 'most', or 'ranked', use DESC. Otherwise use ASC."
-
-	req := inference.NewSimpleRequest(systemPrompt, goal, schema)
-	req.IsLowStakes = true
-
-	result, err := inference.ExecuteRouterStructured(ctx, req)
-	if err != nil {
-		return "", err
+// resolveColumnLiteral finds a column name that appears literally in the goal
+// text (case-insensitive word boundary match). Returns the first match.
+// This is the primary column resolution mechanism — embedding is for operation
+// classification, literal matching is for column identification.
+func resolveColumnLiteral(goalLower string, columns []string) string {
+	// Prefer longer column names first (prevents "name" matching before "account_name")
+	sorted := make([]string, len(columns))
+	copy(sorted, columns)
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if len(sorted[j]) > len(sorted[i]) {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
 	}
 
-	var parsed struct {
-		Direction string `json:"direction"`
+	paddedGoal := " " + goalLower + " "
+	for _, col := range sorted {
+		colLower := strings.ToLower(col)
+		// Word boundary check: " sector ", " country "
+		if strings.Contains(paddedGoal, " "+colLower+" ") ||
+			strings.Contains(paddedGoal, " "+colLower+",") ||
+			strings.Contains(paddedGoal, " "+colLower+".") ||
+			strings.Contains(paddedGoal, `"`+colLower+`"`) ||
+			strings.Contains(paddedGoal, "'"+colLower+"'") {
+			return col
+		}
+		// Also check with underscores replaced by spaces: "target account" → "Target_Account"
+		spaced := strings.ReplaceAll(colLower, "_", " ")
+		if spaced != colLower && strings.Contains(paddedGoal, " "+spaced+" ") {
+			return col
+		}
 	}
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		return "", fmt.Errorf("order direction parse failed: %w", err)
+	return ""
+}
+
+// resolveFilterColumnLiteral finds a column for filtering, excluding the
+// group column. Looks for columns mentioned near filter keywords.
+func resolveFilterColumnLiteral(goalLower string, columns []string, excludeCol string) string {
+	filterKeywords := []string{"where ", "filter ", "equals ", "matching ", " is ", " = "}
+
+	// First try: find a column near a filter keyword
+	for _, kw := range filterKeywords {
+		idx := strings.Index(goalLower, kw)
+		if idx < 0 {
+			continue
+		}
+		// Look for a column name within 50 chars after the keyword
+		window := goalLower[idx:]
+		if len(window) > 80 {
+			window = window[:80]
+		}
+		paddedWindow := " " + window + " "
+		for _, col := range columns {
+			if strings.EqualFold(col, excludeCol) {
+				continue
+			}
+			colLower := strings.ToLower(col)
+			if strings.Contains(paddedWindow, " "+colLower+" ") ||
+				strings.Contains(paddedWindow, " "+colLower+"=") {
+				return col
+			}
+		}
 	}
 
-	return parsed.Direction, nil
+	// Fallback: any column mention that isn't the group column
+	for _, col := range columns {
+		if strings.EqualFold(col, excludeCol) {
+			continue
+		}
+		colLower := strings.ToLower(col)
+		paddedGoal := " " + goalLower + " "
+		if strings.Contains(paddedGoal, " "+colLower+" ") {
+			return col
+		}
+	}
+
+	return ""
+}
+
+// extractLiteralValue extracts a filter value from the goal text by looking
+// for quoted strings or values adjacent to the column name. No LLM involved —
+// pure string extraction from the user's original text.
+func extractLiteralValue(goal string, filterColumn string) string {
+	goalLower := strings.ToLower(goal)
+	colLower := strings.ToLower(filterColumn)
+
+	// Pattern 1: quoted value after column mention
+	// e.g., 'where Target_Account equals "Yes"' or "Country = 'USA'"
+	quotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(colLower) + `\s*(?:equals|=|is)\s*["']([^"']+)["']`)
+	if m := quotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
+		// Return the original-case version from goal text
+		return findOriginalCase(goal, m[1])
+	}
+
+	// Pattern 2: unquoted value after "column equals/is value"
+	unquotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(colLower) + `\s*(?:equals|=|is)\s+(\S+)`)
+	if m := unquotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
+		val := strings.TrimRight(m[1], ".,;)")
+		if val != "" && len(val) < 50 {
+			return findOriginalCase(goal, val)
+		}
+	}
+
+	return ""
+}
+
+// findOriginalCase finds the original-cased version of a value in the goal text.
+func findOriginalCase(goal string, lowerVal string) string {
+	idx := strings.Index(strings.ToLower(goal), lowerVal)
+	if idx >= 0 && idx+len(lowerVal) <= len(goal) {
+		return goal[idx : idx+len(lowerVal)]
+	}
+	return lowerVal
+}
+
+// extractLimitNumber extracts a number from the goal text that appears next to
+// limit keywords like "top", "first", "best". Returns 0 if no limit found.
+func extractLimitNumber(goal string) int {
+	m := limitNumberRe.FindStringSubmatch(goal)
+	if len(m) > 1 {
+		n, err := strconv.Atoi(m[1])
+		if err == nil && n > 0 && n <= 1000 {
+			return n
+		}
+	}
+	return 0
 }
 
 // matchColumnName does case-insensitive matching of an extracted column name
@@ -468,9 +605,15 @@ func IntentToOperations(intent *QueryIntent) []interface{} {
 		if dir == "" {
 			dir = "DESC"
 		}
+		orderCol := intent.OrderColumn
+		// For GROUP BY + aggregate queries, sort by the aggregate result
+		// (e.g., "count") instead of the group column name (e.g., "Country").
+		if intent.GroupColumn != "" && orderCol == intent.GroupColumn && intent.AggFunction != "" {
+			orderCol = strings.ToLower(intent.AggFunction)
+		}
 		ops = append(ops, map[string]interface{}{
 			"type":      "order_by",
-			"column":    intent.OrderColumn,
+			"column":    orderCol,
 			"direction": dir,
 		})
 	}
@@ -715,5 +858,3 @@ func splitGoalIntoPhrases(goal string) []string {
 
 	return filtered
 }
-
-

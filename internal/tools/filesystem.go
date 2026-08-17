@@ -296,32 +296,6 @@ func NewReadFileTool(validator *PathValidator) *BaseAgentTool {
 				content += "\n"
 			}
 
-			// Goal-directed file compaction: if the output exceeds the threshold
-			// and a probe goal is present in context, compress via router model.
-			// The probe is unaware this happens — it gets back content that is
-			// pre-compressed for its goal instead of raw source.
-			if goal, ok := ctx.Value(FileReadGoalKey).(string); ok && goal != "" && len(selectedLines) > fileCompactionThreshold {
-				compressed, compErr := compressFileForGoal(ctx, content, goal, resolvedPath, totalLines)
-				if compErr != nil {
-					// Fallback: deterministic truncation (first/last 20 lines)
-					fmt.Fprintf(os.Stderr, "[FileCompaction] Router failed for %s, falling back to truncation: %v\n", in.Path, compErr)
-					compressed = deterministicTruncate(selectedLines)
-				}
-				compResult := ToolSuccess(map[string]interface{}{
-					"content":    compressed,
-					"path":       resolvedPath,
-					"lineCount":  len(selectedLines),
-					"totalLines": totalLines,
-					"startLine":  startIdx + 1,
-					"endLine":    startIdx + len(selectedLines),
-				})
-				compResult.Hint = fmt.Sprintf(
-					"File was %d lines (est. ~%d tokens). Goal-compressed for probe goal: '%s'.",
-					len(selectedLines), len(selectedLines)*8, truncateGoalStr(goal, 80),
-				)
-				return compResult, nil
-			}
-
 			result := ToolSuccess(map[string]interface{}{
 				"content":    content,
 				"path":       resolvedPath,

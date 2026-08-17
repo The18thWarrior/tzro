@@ -65,7 +65,9 @@ func resolveDynamicBindings(ctx context.Context, bindings map[string]interface{}
 			sourceOutput := state.RawOutput
 			if sourceOutput == "" {
 				sourceOutput = state.Output
-				if idx := strings.Index(sourceOutput, "] "); idx != -1 {
+			}
+			if strings.HasPrefix(sourceOutput, "[") {
+				if idx := strings.Index(sourceOutput, "] "); idx != -1 && idx < 30 {
 					sourceOutput = sourceOutput[idx+2:]
 				}
 			}
@@ -316,7 +318,10 @@ func InterpolateVariables(instruction string, taskID string) string {
 
 func GetNodeStateTolerant(taskID, nodeID string) (memory.NodeState, bool) {
 	// 1. Try finding completed suffix expansions first since they represent actual execution outcomes
-	if !strings.HasSuffix(nodeID, "_exec") && !strings.HasSuffix(nodeID, "_bridge") {
+	if !strings.HasSuffix(nodeID, "_exec") && !strings.HasSuffix(nodeID, "_bridge") && !strings.HasSuffix(nodeID, "_recall") {
+		if state, ok := memory.DB.GetNodeState(taskID, nodeID+"_recall"); ok && (state.Status == "completed" || state.RawOutput != "") {
+			return state, true
+		}
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID+"_exec"); ok && (state.Status == "completed" || state.RawOutput != "") {
 			return state, true
 		}
@@ -331,7 +336,10 @@ func GetNodeStateTolerant(taskID, nodeID string) (memory.NodeState, bool) {
 	}
 
 	// 3. Try adding suffixes (even if not completed)
-	if !strings.HasSuffix(nodeID, "_exec") && !strings.HasSuffix(nodeID, "_bridge") {
+	if !strings.HasSuffix(nodeID, "_exec") && !strings.HasSuffix(nodeID, "_bridge") && !strings.HasSuffix(nodeID, "_recall") {
+		if state, ok := memory.DB.GetNodeState(taskID, nodeID+"_recall"); ok {
+			return state, true
+		}
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID+"_exec"); ok {
 			return state, true
 		}
@@ -349,6 +357,12 @@ func GetNodeStateTolerant(taskID, nodeID string) (memory.NodeState, bool) {
 	}
 	if strings.HasSuffix(nodeID, "_bridge") {
 		baseID := strings.TrimSuffix(nodeID, "_bridge")
+		if state, ok := memory.DB.GetNodeState(taskID, baseID); ok {
+			return state, true
+		}
+	}
+	if strings.HasSuffix(nodeID, "_recall") {
+		baseID := strings.TrimSuffix(nodeID, "_recall")
 		if state, ok := memory.DB.GetNodeState(taskID, baseID); ok {
 			return state, true
 		}

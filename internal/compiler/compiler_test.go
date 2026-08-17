@@ -570,7 +570,7 @@ func TestExpandToSCTGraph_SingleProbe_InjectsRecall(t *testing.T) {
 	}
 }
 
-func TestExpandToSCTGraph_SingleProbeWithAction_RecallIsNotTerminal(t *testing.T) {
+func TestExpandToSCTGraph_SingleProbeWithToolSink_SkipsTerminalSynthesis(t *testing.T) {
 	graph := &ExecutionGraph{
 		TaskID: "probe_plus_action",
 		Nodes: []GraphNode{
@@ -588,20 +588,82 @@ func TestExpandToSCTGraph_SingleProbeWithAction_RecallIsNotTerminal(t *testing.T
 	}
 
 	hasRecall := false
+	hasExec := false
 	hasTerminal := false
 	for _, n := range expanded.Nodes {
 		if n.ID == "p1_recall" {
 			hasRecall = true
+		}
+		if n.ID == "a1_exec" {
+			hasExec = true
 		}
 		if n.ID == "terminal_synthesis" {
 			hasTerminal = true
 		}
 	}
 	if !hasRecall {
-		t.Error("expected p1_recall to be injected")
+		t.Error("expected p1_recall to be injected when probe feeds tool sink")
+	}
+	if !hasExec {
+		t.Error("expected a1_exec to be generated")
+	}
+	if hasTerminal {
+		t.Error("expected terminal_synthesis to be skipped when terminal leaf is a tool sink (write_file)")
+	}
+}
+
+func TestExpandToSCTGraph_MultiProbeWithoutSink_InjectsTerminalSynthesis(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "multi_probe_exploration",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore package A"},
+			{ID: "p2", Type: "probe", Instructions: "Explore package B"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	hasTerminal := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "terminal_synthesis" {
+			hasTerminal = true
+		}
 	}
 	if !hasTerminal {
-		t.Error("expected terminal_synthesis when Recall has downstream action nodes")
+		t.Error("expected terminal_synthesis for multi-probe exploration fan-out")
+	}
+}
+
+func TestExpandToSCTGraph_MultiProbeWithToolSink_SkipsTerminalSynthesis(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "multi_probe_sink",
+		Nodes: []GraphNode{
+			{ID: "p1", Type: "probe", Instructions: "Explore package A"},
+			{ID: "p2", Type: "probe", Instructions: "Explore package B"},
+			{ID: "w1", Type: "action", Action: "write_file", Instructions: "Write summary to file"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "p1", TargetID: "w1"},
+			{SourceID: "p2", TargetID: "w1"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	hasTerminal := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "terminal_synthesis" {
+			hasTerminal = true
+		}
+	}
+	if hasTerminal {
+		t.Error("expected terminal_synthesis to be skipped when multi-probe DAG terminates in write_file")
 	}
 }
 
@@ -699,5 +761,250 @@ func TestActiveExpander_NilFallthrough(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected probe node p1 to pass through via built-in logic")
+	}
+}
+
+func TestExpandToSCTGraph_WriteFileAutoBinding(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_write_file_binding",
+		Nodes: []GraphNode{
+			{ID: "explore", Type: "probe", Instructions: "Explore codebase at internal/cache"},
+			{ID: "write_docs", Type: "action", Action: "write_file", Instructions: "Write function index to function_index.md"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "explore", TargetID: "write_docs"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, func(action string) (string, error) {
+		return `{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`, nil
+	})
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Verify write_docs_validator and write_docs_exec both received DynamicBindings["content"]
+	var validatorNode, execNode *GraphNode
+	for i := range expanded.Nodes {
+		if expanded.Nodes[i].ID == "write_docs_validator" {
+			validatorNode = &expanded.Nodes[i]
+		}
+		if expanded.Nodes[i].ID == "write_docs_exec" {
+			execNode = &expanded.Nodes[i]
+		}
+	}
+
+	if validatorNode == nil {
+		t.Fatal("expected write_docs_validator node")
+	}
+	if execNode == nil {
+		t.Fatal("expected write_docs_exec node")
+	}
+
+	if validatorNode.DynamicBindings == nil || validatorNode.DynamicBindings["content"] != "explore.output" {
+		t.Errorf("expected validatorNode.DynamicBindings[\"content\"] = \"explore.output\", got %v", validatorNode.DynamicBindings)
+	}
+	if execNode.DynamicBindings == nil || execNode.DynamicBindings["content"] != "explore.output" {
+		t.Errorf("expected execNode.DynamicBindings[\"content\"] = \"explore.output\", got %v", execNode.DynamicBindings)
+	}
+}
+
+// ── Slice 4: Dependency-Gated Recall Injection Tests (ADR-0079) ─────────────
+
+func TestExpandToSCTGraph_MultiProbe_OmitsIntermediateRecall(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_multi_probe_exploration",
+		Nodes: []GraphNode{
+			{ID: "explore_core", Type: "probe", Instructions: "Explore core layer"},
+			{ID: "explore_local", Type: "probe", Instructions: "Explore local layer"},
+			{ID: "explore_routing", Type: "probe", Instructions: "Explore routing layer"},
+			{ID: "synthesize_final", Type: "synthesis", Instructions: "Synthesize all layers"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "explore_core", TargetID: "synthesize_final"},
+			{SourceID: "explore_local", TargetID: "synthesize_final"},
+			{SourceID: "explore_routing", TargetID: "synthesize_final"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Verify that intermediate recall nodes were NOT injected for pure exploration probes
+	for _, n := range expanded.Nodes {
+		if n.ID == "explore_core_recall" || n.ID == "explore_local_recall" || n.ID == "explore_routing_recall" {
+			t.Errorf("unexpected intermediate recall node %q in multi-probe exploration graph", n.ID)
+		}
+	}
+}
+
+func TestExpandToSCTGraph_MultiProbe_InjectsRecallForToolSink(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_multi_probe_with_sink",
+		Nodes: []GraphNode{
+			{ID: "explore_core", Type: "probe", Instructions: "Explore core layer"},
+			{ID: "write_core_docs", Type: "action", Action: "write_file", Instructions: "Write core docs"},
+			{ID: "explore_support", Type: "probe", Instructions: "Explore support layer"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "explore_core", TargetID: "write_core_docs"},
+			{SourceID: "explore_support", TargetID: "write_core_docs"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Because both probes feed write_core_docs (a Tool Sink), recall nodes MUST be injected
+	hasCoreRecall := false
+	hasSupportRecall := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "explore_core_recall" {
+			hasCoreRecall = true
+		}
+		if n.ID == "explore_support_recall" {
+			hasSupportRecall = true
+		}
+	}
+
+	if !hasCoreRecall {
+		t.Error("expected explore_core_recall to be injected when feeding write_file tool sink")
+	}
+	if !hasSupportRecall {
+		t.Error("expected explore_support_recall to be injected when feeding write_file tool sink")
+	}
+}
+
+func TestExpandToSCTGraph_SingleProbe_AlwaysInjectsRecall(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_single_probe_safety",
+		Nodes: []GraphNode{
+			{ID: "explore_single", Type: "probe", Instructions: "Explore directory structure"},
+		},
+		Edges: []GraphEdge{},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Single probe with no children MUST inject recall per ADR-0072
+	hasRecall := false
+	for _, n := range expanded.Nodes {
+		if n.ID == "explore_single_recall" {
+			hasRecall = true
+			break
+		}
+	}
+
+	if !hasRecall {
+		t.Error("expected explore_single_recall to be injected for single-probe DAG (ADR-0072)")
+	}
+}
+
+func TestExpandToSCTGraph_MultiProbe_Sequential_OmitsIntermediateRecall(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "test_multi_probe_sequential",
+		Nodes: []GraphNode{
+			{ID: "explore_core", Type: "probe", Instructions: "Explore core layer"},
+			{ID: "explore_local", Type: "probe", Instructions: "Explore local layer"},
+			{ID: "explore_routing", Type: "probe", Instructions: "Explore routing layer"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "explore_core", TargetID: "explore_local"},
+			{SourceID: "explore_local", TargetID: "explore_routing"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// explore_core and explore_local should NOT get recall nodes because they feed another probe, not a tool sink
+	for _, n := range expanded.Nodes {
+		if n.ID == "explore_core_recall" || n.ID == "explore_local_recall" {
+			t.Errorf("unexpected intermediate recall node %q for probe feeding another probe", n.ID)
+		}
+	}
+}
+
+// --- Slice 2 RED (Run 32 fix): per-leaf synthesis injection ---
+
+// TestSCT_SynthesisGoalAnalyzeLeaf_DoesNotMaskExecLeaf verifies that when an
+// analyze node (whose instructions contain "synthesize") exists alongside a
+// real non-sink action leaf, terminal_synthesis IS injected for the exec leaf.
+//
+// Root cause in lead_source_by_owner: isSynthesisGoal(node.Instructions) fired
+// on the analyze node, set hasSynthesisLeaf=true, and suppressed synthesis
+// injection for the actual exec leaf.
+// The fix: needsSynthesis checks node.Type only — isSynthesisGoal() on
+// arbitrary instructions no longer gates injection.
+func TestSCT_SynthesisGoalAnalyzeLeaf_DoesNotMaskExecLeaf(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID:     "lead_source_test",
+		GoalPrompt: "list leads by owner",
+		Nodes: []GraphNode{
+			{ID: "read_leads", Type: "probe",
+				Instructions: "read the leads csv"},
+			// analyze_leads: instructions contain "synthesize" — old isSynthesisGoal
+			// would set hasSynthesisLeaf=true and suppress synthesis for exec_agg.
+			{ID: "analyze_leads", Type: "analyze",
+				Instructions: "analyze and synthesize the lead source breakdown",
+				ProbeConfig:  &ProbeConfig{SourceHint: ""}},
+			// exec_agg: non-sink action leaf — must trigger terminal_synthesis injection.
+			{ID: "exec_agg", Type: "action", Action: "sql_cached_data",
+				Instructions: "aggregate leads by owner"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "read_leads", TargetID: "analyze_leads"},
+			{SourceID: "analyze_leads", TargetID: "exec_agg"},
+		},
+	}
+	compiled, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+	var hasSynth bool
+	for _, n := range compiled.Nodes {
+		if n.ID == "terminal_synthesis" {
+			hasSynth = true
+		}
+	}
+	if !hasSynth {
+		t.Error("expected terminal_synthesis to be injected: exec_agg is a non-sink terminal leaf; " +
+			"analyze_leads 'synthesize' in instructions must NOT suppress injection via isSynthesisGoal()")
+	}
+}
+
+// TestSCT_WriteFileLeaf_NoSynthesisInjected verifies that a graph whose only
+// terminal leaf is a write_file action does NOT receive an auto-injected
+// terminal_synthesis node.
+func TestSCT_WriteFileLeaf_NoSynthesisInjected(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID:     "write_test",
+		GoalPrompt: "write the readme file",
+		Nodes: []GraphNode{
+			{ID: "probe_explore", Type: "probe", Instructions: "explore the codebase"},
+			{ID: "write_exec", Type: "action", Action: "write_file",
+				Instructions: "write the README.md file"},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "probe_explore", TargetID: "write_exec"},
+		},
+	}
+	compiled, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+	for _, n := range compiled.Nodes {
+		if n.ID == "terminal_synthesis" {
+			t.Error("terminal_synthesis must NOT be injected when all terminal leaves are tool sinks (write_file)")
+		}
 	}
 }

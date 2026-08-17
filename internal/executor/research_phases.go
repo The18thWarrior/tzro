@@ -16,7 +16,7 @@ import (
 )
 
 // RunResearchPhases executes a Research Node using the Phase Runner with the
-// Research-specific 5-phase template: Search → Rank → Deep-Read → Cross-Ref → Synthesize.
+// Deterministic Web Research Pipeline (ADR-0078): Query Generation → Search → Deep-Read → Synthesize.
 func RunResearchPhases(
 	ctx context.Context,
 	taskID, probeID string,
@@ -25,7 +25,13 @@ func RunResearchPhases(
 	synthesisEngine ProbeInferenceEngine,
 	downstreamBindingKeys []string,
 ) (string, error) {
-	runner := buildResearchPhaseRunner(config)
+	// Stage 1: Generate 2-3 diverse search queries using 1-shot Worker inference
+	queries, err := GenerateSearchQueries(ctx, engine, config.Goal)
+	if err != nil || len(queries) == 0 {
+		queries = []string{extractSearchQueryFromGoal(config.Goal)}
+	}
+
+	runner := buildResearchPhaseRunner(config, queries)
 
 	results, err := runner.Run(ctx, taskID, probeID, engine, synthesisEngine)
 	if err != nil {
@@ -45,14 +51,24 @@ func RunResearchPhases(
 	return finalSynthesis, nil
 }
 
-// buildResearchPhaseRunner constructs a PhaseRunner with the Research-specific template.
-func buildResearchPhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
-	var searchHasURLs bool
-	var urlsBrowsed int
+// buildResearchPhaseRunner constructs a PhaseRunner with the Deterministic Web Research template.
+func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *PhaseRunner {
+	var searchItems []QueueItem
+	for _, q := range queries {
+		if strings.TrimSpace(q) != "" {
+			searchItems = append(searchItems, QueueItem{
+				Tool: "web_search",
+				Args: map[string]interface{}{"query": strings.TrimSpace(q)},
+			})
+		}
+	}
+	if len(searchItems) == 0 {
+		searchItems = append(searchItems, QueueItem{
+			Tool: "web_search",
+			Args: map[string]interface{}{"query": extractSearchQueryFromGoal(config.Goal)},
+		})
+	}
 
-	// ADR-0058 port: State for web-specific guardrails.
-	// discoveredURLs accumulates URLs from web_search results.
-	// visitedURLs tracks URLs already browsed to prevent duplicates.
 	var discoveredURLs []string
 	visitedURLs := make(map[string]bool)
 
@@ -60,22 +76,15 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 		ToolFixup: func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{}) {
 			switch toolName {
 			case "web_search":
-				// Empty query seeding: extract a search query from the goal
 				query, _ := args["query"].(string)
 				if strings.TrimSpace(query) == "" {
-					seeded := extractSearchQueryFromGoal(config.Goal)
-					if seeded != "" {
-						fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolFixup: seeding empty web_search query from goal: %q\n", seeded)
-						args["query"] = seeded
-					}
+					args["query"] = extractSearchQueryFromGoal(config.Goal)
 				}
 			case "web_browse":
-				// URL auto-population: redirect empty or visited URLs to next unvisited
 				url, _ := args["url"].(string)
 				if strings.TrimSpace(url) == "" || visitedURLs[url] {
 					for _, candidate := range discoveredURLs {
 						if !visitedURLs[candidate] {
-							fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolFixup: redirecting web_browse from %q to %q\n", url, candidate)
 							args["url"] = candidate
 							break
 						}
@@ -88,11 +97,15 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 			switch toolName {
 			case "web_search":
 				if err == nil {
-					// Extract URLs from search results for the deep_read phase
 					urls := extractURLsFromWebSearch(output)
-					discoveredURLs = append(discoveredURLs, urls...)
+					for _, u := range urls {
+						if !visitedURLs[u] {
+							discoveredURLs = append(discoveredURLs, u)
+						}
+					}
 					if len(urls) > 0 {
-						fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolPostProcess: extracted %d URLs from web_search\n", len(urls))
+						fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolPostProcess: extracted %d URLs from web_search (total queue: %d)\n",
+							len(urls), len(discoveredURLs))
 					}
 				}
 			case "web_browse":
@@ -108,74 +121,31 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				Name:         "search",
 				AllowedTools: []string{"web_search"},
 				SystemPrompt: buildPhaseResearchPrompt("search", config.Goal, config.TaskContext),
-				StepBudget:   3,
-				Pass1Target:  TargetRouter,
-				Recovery: PhaseRecovery{
-					MaxRetries:   1,
-					OnExhaustion: ExhaustionFail,
-					OnError:      ErrorFail,
-				},
+				StepBudget:   len(searchItems),
+				Driver:       NewDeterministicQueueDriver(searchItems),
 				Transition: func(step int, result PhaseResult, err error) string {
-					for _, tool := range result.ToolsCalled {
-						if tool == "web_search" {
-							searchHasURLs = true
-							return "rank"
-						}
-					}
-					return ""
-				},
-			},
-			"rank": {
-				Name:         "rank",
-				AllowedTools: []string{}, // Synthesis only — no tools
-				SystemPrompt: buildPhaseResearchPrompt("rank", config.Goal, config.TaskContext),
-				StepBudget:   1,
-				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-				},
-				Transition: func(step int, result PhaseResult, err error) string {
-					return "deep_read" // always transitions
+					return "deep_read"
 				},
 			},
 			"deep_read": {
 				Name:         "deep_read",
 				AllowedTools: []string{"web_browse"},
 				SystemPrompt: buildPhaseResearchPrompt("deep_read", config.Goal, config.TaskContext),
-				StepBudget:   8,
-				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					MaxRetries:   1,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-					BacktrackTo:  "search",
-				},
-				Transition: func(step int, result PhaseResult, err error) string {
-					for _, tool := range result.ToolsCalled {
-						if tool == "web_browse" {
-							urlsBrowsed++
+				StepBudget:   5,
+				Driver: NewDynamicQueueDriver(func() []QueueItem {
+					var browseItems []QueueItem
+					for _, u := range discoveredURLs {
+						if !visitedURLs[u] {
+							browseItems = append(browseItems, QueueItem{
+								Tool: "web_browse",
+								Args: map[string]interface{}{"url": u},
+							})
 						}
 					}
-					if urlsBrowsed >= 3 {
-						return "cross_ref"
-					}
-					return ""
-				},
-			},
-			"cross_ref": {
-				Name:         "cross_ref",
-				AllowedTools: []string{"web_search", "web_browse"},
-				SystemPrompt: buildPhaseResearchPrompt("cross_ref", config.Goal, config.TaskContext),
-				StepBudget:   4,
-				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-					BacktrackTo:  "search",
-				},
+					return browseItems
+				}),
 				Transition: func(step int, result PhaseResult, err error) string {
-					return "" // terminal — falls through to synthesize via budget
+					return "synthesize"
 				},
 			},
 			"synthesize": {
@@ -184,19 +154,22 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				SystemPrompt: buildPhaseResearchPrompt("synthesize", config.Goal, config.TaskContext),
 				StepBudget:   1,
 				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					OnExhaustion: ExhaustionFail,
-					OnError:      ErrorFail,
-				},
-				Transition: func(step int, result PhaseResult, err error) string { return "" },
+				Driver:       NewDeterministicQueueDriver(nil),
 			},
 		},
+		PhaseOrder:   []string{"search", "deep_read", "synthesize"},
 		InitialPhase: "search",
-		MaxCycles:    3,
+		MaxCycles:    1,
 		Goal:         config.Goal,
 	}
 
-	_ = searchHasURLs
+	runner.SynthesisPromptPrefix = func() string {
+		var sources []ScrapedSource
+		for url := range visitedURLs {
+			sources = append(sources, ScrapedSource{URL: url})
+		}
+		return buildCitationPreamble(sources)
+	}
 
 	return runner
 }
@@ -225,6 +198,7 @@ func buildPhaseResearchPrompt(phase, goal, taskContext string) string {
 	case "synthesize":
 		b.WriteString("You are producing a final research synthesis. ")
 		b.WriteString("PHASE: SYNTHESIZE — produce a comprehensive, well-sourced answer. ")
+		b.WriteString("Cite specific URLs and domain sources from the research findings for all key facts, benchmarks, and data points. ")
 		b.WriteString("You have NO tools. Use the accumulated phase results as your evidence. ")
 	}
 
@@ -233,5 +207,38 @@ func buildPhaseResearchPrompt(phase, goal, taskContext string) string {
 		b.WriteString(fmt.Sprintf("\n\nTask Context: %s", taskContext))
 	}
 
+	return b.String()
+}
+
+// ScrapedSource is a URL with an optional title that was successfully read
+// during a Research Node's deep-read phase.
+type ScrapedSource struct {
+	Title string
+	URL   string
+}
+
+// buildCitationPreamble constructs a markdown ## Verified Sources block from
+// a list of successfully scraped sources. Returns an empty string when no
+// sources are provided (graceful no-op for tasks without web scraping).
+//
+// ADR-run32: Injected into the synthesis phase system prompt so the local
+// model is anchored to verified URLs and cannot hallucinate citation links.
+func buildCitationPreamble(sources []ScrapedSource) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Verified Sources\n\n")
+	b.WriteString("The following URLs were successfully read during research. ")
+	b.WriteString("IMPORTANT: You MUST cite these URLs when referencing their content. ")
+	b.WriteString("Do NOT invent or hallucinate additional URLs.\n\n")
+	for _, s := range sources {
+		title := s.Title
+		if title == "" {
+			title = s.URL
+		}
+		b.WriteString(fmt.Sprintf("- [%s](%s)\n", title, s.URL))
+	}
+	b.WriteString("\n")
 	return b.String()
 }

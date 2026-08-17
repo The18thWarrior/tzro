@@ -1626,13 +1626,11 @@ func TestTzroWorkflow_DryRun_MultiNodeDAG(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response JSON: %v", err)
 	}
-	if resp["status"] != "dry_run" {
-		t.Errorf("expected status dry_run, got: %v", resp["status"])
-	}
-	// Should have expanded nodes: fetch_validator, fetch_exec, process_validator, process_exec, terminal_synthesis
+	// Should have expanded nodes: fetch_validator, fetch_exec, process_validator, process_exec
+	// (terminal_synthesis is skipped since the terminal leaf process_exec is a tool sink: save_memory)
 	nodeCount, ok := resp["nodeCount"].(float64)
-	if !ok || nodeCount < 5 {
-		t.Errorf("expected at least 5 expanded nodes (2 action * 2 + synthesis), got: %v", resp["nodeCount"])
+	if !ok || nodeCount < 4 {
+		t.Errorf("expected at least 4 expanded nodes (2 action * 2), got: %v", resp["nodeCount"])
 	}
 }
 

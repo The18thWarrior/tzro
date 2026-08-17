@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/tools"
 )
@@ -53,6 +52,9 @@ type Phase struct {
 	// that must read multiple files before synthesizing (e.g., discover
 	// phase scanning 71 ADR files).
 	MinToolCalls int
+	// Driver overrides the phase's execution driver. When set, executePhase
+	// delegates tool execution to this StageDriver without step-level LLM inference.
+	Driver StageDriver
 	// Transition determines the next phase after each step completes.
 	// Returns "" to continue current phase, or a phase name to transition.
 	Transition func(step int, result PhaseResult, err error) string
@@ -116,6 +118,13 @@ type PhaseRunner struct {
 	// Allows per-node-type post-dispatch state tracking (URL extraction,
 	// evidence capture, visited file marking).
 	ToolPostProcess func(phaseName, toolName string, args map[string]interface{}, output string, err error)
+
+	// SynthesisPromptPrefix is an optional function that returns a string
+	// prepended to the synthesize phase's system prompt. Used by Research
+	// nodes to inject a ## Verified Sources preamble from visitedURLs.
+	// ADR-run32: Anchors the local model to actual scraped URLs, preventing
+	// citation hallucination.
+	SynthesisPromptPrefix func() string
 
 	// Goal is the probe's exploration goal, injected into tool context
 	// via tools.FileReadGoalKey so read_file can goal-compress large outputs.
@@ -252,6 +261,8 @@ func (pr *PhaseRunner) executePhase(
 	engine ProbeInferenceEngine,
 	synthesisEngine ProbeInferenceEngine,
 ) (PhaseResult, string, error) {
+	fmt.Fprintf(os.Stderr, "[PhaseRunner] Starting phase %q (budget: %d steps)\n", phase.Name, phase.StepBudget)
+
 	result := PhaseResult{
 		PhaseName: phase.Name,
 		Artifacts: make(map[string]interface{}),
@@ -259,171 +270,69 @@ func (pr *PhaseRunner) executePhase(
 
 	// Inject phase name into context for mock engine routing
 	phaseCtx := context.WithValue(ctx, phaseContextKey, phase.Name)
-
-	// Build phase-specific system prompt with prior phase summaries
-	systemPrompt := pr.buildPhaseSystemPrompt(phase, priorResults)
-
-	var lastToolOutput string
-	var toolsCalled []string
-	var toolOutputLog []string // Accumulated tool outputs for synthesis context
-	var noActionRetries int
-
-	for step := 1; step <= phase.StepBudget; step++ {
-		// --- Pass 1: Free-text reasoning (phase-specific model target) ---
-		var userPrompt strings.Builder
-		if lastToolOutput != "" {
-			userPrompt.WriteString(fmt.Sprintf("## Last Tool Output\n```\n%s\n```\n\n", lastToolOutput))
-		}
-		userPrompt.WriteString(fmt.Sprintf("Phase %q, step %d/%d: What should we do next?", phase.Name, step, phase.StepBudget))
-
-		messages := []inference.InferenceMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt.String()},
-		}
-
-		reasoning, err := engine.InferMessages(phaseCtx, messages, "", phase.Pass1Target)
-		if err != nil {
-			return result, "", fmt.Errorf("phase %q step %d pass 1 failed: %w", phase.Name, step, err)
-		}
-
-		// --- Pass 2: GBNF-constrained action extraction ---
-		action, toolName, args, err := extractToolAction(phaseCtx, engine, reasoning, phase.AllowedTools, false)
-		if err != nil {
-			// Treat extraction failures as synthesis signals rather than fatal errors.
-			// The 4B model frequently produces malformed JSON in the GBNF pass.
-			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q step %d: pass 2 extraction failed (%v) — treating as synthesis\n",
-				phase.Name, step, err)
-			action = "synthesize"
-		}
-
-		// --- No-action retry (ADR-0058 port): reject premature synthesis ---
-		// When the model signals "synthesize" but has called fewer tools than
-		// MinToolCalls and the phase has AllowedTools, the synthesis is premature.
-		// Re-prompt with corrective text instead of accepting it.
-		minCalls := phase.MinToolCalls
-		if minCalls <= 0 {
-			minCalls = 1 // default: at least 1 tool call required
-		}
-		if action == "synthesize" && len(phase.AllowedTools) > 0 && len(toolsCalled) < minCalls {
-			noActionRetries++
-			if noActionRetries <= 2 {
-				fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: premature synthesis rejected (%d/%d tools called, retry %d/2)\n",
-					phase.Name, len(toolsCalled), minCalls, noActionRetries)
-				lastToolOutput = fmt.Sprintf(
-					"REJECTED: You must call at least %d tools before synthesizing. You have called %d. Available tools: %s. "+
-						"Call one of these tools to gather more information, then synthesize.",
-					minCalls, len(toolsCalled), strings.Join(phase.AllowedTools, ", "))
-				continue // retry the step without incrementing
-			}
-			// Exhausted retries — force a tool call rather than accepting empty synthesis.
-			// The ToolFixup hook (ExplorationQueue) will redirect to the next unvisited file.
-			// Prefer read_file since the ExplorationQueue can populate args from PreloadPaths.
-			forcedTool := phase.AllowedTools[0]
-			for _, t := range phase.AllowedTools {
-				if t == "read_file" {
-					forcedTool = t
-					break
-				}
-			}
-			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q: no-action retry exhausted — forcing %q call\n",
-				phase.Name, forcedTool)
-			action = "tool_call"
-			toolName = forcedTool
-			args = map[string]interface{}{}
-		}
-
-		if action == "synthesize" {
-			// Phase synthesis — generate summary from accumulated work
-			result.StepsUsed = step
-			result.ToolsCalled = toolsCalled
-			result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, toolOutputLog, synthesisEngine)
-
-			// Check transition
-			nextPhase := ""
-			if phase.Transition != nil {
-				nextPhase = phase.Transition(step, result, nil)
-			}
-			return result, nextPhase, nil
-		}
-
-		// --- ToolFixup hook: repair arguments before dispatch ---
-		if pr.ToolFixup != nil {
-			toolName, args = pr.ToolFixup(phase.Name, toolName, args, reasoning)
-		}
-
-		// --- Tool dispatch ---
-		toolsCalled = append(toolsCalled, toolName)
-
-		toolOutput, toolErr := pr.dispatchPhaseTool(phaseCtx, toolName, args)
-		if toolErr != nil {
-			lastToolOutput = fmt.Sprintf("Error: %s", toolErr.Error())
-		} else {
-			lastToolOutput = toolOutput
-		}
-
-		// --- Persist ThoughtStep for Recall Node pipeline (FM-1 fix) ---
-		// The Recall node's buildCompactedRecallContext queries ThoughtSteps
-		// by probeID. Without this, Recall synthesis runs with zero context.
-		pr.globalStepCounter++
-		pr.persistThoughtStep(phase.Name, toolName, args, lastToolOutput, reasoning)
-
-		// Accumulate tool outputs for phase synthesis context
-		argsStr, _ := json.Marshal(args)
-		toolOutputLog = append(toolOutputLog, fmt.Sprintf("### %s(%s)\n%s", toolName, string(argsStr), truncate(lastToolOutput, 2000)))
-
-		// --- ToolPostProcess hook: post-dispatch state tracking ---
-		if pr.ToolPostProcess != nil {
-			pr.ToolPostProcess(phase.Name, toolName, args, lastToolOutput, toolErr)
-		}
-
-		// Check transition after each step
-		result.StepsUsed = step
-		result.ToolsCalled = toolsCalled
-		if phase.Transition != nil {
-			nextPhase := phase.Transition(step, result, toolErr)
-			if nextPhase != "" {
-				// Transition triggered — synthesize current phase and move on
-				result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, toolOutputLog, synthesisEngine)
-				return result, nextPhase, nil
-			}
-		}
+	if pr.Goal != "" {
+		phaseCtx = context.WithValue(phaseCtx, tools.FileReadGoalKey, pr.Goal)
 	}
 
-	// Step budget exhausted
-	result.StepsUsed = phase.StepBudget
-	result.ToolsCalled = toolsCalled
-	result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, toolsCalled, toolOutputLog, synthesisEngine)
+	driver := phase.Driver
+	if driver == nil {
+		driver = NewDeterministicQueueDriver(nil)
+	}
 
-	// Check transition before applying exhaustion recovery — allows phases
-	// to define a fallthrough transition that fires on budget exhaustion.
+	runnerCtx := &PhaseRunnerContext{
+		TaskID:            pr.taskID,
+		ProbeID:           pr.probeID,
+		GlobalStepCounter: &pr.globalStepCounter,
+		Goal:              pr.Goal,
+		ToolDispatcher:    pr.dispatchPhaseTool,
+		ToolFixup:         pr.ToolFixup,
+		ToolPostProcess:   pr.ToolPostProcess,
+		PersistStep:       pr.persistThoughtStep,
+	}
+
+	driverResult, driverErr := driver.Execute(phaseCtx, phase, runnerCtx)
+	if driverErr != nil {
+		return result, "", fmt.Errorf("phase %q driver failed: %w", phase.Name, driverErr)
+	}
+
+	result.StepsUsed = driverResult.StepsUsed
+	result.ToolsCalled = driverResult.ToolsCalled
+
+	// Check transition
+	nextPhase := ""
 	if phase.Transition != nil {
-		nextPhase := phase.Transition(phase.StepBudget, result, nil)
-		if nextPhase != "" {
-			fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q budget exhausted — transitioning to %q via fallthrough\n", phase.Name, nextPhase)
-			return result, nextPhase, nil
+		nextPhase = phase.Transition(result.StepsUsed, result, driverResult.Error)
+	}
+
+	// If no transition and budget exhausted, check exhaustion policy
+	if nextPhase == "" && result.StepsUsed >= phase.StepBudget && phase.StepBudget > 0 {
+		if phase.Recovery.OnExhaustion == ExhaustionFail {
+			return result, "", fmt.Errorf("phase %q exhausted step budget (%d)", phase.Name, phase.StepBudget)
 		}
 	}
 
-	// Handle exhaustion according to recovery strategy
-	switch phase.Recovery.OnExhaustion {
-	case ExhaustionFail:
-		return result, "", fmt.Errorf("phase %q exhausted step budget (%d)", phase.Name, phase.StepBudget)
-	case ExhaustionSkip:
-		// Skip — no next phase from exhaustion (terminal)
-		fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q budget exhausted — skipping\n", phase.Name)
-		return result, "", nil
-	case ExhaustionBacktrack:
-		// TODO: Slice 3
-		return result, "", nil
-	}
+	// Synthesize phase summary using 1-shot synthesis engine
+	result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, result.ToolsCalled, driverResult.ToolOutputLog, synthesisEngine)
 
-	return result, "", nil
+	fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q completed: %d steps, %d tools called\n",
+		phase.Name, result.StepsUsed, len(result.ToolsCalled))
+
+	return result, nextPhase, nil
 }
 
 // buildPhaseSystemPrompt constructs a fresh system prompt for a phase,
 // injecting compacted summaries from prior completed phases.
 func (pr *PhaseRunner) buildPhaseSystemPrompt(phase *Phase, priorResults []PhaseResult) string {
 	var b strings.Builder
+
+	// Inject SynthesisPromptPrefix for the synthesize phase (citation preamble, etc.)
+	// ADR-run32: Anchors the model to verified sources before synthesis begins.
+	if phase.Name == "synthesize" && pr.SynthesisPromptPrefix != nil {
+		if prefix := pr.SynthesisPromptPrefix(); prefix != "" {
+			b.WriteString(prefix)
+		}
+	}
+
 	b.WriteString(phase.SystemPrompt)
 
 	if len(priorResults) > 0 {
@@ -469,7 +378,29 @@ func (pr *PhaseRunner) synthesizePhase(
 
 	result, err := synthesisEngine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q synthesis failed: %v\n", phase.Name, err)
+		fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q synthesis failed: %v — attempting emergency 50%% pruning retry\n", phase.Name, err)
+		// Emergency 50% head/tail pruning of toolOutputLog
+		if len(toolOutputLog) > 1 {
+			half := len(toolOutputLog) / 2
+			quarter := half / 2
+			if quarter < 1 {
+				quarter = 1
+			}
+			prunedLog := append(toolOutputLog[:quarter], toolOutputLog[len(toolOutputLog)-quarter:]...)
+			var retrySb strings.Builder
+			retrySb.WriteString(fmt.Sprintf(
+				"Summarize the work done in phase %q. List key findings and outputs concisely. Tools used: %s.\n\n## Tool Outputs (Pruned)\n",
+				phase.Name, strings.Join(toolsCalled, ", ")))
+			for _, entry := range prunedLog {
+				retrySb.WriteString(entry)
+				retrySb.WriteString("\n\n")
+			}
+			retryPrompt := retrySb.String()
+			retryResult, retryErr := synthesisEngine.Infer(ctx, retryPrompt, userPrompt, "", TargetWorker)
+			if retryErr == nil && retryResult != "" {
+				return retryResult
+			}
+		}
 		return fmt.Sprintf("[Synthesis failed for phase %s: %s]", phase.Name, err.Error())
 	}
 	return result

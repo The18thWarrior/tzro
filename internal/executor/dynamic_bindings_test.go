@@ -336,3 +336,49 @@ func TestSCTCompilerPropagatesDynamicBindings(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveDynamicBindings_WholeOutputRecall(t *testing.T) {
+	oldDBPath := memory.DB.GetDBPathForTesting()
+	memory.DB.SetDBPathForTesting("tzro_test_recall_binding.db")
+	defer func() {
+		memory.DB.Close()
+		os.Remove("tzro_test_recall_binding.db")
+		memory.DB.SetDBPathForTesting(oldDBPath)
+		_ = memory.DB.Init()
+	}()
+	_ = memory.DB.Init()
+
+	taskID := "task-recall-binding-test"
+
+	// Simulate probe recall node completion with tag prefix
+	recallContent := "# Cache Analysis\nExported functions:\n- NewCacheID\n- PruneColumns"
+	_ = memory.DB.SetNodeState(taskID, "analyze_cache_recall", "completed", "[Recall] "+recallContent)
+	_ = memory.DB.SetNodeRawOutput(taskID, "analyze_cache_recall", "[Recall] "+recallContent)
+
+	// Resolve "analyze_cache.output" (using base probe ID)
+	bindings := map[string]interface{}{
+		"content": "analyze_cache.output",
+	}
+
+	resolved := resolveDynamicBindings(context.Background(), bindings, taskID, nil)
+
+	if rb, ok := resolved["content"]; !ok {
+		t.Fatal("expected 'content' binding to be resolved")
+	} else {
+		if rb.Tier != "whole_output" {
+			t.Errorf("expected tier 'whole_output', got %q", rb.Tier)
+		}
+		if rb.Value != recallContent {
+			t.Errorf("expected value %q (stripped of prefix), got %q", recallContent, rb.Value)
+		}
+	}
+
+	// Verify partitioning puts whole_output into highConf
+	highConf, lowConf := partitionBindings(resolved)
+	if highConf["content"] != recallContent {
+		t.Errorf("expected highConf[\"content\"] = %q, got %q", recallContent, highConf["content"])
+	}
+	if len(lowConf) != 0 {
+		t.Errorf("expected lowConf to be empty, got %v", lowConf)
+	}
+}

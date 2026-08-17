@@ -627,20 +627,16 @@ func RunProbe(
 		// Grammar-level synthesis gate: when the probe hasn't met its minimum
 		// step budget, remove "synthesize" from the GBNF enum entirely. The 1B
 		// Router physically cannot output "synthesize" — it must extract a
-		// tool_call (which auto-seed will populate if args are empty).
-		// This fixes the ADR-0065 regression: the Router over-classified Worker
-		// reasoning as "synthesize", collapsing edge entries from 63 (R-9) to 0 (R-12).
 		adaptiveMinMet := successfulToolCalls >= minStepBudget-2 && successfulToolCalls > 0
 		forceTool := step < minStepBudget && !adaptiveMinMet
-		extractedAction, extractedTool, extractedArgs, extractErr := extractToolAction(
-			ctx, engine, cleanedResponse, config.AllowedTools, forceTool, config.Goal,
-		)
+		extractedAction, extractedTool, extractedArgs := parseActionFromResponse(cleanedResponse)
+		if forceTool && extractedAction == "synthesize" && len(config.AllowedTools) > 0 {
+			extractedAction = "tool_call"
+			extractedTool = config.AllowedTools[0]
+			extractedArgs = make(map[string]interface{})
+		}
 
-		if extractErr != nil {
-			// GBNF extraction failed — burn the step
-			fmt.Fprintf(os.Stderr, "[Probe] Two-pass extraction failed at step %d: %v\n", step, extractErr)
-			toolOutput = fmt.Sprintf("Action extraction failed: %v. Include a clear <ACTION> tag or signal synthesis readiness.", extractErr)
-		} else if extractedAction == "synthesize" {
+		if extractedAction == "synthesize" {
 			// Adaptive minimum: allow early synthesis if the probe has made
 			// substantial successful progress (successfulToolCalls >= minStepBudget - 2).
 			// Note: adaptiveMinMet is computed above (line 655) for forceTool gating.

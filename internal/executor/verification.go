@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
+	"tzro/internal/compactor"
 	"tzro/internal/inference"
 )
 
@@ -17,28 +19,46 @@ type ScatterSpec struct {
 	ContextFilePath string `json:"contextFilePath"` // Temp file path containing refinedContext
 }
 
-// VerificationResult holds the outcome of the Verification Gate (ADR-0067).
-// Populated by VerifyTaskOutput and persisted in the ExecutionEnvelope.
-type VerificationResult struct {
-	Accepted         bool          `json:"accepted"`
-	GoalAlignment    float64       `json:"goalAlignment"`
-	FactualGrounding float64       `json:"factualGrounding"`
-	Coherence        float64       `json:"coherence"`
-	Completeness     float64       `json:"completeness"`
-	Reason           string        `json:"reason"`
-	ReSynthesis      string        `json:"reSynthesis,omitempty"`
-	PreCheckResult   string        `json:"structuralPreCheck"`          // "passed" | "failed"
-	Source           string        `json:"source"`                      // "local_precheck" | "cloud_verification"
-	ScatterItems     []ScatterSpec `json:"scatterItems,omitempty"`      // ADR-0071: missing items needing scatter probes
-	ReExplore        bool          `json:"reExplore,omitempty"`         // When true, upstream data collection was insufficient — re-run exploration
-	ReExploreHint    string        `json:"reExploreHint,omitempty"`     // Guidance for the re-explore phase (what data to collect)
+// VerificationMode defines the operational mode of the Verification Gate (ADR-0079).
+type VerificationMode string
+
+const (
+	// ModeTerminal evaluates full end-to-end task completeness against the global goal.
+	ModeTerminal VerificationMode = "terminal"
+	// ModeMilestone evaluates intermediate step alignment and downstream viability without global completeness penalties.
+	ModeMilestone VerificationMode = "milestone"
+)
+
+// VerificationOpts specifies configuration for VerifyTaskOutputWithOptions (ADR-0079).
+type VerificationOpts struct {
+	Mode             VerificationMode
+	FeedsToolSink    bool // When true in Milestone mode, rejection triggers immediate Cloud Re-Synthesis
+	ScatterAttempted bool
 }
 
-// verificationRubricSchema is the JSON schema passed to the cloud model's
-// structured output mode (response_format: json_schema). Constrains token
-// generation to valid JSON matching this schema, eliminating parse failures
-// from unescaped characters in reSynthesis content.
-const verificationRubricSchema = `{
+// VerificationResult holds the outcome of the Verification Gate (ADR-0067, ADR-0079).
+// Populated by VerifyTaskOutput / VerifyTaskOutputWithOptions and persisted in the ExecutionEnvelope.
+type VerificationResult struct {
+	Accepted            bool             `json:"accepted"`
+	GoalAlignment       float64          `json:"goalAlignment,omitempty"`
+	FactualGrounding    float64          `json:"factualGrounding"`
+	Coherence           float64          `json:"coherence,omitempty"`
+	Completeness        float64          `json:"completeness,omitempty"`
+	StepAlignment       float64          `json:"stepAlignment,omitempty"`
+	DownstreamViability float64          `json:"downstreamViability,omitempty"`
+	Reason              string           `json:"reason"`
+	ReSynthesis         string           `json:"reSynthesis,omitempty"`
+	PreCheckResult      string           `json:"structuralPreCheck"`          // "passed" | "failed"
+	Source              string           `json:"source"`                      // "local_precheck" | "cloud_verification"
+	Mode                VerificationMode `json:"mode,omitempty"`              // "terminal" | "milestone"
+	ScatterItems        []ScatterSpec    `json:"scatterItems,omitempty"`      // ADR-0071: missing items needing scatter probes
+	ReExplore           bool             `json:"reExplore,omitempty"`         // When true, upstream data collection was insufficient — re-run exploration
+	ReExploreHint       string           `json:"reExploreHint,omitempty"`     // Guidance for the re-explore phase (what data to collect)
+}
+
+// verificationEvaluateSchema is the JSON schema passed to the cloud model's
+// structured output mode for Tier 1 Terminal evaluation.
+const verificationEvaluateSchema = `{
   "type": "object",
   "properties": {
     "accepted": { "type": "boolean" },
@@ -47,11 +67,25 @@ const verificationRubricSchema = `{
     "coherence": { "type": "number" },
     "completeness": { "type": "number" },
     "reason": { "type": "string" },
-    "reSynthesis": { "type": "string" },
     "reExplore": { "type": "boolean" },
     "reExploreHint": { "type": "string" }
   },
-  "required": ["accepted", "goalAlignment", "factualGrounding", "coherence", "completeness", "reason", "reSynthesis"]
+  "required": ["accepted", "goalAlignment", "factualGrounding", "coherence", "completeness", "reason"]
+}`
+
+// milestoneEvaluateSchema is the JSON schema for Tier 1 Milestone evaluation (ADR-0079).
+const milestoneEvaluateSchema = `{
+  "type": "object",
+  "properties": {
+    "accepted": { "type": "boolean" },
+    "stepAlignment": { "type": "number" },
+    "factualGrounding": { "type": "number" },
+    "downstreamViability": { "type": "number" },
+    "reason": { "type": "string" },
+    "reExplore": { "type": "boolean" },
+    "reExploreHint": { "type": "string" }
+  },
+  "required": ["accepted", "stepAlignment", "factualGrounding", "downstreamViability", "reason"]
 }`
 
 // generationAbortedMarker is the marker emitted by the Generation Guard
@@ -171,22 +205,23 @@ func detectMetaResponse(synthesis string) string {
 	return ""
 }
 
-// CloudVerifier abstracts the cloud inference call for testability.
+// CloudVerifier abstracts the cloud inference calls for testability.
 // DefaultCloudVerifier is the production implementation; tests use mockCloudVerifier.
 type CloudVerifier interface {
-	Verify(ctx context.Context, goal, synthesis, refinedContext string) (*VerificationResult, error)
+	Verify(ctx context.Context, goal, synthesis, prunedContext string) (*VerificationResult, error)
+	VerifyMilestone(ctx context.Context, stepObjective, synthesis, prunedContext string) (*VerificationResult, error)
+	ReSynthesize(ctx context.Context, goal, fullContext, synthesis, reason string) (string, error)
 }
 
-// DefaultCloudVerifier calls inference.CallCloudModel with the verification
-// rubric schema for structured output.
+// DefaultCloudVerifier calls inference.CallCloudModel with structured schemas.
 type DefaultCloudVerifier struct{}
 
-// verificationSystemPrompt is the system prompt for the cloud Verification Gate.
-const verificationSystemPrompt = `You are the Verification Gate for a local AI model's output.
+// verificationEvaluateSystemPrompt is the system prompt for the Tier 1 Terminal evaluation gate.
+const verificationEvaluateSystemPrompt = `You are the Verification Gate for a local AI model's output.
 
 You will receive:
 1. The GOAL the local model was trying to achieve
-2. The EXPLORATION CONTEXT (facts discovered during research)
+2. The EXPLORATION CONTEXT (key facts and signatures discovered during research)
 3. The LOCAL MODEL'S ATTEMPT at answering the goal
 
 Your job:
@@ -197,25 +232,45 @@ Your job:
   - coherence: Is the output well-structured and readable?
   - completeness: Does it cover all aspects of the goal?
 - Set "accepted" to true if ALL scores >= 0.6
-- IMPORTANT: When setting "accepted" to false, you MUST provide a "reSynthesis" field containing a COMPLETE, COMPREHENSIVE replacement answer synthesized from the exploration context. The reSynthesis must be a full document that directly fulfills the goal — not a summary or brief note. It should be at least as long and detailed as the exploration context warrants. Never produce a short reSynthesis — the rejected output will be discarded and your reSynthesis will be used as the final output. When accepting, set reSynthesis to an empty string.
+- Set "reason" explaining the score justification and noting any gaps.
 
 Be strict but fair. Accept well-structured output that addresses the goal with minor gaps. Reject output containing meta-commentary about the task, fabricated data, or missing key requirements.
 
 RE-EXPLORE DETECTION: If the output reports tool failures, query errors, or explores the local filesystem instead of answering the research question (e.g., "I searched for files but found no results", "The tool returned an error", meta-commentary about internal diagnostics), set "reExplore" to true and provide a "reExploreHint" describing what data needs to be collected. This signals that the data collection phase was insufficient and should be re-run — re-synthesis alone cannot fix a data gap. Only set reExplore when the failure is clearly about missing data, not about poor writing quality.`
 
-// Verify calls the cloud model to evaluate and optionally re-synthesize.
-func (v *DefaultCloudVerifier) Verify(ctx context.Context, goal, synthesis, refinedContext string) (*VerificationResult, error) {
+// milestoneEvaluateSystemPrompt is the system prompt for the Tier 1 Milestone evaluation gate (ADR-0079).
+const milestoneEvaluateSystemPrompt = `You are the Milestone Verification Gate for an intermediate step in a multi-step workflow.
+
+You will receive:
+1. The STEP OBJECTIVE (the local sub-goal assigned to this step)
+2. The EXPLORATION CONTEXT (evidence gathered by this step)
+3. The LOCAL MODEL'S MILESTONE OUTPUT
+
+Your job:
+- Evaluate whether this milestone accomplished its specific step objective.
+- Score on three dimensions (0.0 to 1.0):
+  - stepAlignment: Did the output address its specific step objective?
+  - factualGrounding: Are claims supported by the gathered context?
+  - downstreamViability: Did it produce usable, non-empty, actionable data for downstream steps?
+- Set "accepted" to true if ALL scores >= 0.60
+- Set "reason" explaining the score justification.
+- CRITICAL INVARIANT: Do NOT penalize or reject this output for failing to satisfy the entire final task. This is an INTERMEDIATE MILESTONE. As long as this milestone fulfilled its local step contract, accept it.
+
+RE-EXPLORE DETECTION: If the step failed to collect data due to tool errors, 0 search results, or wrong directory exploration, set "reExplore" to true and provide "reExploreHint".`
+
+// Verify calls the cloud model to evaluate local synthesis against the goal and pruned context (Tier 1 Terminal).
+func (v *DefaultCloudVerifier) Verify(ctx context.Context, goal, synthesis, prunedContext string) (*VerificationResult, error) {
 	userMessage := fmt.Sprintf(
 		"## GOAL\n\n%s\n\n## EXPLORATION CONTEXT\n\n%s\n\n## LOCAL MODEL'S ATTEMPT\n\n%s",
-		goal, refinedContext, synthesis,
+		goal, prunedContext, synthesis,
 	)
 
 	messages := []inference.InferenceMessage{
-		{Role: "system", Content: verificationSystemPrompt},
+		{Role: "system", Content: verificationEvaluateSystemPrompt},
 		{Role: "user", Content: userMessage},
 	}
 
-	response, err := inference.CallCloudModel(ctx, messages, verificationRubricSchema)
+	response, err := inference.CallCloudModel(ctx, messages, verificationEvaluateSchema)
 	if err != nil {
 		return nil, fmt.Errorf("verification cloud call failed: %w", err)
 	}
@@ -226,25 +281,126 @@ func (v *DefaultCloudVerifier) Verify(ctx context.Context, goal, synthesis, refi
 	}
 
 	result.Source = "cloud_verification"
+	result.Mode = ModeTerminal
 	return &result, nil
 }
 
-// VerifyTaskOutput is the top-level entry point for Verified Task Execution (ADR-0067).
+// VerifyMilestone calls the cloud model to evaluate intermediate milestone output (Tier 1 Milestone, ADR-0079).
+func (v *DefaultCloudVerifier) VerifyMilestone(ctx context.Context, stepObjective, synthesis, prunedContext string) (*VerificationResult, error) {
+	userMessage := fmt.Sprintf(
+		"## STEP OBJECTIVE\n\n%s\n\n## EXPLORATION CONTEXT\n\n%s\n\n## LOCAL MODEL'S MILESTONE OUTPUT\n\n%s",
+		stepObjective, prunedContext, synthesis,
+	)
+
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: milestoneEvaluateSystemPrompt},
+		{Role: "user", Content: userMessage},
+	}
+
+	response, err := inference.CallCloudModel(ctx, messages, milestoneEvaluateSchema)
+	if err != nil {
+		return nil, fmt.Errorf("milestone verification cloud call failed: %w", err)
+	}
+
+	var result VerificationResult
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse milestone verification response: %w", err)
+	}
+
+	result.Source = "cloud_verification"
+	result.Mode = ModeMilestone
+	return &result, nil
+}
+
+// ReSynthesize calls the cloud model to generate a complete replacement document (Tier 2).
+func (v *DefaultCloudVerifier) ReSynthesize(ctx context.Context, goal, fullContext, synthesis, reason string) (string, error) {
+	fallbackPrompt := fmt.Sprintf(
+		"The following synthesis was REJECTED for this reason: %s\n\n"+
+			"Using ONLY the exploration context below, write a complete replacement that addresses the original goal.\n\n"+
+			"## GOAL\n\n%s\n\n## EXPLORATION CONTEXT\n\n%s",
+		reason, goal, fullContext,
+	)
+
+	fallbackMessages := []inference.InferenceMessage{
+		{Role: "system", Content: "You are a technical writer. Produce a comprehensive, well-structured response to the goal using only the provided exploration context. Output the response directly with no meta-commentary."},
+		{Role: "user", Content: fallbackPrompt},
+	}
+
+	return inference.CallCloudModel(ctx, fallbackMessages, "")
+}
+
+var codeBlockRegex = regexp.MustCompile("(?s)```([a-zA-Z0-9_-]*)\n(.*?)```")
+
+// PruneContextForVerification reduces exploration context to high-signal facts,
+// type declarations, and signatures to minimize Tier 1 cloud verification tokens.
+func PruneContextForVerification(rawContext string, targetMaxChars int) string {
+	if targetMaxChars <= 0 {
+		targetMaxChars = 6000
+	}
+
+	// 1. Process code blocks within markdown fences (strip function bodies into signatures)
+	pruned := codeBlockRegex.ReplaceAllStringFunc(rawContext, func(match string) string {
+		sub := codeBlockRegex.FindStringSubmatch(match)
+		if len(sub) < 3 {
+			return match
+		}
+		lang := sub[1]
+		code := sub[2]
+		if len(code) > 200 {
+			skeleton := compactor.ExtractSkeleton(code, 600)
+			return fmt.Sprintf("```%s\n%s\n```", lang, strings.TrimSpace(skeleton))
+		}
+		return match
+	})
+
+	if len(pruned) <= targetMaxChars {
+		return pruned
+	}
+
+	// 2. Compact tool outputs / content if structured
+	pruned = compactor.CompactContent(pruned, targetMaxChars)
+	if len(pruned) <= targetMaxChars {
+		return pruned
+	}
+
+	// 3. Fallback: deterministic head/tail budget preservation
+	headBudget := (targetMaxChars * 2) / 3
+	tailBudget := targetMaxChars - headBudget - 60
+	if tailBudget > 0 && len(pruned) > headBudget+tailBudget {
+		return pruned[:headBudget] + "\n\n... [intermediate context pruned for verification] ...\n\n" + pruned[len(pruned)-tailBudget:]
+	}
+	if len(pruned) > targetMaxChars {
+		return pruned[:targetMaxChars-25] + "\n... [truncated] ..."
+	}
+
+	return pruned
+}
+
+// VerifyTaskOutput is the legacy entry point for Verified Task Execution (ADR-0067).
+// Runs in ModeTerminal mode.
+func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthesis, refinedContext string, scatterAttempted bool) (finalSynthesis string, result *VerificationResult, err error) {
+	return VerifyTaskOutputWithOptions(ctx, verifier, goal, synthesis, refinedContext, VerificationOpts{
+		Mode:             ModeTerminal,
+		ScatterAttempted: scatterAttempted,
+	})
+}
+
+// VerifyTaskOutputWithOptions is the top-level entry point for dual-mode Verified Task Execution (ADR-0079).
 //
 // Pipeline:
 //  1. Stage 2: RunUnifiedValidation (local checks: structural + FM1/FM3/FM5)
-//  2. Stage 3+4: CloudVerifier.Verify (cloud call for evaluation + re-synthesis)
+//  2. Tier 1 (Stage 3): CloudVerifier.Verify / VerifyMilestone on pruned context (fast pass)
+//  3. Tier 2 (Stage 4): CloudVerifier.ReSynthesize on full context (only on rejection with ToolSink or Terminal mode)
 //
-// Returns the final synthesis text (original if accepted, reSynthesis if rejected)
+// Returns the final synthesis text (original if accepted, reSynthesis if rejected and sink-aware)
 // and the VerificationResult for Execution Envelope population.
-//
-// On cloud errors, degrades gracefully: returns the original synthesis with
-// an error-indicating VerificationResult. Never returns an error to the caller.
-func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthesis, refinedContext string, scatterAttempted bool) (finalSynthesis string, result *VerificationResult, err error) {
-	// ADR-0067: Audit log — VTE activates for every recall node unconditionally.
-	// The only gate is privacy level (strict-local / local model mode).
-	fmt.Fprintf(os.Stderr, "[VTE] Activating (goal=%d chars, synthesis=%d chars, context=%d chars)\n",
-		len(goal), len(synthesis), len(refinedContext))
+func VerifyTaskOutputWithOptions(ctx context.Context, verifier CloudVerifier, goal, synthesis, refinedContext string, opts VerificationOpts) (finalSynthesis string, result *VerificationResult, err error) {
+	if opts.Mode == "" {
+		opts.Mode = ModeTerminal
+	}
+
+	fmt.Fprintf(os.Stderr, "[VTE] Activating mode=%s (goal=%d chars, synthesis=%d chars, context=%d chars, feedsToolSink=%v)\n",
+		opts.Mode, len(goal), len(synthesis), len(refinedContext), opts.FeedsToolSink)
 
 	// Privacy Level gate (ADR-0067): strict-local skips cloud verification.
 	if isCloudEscalationBlocked() {
@@ -258,6 +414,7 @@ func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthes
 			Accepted:       preCheckResult == "passed",
 			PreCheckResult: preCheckResult,
 			Source:         "local_precheck",
+			Mode:           opts.Mode,
 			Reason:         reason,
 		}, nil
 	}
@@ -268,33 +425,48 @@ func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthes
 	if unified.StructuralPreCheck == "failed" {
 		fmt.Fprintf(os.Stderr, "[VTE] Stage 2 pre-check FAILED: %s\n", unified.StructuralReason)
 
-		// Pre-check failed — call cloud for direct re-synthesis.
-		vResult, cloudErr := verifier.Verify(ctx, goal, synthesis, refinedContext)
-		if cloudErr != nil {
-			fmt.Fprintf(os.Stderr, "[VTE] Cloud re-synthesis failed: %v\n", cloudErr)
+		// In Milestone mode without a Tool Sink, skip cloud re-synthesis to save tokens/latency (ADR-0079).
+		if opts.Mode == ModeMilestone && !opts.FeedsToolSink {
+			fmt.Fprintf(os.Stderr, "[VTE] Milestone mode without tool sink: skipping cloud re-synthesis on pre-check failure\n")
 			return synthesis, &VerificationResult{
 				Accepted:       false,
 				PreCheckResult: "failed",
 				Source:         "local_precheck",
-				Reason:         fmt.Sprintf("structural pre-check failed (%s), cloud re-synthesis failed: %v", unified.StructuralReason, cloudErr),
+				Mode:           opts.Mode,
+				Reason:         unified.StructuralReason,
 			}, nil
 		}
 
-		vResult.PreCheckResult = "failed"
-		if vResult.ReSynthesis != "" {
-			return vResult.ReSynthesis, vResult, nil
+		// Pre-check failed — call cloud for direct re-synthesis (Tier 2).
+		reSynth, synthErr := verifier.ReSynthesize(ctx, goal, refinedContext, synthesis, unified.StructuralReason)
+		if synthErr != nil || reSynth == "" {
+			fmt.Fprintf(os.Stderr, "[VTE] Cloud re-synthesis failed: %v\n", synthErr)
+			return synthesis, &VerificationResult{
+				Accepted:       false,
+				PreCheckResult: "failed",
+				Source:         "local_precheck",
+				Mode:           opts.Mode,
+				Reason:         fmt.Sprintf("structural pre-check failed (%s), cloud re-synthesis failed: %v", unified.StructuralReason, synthErr),
+			}, nil
 		}
-		return synthesis, vResult, nil
+
+		vResult := &VerificationResult{
+			Accepted:       false,
+			PreCheckResult: "failed",
+			Source:         "cloud_verification",
+			Mode:           opts.Mode,
+			ReSynthesis:    reSynth,
+			Reason:         unified.StructuralReason,
+		}
+		return reSynth, vResult, nil
 	}
 
-	// Pre-check passed — check for coverage-based scatter opportunity (ADR-0071)
-	if unified.CoverageResult != nil && len(unified.CoverageResult.Missing) > 0 {
+	// Pre-check passed — check for coverage-based scatter opportunity (ADR-0071) in Terminal mode
+	if opts.Mode == ModeTerminal && unified.CoverageResult != nil && len(unified.CoverageResult.Missing) > 0 {
 		fmt.Fprintf(os.Stderr, "[VTE] Coverage advisory: %d/%d items missing\n",
 			len(unified.CoverageResult.Missing), unified.CoverageResult.TotalRequired)
 
-		// Item-Level Scatter: if scatter hasn't been attempted yet, signal
-		// the executor to spawn targeted probes for missing items.
-		if !scatterAttempted {
+		if !opts.ScatterAttempted {
 			var specs []ScatterSpec
 			for _, item := range unified.CoverageResult.Missing {
 				specs = append(specs, ScatterSpec{GoalItem: item})
@@ -304,6 +476,7 @@ func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthes
 				Accepted:       false,
 				PreCheckResult: "passed",
 				Source:         "scatter_needed",
+				Mode:           opts.Mode,
 				Reason:         fmt.Sprintf("coverage check found %d missing items, scatter requested", len(specs)),
 				ScatterItems:   specs,
 			}, nil
@@ -314,79 +487,77 @@ func VerifyTaskOutput(ctx context.Context, verifier CloudVerifier, goal, synthes
 			len(unified.ContentIssues))
 	}
 
-	// Run cloud verification
-	fmt.Fprintf(os.Stderr, "[VTE] Stage 2 pre-check PASSED, calling cloud verification\n")
+	// Tier 1: Run fast cloud evaluation on PRUNED context
+	prunedContext := PruneContextForVerification(refinedContext, 6000)
+	fmt.Fprintf(os.Stderr, "[VTE] Stage 2 pre-check PASSED, calling Tier 1 verification (%s mode, pruned context: %d -> %d chars)\n",
+		opts.Mode, len(refinedContext), len(prunedContext))
 
-	vResult, cloudErr := verifier.Verify(ctx, goal, synthesis, refinedContext)
+	var vResult *VerificationResult
+	var cloudErr error
+
+	if opts.Mode == ModeMilestone {
+		vResult, cloudErr = verifier.VerifyMilestone(ctx, goal, synthesis, prunedContext)
+	} else {
+		vResult, cloudErr = verifier.Verify(ctx, goal, synthesis, prunedContext)
+	}
+
 	if cloudErr != nil {
 		fmt.Fprintf(os.Stderr, "[VTE] Cloud verification failed: %v — returning original synthesis\n", cloudErr)
 		return synthesis, &VerificationResult{
 			Accepted:       false,
 			PreCheckResult: "passed",
 			Source:         "cloud_verification",
+			Mode:           opts.Mode,
 			Reason:         fmt.Sprintf("cloud verification failed: %v", cloudErr),
 		}, nil
 	}
 
 	vResult.PreCheckResult = "passed"
 	vResult.Source = "cloud_verification"
+	vResult.Mode = opts.Mode
 
 	if vResult.Accepted {
-		fmt.Fprintf(os.Stderr, "[VTE] ACCEPTED (goal=%.2f, fact=%.2f, cohr=%.2f, comp=%.2f)\n",
-			vResult.GoalAlignment, vResult.FactualGrounding, vResult.Coherence, vResult.Completeness)
+		if opts.Mode == ModeMilestone {
+			fmt.Fprintf(os.Stderr, "[VTE] MILESTONE ACCEPTED (step=%.2f, fact=%.2f, viability=%.2f)\n",
+				vResult.StepAlignment, vResult.FactualGrounding, vResult.DownstreamViability)
+		} else {
+			fmt.Fprintf(os.Stderr, "[VTE] TERMINAL ACCEPTED (goal=%.2f, fact=%.2f, cohr=%.2f, comp=%.2f)\n",
+				vResult.GoalAlignment, vResult.FactualGrounding, vResult.Coherence, vResult.Completeness)
+		}
 		return synthesis, vResult, nil
 	}
 
-	// Rejected — use re-synthesis if available
-	fmt.Fprintf(os.Stderr, "[VTE] REJECTED: %s (goal=%.2f, fact=%.2f, cohr=%.2f, comp=%.2f)\n",
-		vResult.Reason, vResult.GoalAlignment, vResult.FactualGrounding, vResult.Coherence, vResult.Completeness)
+	// Rejected — check for Re-Explore signal
+	if opts.Mode == ModeMilestone {
+		fmt.Fprintf(os.Stderr, "[VTE] MILESTONE REJECTED: %s (step=%.2f, fact=%.2f, viability=%.2f)\n",
+			vResult.Reason, vResult.StepAlignment, vResult.FactualGrounding, vResult.DownstreamViability)
+	} else {
+		fmt.Fprintf(os.Stderr, "[VTE] TERMINAL REJECTED: %s (goal=%.2f, fact=%.2f, cohr=%.2f, comp=%.2f)\n",
+			vResult.Reason, vResult.GoalAlignment, vResult.FactualGrounding, vResult.Coherence, vResult.Completeness)
+	}
 
-	// Re-Explore: if the cloud verifier detected insufficient data collection
-	// (tool failures, filesystem exploration instead of web research, etc.),
-	// signal re-explore to the consuming strategy. Re-synthesis can't fix a
-	// data gap — the upstream exploration needs to be re-run.
 	if vResult.ReExplore {
 		fmt.Fprintf(os.Stderr, "[VTE] Re-explore signaled: %s\n", vResult.ReExploreHint)
-		vResult.PreCheckResult = "passed"
-		vResult.Source = "cloud_verification"
 		return synthesis, vResult, nil
 	}
 
-	if vResult.ReSynthesis != "" {
-		fmt.Fprintf(os.Stderr, "[VTE] Using cloud re-synthesis (%d chars)\n", len(vResult.ReSynthesis))
-		return vResult.ReSynthesis, vResult, nil
-	}
-
-	// Defensive fallback: the cloud model rejected but did not produce a
-	// reSynthesis (it omitted the optional field). Fire a dedicated second
-	// call with explicit re-synthesis instructions rather than returning the
-	// rejected output. This is a robustness guard, not an architectural change
-	// to the single-call VTE design.
-	fmt.Fprintf(os.Stderr, "[VTE] WARNING: Rejection without reSynthesis — firing fallback re-synthesis call\n")
-	fallbackPrompt := fmt.Sprintf(
-		"The following synthesis was REJECTED for this reason: %s\n\n"+
-			"Using ONLY the exploration context below, write a complete replacement that addresses the original goal.\n\n"+
-			"## GOAL\n\n%s\n\n## EXPLORATION CONTEXT\n\n%s",
-		vResult.Reason, goal, refinedContext,
-	)
-
-	fallbackMessages := []inference.InferenceMessage{
-		{Role: "system", Content: "You are a technical writer. Produce a comprehensive, well-structured response to the goal using only the provided exploration context. Output the response directly with no meta-commentary."},
-		{Role: "user", Content: fallbackPrompt},
-	}
-
-	fallbackResponse, fallbackErr := inference.CallCloudModel(ctx, fallbackMessages, "")
-	if fallbackErr != nil {
-		fmt.Fprintf(os.Stderr, "[VTE] Fallback re-synthesis failed: %v — returning original rejected synthesis\n", fallbackErr)
+	// Sink-Aware Re-Synthesis check (ADR-0079):
+	// If this is a Milestone node that does NOT feed a Tool Sink, skip cloud re-synthesis.
+	if opts.Mode == ModeMilestone && !opts.FeedsToolSink {
+		fmt.Fprintf(os.Stderr, "[VTE] Milestone rejected without tool sink — skipping cloud re-synthesis, forwarding original synthesis\n")
 		return synthesis, vResult, nil
 	}
 
-	if fallbackResponse != "" {
-		fmt.Fprintf(os.Stderr, "[VTE] Fallback re-synthesis succeeded (%d chars)\n", len(fallbackResponse))
-		vResult.ReSynthesis = fallbackResponse
-		return fallbackResponse, vResult, nil
+	// Tier 2: Targeted Re-Synthesis using FULL unpruned context
+	fmt.Fprintf(os.Stderr, "[VTE] Firing Tier 2 re-synthesis call with full context (%d chars)\n", len(refinedContext))
+	reSynth, synthErr := verifier.ReSynthesize(ctx, goal, refinedContext, synthesis, vResult.Reason)
+	if synthErr != nil || reSynth == "" {
+		fmt.Fprintf(os.Stderr, "[VTE] Re-synthesis failed: %v — returning original synthesis\n", synthErr)
+		return synthesis, vResult, nil
 	}
 
-	return synthesis, vResult, nil
+	vResult.ReSynthesis = reSynth
+	fmt.Fprintf(os.Stderr, "[VTE] Using cloud re-synthesis (%d chars)\n", len(reSynth))
+	return reSynth, vResult, nil
 }
 

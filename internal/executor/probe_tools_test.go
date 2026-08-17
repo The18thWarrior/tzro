@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"context"
 	"testing"
+
+	"tzro/internal/inference"
 )
 
 func TestRescueRefFromThought(t *testing.T) {
@@ -195,3 +198,56 @@ func TestClassifyProbeGoal_GitKeywords(t *testing.T) {
 		}
 	}
 }
+
+type mockQueryEngine struct {
+	response string
+	err      error
+}
+
+func (m *mockQueryEngine) Infer(ctx context.Context, systemPrompt, userPrompt, schema string, target ModelTarget) (string, error) {
+	return m.response, m.err
+}
+
+func (m *mockQueryEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, schema string, target ModelTarget) (string, error) {
+	return m.response, m.err
+}
+
+func TestGenerateSearchQueries_WorkerSuccess(t *testing.T) {
+	mock := &mockQueryEngine{
+		response: `["agent memory benchmarks", "tzro architecture comparison", "local LLM orchestration"]`,
+	}
+
+	queries, err := GenerateSearchQueries(context.Background(), mock, "Research agent memory benchmarks and compare tzro to local LLM orchestration")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(queries) != 3 {
+		t.Fatalf("expected 3 queries, got %d: %v", len(queries), queries)
+	}
+	if queries[0] != "agent memory benchmarks" || queries[1] != "tzro architecture comparison" {
+		t.Errorf("unexpected queries: %v", queries)
+	}
+}
+
+func TestGenerateSearchQueries_Fallback(t *testing.T) {
+	mock := &mockQueryEngine{
+		response: `invalid json response`,
+	}
+
+	queries, err := GenerateSearchQueries(context.Background(), mock, "Research llama.cpp performance on Apple Silicon and compare to Ollama")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(queries) < 1 {
+		t.Fatalf("expected at least 1 fallback query, got %d", len(queries))
+	}
+}
+
+func TestExtractSearchQueryVariantsFromGoal(t *testing.T) {
+	goal := "Research llama.cpp speed on Apple Silicon and compare it to Ollama"
+	queries := extractSearchQueryVariantsFromGoal(goal)
+	if len(queries) < 2 {
+		t.Errorf("expected at least 2 query variants from compound goal, got %d: %v", len(queries), queries)
+	}
+}
+

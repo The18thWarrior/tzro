@@ -48,7 +48,7 @@ func TestBuildSQL_GroupByWithCount(t *testing.T) {
 		t.Fatalf("BuildSQL failed: %v", err)
 	}
 
-	if !strings.Contains(sql, "GROUP BY [Country]") {
+	if !strings.Contains(sql, "GROUP BY COALESCE(NULLIF([Country], ''), '(Unspecified)')") {
 		t.Errorf("expected GROUP BY clause, got: %s", sql)
 	}
 	if !strings.Contains(sql, "COUNT(*)") {
@@ -88,7 +88,7 @@ func TestBuildSQL_ComplexComposite(t *testing.T) {
 	if !strings.Contains(sql, "WHERE [Target_Account?] = 'Yes'") {
 		t.Errorf("expected WHERE with bracket-escaped special column, got: %s", sql)
 	}
-	if !strings.Contains(sql, "GROUP BY [Primary_Incumbent_CDN]") {
+	if !strings.Contains(sql, "GROUP BY COALESCE(NULLIF([Primary_Incumbent_CDN], ''), '(Unspecified)')") {
 		t.Errorf("expected GROUP BY, got: %s", sql)
 	}
 	if !strings.Contains(sql, "COUNT(*)") {
@@ -250,8 +250,8 @@ func TestBuildSQL_AggregateWithoutAlias(t *testing.T) {
 	if !strings.Contains(sql, "COUNT(*)") {
 		t.Errorf("expected COUNT(*), got: %s", sql)
 	}
-	if strings.Contains(sql, " AS ") {
-		t.Errorf("expected no alias when not specified, got: %s", sql)
+	if strings.Contains(sql, "COUNT(*) AS") {
+		t.Errorf("expected no alias for aggregate when not specified, got: %s", sql)
 	}
 }
 
@@ -326,3 +326,56 @@ func TestNewQueryBuilderTool_Schema(t *testing.T) {
 		t.Error("schema missing operations")
 	}
 }
+
+func TestBuildSQL_GroupByCoalesceImputation(t *testing.T) {
+	spec := QuerySpec{
+		CacheID: "cache_1234567890",
+		Operations: []Operation{
+			{Type: "group_by", Column: "Primary_Incumbent_CDN"},
+			{Type: "aggregate", Function: "COUNT", Alias: "target_lead_count"},
+			{Type: "order_by", Column: "target_lead_count", Direction: "DESC"},
+		},
+	}
+
+	sql, err := BuildSQL(spec)
+	if err != nil {
+		t.Fatalf("BuildSQL failed: %v", err)
+	}
+
+	// Grouping columns should have COALESCE(NULLIF(col, ''), '(Unspecified)') imputation
+	expectedSelect := "COALESCE(NULLIF([Primary_Incumbent_CDN], ''), '(Unspecified)') AS [Primary_Incumbent_CDN]"
+	if !strings.Contains(sql, expectedSelect) {
+		t.Errorf("expected SELECT clause to contain imputed column %q, got: %s", expectedSelect, sql)
+	}
+
+	expectedGroupBy := "GROUP BY COALESCE(NULLIF([Primary_Incumbent_CDN], ''), '(Unspecified)')"
+	if !strings.Contains(sql, expectedGroupBy) {
+		t.Errorf("expected GROUP BY clause %q, got: %s", expectedGroupBy, sql)
+	}
+}
+
+// --- Slice 1 RED (Run 32 fix): COUNT(*) wildcard must not produce COUNT([*]) ---
+
+// TestBuildSQL_CountStar_NoColumnBrackets verifies that a COUNT(*) aggregate
+// is emitted as COUNT(*) and not COUNT([*]), which SQLite rejects with
+// "no such column: *".
+func TestBuildSQL_CountStar_NoColumnBrackets(t *testing.T) {
+	spec := QuerySpec{
+		CacheID: "cache_1234567890",
+		Operations: []Operation{
+			{Type: "group_by", Column: "Country"},
+			{Type: "aggregate", Function: "COUNT", Column: "*", Alias: "count"},
+		},
+	}
+	sql, err := BuildSQL(spec)
+	if err != nil {
+		t.Fatalf("BuildSQL failed: %v", err)
+	}
+	if strings.Contains(sql, "COUNT([*])") {
+		t.Errorf("COUNT([*]) must not appear in SQL — SQLite rejects it. Got: %s", sql)
+	}
+	if !strings.Contains(sql, "COUNT(*)") {
+		t.Errorf("expected COUNT(*) in SQL, got: %s", sql)
+	}
+}
+

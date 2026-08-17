@@ -67,12 +67,14 @@ func BuildSQL(spec QuerySpec) (string, error) {
 	}
 
 	// Collect clause components from operations
+	// Collect clause components from operations
 	var (
-		selectCols []string
-		filters    []string
-		groupByCols []string
-		aggregates  []string
-		orderClauses []string
+		selectCols        []string
+		filters           []string
+		groupByCols       []string
+		groupBySelectCols []string
+		aggregates        []string
+		orderClauses      []string
 	)
 
 	for _, op := range spec.Operations {
@@ -88,7 +90,9 @@ func BuildSQL(spec QuerySpec) (string, error) {
 			if op.Column == "" {
 				return "", fmt.Errorf("group_by operation requires a column")
 			}
-			groupByCols = append(groupByCols, fmt.Sprintf("[%s]", op.Column))
+			imputedExpr := fmt.Sprintf("COALESCE(NULLIF([%s], ''), '(Unspecified)')", op.Column)
+			groupByCols = append(groupByCols, imputedExpr)
+			groupBySelectCols = append(groupBySelectCols, fmt.Sprintf("%s AS [%s]", imputedExpr, op.Column))
 
 		case "aggregate":
 			agg, err := buildAggregateClause(op)
@@ -113,10 +117,10 @@ func BuildSQL(spec QuerySpec) (string, error) {
 
 	// Assemble SELECT clause
 	var selectClause string
-	if len(groupByCols) > 0 {
-		// When GROUP BY is used, SELECT = group columns + aggregates
-		parts := make([]string, 0, len(groupByCols)+len(aggregates))
-		parts = append(parts, groupByCols...)
+	if len(groupBySelectCols) > 0 {
+		// When GROUP BY is used, SELECT = imputed group columns + aggregates
+		parts := make([]string, 0, len(groupBySelectCols)+len(aggregates))
+		parts = append(parts, groupBySelectCols...)
 		parts = append(parts, aggregates...)
 		if len(parts) == 0 {
 			selectClause = "*"
@@ -185,7 +189,7 @@ func buildAggregateClause(op Operation) (string, error) {
 	}
 
 	var expr string
-	if funcUpper == "COUNT" && op.Column == "" {
+	if funcUpper == "COUNT" && (op.Column == "" || op.Column == "*") {
 		expr = "COUNT(*)"
 	} else if funcUpper == "GROUP_CONCAT" {
 		if op.Column == "" {

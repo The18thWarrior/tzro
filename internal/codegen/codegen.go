@@ -489,3 +489,85 @@ func WriteCodeFile(filePath, rawContent string, maxLines int) (action string, li
 
 	return action, lines, nil
 }
+
+// SanitizeSourceCode strips leading conversational preamble and markdown artifacts
+// before the code begins, ensuring that generated files start immediately with valid code tokens.
+func SanitizeSourceCode(raw string, language string) string {
+	cleaned := StripMarkdownFences(raw)
+	lines := strings.Split(cleaned, "\n")
+
+	lang := strings.ToLower(language)
+	startIdx := 0
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		switch lang {
+		case "go":
+			if strings.HasPrefix(trimmed, "package ") {
+				startIdx = i
+				goto found
+			}
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+				// Look ahead to check if package declaration follows
+				for j := i + 1; j < len(lines); j++ {
+					t := strings.TrimSpace(lines[j])
+					if strings.HasPrefix(t, "package ") {
+						startIdx = i
+						goto found
+					}
+				}
+			}
+
+		case "typescript", "javascript", "ts", "js":
+			if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "export ") ||
+				strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "interface ") ||
+				strings.HasPrefix(trimmed, "const ") || strings.HasPrefix(trimmed, "let ") ||
+				strings.HasPrefix(trimmed, "var ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "//") ||
+				strings.HasPrefix(trimmed, "/*") {
+				startIdx = i
+				goto found
+			}
+
+		case "python", "py":
+			if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "from ") ||
+				strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "class ") ||
+				strings.HasPrefix(trimmed, "\"\"\"") || strings.HasPrefix(trimmed, "'''") ||
+				strings.HasPrefix(trimmed, "#") {
+				startIdx = i
+				goto found
+			}
+
+		case "rust", "rs":
+			if strings.HasPrefix(trimmed, "use ") || strings.HasPrefix(trimmed, "pub ") ||
+				strings.HasPrefix(trimmed, "fn ") || strings.HasPrefix(trimmed, "struct ") ||
+				strings.HasPrefix(trimmed, "enum ") || strings.HasPrefix(trimmed, "mod ") ||
+				strings.HasPrefix(trimmed, "//") {
+				startIdx = i
+				goto found
+			}
+
+		default:
+			// For generic languages, strip common conversational intro phrases
+			lower := strings.ToLower(trimmed)
+			if !strings.HasPrefix(lower, "here is") &&
+				!strings.HasPrefix(lower, "sure") &&
+				!strings.HasPrefix(lower, "below is") &&
+				!strings.HasPrefix(lower, "certainly") {
+				startIdx = i
+				goto found
+			}
+		}
+	}
+
+found:
+	if startIdx > 0 && startIdx < len(lines) {
+		return strings.Join(lines[startIdx:], "\n")
+	}
+	return cleaned
+}
+

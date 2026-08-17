@@ -217,3 +217,52 @@ func TestCompactToolOutputs_AnalyzeToolsExempt(t *testing.T) {
 		t.Error("introspect_cache output should be preserved at full fidelity")
 	}
 }
+
+func TestCompactToolOutputs_TextWithGoalUsesHybridCompactor(t *testing.T) {
+	doc := `## Section 1: Memory Indexing
+Database memory indexing structures like B-Trees and LSM Trees allow high speed lookups for key value queries.
+
+## Section 2: Regional Weather Trends
+The forecast for tomorrow predicts sunny skies with mild westerly winds across the valley.
+
+## Section 3: Cache Eviction Policies
+LRU and LFU cache eviction algorithms determine which cache entries to discard when memory capacity is reached.
+
+## Section 4: Baking Recipes
+To bake sourdough bread, mix flour and water and allow fermentation for 24 hours at room temperature.`
+
+	steps := []ToolOutputStep{
+		{
+			StepIndex:  1,
+			ToolName:   "read_file",
+			ToolArgs:   `{"path":"notes.txt"}`,
+			ToolOutput: doc,
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), CompactorGoalKey, "cache eviction and memory indexing")
+	result, err := CompactToolOutputs(ctx, steps, 400, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.LLMCalls != 0 {
+		t.Errorf("expected 0 LLM calls for deterministic hybrid compaction, got %d", result.LLMCalls)
+	}
+
+	// Should contain Section 1 (Indexing) and Section 3 (Cache Eviction)
+	if !strings.Contains(result.Output, "Database Memory Indexing") && !strings.Contains(result.Output, "indexing") {
+		t.Errorf("expected output to contain Section 1 (Indexing), got:\n%s", result.Output)
+	}
+	if !strings.Contains(result.Output, "Cache Eviction Policies") && !strings.Contains(result.Output, "eviction") {
+		t.Errorf("expected output to contain Section 3 (Cache Eviction), got:\n%s", result.Output)
+	}
+
+	// Should omit Section 2 (Weather) or Section 4 (Baking)
+	if strings.Contains(result.Output, "Regional Weather Trends") {
+		t.Errorf("expected output to omit Section 2 (Weather)")
+	}
+	if strings.Contains(result.Output, "Baking Recipes") {
+		t.Errorf("expected output to omit Section 4 (Baking)")
+	}
+}

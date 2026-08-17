@@ -75,6 +75,61 @@ func RunAnalyzePhases(
 	return finalOutput, nil
 }
 
+// renderJSONToMarkdownTable converts a JSON array of row objects into a clean Markdown table.
+func renderJSONToMarkdownTable(jsonStr string) (string, int) {
+	trimmed := strings.TrimSpace(jsonStr)
+	if !strings.HasPrefix(trimmed, "[") || !strings.HasSuffix(trimmed, "]") {
+		return "", 0
+	}
+
+	var rows []map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &rows); err != nil || len(rows) == 0 {
+		return "", 0
+	}
+
+	// Extract headers in deterministic order
+	var headers []string
+	seenHeader := make(map[string]bool)
+	for _, row := range rows {
+		for k := range row {
+			if !seenHeader[k] {
+				seenHeader[k] = true
+				headers = append(headers, k)
+			}
+		}
+	}
+
+	if len(headers) == 0 {
+		return "", 0
+	}
+
+	var sb strings.Builder
+	// Header row
+	fmt.Fprintf(&sb, "| %s |\n", strings.Join(headers, " | "))
+	// Separator row
+	seps := make([]string, len(headers))
+	for i := range seps {
+		seps[i] = "---"
+	}
+	fmt.Fprintf(&sb, "| %s |\n", strings.Join(seps, " | "))
+
+	// Data rows
+	for _, row := range rows {
+		vals := make([]string, len(headers))
+		for i, h := range headers {
+			val := row[h]
+			if val == nil || fmt.Sprintf("%v", val) == "" {
+				vals[i] = "(Unspecified)"
+			} else {
+				vals[i] = fmt.Sprintf("%v", val)
+			}
+		}
+		fmt.Fprintf(&sb, "| %s |\n", strings.Join(vals, " | "))
+	}
+
+	return sb.String(), len(rows)
+}
+
 // buildDataPassthrough constructs a structured output from the goal and raw
 // query results, bypassing LLM prose synthesis entirely. The VTE/cloud model
 // handles formatting if needed.
@@ -110,9 +165,16 @@ func buildDataPassthrough(goal string, results []PhaseResult, probeID string) st
 	}
 
 	if lastQueryOutput != "" {
-		sb.WriteString("## Query Result\n")
-		sb.WriteString(lastQueryOutput)
-		sb.WriteString("\n\n")
+		tableMD, rowCount := renderJSONToMarkdownTable(lastQueryOutput)
+		if tableMD != "" {
+			sb.WriteString(fmt.Sprintf("--- Query Result: %d Rows Returned ---\n\n", rowCount))
+			sb.WriteString(tableMD)
+			sb.WriteString("\n")
+		} else {
+			sb.WriteString("## Query Result\n")
+			sb.WriteString(lastQueryOutput)
+			sb.WriteString("\n\n")
+		}
 	} else {
 		// Fallback: use the last phase's Summary (LLM-generated, from phase transition)
 		if len(results) > 0 {
@@ -175,7 +237,6 @@ func autoIngestTabularFile(ctx context.Context, filePath string) (string, error)
 
 func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]string) {
 	var schemaIntrospected bool
-	var queryBuilderCalls int
 	var keyColumns []string // Populated by embedding override in schema_orient transition
 
 	// ADR-0058 port: State for cache ID guardrails.
@@ -228,6 +289,7 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 	// QueryIntent GBNF extraction: pre-built operations from goal analysis.
 	// Populated after schema_orient completes (when we have column names).
 	var preBuiltOps []interface{}
+	var preBuiltLimit int
 	var sampleValues map[string][]string
 
 	runner := &PhaseRunner{
@@ -273,6 +335,13 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 						}
 						args["limit"] = 20
 						fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: injected default SELECT * LIMIT 20 (no intent available)\n")
+					}
+				}
+				// Apply pre-built limit from QueryIntent extraction.
+				if preBuiltLimit > 0 {
+					if _, hasLimit := args["limit"]; !hasLimit {
+						args["limit"] = preBuiltLimit
+						fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: applied pre-built limit=%d\n", preBuiltLimit)
 					}
 				}
 				// Duplicate detection — skip if same args already dispatched
@@ -326,13 +395,16 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 				Name:         "schema_orient",
 				AllowedTools: []string{"introspect_cache"},
 				SystemPrompt: buildPhaseAnalyzePrompt("schema_orient", config.Goal, config.TaskContext, nil, nil),
-				StepBudget:   4,
-				Pass1Target:  TargetRouter,
-				Recovery: PhaseRecovery{
-					MaxRetries:   1, // Allow retry so forced tool call can fire introspect_cache
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-				},
+				StepBudget:   1,
+				Driver: NewDynamicQueueDriver(func() []QueueItem {
+					if len(knownCacheIds) > 0 {
+						return []QueueItem{{
+							Tool: "introspect_cache",
+							Args: map[string]interface{}{"cacheId": knownCacheIds[0]},
+						}}
+					}
+					return nil
+				}),
 				Transition: func(step int, result PhaseResult, err error) string {
 					for _, tool := range result.ToolsCalled {
 						if tool == "introspect_cache" {
@@ -358,7 +430,8 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 									fmt.Fprintf(os.Stderr, "[AnalyzePhases] QueryIntent extraction failed (non-fatal): %v\n", intentErr)
 								} else {
 									preBuiltOps = IntentToOperations(intent)
-									fmt.Fprintf(os.Stderr, "[AnalyzePhases] QueryIntent extracted %d operations as fallback\n", len(preBuiltOps))
+									preBuiltLimit = intent.Limit
+									fmt.Fprintf(os.Stderr, "[AnalyzePhases] QueryIntent extracted %d operations as fallback (limit=%d)\n", len(preBuiltOps), preBuiltLimit)
 								}
 
 								// Red-team FM-10 fix: Collect sample values per column so the
@@ -370,15 +443,6 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 								}
 
 								// ADR-0075: Embedding-based select column override.
-								// The 4B model's GBNF extraction of selectColumns is unreliable
-								// (e.g., extracts [name, AccountId, Status] instead of [name, email]).
-								// Neural embeddings match the goal text against enriched column strings
-								// to deterministically select the right output columns.
-								//
-								// IMPORTANT: Use config.TaskContext (the original user prompt) rather
-								// than config.Goal (which wraps it with "Analyze the cached data to
-								// answer:"). The TaskContext contains the actual analytical terms
-								// (e.g., "name", "email", "country") needed for accurate embedding.
 								if intent != nil {
 									embGoal := config.TaskContext
 									if embGoal == "" {
@@ -410,26 +474,30 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 				Name:         "query",
 				AllowedTools: []string{"query_builder", "sql_cached_data"},
 				SystemPrompt: buildPhaseAnalyzePrompt("query", config.Goal, config.TaskContext, knownCacheIds, sampleValues),
-				StepBudget:   6,
-				MinToolCalls: 1, // Must execute ≥1 query before allowing synthesis
-				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					MaxRetries:   1,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-					BacktrackTo:  "schema_orient",
-				},
-				Transition: func(step int, result PhaseResult, err error) string {
-					for _, tool := range result.ToolsCalled {
-						if tool == "query_builder" || tool == "sql_cached_data" {
-							queryBuilderCalls++
+				StepBudget:   1,
+				MinToolCalls: 1,
+				Driver: NewDynamicQueueDriver(func() []QueueItem {
+					if len(knownCacheIds) > 0 {
+						ops := preBuiltOps
+						if len(ops) == 0 {
+							ops = extractFilterFromGoal(config.Goal)
 						}
+						if len(ops) == 0 {
+							ops = []interface{}{
+								map[string]interface{}{"type": "select", "columns": []string{"*"}},
+							}
+						}
+						return []QueueItem{{
+							Tool: "query_builder",
+							Args: map[string]interface{}{
+								"cacheId":    knownCacheIds[0],
+								"operations": ops,
+							},
+						}}
 					}
-					if queryBuilderCalls >= 1 {
-						// v3: skip synthesize phase — raw data passthrough.
-						// Return "" (terminal) instead of "synthesize".
-						return ""
-					}
+					return nil
+				}),
+				Transition: func(step int, result PhaseResult, err error) string {
 					return ""
 				},
 			},
@@ -437,17 +505,13 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 				Name:         "synthesize",
 				AllowedTools: []string{},
 				SystemPrompt: buildPhaseAnalyzePrompt("synthesize", config.Goal, config.TaskContext, nil, nil),
-				StepBudget:   2,
+				StepBudget:   1,
 				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-				},
-				Transition: func(step int, result PhaseResult, err error) string { return "" },
+				Driver:       NewDeterministicQueueDriver(nil),
 			},
 		},
 		InitialPhase: "schema_orient",
-		MaxCycles:    3,
+		MaxCycles:    1,
 		Goal:         config.Goal,
 	}
 

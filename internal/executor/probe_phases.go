@@ -67,10 +67,6 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	discoverTools := filterTools(config.AllowedTools, []string{"list_dir", "search_files", "read_file"})
 	deepReadTools := filterTools(config.AllowedTools, []string{"read_file"})
 
-	// Track file discovery state for transition decisions
-	var filesWithSymbols int
-	var deepReadDepth int
-
 	// ADR-0058 port: Initialize Exploration Queue from PreloadPaths for
 	// deterministic loop-breaking. When a duplicate read_file is detected,
 	// redirect to the next unvisited file via ToolFixup.
@@ -81,6 +77,48 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 			explorationQueue = NewExplorationQueue(queueFiles)
 			fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue initialized with %d files\n", len(queueFiles))
 		}
+	}
+
+	var initialFiles []QueueItem
+	var deepReadFiles []QueueItem
+	if explorationQueue != nil {
+		allFiles := explorationQueue.files
+		if len(allFiles) <= 3 {
+			for _, f := range allFiles {
+				initialFiles = append(initialFiles, QueueItem{
+					Tool: "read_file",
+					Args: map[string]interface{}{"path": f},
+				})
+			}
+		} else {
+			for _, f := range allFiles[:3] {
+				initialFiles = append(initialFiles, QueueItem{
+					Tool: "read_file",
+					Args: map[string]interface{}{"path": f},
+				})
+			}
+			for _, f := range allFiles[3:] {
+				deepReadFiles = append(deepReadFiles, QueueItem{
+					Tool: "read_file",
+					Args: map[string]interface{}{"path": f},
+				})
+			}
+		}
+	}
+	if len(initialFiles) == 0 && len(deepReadFiles) == 0 {
+		initialFiles = append(initialFiles, QueueItem{
+			Tool: "list_dir",
+			Args: map[string]interface{}{"path": "."},
+		})
+	}
+
+	discoverBudget := len(initialFiles)
+	if discoverBudget < 1 {
+		discoverBudget = 1
+	}
+	deepReadBudget := len(deepReadFiles)
+	if deepReadBudget < 1 {
+		deepReadBudget = 1
 	}
 
 	runner := &PhaseRunner{
@@ -108,163 +146,58 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				Name:         "orient",
 				AllowedTools: orientTools,
 				SystemPrompt: buildPhaseProbePrompt("orient", config.Goal, config.TaskContext),
-				StepBudget:   6,
-				Pass1Target:  TargetRouter,
-				Recovery: PhaseRecovery{
-					MaxRetries:   0,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-				},
+				StepBudget:   1,
+				Driver:       NewDeterministicQueueDriver([]QueueItem{{Tool: "list_dir", Args: map[string]interface{}{"path": "."}}}),
 				Transition: func(step int, result PhaseResult, err error) string {
-					// Transition: first list_dir at depth ≥2 OR budget exhausted
-					for _, tool := range result.ToolsCalled {
-						if tool == "list_dir" {
-							return "discover"
-						}
-					}
-					// Fallthrough: even without list_dir, advance to discover
-					// so deep_read/synthesize phases can still execute.
-					// The preloaded TaskContext provides enough structure.
-					if step >= result.StepsUsed {
-						return "discover"
-					}
-					return ""
+					return "discover"
 				},
 			},
 			"discover": {
 				Name:         "discover",
 				AllowedTools: discoverTools,
 				SystemPrompt: buildPhaseProbePrompt("discover", config.Goal, config.TaskContext),
-				StepBudget:   8,
-				MinToolCalls: 3, // Match transition threshold — read ≥3 files before allowing synthesis
-				Pass1Target:  TargetRouter,
-				Recovery: PhaseRecovery{
-					MaxRetries:   1,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-					BacktrackTo:  "orient",
-				},
+				StepBudget:   discoverBudget,
+				MinToolCalls: 1,
+				Driver:       NewDeterministicQueueDriver(initialFiles),
 				Transition: func(step int, result PhaseResult, err error) string {
-					// Transition: ≥3 files with symbols OR budget exhausted
-					for _, tool := range result.ToolsCalled {
-						if tool == "read_file" {
-							filesWithSymbols++
-						}
-					}
-					if filesWithSymbols >= 3 {
-						return "deep_read"
-					}
-					return ""
+					return "deep_read"
 				},
 			},
 			"deep_read": {
 				Name:         "deep_read",
 				AllowedTools: deepReadTools,
 				SystemPrompt: buildPhaseProbePrompt("deep_read", config.Goal, config.TaskContext),
-				StepBudget:   10,
+				StepBudget:   deepReadBudget,
 				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					MaxRetries:   1,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-					BacktrackTo:  "discover",
-				},
+				Driver:       NewDeterministicQueueDriver(deepReadFiles),
 				Transition: func(step int, result PhaseResult, err error) string {
-					// Transition: diminishing returns OR budget exhausted
-					deepReadDepth++
-					if deepReadDepth >= 5 {
-						return "synthesize"
-					}
-					return ""
+					return "synthesize"
 				},
 			},
 			"synthesize": {
 				Name:         "synthesize",
-				AllowedTools: []string{}, // No tools — pure synthesis
+				AllowedTools: []string{},
 				SystemPrompt: buildPhaseProbePrompt("synthesize", config.Goal, config.TaskContext),
 				StepBudget:   1,
 				Pass1Target:  TargetWorker,
-				Recovery: PhaseRecovery{
-					MaxRetries:   0,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-				},
-				Transition: func(step int, result PhaseResult, err error) string {
-					return "" // terminal
-				},
+				Driver:       NewDeterministicQueueDriver(nil),
 			},
 		},
 		InitialPhase: "orient",
-		MaxCycles:    3,
+		MaxCycles:    1,
 		Goal:         config.Goal,
 	}
 
 	return runner
 }
 
-
-// buildWebProbePhaseRunner constructs a PhaseRunner with a 2-phase template
-// designed for web research probes: Search → Browse.
-//
-// Unlike the codebase probe template (orient → discover → deep_read), web
-// research has no filesystem navigation. The search phase issues diverse
-// queries; the browse phase reads top results and extracts structured facts.
+// buildWebProbePhaseRunner delegates directly to the Deterministic Web Research pipeline.
 func buildWebProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	fmt.Fprintf(os.Stderr, "[ProbePhases] Using web-specific phase template (search → browse)\n")
-
-	var searchesDone int
-
-	runner := &PhaseRunner{
-		// No ToolFixup needed — web tools are stateless, no deduplication required.
-		Phases: map[string]*Phase{
-			"search": {
-				Name:         "search",
-				AllowedTools: filterTools(config.AllowedTools, []string{"web_search"}),
-				SystemPrompt: buildPhaseProbePrompt("search", config.Goal, config.TaskContext),
-				StepBudget:   4,
-				MinToolCalls: 2, // At least 2 search queries for source diversity
-				Pass1Target:  TargetRouter,
-				Recovery: PhaseRecovery{
-					MaxRetries:   1,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-				},
-				Transition: func(step int, result PhaseResult, err error) string {
-					for _, tool := range result.ToolsCalled {
-						if tool == "web_search" {
-							searchesDone++
-						}
-					}
-					if searchesDone >= 2 {
-						return "browse"
-					}
-					return ""
-				},
-			},
-			"browse": {
-				Name:         "browse",
-				AllowedTools: filterTools(config.AllowedTools, []string{"web_search", "web_browse"}),
-				SystemPrompt: buildPhaseProbePrompt("browse", config.Goal, config.TaskContext),
-				StepBudget:   8,
-				MinToolCalls: 3, // Browse at least 3 sources for substantive content
-				Pass1Target:  TargetRouter,
-				Recovery: PhaseRecovery{
-					MaxRetries:   0,
-					OnExhaustion: ExhaustionSkip,
-					OnError:      ErrorFail,
-				},
-				Transition: func(step int, result PhaseResult, err error) string {
-					return "" // terminal — synthesis handled by downstream recall/synthesis node
-				},
-			},
-		},
-		InitialPhase: "search",
-		MaxCycles:    2,
-		Goal:         config.Goal,
-	}
-
-	return runner
+	queries := extractSearchQueryVariantsFromGoal(config.Goal)
+	return buildResearchPhaseRunner(config, queries)
 }
+
 
 // buildPhaseProbePrompt constructs a phase-specific system prompt for Probe nodes.
 func buildPhaseProbePrompt(phase, goal, taskContext string) string {

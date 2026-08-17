@@ -215,12 +215,18 @@ The following vulnerabilities were identified in the Go standard library:
 
 // mockCloudVerifier is a test double for CloudVerifier.
 type mockCloudVerifier struct {
-	callCount int
-	lastGoal  string
-	lastSynth string
-	lastCtx   string
-	result    *VerificationResult
-	err       error
+	callCount     int
+	reSynthCount  int
+	lastGoal      string
+	lastSynth     string
+	lastCtx       string
+	reSynthGoal   string
+	reSynthCtx    string
+	reSynthReason string
+	result        *VerificationResult
+	reSynthesis   string
+	err           error
+	reSynthErr    error
 }
 
 func (m *mockCloudVerifier) Verify(ctx context.Context, goal, synthesis, refinedContext string) (*VerificationResult, error) {
@@ -229,6 +235,31 @@ func (m *mockCloudVerifier) Verify(ctx context.Context, goal, synthesis, refined
 	m.lastSynth = synthesis
 	m.lastCtx = refinedContext
 	return m.result, m.err
+}
+
+func (m *mockCloudVerifier) VerifyMilestone(ctx context.Context, stepObjective, synthesis, refinedContext string) (*VerificationResult, error) {
+	m.callCount++
+	m.lastGoal = stepObjective
+	m.lastSynth = synthesis
+	m.lastCtx = refinedContext
+	return m.result, m.err
+}
+
+func (m *mockCloudVerifier) ReSynthesize(ctx context.Context, goal, fullContext, synthesis, reason string) (string, error) {
+	m.reSynthCount++
+	m.reSynthGoal = goal
+	m.reSynthCtx = fullContext
+	m.reSynthReason = reason
+	if m.reSynthErr != nil {
+		return "", m.reSynthErr
+	}
+	if m.reSynthesis != "" {
+		return m.reSynthesis, nil
+	}
+	if m.result != nil && m.result.ReSynthesis != "" {
+		return m.result.ReSynthesis, nil
+	}
+	return "Mock cloud re-synthesis from full context", nil
 }
 
 func TestCloudVerifier_AcceptReturnsResult(t *testing.T) {
@@ -322,8 +353,8 @@ func TestVerifyTaskOutput_PreCheckFail_CallsCloudForReSynthesis(t *testing.T) {
 	if result.PreCheckResult != "failed" {
 		t.Errorf("expected pre-check 'failed', got %q", result.PreCheckResult)
 	}
-	if mock.callCount != 1 {
-		t.Errorf("expected cloud verifier called once for re-synthesis, got %d", mock.callCount)
+	if mock.reSynthCount != 1 {
+		t.Errorf("expected re-synthesis called once on pre-check failure, got %d", mock.reSynthCount)
 	}
 	if finalSynthesis == "" {
 		t.Error("expected non-empty final synthesis from cloud re-synthesis")
@@ -887,3 +918,261 @@ graphs into topologically-sorted execution layers.`
 		t.Errorf("expected no scatter for free-form goal, got %d items", len(result.ScatterItems))
 	}
 }
+
+// ── Slice 4: Two-Tier VTE & Context Pruning tests ───────────────────────────
+
+func TestPruneContextForVerification_GoCodeSkeleton(t *testing.T) {
+	raw := "### File: internal/cache/cache.go\n\n" +
+		"```go\n" +
+		"package cache\n\n" +
+		"import (\n\t\"context\"\n\t\"fmt\"\n)\n\n" +
+		"// CacheStore manages caching.\ntype CacheStore interface {\n\tStore(ctx context.Context, key string) error\n}\n\n" +
+		"// Process processes the payload.\nfunc Process(ctx context.Context, payload string) (string, error) {\n" +
+		"\t// Long implementation body that should be pruned\n" +
+		"\tfor i := 0; i < 100; i++ {\n\t\tfmt.Println(i)\n\t}\n\treturn payload, nil\n}\n" +
+		"```\n"
+
+	pruned := PruneContextForVerification(raw, 500)
+	if len(pruned) >= len(raw) {
+		t.Errorf("expected pruned context to be smaller than raw (raw=%d, pruned=%d)", len(raw), len(pruned))
+	}
+	if !strings.Contains(pruned, "CacheStore") {
+		t.Error("expected type declaration CacheStore to be retained")
+	}
+	if !strings.Contains(pruned, "Process") {
+		t.Error("expected exported function Process signature to be retained")
+	}
+}
+
+func TestPruneContextForVerification_HardBudget(t *testing.T) {
+	huge := strings.Repeat("Some long analytical observation line with facts. ", 500) // ~25,000 chars
+	pruned := PruneContextForVerification(huge, 1000)
+	if len(pruned) > 1050 {
+		t.Errorf("expected pruned context <= ~1000 chars, got %d", len(pruned))
+	}
+}
+
+func TestVerifyTaskOutput_TwoTier_AcceptedSkipsReSynthesis(t *testing.T) {
+	enableCloudForTest(t)
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:         true,
+			GoalAlignment:    0.95,
+			FactualGrounding: 0.90,
+			Coherence:        0.95,
+			Completeness:     0.90,
+			Reason:           "All requirements satisfied",
+		},
+	}
+
+	finalSynth, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		"Test Goal",
+		validTestSynthesis,
+		"Full exploration context with lots of facts",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Accepted {
+		t.Error("expected accepted")
+	}
+	if mock.callCount != 1 {
+		t.Errorf("expected 1 Verify call, got %d", mock.callCount)
+	}
+	if mock.reSynthCount != 0 {
+		t.Errorf("expected 0 ReSynthesize calls when accepted, got %d", mock.reSynthCount)
+	}
+	if finalSynth != validTestSynthesis {
+		t.Errorf("expected original synthesis, got %q", finalSynth)
+	}
+}
+
+func TestVerifyTaskOutput_TwoTier_RejectedCallsReSynthesis(t *testing.T) {
+	enableCloudForTest(t)
+	expectedReplacement := "## Replacement Document Generated from Full Context"
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:         false,
+			GoalAlignment:    0.3,
+			FactualGrounding: 0.2,
+			Reason:           "Quality failure: missing symbols",
+		},
+		reSynthesis: expectedReplacement,
+	}
+
+	fullContext := "Full exploration context with all function definitions"
+	finalSynth, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		"Document the functions",
+		validTestSynthesis,
+		fullContext,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Accepted {
+		t.Error("expected rejected")
+	}
+	if mock.callCount != 1 {
+		t.Errorf("expected 1 Verify call, got %d", mock.callCount)
+	}
+	if mock.reSynthCount != 1 {
+		t.Errorf("expected 1 ReSynthesize call on rejection, got %d", mock.reSynthCount)
+	}
+	if mock.reSynthCtx != fullContext {
+		t.Errorf("expected ReSynthesize to receive full unpruned context, got %q", mock.reSynthCtx)
+	}
+	if finalSynth != expectedReplacement {
+		t.Errorf("expected final synthesis to be re-synthesis output, got %q", finalSynth)
+	}
+}
+
+func TestVerifyTaskOutput_TwoTier_ReExploreSkipsReSynthesis(t *testing.T) {
+	enableCloudForTest(t)
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:      false,
+			ReExplore:     true,
+			ReExploreHint: "Read query.go to find missing query methods",
+			Reason:        "Missing query functions",
+		},
+	}
+
+	_, result, err := VerifyTaskOutput(
+		context.Background(),
+		mock,
+		"Document the functions",
+		validTestSynthesis,
+		"Exploration context",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ReExplore {
+		t.Error("expected re-explore signaled")
+	}
+	if mock.reSynthCount != 0 {
+		t.Errorf("expected ReSynthesize skipped when reExplore is signaled, got %d calls", mock.reSynthCount)
+	}
+}
+
+// ── Slice 5: Milestone Verification & Sink-Aware Re-Synthesis (ADR-0079) ───
+
+func TestVerifyTaskOutput_MilestoneMode_AcceptsValidSubGoal(t *testing.T) {
+	enableCloudForTest(t)
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:            true,
+			StepAlignment:       0.95,
+			FactualGrounding:    0.90,
+			DownstreamViability: 0.90,
+			Reason:              "Core layer findings fully extracted",
+		},
+	}
+
+	finalSynth, result, err := VerifyTaskOutputWithOptions(
+		context.Background(),
+		mock,
+		"Explore core layer files",
+		validTestSynthesis,
+		"Core layer context",
+		VerificationOpts{
+			Mode: ModeMilestone,
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Accepted {
+		t.Errorf("expected milestone to be accepted, got false (reason: %s)", result.Reason)
+	}
+	if mock.callCount != 1 {
+		t.Errorf("expected VerifyMilestone to be called once, got %d", mock.callCount)
+	}
+	if finalSynth != validTestSynthesis {
+		t.Errorf("expected accepted synthesis returned as-is")
+	}
+}
+
+func TestVerifyTaskOutput_MilestoneMode_SkipsReSynthesis_WhenNoToolSink(t *testing.T) {
+	enableCloudForTest(t)
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:            false,
+			StepAlignment:       0.40,
+			FactualGrounding:    0.70,
+			DownstreamViability: 0.50,
+			Reason:              "Imperfect phrasing",
+		},
+	}
+
+	finalSynth, result, err := VerifyTaskOutputWithOptions(
+		context.Background(),
+		mock,
+		"Explore core layer files",
+		validTestSynthesis,
+		"Core layer context",
+		VerificationOpts{
+			Mode:          ModeMilestone,
+			FeedsToolSink: false, // Pure exploration fan-out!
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Accepted {
+		t.Error("expected milestone to be rejected")
+	}
+	if mock.reSynthCount != 0 {
+		t.Errorf("expected ReSynthesize SKIPPED when FeedsToolSink is false, got %d calls", mock.reSynthCount)
+	}
+	if finalSynth != validTestSynthesis {
+		t.Errorf("expected original synthesis returned when ReSynthesize is skipped, got %q", finalSynth)
+	}
+}
+
+func TestVerifyTaskOutput_MilestoneMode_CallsReSynthesis_WhenFeedsToolSink(t *testing.T) {
+	enableCloudForTest(t)
+	expectedCloudRewrite := "# Rewritten High Fidelity Function Index\n\nFunc A, Func B..."
+	mock := &mockCloudVerifier{
+		result: &VerificationResult{
+			Accepted:            false,
+			StepAlignment:       0.40,
+			FactualGrounding:    0.70,
+			DownstreamViability: 0.50,
+			Reason:              "Corrupted intermediate draft",
+		},
+		reSynthesis: expectedCloudRewrite,
+	}
+
+	finalSynth, result, err := VerifyTaskOutputWithOptions(
+		context.Background(),
+		mock,
+		"Extract functions for write_file",
+		validTestSynthesis,
+		"Core layer context",
+		VerificationOpts{
+			Mode:          ModeMilestone,
+			FeedsToolSink: true, // Feeds write_file!
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Accepted {
+		t.Error("expected milestone to be rejected")
+	}
+	if mock.reSynthCount != 1 {
+		t.Errorf("expected ReSynthesize CALLED when FeedsToolSink is true, got %d calls", mock.reSynthCount)
+	}
+	if finalSynth != expectedCloudRewrite {
+		t.Errorf("expected cloud rewrite returned when FeedsToolSink is true, got %q", finalSynth)
+	}
+}
+

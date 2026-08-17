@@ -374,7 +374,8 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	}
 
 	// Extract output: for codegen tasks, prefer reading the written file from testOutputDir;
-	// for docgen tasks, use the terminal synthesis node output, falling back to the last write_file content.
+	// for docgen tasks, prefer reading the created markdown documentation file from testOutputDir,
+	// falling back to terminal synthesis if no file was written.
 	var outputText string
 	if codegenTargetPath != "" {
 		if data, readErr := os.ReadFile(codegenTargetPath); readErr == nil && len(data) > 0 {
@@ -383,12 +384,14 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			// Fallback to terminal synthesis if no file was written
 			outputText = extractTerminalSynthesis(graph, taskID)
 		}
+	} else if t.Category == CategoryDocgen {
+		if docContent := extractLastWriteContent(taskID, graph, testOutputDir); docContent != "" {
+			outputText = docContent
+		} else {
+			outputText = extractTerminalSynthesis(graph, taskID)
+		}
 	} else {
 		outputText = extractTerminalSynthesis(graph, taskID)
-		if outputText == "" && t.Category == CategoryDocgen {
-			// Fallback: if docgen didn't have a synthesis node, it might have written to a file
-			outputText = extractLastWriteContent(taskID, graph, testOutputDir)
-		}
 	}
 
 	// Count tool calls from the graph

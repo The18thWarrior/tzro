@@ -107,8 +107,8 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 		return executor.ActionContinue, nil
 	}
 
-	// Strip markdown fences and clean the output before writing
-	cleanCode := StripMarkdownFences(*rawOutput)
+	// Strip markdown fences and clean conversational intro before writing
+	cleanCode := SanitizeSourceCode(*rawOutput, h.Language)
 
 	// Write the generated code to the target file for compilation
 	if h.FilePath != "" {
@@ -380,14 +380,19 @@ func (h *CompilationGateHook) GetLocalFailureCount() int {
 func (h *CompilationGateHook) attemptCloudRepair(ctx context.Context, brokenCode, compilerErrors, taskID string) (string, error) {
 	moduleCtx := DiscoverModuleContext(h.FilePath, h.Language)
 
+	originalSection := ""
+	if h.OriginalContent != "" {
+		originalSection = fmt.Sprintf("\n## Original File To Preserve\n```\n%s\n```\n", h.OriginalContent)
+	}
+
 	systemPrompt := fmt.Sprintf(`You are a code repair agent. Fix the compilation errors in the %s code below.
-Output ONLY the corrected source code — no explanations, no markdown fences, no commentary.
+Output ONLY the corrected source code starting with package/import — no explanations, no markdown fences, no commentary.
 
 ## Specification
 %s
-
+%s
 ## Module Context
-%s`, h.Language, h.Spec, moduleCtx)
+%s`, h.Language, h.Spec, originalSection, moduleCtx)
 
 	userPrompt := fmt.Sprintf(`## Broken Code
 %s
@@ -407,8 +412,8 @@ Fix ALL compiler errors. Output the complete corrected file.`, brokenCode, compi
 		return "", fmt.Errorf("cloud repair inference failed: %w", err)
 	}
 
-	// Strip markdown fences from cloud response
-	result = StripMarkdownFences(result)
+	// Strip markdown fences and conversational preamble from cloud response
+	result = SanitizeSourceCode(result, h.Language)
 
 	fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud repair response: %d chars for task %s\n",
 		len(result), taskID)
@@ -452,7 +457,9 @@ func (h *CompilationGateHook) runSpecComplianceGate(ctx context.Context, generat
 // ADR-0061: Uses full regeneration (not targeted patching) because the failed
 // code's structure may be fundamentally incompatible with the missing requirements.
 func (h *CompilationGateHook) attemptLocalRegeneration(ctx context.Context, prompt, taskID string) (string, error) {
+	systemPrompt := "You are a code generator. Output ONLY pure raw source code starting with package/import. Do NOT output conversational text, explanations, or introductory remarks."
 	messages := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: prompt},
 	}
 
@@ -461,8 +468,8 @@ func (h *CompilationGateHook) attemptLocalRegeneration(ctx context.Context, prom
 		return "", fmt.Errorf("local regeneration inference failed: %w", err)
 	}
 
-	// Strip markdown fences from the response
-	code := StripMarkdownFences(result.Content)
+	// Strip markdown fences and conversational preamble from the response
+	code := SanitizeSourceCode(result.Content, h.Language)
 
 	fmt.Fprintf(os.Stderr, "[CompilationGateHook] Local regeneration: %d chars for task %s\n",
 		len(code), taskID)
@@ -548,12 +555,20 @@ func (h *CompilationGateHook) defaultCloudSemanticReview(ctx context.Context, co
 func (h *CompilationGateHook) attemptCloudRegeneration(ctx context.Context, brokenCode, spec, rejectionReason, taskID string) (string, error) {
 	moduleCtx := DiscoverModuleContext(h.FilePath, h.Language)
 
+	originalSection := ""
+	if h.OriginalContent != "" {
+		originalSection = fmt.Sprintf("\n## Original File To Preserve\n```\n%s\n```\n", h.OriginalContent)
+	}
+
 	systemPrompt := fmt.Sprintf(`You are a code generation agent. Generate %s code that correctly implements the specification.
 A previous attempt was rejected for semantic errors. Generate correct code from scratch.
-Output ONLY the source code — no explanations, no markdown fences, no commentary.
+Output ONLY the source code starting with package/import — no explanations, no markdown fences, no commentary.
 
+## Specification
+%s
+%s
 ## Module Context
-%s`, h.Language, moduleCtx)
+%s`, h.Language, spec, originalSection, moduleCtx)
 
 	userPrompt := fmt.Sprintf(`## Specification
 %s
@@ -576,12 +591,13 @@ Generate the complete corrected file implementing the specification correctly.`,
 		return "", fmt.Errorf("cloud regeneration inference failed: %w", err)
 	}
 
-	result = StripMarkdownFences(result)
+	// Strip markdown fences and conversational preamble from cloud response
+	code := SanitizeSourceCode(result, h.Language)
 
 	fmt.Fprintf(os.Stderr, "[CompilationGateHook] Cloud regeneration response: %d chars for task %s\n",
-		len(result), taskID)
+		len(code), taskID)
 
-	return result, nil
+	return code, nil
 }
 
 // checkSymbolPreservation extracts public symbols from both the original
