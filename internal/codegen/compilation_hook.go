@@ -54,6 +54,9 @@ type CompilationGateHook struct {
 	TaskTier         int  `json:"-"`
 	AllowCloudReview bool `json:"-"`
 
+	// CloudRepairAttempted tracks whether cloud repair was executed by this hook.
+	CloudRepairAttempted bool `json:"-"`
+
 	// CloudReviewFunc is a pluggable semantic review function for testability.
 	// When nil, defaults to the real cloud inference implementation.
 	// Signature: (ctx, generatedCode, spec, language) -> (pass bool, reason string, error)
@@ -263,6 +266,7 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 
 		// ADR-0057: Cloud repair escalation after local attempts exhausted
 		if h.localFailureCount >= MaxLocalRepairAttempts && h.AllowCloudRepair && !isCloudRepairBlocked() {
+			h.CloudRepairAttempted = true
 			fmt.Fprintf(os.Stderr, "[CompilationGateHook] Local repair exhausted (%d attempts). Escalating to cloud repair for %s\n",
 				h.localFailureCount, h.FilePath)
 

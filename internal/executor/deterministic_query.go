@@ -57,14 +57,18 @@ type QueryConfidence struct {
 
 // Filter patterns: "where {col} is/equals/= {val}", "{col} equals {val}", etc.
 var filterPatterns = []*regexp.Regexp{
-	// "where (the)? {col} (column)? is/equals/= "{val}""
-	regexp.MustCompile(`(?i)where\s+(?:the\s+)?(\S+?)(?:\s+column)?\s+(?:is|equals|=)\s+"([^"]+)"`),
+	// "where (the)? {col} (column)? is/equals/=/matches "{val}""
+	regexp.MustCompile(`(?i)where\s+(?:the\s+)?(\S+?)(?:\s+column)?\s+(?:is|equals|=|matches|like)\s+["']([^"']+)["']`),
 	// "where (the)? {col} (column)? is/equals/= {val}" (unquoted)
-	regexp.MustCompile(`(?i)where\s+(?:the\s+)?(\S+?)(?:\s+column)?\s+(?:is|equals|=)\s+(\S+)`),
-	// "{col} (column)? equals "{val}""
-	regexp.MustCompile(`(?i)(\S+?)(?:\s+column)?\s+equals\s+"([^"]+)"`),
+	regexp.MustCompile(`(?i)where\s+(?:the\s+)?(\S+?)(?:\s+column)?\s+(?:is|equals|=|matches)\s+(\S+)`),
+	// "{col} (column)? equals/is/matches "{val}""
+	regexp.MustCompile(`(?i)(\S+?)(?:\s+column)?\s+(?:equals|is|matches)\s+["']([^"']+)["']`),
+	// "matching "{val}" (or '...')" in (the)? {col} (column)?
+	regexp.MustCompile(`(?i)(?:matching|for)\s+["']([^"']+)["']\s+(?:in|for)\s+(?:the\s+)?(\S+?)(?:\s+column)?`),
 	// "filter by {col} = {val}"
-	regexp.MustCompile(`(?i)filter\s+by\s+(\S+)\s*=\s*"?([^"]+?)"?\s*$`),
+	regexp.MustCompile(`(?i)filter\s+by\s+(\S+)\s*=\s*["']?([^"']+)["']?\s*$`),
+	// "{col} = "{val}""
+	regexp.MustCompile(`(?i)(\S+?)\s*=\s*["']([^"']+)["']`),
 }
 
 // Group-by patterns: "group by {col}", "for each {col}", etc.
@@ -100,9 +104,9 @@ var aggregatePatterns = []*regexp.Regexp{
 // Distinct/GROUP_CONCAT patterns: "distinct {col} values"
 var distinctPatterns = []*regexp.Regexp{
 	// "distinct {col} values/entries/items"
-	regexp.MustCompile(`(?i)\b(?:distinct|unique)\s+([\w_]+)\s+(?:values|entries|items|names|types|sources)`),
-	// "list the distinct {col}"
-	regexp.MustCompile(`(?i)\blist\s+(?:the\s+)?(?:distinct|unique)\s+([\w_]+)`),
+	regexp.MustCompile(`(?i)\b(?:distinct|unique)\s+([\w_]+)\s*(?:values|entries|items|names|types|sources|list)?`),
+	// "list (the)? distinct {col}"
+	regexp.MustCompile(`(?i)\b(?:list|including|with|show)\s+(?:the\s+)?(?:distinct|unique)\s+([\w_]+)`),
 }
 
 // Order patterns: "sort by", "descending", "top N", etc.

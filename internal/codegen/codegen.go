@@ -380,6 +380,7 @@ func BuildCodeDAG(taskID, spec, filePath, language string, maxLines int, codeCtx
 					Instructions:        fmt.Sprintf("Validate that the generated %s code compiles successfully.", language),
 					AllowedTools:        []string{},
 					Status:              "pending",
+					OutputFormat:        "code_validation",
 					ActivationThreshold: 0.9,
 				},
 			},

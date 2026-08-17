@@ -1056,6 +1056,7 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
 		DRYPenaltyLastN    *int                     `json:"dry_penalty_last_n,omitempty"`
 		DRYSequenceBreakers []string                `json:"dry_sequence_breakers,omitempty"`
+		Grammar            string                   `json:"grammar,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
 		ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs,omitempty"`
 	}
@@ -1128,6 +1129,9 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 				"type":   "json_object",
 				"schema": schemaObj,
 			}
+		} else {
+			// In llama-server, raw GBNF grammars are passed as a top-level grammar field
+			reqBody.Grammar = gbnfSchema
 		}
 	}
 
@@ -1308,6 +1312,7 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		DRYAllowedLength   *int                     `json:"dry_allowed_length,omitempty"`
 		DRYPenaltyLastN    *int                     `json:"dry_penalty_last_n,omitempty"`
 		DRYSequenceBreakers []string                `json:"dry_sequence_breakers,omitempty"`
+		Grammar            string                   `json:"grammar,omitempty"`
 		Stream             bool                     `json:"stream"`
 		StreamOptions      *StreamOptionsStruct     `json:"stream_options,omitempty"`
 		ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
@@ -1379,6 +1384,9 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 				"type":   "json_object",
 				"schema": schemaObj,
 			}
+		} else {
+			// In llama-server, raw GBNF grammars are passed as a top-level grammar field
+			reqBody.Grammar = gbnfSchema
 		}
 	}
 

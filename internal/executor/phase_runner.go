@@ -55,6 +55,8 @@ type Phase struct {
 	// Driver overrides the phase's execution driver. When set, executePhase
 	// delegates tool execution to this StageDriver without step-level LLM inference.
 	Driver StageDriver
+	// Grammar defines an optional GBNF grammar constraint for the phase's synthesis pass (ADR-0080).
+	Grammar string
 	// Transition determines the next phase after each step completes.
 	// Returns "" to continue current phase, or a phase name to transition.
 	Transition func(step int, result PhaseResult, err error) string
@@ -376,7 +378,7 @@ func (pr *PhaseRunner) synthesizePhase(
 	systemPrompt := sb.String()
 	userPrompt := "Produce a concise summary of this phase's findings based on the tool outputs above."
 
-	result, err := synthesisEngine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
+	result, err := synthesisEngine.Infer(ctx, systemPrompt, userPrompt, phase.Grammar, TargetWorker)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q synthesis failed: %v — attempting emergency 50%% pruning retry\n", phase.Name, err)
 		// Emergency 50% head/tail pruning of toolOutputLog
@@ -396,7 +398,7 @@ func (pr *PhaseRunner) synthesizePhase(
 				retrySb.WriteString("\n\n")
 			}
 			retryPrompt := retrySb.String()
-			retryResult, retryErr := synthesisEngine.Infer(ctx, retryPrompt, userPrompt, "", TargetWorker)
+			retryResult, retryErr := synthesisEngine.Infer(ctx, retryPrompt, userPrompt, phase.Grammar, TargetWorker)
 			if retryErr == nil && retryResult != "" {
 				return retryResult
 			}

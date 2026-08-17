@@ -74,12 +74,27 @@ var embedGroupPatterns = []string{
 }
 
 var embedFilterPatterns = []string{
-	"where column equals specific value",
-	"only include rows matching criteria",
-	"filter records for a specific named value",
-	"rows where field equals value",
-	"restrict to entries with a specific value",
-	"find rows matching exact value",
+	"find all records where column is X",
+	"show items where field equals X",
+	"filter records where attribute is X",
+	"look up entries matching X",
+	"where field equals X",
+	"only include rows matching X",
+	"search for records with X in field",
+	"filter by column is X",
+	"select entries where property is X",
+	"find rows where column equals X",
+	"rows matching X in column",
+	"where field is X",
+}
+
+var embedDistinctPatterns = []string{
+	"list distinct values for each group",
+	"distinct values for column",
+	"list unique items per category",
+	"comma-separated distinct values",
+	"unique values for each group",
+	"distinct values in column",
 }
 
 var embedDescPatterns = []string{
@@ -114,11 +129,12 @@ var limitNumberRe = regexp.MustCompile(`(?i)\b(?:top|first|bottom|last|best|wors
 
 // operationScores holds cosine similarity scores from embedding classification.
 type operationScores struct {
-	groupScore  float32
-	filterScore float32
-	descScore   float32
-	ascScore    float32
-	limitScore  float32
+	groupScore    float32
+	filterScore   float32
+	distinctScore float32
+	descScore     float32
+	ascScore      float32
+	limitScore    float32
 }
 
 // ExtractQueryIntent uses embedding-based classification to extract structured
@@ -152,12 +168,13 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 	// Classify operations via embedding similarity.
 	scores := classifyOpsViaEmbedding(ctx, phrases)
 
-	fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding scores: group=%.3f filter=%.3f desc=%.3f asc=%.3f limit=%.3f\n",
-		scores.groupScore, scores.filterScore, scores.descScore, scores.ascScore, scores.limitScore)
+	fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding scores: group=%.3f filter=%.3f distinct=%.3f desc=%.3f asc=%.3f limit=%.3f\n",
+		scores.groupScore, scores.filterScore, scores.distinctScore, scores.descScore, scores.ascScore, scores.limitScore)
 
 	// Thresholds for operation activation.
 	const groupThreshold float32 = 0.45
-	const filterThreshold float32 = 0.55
+	const filterThreshold float32 = 0.35
+	const distinctThreshold float32 = 0.35
 	const limitThreshold float32 = 0.45
 
 	goalLower := strings.ToLower(goal)
@@ -191,6 +208,19 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		}
 	}
 
+	// --- DISTINCT / GROUP_CONCAT Aggregates ---
+	if scores.distinctScore >= distinctThreshold || strings.Contains(goalLower, "distinct") || strings.Contains(goalLower, "unique") {
+		distinctCol := resolveDistinctColumnLiteral(goalLower, columns, intent.GroupColumn, intent.FilterColumn)
+		if distinctCol != "" {
+			intent.AggExtras = append(intent.AggExtras, AggClause{
+				Function: "GROUP_CONCAT",
+				Column:   distinctCol,
+				Distinct: true,
+			})
+			fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: AGGREGATE GROUP_CONCAT(DISTINCT %s) (score=%.3f)\n", distinctCol, scores.distinctScore)
+		}
+	}
+
 	// --- ORDER direction ---
 	if intent.GroupColumn != "" || intent.FilterColumn != "" {
 		if scores.descScore > scores.ascScore {
@@ -215,10 +245,11 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "[QueryIntent] Extracted: filter=%s %s %q, group=%s, agg=%s(%s), order=%s %s, limit=%d, select=%v\n",
+	fmt.Fprintf(os.Stderr, "[QueryIntent] Extracted: filter=%s %s %q, group=%s, agg=%s(%s), aggExtras=%v, order=%s %s, limit=%d, select=%v\n",
 		intent.FilterColumn, intent.FilterOperator, intent.FilterValue,
 		intent.GroupColumn,
 		intent.AggFunction, intent.AggColumn,
+		intent.AggExtras,
 		intent.OrderColumn, intent.OrderDirection,
 		intent.Limit,
 		intent.SelectColumns)
@@ -236,7 +267,7 @@ func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationSco
 
 	// Batch embed everything in one call: [phrases..., patterns...]
 	allTexts := make([]string, 0,
-		len(phrases)+len(embedGroupPatterns)+len(embedFilterPatterns)+
+		len(phrases)+len(embedGroupPatterns)+len(embedFilterPatterns)+len(embedDistinctPatterns)+
 			len(embedDescPatterns)+len(embedAscPatterns)+len(embedLimitPatterns))
 
 	allTexts = append(allTexts, phrases...)
@@ -248,8 +279,11 @@ func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationSco
 	allTexts = append(allTexts, embedFilterPatterns...)
 	fEnd := gEnd + len(embedFilterPatterns)
 
+	allTexts = append(allTexts, embedDistinctPatterns...)
+	distEnd := fEnd + len(embedDistinctPatterns)
+
 	allTexts = append(allTexts, embedDescPatterns...)
-	dEnd := fEnd + len(embedDescPatterns)
+	dEnd := distEnd + len(embedDescPatterns)
 
 	allTexts = append(allTexts, embedAscPatterns...)
 	aEnd := dEnd + len(embedAscPatterns)
@@ -270,16 +304,18 @@ func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationSco
 	phraseVecs := vecs[:pEnd]
 	groupVecs := vecs[pEnd:gEnd]
 	filterVecs := vecs[gEnd:fEnd]
-	descVecs := vecs[fEnd:dEnd]
+	distinctVecs := vecs[fEnd:distEnd]
+	descVecs := vecs[distEnd:dEnd]
 	ascVecs := vecs[dEnd:aEnd]
 	limitVecs := vecs[aEnd:]
 
 	return operationScores{
-		groupScore:  maxCategorySim(phraseVecs, groupVecs),
-		filterScore: maxCategorySim(phraseVecs, filterVecs),
-		descScore:   maxCategorySim(phraseVecs, descVecs),
-		ascScore:    maxCategorySim(phraseVecs, ascVecs),
-		limitScore:  maxCategorySim(phraseVecs, limitVecs),
+		groupScore:    maxCategorySim(phraseVecs, groupVecs),
+		filterScore:   maxCategorySim(phraseVecs, filterVecs),
+		distinctScore: maxCategorySim(phraseVecs, distinctVecs),
+		descScore:     maxCategorySim(phraseVecs, descVecs),
+		ascScore:      maxCategorySim(phraseVecs, ascVecs),
+		limitScore:    maxCategorySim(phraseVecs, limitVecs),
 	}
 }
 
@@ -317,12 +353,46 @@ func classifyOpsViaBagOfWords(phrases []string) operationScores {
 	}
 
 	return operationScores{
-		groupScore:  bowMax(embedGroupPatterns),
-		filterScore: bowMax(embedFilterPatterns),
-		descScore:   bowMax(embedDescPatterns),
-		ascScore:    bowMax(embedAscPatterns),
-		limitScore:  bowMax(embedLimitPatterns),
+		groupScore:    bowMax(embedGroupPatterns),
+		filterScore:   bowMax(embedFilterPatterns),
+		distinctScore: bowMax(embedDistinctPatterns),
+		descScore:     bowMax(embedDescPatterns),
+		ascScore:      bowMax(embedAscPatterns),
+		limitScore:    bowMax(embedLimitPatterns),
 	}
+}
+
+// resolveDistinctColumnLiteral finds a column name associated with distinct/unique
+// aggregations in the goal text.
+func resolveDistinctColumnLiteral(goalLower string, columns []string, excludeCols ...string) string {
+	distinctKeywords := []string{"distinct", "unique", "list"}
+	excludeMap := make(map[string]bool)
+	for _, c := range excludeCols {
+		if c != "" {
+			excludeMap[strings.ToLower(c)] = true
+		}
+	}
+
+	for _, kw := range distinctKeywords {
+		idx := strings.Index(goalLower, kw)
+		if idx < 0 {
+			continue
+		}
+		window := goalLower[idx:]
+		if len(window) > 100 {
+			window = window[:100]
+		}
+		for _, col := range columns {
+			if excludeMap[strings.ToLower(col)] {
+				continue
+			}
+			colLower := strings.ToLower(col)
+			if strings.Contains(window, colLower) {
+				return col
+			}
+		}
+	}
+	return ""
 }
 
 // resolveColumnLiteral finds a column name that appears literally in the goal
@@ -597,6 +667,25 @@ func IntentToOperations(intent *QueryIntent) []interface{} {
 		// Default alias based on function
 		aggOp["alias"] = strings.ToLower(intent.AggFunction)
 		ops = append(ops, aggOp)
+	}
+
+	// Extra Aggregates (e.g. GROUP_CONCAT)
+	for _, extra := range intent.AggExtras {
+		if extra.Column == "" {
+			continue
+		}
+		extraOp := map[string]interface{}{
+			"type":     "aggregate",
+			"function": strings.ToUpper(extra.Function),
+			"column":   extra.Column,
+			"distinct": extra.Distinct,
+		}
+		if extra.Distinct {
+			extraOp["alias"] = "distinct_" + strings.ToLower(extra.Column)
+		} else {
+			extraOp["alias"] = strings.ToLower(extra.Function) + "_" + strings.ToLower(extra.Column)
+		}
+		ops = append(ops, extraOp)
 	}
 
 	// Order By

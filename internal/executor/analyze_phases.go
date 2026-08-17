@@ -325,7 +325,11 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 					fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: injected %d pre-built ops from QueryIntent extraction\n", len(preBuiltOps))
 				} else if len(ops) == 0 {
 					// Last resort: regex-based filter extraction from goal text
-					defaultOps := extractFilterFromGoal(config.Goal)
+					goalText := config.TaskContext
+					if goalText == "" {
+						goalText = config.Goal
+					}
+					defaultOps := extractFilterFromGoal(goalText)
 					if len(defaultOps) > 0 {
 						args["operations"] = defaultOps
 						fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolFixup: injected goal-derived filter operations (regex fallback)\n")
@@ -480,7 +484,11 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 					if len(knownCacheIds) > 0 {
 						ops := preBuiltOps
 						if len(ops) == 0 {
-							ops = extractFilterFromGoal(config.Goal)
+							goalText := config.TaskContext
+							if goalText == "" {
+								goalText = config.Goal
+							}
+							ops = extractFilterFromGoal(goalText)
 						}
 						if len(ops) == 0 {
 							ops = []interface{}{
@@ -610,9 +618,10 @@ func isKnownCacheId(cacheId string, known []string) bool {
 func extractFilterFromGoal(goal string) []interface{} {
 	// Pattern: where/filter COLUMN is/=/equals 'VALUE' or "VALUE"
 	patterns := []string{
-		`(?i)(?:where|filter)\s+(?:the\s+)?(\w+)\s+(?:is|=|equals)\s+['""]([^'""]+)['""]`,
-		`(?i)(\w+)\s+=\s+['""]([^'""]+)['""]`,
-		`(?i)(\w+)\s+equals\s+['""]([^'""]+)['""]`,
+		`(?i)(?:where|filter)\s+(?:the\s+)?(\w+?)(?:\s+column)?\s+(?:is|=|equals|matches)\s+['""]([^'""]+)['""]`,
+		`(?i)(\w+?)(?:\s+column)?\s+(?:is|=|equals|matches)\s+['""]([^'""]+)['""]`,
+		`(?i)(\w+)\s*=\s*['""]([^'""]+)['""]`,
+		`(?i)(?:matching|for)\s+['""]([^'""]+)['""]\s+(?:in|for)\s+(?:the\s+)?(\w+?)(?:\s+column)?`,
 	}
 
 	for _, pat := range patterns {
@@ -621,6 +630,11 @@ func extractFilterFromGoal(goal string) []interface{} {
 		if len(matches) >= 3 {
 			column := matches[1]
 			value := matches[2]
+			// If match was from pattern 4: reverse column and value
+			if strings.Contains(pat, "matching") {
+				value = matches[1]
+				column = matches[2]
+			}
 			// Skip common SQL keywords that might be falsely matched
 			lower := strings.ToLower(column)
 			if lower == "where" || lower == "the" || lower == "and" || lower == "or" || lower == "is" {

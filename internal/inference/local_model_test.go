@@ -525,3 +525,53 @@ func TestDRYSamplingKey_PropagatesThroughCallLocalModel(t *testing.T) {
 		}
 	}
 }
+
+func TestCallLocalModel_RawGBNFGrammar(t *testing.T) {
+	var capturedBody map[string]interface{}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "# Research\n\nFindings"}}],
+			"usage": {"prompt_tokens": 10, "completion_tokens": 5}
+		}`))
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+
+	mgr := &LocalModelManager{
+		ActivePort:      port,
+		Status:          "Active",
+		inferenceClient: http.DefaultClient,
+	}
+
+	rawGrammar := `root ::= "# " [^\n]+ "\n\n" [^\n]+`
+	msgs := []InferenceMessage{{Role: "user", Content: "research"}}
+
+	res, err := mgr.CallLocalModel(context.Background(), msgs, rawGrammar)
+	if err != nil {
+		t.Fatalf("CallLocalModel failed: %v", err)
+	}
+	if res.Content != "# Research\n\nFindings" {
+		t.Errorf("unexpected content: %s", res.Content)
+	}
+
+	grammarVal, ok := capturedBody["grammar"].(string)
+	if !ok || grammarVal != rawGrammar {
+		t.Errorf("expected top-level grammar=%q in request body, got %v", rawGrammar, capturedBody["grammar"])
+	}
+	if capturedBody["response_format"] != nil {
+		t.Errorf("expected response_format to be nil when raw GBNF grammar is used, got %v", capturedBody["response_format"])
+	}
+}
+

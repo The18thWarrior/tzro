@@ -125,6 +125,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0077: VTE Re-Explore Outcome](../adr/0077-vte-re-explore.md) - Adds Re-Explore outcome to Verified Task Execution for upstream data collection failures.
 - [ADR-0078: Model/Scaffolding Split — Deterministic Walkers & Defensive Re-Synthesis](../adr/0078-model-scaffolding-split-deterministic-walkers.md) - Eliminates step-level LLM inference in PhaseRunner in favor of Deterministic Walkers, establishes 1-shot Worker query generation with URL browsing loops, and enforces Defensive Re-Synthesis on VTE rejection.
 - [ADR-0079: Milestone Verification and Dependency-Gated Recall](../adr/0079-milestone-verification-and-dependency-gated-recall.md) - Dual-mode VTE (Milestone vs Terminal Gate) with Milestone Rubric (`stepAlignment`, `factualGrounding`, `downstreamViability`), Sink-Aware Re-Synthesis, and Dependency-Gated Recall Injection to eliminate false rejections and the $N \times \text{Recall}$ latency multiplier.
+- [ADR-0080: High-Density Research Pipeline and Structured Synthesis](../adr/0080-high-density-research-pipeline-and-structured-synthesis.md) - Deterministic AST/DOM and high-density sentence extraction for EvidenceCards, default DRY sampling & presence penalties across synthesis passes, GBNF-enforced structural Markdown research grammars, and two-stage dynamic search refinement.
 
 ## Ingested Sources
 

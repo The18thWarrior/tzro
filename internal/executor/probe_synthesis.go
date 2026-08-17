@@ -67,6 +67,22 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal, taskContext st
 		}
 	}
 
+	// Web Research Evidence: Inject high-fidelity web search & browse evidence (compaction-exempt)
+	researchEvidence := extractResearchEvidence(probeID, 12288)
+	isResearch := researchEvidence != ""
+	if !isResearch {
+		for _, e := range edgeEntries {
+			if isWebResearchTool(e.ToolName) {
+				isResearch = true
+				break
+			}
+		}
+	}
+	if researchEvidence != "" {
+		contextStr += "## Verified Search Sources & Evidence (compaction-exempt)\n" + researchEvidence + "\n"
+		fmt.Fprintf(os.Stderr, "[Probe] Injected %d chars of web research evidence into synthesis context\n", len(researchEvidence))
+	}
+
 	// ADR-0059: Compile the Edge Entry log for synthesis.
 	// CompileEdgeLog returns the formatted exploration log and whether overflow was detected.
 	edgeLog, overflow := CompileEdgeLog(edgeEntries)
@@ -82,6 +98,9 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal, taskContext st
 	// that the Response Resolver can extract deterministically (Tier 1: recursive_key)
 	// instead of falling through to the lossy semantic fallback.
 	synthSchema, extractionHint := buildSynthesisSchema(bindingKeys)
+	if isResearch && len(bindingKeys) == 0 {
+		synthSchema = buildResearchMarkdownGrammar(goal)
+	}
 
 	// Fix 1 (Cluster 3): Pin TaskContext into synthesis prompt so the model sees
 	// the full task specification at synthesis time, not just the short goal string.
@@ -284,13 +303,19 @@ Include source citations where the outline references URLs.%s`, taskReqSection, 
 	}
 
 	// No binding keys or JSON parse failed — extract the synthesis field
+	if strings.HasPrefix(strings.TrimSpace(result), "#") {
+		return result, nil
+	}
 	var parsed struct {
 		Synthesis string `json:"synthesis"`
 	}
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		return result, nil // fallback to raw string if parsing fails
 	}
-	return parsed.Synthesis, nil
+	if parsed.Synthesis != "" {
+		return parsed.Synthesis, nil
+	}
+	return result, nil
 }
 
 // buildSynthesisSchema constructs the GBNF-constrained JSON schema for probe synthesis.

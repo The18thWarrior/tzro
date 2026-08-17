@@ -50,9 +50,13 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 	for _, nodeID := range upstreamNodeIDs {
 		manifest += fmt.Sprintf("### Node: %s\n", nodeID)
 
-		// Include the upstream node's completed synthesis output first.
+		// Include the upstream node's completed synthesis output first, semantically pruned to safe budget.
 		if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok && state.RawOutput != "" {
-			manifest += fmt.Sprintf("#### Synthesis Output:\n%s\n\n", state.RawOutput)
+			prunedRaw, err := PruneUpstreamOutput(ctx, state.RawOutput, goal, 4000)
+			if err != nil || prunedRaw == "" {
+				prunedRaw = truncate(state.RawOutput, 4000)
+			}
+			manifest += fmt.Sprintf("#### Synthesis Output:\n%s\n\n", prunedRaw)
 		}
 
 		// Fix 2 (Cache ID Pinning): Surface the correct cacheId explicitly
@@ -114,6 +118,12 @@ You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 		currentPrompt := systemPrompt
 		if refinedContext != "" && refinedContext != baselineContext {
 			currentPrompt += fmt.Sprintf("\n\n## Current Refined Discovery Context:\n%s", refinedContext)
+		}
+
+		// Hard safety clamp: ensure prompt never exceeds 80K chars (~20K tokens) to prevent 400 Bad Request
+		const maxSafePromptChars = 80000
+		if len(currentPrompt) > maxSafePromptChars {
+			currentPrompt = compactor.TruncateTextMiddleOut(currentPrompt, maxSafePromptChars)
 		}
 
 		rawResponse, err := engine.Infer(ctx, currentPrompt, lastResult, "", TargetWorker)
@@ -242,6 +252,15 @@ IMPORTANT: Begin your response with the content directly. Do NOT describe what y
 	}
 
 	var synthesis string
+	// ADR-0080: Inject DRY Sampling and Presence Penalty on Recall synthesis passes
+	// to eliminate sequence-level repetition loops in the local 4B model.
+	synthCtx := context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+		Multiplier:    0.8,
+		Base:          1.75,
+		AllowedLength: 2,
+	})
+	synthCtx = context.WithValue(synthCtx, inference.PresencePenaltyKey, 0.2)
+
 	// P1: Hybrid Synthesis for Recall — when the synthesis input is large,
 	// use local outline + cloud expansion instead of sending the full context
 	// to the local model (which reliably produces repetitive output).
@@ -257,7 +276,7 @@ Given the refined discovery context below, produce a CONCISE STRUCTURED OUTLINE 
 - NO prose paragraphs — bullet points ONLY
 - Include ALL relevant facts from the discovery context`, goal)
 
-		outline, outlineErr := engine.Infer(ctx, outlinePrompt, synthesisInput, "", TargetWorker)
+		outline, outlineErr := engine.Infer(synthCtx, outlinePrompt, synthesisInput, "", TargetWorker)
 		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
 			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
 
@@ -295,7 +314,7 @@ IMPORTANT: Begin your response with the content directly. Do NOT write meta-comm
 		if cloudErr != nil {
 			// Cloud failed — fall back to local
 			fmt.Fprintf(os.Stderr, "[Recall] Cloud synthesis failed (%v), falling back to local engine\n", cloudErr)
-			synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
+			synthesis, err = engine.Infer(synthCtx, synthPrompt, lastResult, "", TargetWorker)
 			if err != nil {
 				return RecallResult{}, err
 			}
@@ -303,7 +322,7 @@ IMPORTANT: Begin your response with the content directly. Do NOT write meta-comm
 			synthesis = cloudResult
 		}
 	} else {
-		synthesis, err = engine.Infer(ctx, synthPrompt, lastResult, "", TargetWorker)
+		synthesis, err = engine.Infer(synthCtx, synthPrompt, lastResult, "", TargetWorker)
 		if err != nil {
 			return RecallResult{}, err
 		}

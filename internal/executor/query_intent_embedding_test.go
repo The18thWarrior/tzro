@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 
 	"tzro/internal/embeddings"
@@ -136,5 +137,50 @@ func TestEmbeddingsPackage_Integration(t *testing.T) {
 	sim := embeddings.CosineSimilarity("group by column", "group leads by sector")
 	if sim < 0 || sim > 1.0 {
 		t.Errorf("embeddings.CosineSimilarity returned out-of-range value: %.4f", sim)
+	}
+}
+
+func TestResolveDistinctColumnLiteral(t *testing.T) {
+	columns := []string{"Accout_Owner", "Lead_Source", "account_name", "Country"}
+	goal := "For each unique Account Owner, count total leads and list the distinct Lead_Source values."
+
+	col := resolveDistinctColumnLiteral(strings.ToLower(goal), columns, "Accout_Owner")
+	if col != "Lead_Source" {
+		t.Errorf("expected Lead_Source, got %q", col)
+	}
+}
+
+func TestIntentToOperations_AggExtras(t *testing.T) {
+	intent := &QueryIntent{
+		GroupColumn: "Accout_Owner",
+		AggFunction: "COUNT",
+		AggColumn:   "*",
+		AggExtras: []AggClause{
+			{
+				Function: "GROUP_CONCAT",
+				Column:   "Lead_Source",
+				Distinct: true,
+			},
+		},
+	}
+
+	ops := IntentToOperations(intent)
+	if len(ops) < 3 {
+		t.Fatalf("expected at least 3 operations (group_by, count, group_concat), got %d: %v", len(ops), ops)
+	}
+
+	foundDistinct := false
+	for _, op := range ops {
+		m, ok := op.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if m["type"] == "aggregate" && m["function"] == "GROUP_CONCAT" && m["column"] == "Lead_Source" && m["distinct"] == true {
+			foundDistinct = true
+			break
+		}
+	}
+	if !foundDistinct {
+		t.Errorf("expected GROUP_CONCAT(DISTINCT Lead_Source) in ops, got %v", ops)
 	}
 }

@@ -83,11 +83,16 @@ func GenerateSearchQueries(ctx context.Context, engine ProbeInferenceEngine, goa
 	}
 
 	systemPrompt := `You are a search query optimizer for a technical research agent.
-Given the user's research goal, generate 2 to 3 distinct, high-precision search query strings designed to find authoritative, factual information from different angles (e.g. core concepts, comparisons, recent developments, specific technical names).
+Given the user's research goal and context, generate 2 to 4 distinct, high-precision search query strings designed to find authoritative, factual information from different angles.
+
+Follow these decomposition rules:
+1. ENTITY TARGETING: If specific named entities, tools, products, or standards are mentioned (e.g. llama.cpp, Ollama, MLX, vLLM, Go CVE, Temporal, Restate), generate targeted queries pinning each entity + its required comparison dimensions.
+2. THEMATIC DECOMPOSITION: If the goal is conceptual or thematic without specific entities (e.g. common business practices for remote teams), extract the core subject noun-phrase and decompose into distinct sub-aspect queries (e.g. communication standards, performance metrics, workflow guidelines).
+3. NO GENERIC QUERIES: Never emit broad 1-2 word queries (e.g. "market analysis" or "security"). Always include concrete technical qualifiers.
 
 Output ONLY a JSON array of query strings with no other text, e.g. ["query 1", "query 2", "query 3"].`
 
-	userPrompt := fmt.Sprintf("Research Goal: %q\n\nGenerate 2-3 distinct web search queries:", goal)
+	userPrompt := fmt.Sprintf("Research Goal: %s\n\nGenerate 2-4 distinct web search queries:", goal)
 
 	messages := []inference.InferenceMessage{
 		{Role: "system", Content: systemPrompt},

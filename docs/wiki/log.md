@@ -2,6 +2,30 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-16T19:40:00-07:00] tdd | Recall Context Safety (Semantic Pruning + KNN) & Research Markdown GBNF Grammar Synthesis
+
+- **Activity**: Implemented TDD-aligned architectural remediations for Benchmark Run 35 failure modes (eliminating HTTP 400 context overflow crashes in multi-probe codebase exploration tasks and enforcing Markdown comparison tables + verifiable source citations in web research tasks).
+- **Key Deliverables**:
+  1. `internal/inference/local_model.go`:
+     - Extended `CallLocalModel` and `CallLocalModelStream` to support raw GBNF grammars via `{"type": "grammar", "grammar": ...}` when `gbnfSchema` is not JSON (e.g. begins with `root ::=` or GBNF grammar rules).
+  2. `internal/executor/recall_pruner.go` & `internal/executor/recall.go`:
+     - Implemented `PruneUpstreamOutput`: Performs semantic chunking (700 chars with 100-char overlap), hybrid BM25 + Cosine scoring against the goal, and KNN / adjacent window expansion ($i \pm 1$) to prune upstream `RawOutput` into safe $\le 4,000$ character segments while preserving narrative continuity.
+     - Injected `PruneUpstreamOutput` into `RunRecall` manifest assembly, reducing multi-probe manifest prompts from 98,250 tokens down to $< 5,000$ characters.
+     - Added hard pre-flight token clamp `maxSafePromptChars = 80000` (~20,000 tokens) before calling `engine.Infer`.
+  3. `internal/executor/research_evidence.go`:
+     - Implemented `extractResearchEvidence`: Queries SQLite ThoughtSteps for uncompacted `web_search` and `web_browse` / `fetch_web_page` hits and constructs a dedicated `## Verified Search Sources & Evidence` block (budgeted up to 12,288 chars), preserving verbatim source URLs, CVSS numbers, and metrics.
+  4. `internal/executor/probe_research_grammar.go` & `internal/executor/probe_synthesis.go`:
+     - Implemented `buildResearchMarkdownGrammar`: Constructs context-free GBNF grammar enforcing `# Overview`, `## Detailed Analysis`, `## Comparative Overview` (Markdown table syntax), and `## Sources & Citations` (bulleted list).
+     - Wired high-fidelity research evidence and direct Markdown GBNF grammar dispatch into `runSynthesisPass` and `parseSynthesisResponse`.
+- **Testing**:
+  - `internal/inference/local_model_test.go`: `TestCallLocalModel_RawGBNFGrammar`.
+  - `internal/executor/recall_pruner_test.go`: `TestPruneUpstreamOutput_SmallPassThrough` and `TestPruneUpstreamOutput_SemanticChunkAndKNN`.
+  - `internal/executor/recall_overflow_test.go`: `TestRunRecall_ContextOverflowSafety`.
+  - `internal/executor/research_evidence_test.go`: `TestExtractResearchEvidence`.
+  - `internal/executor/probe_research_grammar_test.go`: `TestBuildResearchMarkdownGrammar`.
+  - `internal/executor/probe_research_synthesis_test.go`: `TestProbeSynthesis_ResearchMarkdownGrammar`.
+- **Verification**: `go test ./internal/...` passed 100% with zero regressions across all packages.
+
 ## [2026-08-14T14:52:00-07:00] tdd | Run 31 Failure Mode Hardening (Compaction, Imputation, Preservation, Grounding)
 
 - **Activity**: Implemented comprehensive hardening for all four concrete failure modes from Benchmark Run 31 (Docgen context blowup, Data analysis null-bucket omission, Codegen preamble syntax errors, and Web research re-explore synthesis preservation).

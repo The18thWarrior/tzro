@@ -833,11 +833,10 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 	if !compResult.Pass {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", conditionID, t.ID, compResult.Reason)
 
-		// Post-DAG cloud repair: only if no cloud tokens were used during
-		// the DAG execution (avoids double cloud cost when the hook already
-		// escalated). Uses the same narrow repair payload as the hook.
-		_, currentCloudUsage := tracker.GetUsage()
-		if currentCloudUsage.TotalTokens == 0 {
+		// Post-DAG cloud repair: only if cloud repair has not already been
+		// executed by the hook during DAG execution (avoids double cloud repair).
+		// Uses the same narrow repair payload as the hook.
+		if !compilationHook.CloudRepairAttempted {
 			fmt.Fprintf(os.Stderr, "[Comparison] Attempting post-DAG cloud repair for %s/%s\n", conditionID, t.ID)
 
 			originalModelMode := config.GlobalConfig.ModelMode
