@@ -141,6 +141,48 @@ func ExtractQuotes(text string) []string {
 	return quotes
 }
 
+// citationPattern extracts bracketed source citation indices like [1], [2], [10].
+var citationPattern = regexp.MustCompile(`\[(\d+)\]`)
+
+// ValidateCitationAttribution verifies that inline citation markers [N]
+// in research synthesis match valid entries in the Citation Preamble (ADR-0082).
+func ValidateCitationAttribution(text string, numSources int) []ContentIssue {
+	if numSources <= 0 || len(text) < 100 {
+		return nil
+	}
+
+	matches := citationPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 && len(text) > 300 {
+		return []ContentIssue{
+			{
+				Type:    "missing_citations",
+				Content: "",
+				Reason:  "synthesis text contains no inline numbered citations [N]",
+			},
+		}
+	}
+
+	var issues []ContentIssue
+	seenInvalid := make(map[int]bool)
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		var idx int
+		fmt.Sscanf(m[1], "%d", &idx)
+		if (idx < 1 || idx > numSources) && !seenInvalid[idx] {
+			seenInvalid[idx] = true
+			issues = append(issues, ContentIssue{
+				Type:    "invalid_citation",
+				Content: fmt.Sprintf("[%d]", idx),
+				Reason:  fmt.Sprintf("citation [%d] exceeds available sources count (%d)", idx, numSources),
+			})
+		}
+	}
+
+	return issues
+}
+
 // ValidateContent checks URLs and quoted claims against source material.
 // Runs URL liveness checks and quote verification in parallel.
 func ValidateContent(ctx context.Context, synthesis string, sourceContext string) []ContentIssue {

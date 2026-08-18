@@ -1,54 +1,96 @@
 package classifier
 
 import (
+	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
 
+	"tzro/internal/inference"
 	"tzro/internal/mcp"
 	"tzro/internal/memory"
 )
 
 var (
-	temporalRegexes = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(wait|delay|defer|sleep|after)\s+(\d+|a|an)\s+(second|minute|hour|day|week|month|year)s?`),
-		regexp.MustCompile(`(?i)(run\s+every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday))`),
-		regexp.MustCompile(`(?i)(wait\s+until|until\s+the|wait\s+for\s+the)`),
-	}
-	temporalKeywords = []string{
-		"every tuesday", "every monday", "every wednesday", "every thursday", "every friday", "every saturday", "every sunday",
+	workflowTemporalPrototypes = []string{
+		"run every monday at 9am",
+		"schedule a recurring task every weekday",
+		"execute periodically on schedule",
+		"wait 3 hours before checking results",
+		"delay execution until tomorrow",
+		"sleep for 10 minutes then resume",
+		"recurring cron trigger every week",
 	}
 
-	hitlRegexes = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)dry\s*run`),
-		regexp.MustCompile(`(?i)approval|sign\s*off|sign-off`),
-		regexp.MustCompile(`(?i)confirm\s+before|ask\s+me\s+before`),
-		regexp.MustCompile(`(?i)wait\s+for\s+(my\s+)?(approval|sign\s*off)`),
-		regexp.MustCompile(`(?i)notify\s+me\s+and\s+wait`),
-		regexp.MustCompile(`(?i)wait\s+for\s+my\s+(confirmation|sign-off|signoff|approval)`),
+	workflowHitlPrototypes = []string{
+		"ask for my approval before executing",
+		"require human confirmation before deleting",
+		"dry run and wait for sign-off",
+		"notify me and pause for my approval",
+		"confirm with me before making changes",
+		"wait for manual confirmation to proceed",
+		"wait for confirmation before running",
+	}
+
+	workflowNgramKeywords = []string{
+		"run every monday", "run every tuesday", "run every wednesday", "run every thursday",
+		"run every friday", "run every saturday", "run every sunday",
+		"every monday", "every tuesday", "every wednesday", "every thursday",
+		"every friday", "every saturday", "every sunday", "every weekday",
+		"dry run", "sign-off", "sign off",
+		"ask me before", "confirm before", "wait for approval", "wait for my approval",
+		"wait for confirmation", "wait for my confirmation", "wait for sign-off",
 	}
 )
 
-// ShouldPromoteToWorkflow checks regex and keyword heuristics to trigger Workflow promotion.
-func ShouldPromoteToWorkflow(prompt string) bool {
-	lower := strings.ToLower(prompt)
-	for _, r := range temporalRegexes {
-		if r.MatchString(prompt) {
-			return true
+// isTemporalDelay checks for temporal delay expressions (e.g. "wait 3 days", "sleep 10 minutes") without regex.
+func isTemporalDelay(lower string) bool {
+	delayUnits := []string{"second", "minute", "hour", "day", "week", "month", "year"}
+	delayVerbs := []string{"wait ", "delay ", "defer ", "sleep ", "after "}
+	for _, verb := range delayVerbs {
+		if idx := strings.Index(lower, verb); idx >= 0 {
+			window := lower[idx+len(verb):]
+			if len(window) > 20 {
+				window = window[:20]
+			}
+			for _, unit := range delayUnits {
+				if strings.Contains(window, unit) {
+					return true
+				}
+			}
 		}
 	}
-	for _, kw := range temporalKeywords {
+	return false
+}
+
+// ShouldPromoteToWorkflow checks neural prototypes and multi-token n-gram keywords to trigger Workflow promotion.
+// Uses a strict > 0.70 cosine similarity threshold to eliminate false positive workflow promotions (ADR-0082).
+func ShouldPromoteToWorkflow(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	if isTemporalDelay(lower) {
+		return true
+	}
+	for _, kw := range workflowNgramKeywords {
 		if strings.Contains(lower, kw) {
 			return true
 		}
 	}
-	for _, r := range hitlRegexes {
-		if r.MatchString(prompt) {
-			return true
+
+	if inference.GlobalEmbeddingSidecar != nil && inference.GlobalEmbeddingSidecar.IsAvailable() {
+		allPrototypes := append(workflowTemporalPrototypes, workflowHitlPrototypes...)
+		vecs, err := inference.GlobalEmbeddingSidecar.EmbedBatch(context.Background(), append([]string{prompt}, allPrototypes...))
+		if err == nil && len(vecs) == len(allPrototypes)+1 {
+			promptVec := vecs[0]
+			for _, protoVec := range vecs[1:] {
+				sim := inference.GlobalEmbeddingSidecar.CosineSimilarity(promptVec, protoVec)
+				if sim > 0.70 {
+					return true
+				}
+			}
 		}
 	}
+
 	return false
 }
 

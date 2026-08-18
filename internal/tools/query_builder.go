@@ -38,7 +38,7 @@ type Operation struct {
 	Columns   []string `json:"columns,omitempty"`    // for select: specific columns to return
 }
 
-// validQueryAggregateFunctions extends the compound_data whitelist with GROUP_CONCAT.
+// validQueryAggregateFunctions extends the compound_data whitelist with GROUP_CONCAT, PERCENTAGE, and RATIO.
 var validQueryAggregateFunctions = map[string]bool{
 	"COUNT":        true, "count":        true,
 	"SUM":          true, "sum":          true,
@@ -46,6 +46,8 @@ var validQueryAggregateFunctions = map[string]bool{
 	"MIN":          true, "min":          true,
 	"MAX":          true, "max":          true,
 	"GROUP_CONCAT": true, "group_concat": true,
+	"PERCENTAGE":   true, "percentage":   true,
+	"RATIO":        true, "ratio":        true,
 }
 
 // BuildSQL constructs a SQL SELECT statement from a QuerySpec.
@@ -189,7 +191,9 @@ func buildAggregateClause(op Operation) (string, error) {
 	}
 
 	var expr string
-	if funcUpper == "COUNT" && (op.Column == "" || op.Column == "*") {
+	if funcUpper == "PERCENTAGE" || funcUpper == "RATIO" {
+		expr = "ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2)"
+	} else if funcUpper == "COUNT" && (op.Column == "" || op.Column == "*") {
 		expr = "COUNT(*)"
 	} else if funcUpper == "GROUP_CONCAT" {
 		if op.Column == "" {

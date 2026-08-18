@@ -154,9 +154,9 @@ else
     chmod +x "${INSTALL_DIR}/bin/tzro-mcp" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/bin/tzrod" 2>/dev/null || true
 
-    # Downloading static precompiled llama-server (b10153)
+    # Downloading static precompiled llama-server (b10488)
     # Release naming: llama-b{VER}-bin-{macos|ubuntu}-{arm64|x64}.tar.gz
-    LLAMA_BUILD="b10153"
+    LLAMA_BUILD="b10488"
     LLAMA_PLATFORM=""
     LLAMA_ARCH=""
     case "${PLATFORM}" in

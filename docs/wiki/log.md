@@ -2,6 +2,40 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-18T10:50:00-07:00] tdd | Semantic Regex Migration & Neural Query Intent (ADR-0081 / ADR-0082)
+
+- **Activity**: Implemented complete deprecation of 46 semantic parsing regexes across `deterministic_query.go`, `query_intent.go`, and `promotion.go`, replacing heuristic pattern matching with the on-device Neural Embedding Sidecar (`inference.GlobalEmbeddingSidecar`) and deterministic Bag-of-Words fallback.
+- **Key Deliverables**:
+  1. `internal/executor/query_intent.go` & `internal/executor/query_intent_embedding_test.go`:
+     - Added phrase-window multi-filter extraction via `splitGoalIntoPhrases` populating `intent.Filters []FilterClause`.
+     - Added support for normalized and fuzzy column matching (e.g. `Target_Account?` → `Target_Account_`, `accout owner` → `Accout_Owner`).
+     - Added scalar metric aggregate priority ordering in `IntentToOperations` (`avg_deal_size DESC` / `sum_revenue DESC` over `count`).
+     - Added `percentage` and `ratio` alias handling and automatic `COUNT(*)` injection when `group_by` is active.
+  2. `internal/tools/query_builder.go` & `internal/tools/query_builder_test.go`:
+     - Verified exact window ratio calculation (`ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS [percentage]`) and NULL-safe categorical grouping (`COALESCE(NULLIF([col], ''), '(Unspecified)')`).
+     - Added `TestBuildSQL_MultiFilter_MultiAggregate` verifying multi-aggregate, multi-filter, and ratio window assembly.
+  3. `internal/executor/deterministic_query.go` & `internal/executor/deterministic_query_test.go`:
+     - Completely removed 32 brittle regexes (`filterPatterns`, `groupByPatterns`, `aggregatePatterns`, `distinctPatterns`, `orderPatterns`).
+     - Implemented `ExtractDeterministicQueryIntent` routing directly through `ExtractQueryIntent` and scoring `QueryConfidence` from neural/BoW similarity.
+     - Updated all unit tests to `TestNeuralExtract_*` suites.
+  4. `internal/classifier/promotion.go` & `internal/classifier/promotion_test.go`:
+     - Deprecated 14 temporal and HITL regexes/keywords.
+     - Implemented `isTemporalDelay` (delay verbs + time units without regex) and prototype embedding similarity matching against `workflowTemporalPrototypes` and `workflowHitlPrototypes` with strict $> 0.70$ threshold gate and multi-token keyword fallback.
+- **Verification**: `go test -v ./internal/executor ./internal/tools ./internal/classifier` passed 100% with zero regressions; `go build ./...` succeeded.
+
+## [2026-08-18T10:20:00-07:00] grill-with-docs | Deterministic Harness Scaffolding for Small-Model Parity (ADR-0082)
+
+- **Activity**: Grill-with-docs session analyzing Benchmark Run 38 (Qwen 35B MoE remote inferenceBackend vs 4B on-device models) and architecting deterministic Go harness scaffolding to achieve 4.25+ benchmark quality on 4B local models.
+- **Key Findings & Design Decisions**:
+  1. **Model Parameter Scaling Bottleneck**: Confirmed that moving from 4B to 35B improved raw code generation (4.26 / 5.0) and high-volume probe traversal stability, but overall quality plateaued at 3.57 because the remaining failure modes in Data Analysis (2.80) and Web Research (2.82) are structural/harness limitations rather than model reasoning flaws.
+  2. **Relevance-Scored Exploration Queue**: Use the local Embedding Sidecar (cosine similarity) during the `orient` phase to rank candidate files against the probe goal and prune to top-$K$, preventing indiscriminate repository-wide file reads on targeted queries.
+  3. **Neural Semantic QueryIntent & Window Functions**: Replace regex intent extraction with vector similarity matching against operation prototypes, adding compound aggregation support, SQLite window functions for ratio/percentage calculations (`% of total`), and NULL-safe categorical grouping.
+  4. **Numbered Citation Preamble & Citation Assertion**: Enforce structured numbered bibliography indices (`[1] URL - Title`) with deterministic Pre-Flight Stage 2 Citation Assertions, eliminating ungrounded numerical hallucinations.
+  5. **Tree-Sitter AST Import Validator & LanguageLinter**: Implement language-agnostic in-memory tree-sitter AST validation across Go, TypeScript, Python, and Rust with 1-turn local self-repair and an extensible `LanguageLinter` interface for custom toolchains.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added definitions for `Relevance-Scored Exploration Queue`, `Citation Preamble`, `Citation Assertion`, `AST Import Validator`, `Language Linter`, and updated `Deterministic Query Path` with neural semantic matching.
+  - `docs/adr/0082-deterministic-harness-scaffolding-for-small-model-parity.md`: Formally recorded architectural decisions.
+
 ## [2026-08-16T19:40:00-07:00] tdd | Recall Context Safety (Semantic Pruning + KNN) & Research Markdown GBNF Grammar Synthesis
 
 - **Activity**: Implemented TDD-aligned architectural remediations for Benchmark Run 35 failure modes (eliminating HTTP 400 context overflow crashes in multi-probe codebase exploration tasks and enforcing Markdown comparison tables + verifiable source citations in web research tasks).

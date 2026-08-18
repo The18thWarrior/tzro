@@ -184,3 +184,89 @@ func TestIntentToOperations_AggExtras(t *testing.T) {
 		t.Errorf("expected GROUP_CONCAT(DISTINCT Lead_Source) in ops, got %v", ops)
 	}
 }
+
+func TestIntentToOperations_MultiFilter(t *testing.T) {
+	intent := &QueryIntent{
+		Filters: []FilterClause{
+			{Column: "Country", Operator: "=", Value: "USA"},
+			{Column: "Sector", Operator: "=", Value: "Healthcare"},
+		},
+		GroupColumn: "Lead_Source",
+		AggFunction: "COUNT",
+	}
+
+	ops := IntentToOperations(intent)
+	filterCount := 0
+	for _, op := range ops {
+		m, ok := op.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if m["type"] == "filter" {
+			filterCount++
+		}
+	}
+
+	if filterCount != 2 {
+		t.Errorf("expected 2 filter operations in IntentToOperations, got %d: %v", filterCount, ops)
+	}
+}
+
+func TestIntentToOperations_CompoundAggregatesOrder(t *testing.T) {
+	intent := &QueryIntent{
+		GroupColumn: "Sector",
+		AggFunction: "COUNT",
+		AggColumn:   "*",
+		AggExtras: []AggClause{
+			{
+				Function: "PERCENTAGE",
+				Column:   "*",
+			},
+			{
+				Function: "AVG",
+				Column:   "Deal_Size",
+			},
+			{
+				Function: "GROUP_CONCAT",
+				Column:   "Company",
+				Distinct: true,
+			},
+		},
+		OrderColumn:    "Sector",
+		OrderDirection: "DESC",
+	}
+
+	ops := IntentToOperations(intent)
+	
+	// Check percentage alias
+	var percentageAlias, avgAlias, orderColumn string
+	for _, op := range ops {
+		m, ok := op.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if m["type"] == "aggregate" {
+			if m["function"] == "PERCENTAGE" {
+				percentageAlias, _ = m["alias"].(string)
+			}
+			if m["function"] == "AVG" {
+				avgAlias, _ = m["alias"].(string)
+			}
+		}
+		if m["type"] == "order_by" {
+			orderColumn, _ = m["column"].(string)
+		}
+	}
+
+	if percentageAlias != "percentage" {
+		t.Errorf("expected percentage alias 'percentage', got %q", percentageAlias)
+	}
+	if avgAlias != "avg_deal_size" {
+		t.Errorf("expected avg alias 'avg_deal_size', got %q", avgAlias)
+	}
+	if orderColumn != "avg_deal_size" {
+		t.Errorf("expected order by metric aggregate 'avg_deal_size', got %q", orderColumn)
+	}
+}
+
+

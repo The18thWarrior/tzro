@@ -223,3 +223,27 @@ func TestValidateSynthesisOutput_TrailingMeta_NotFlaggedWhenClean(t *testing.T) 
 		t.Errorf("expected valid output with clean tail, got reason: %s", reason)
 	}
 }
+
+func TestValidateSynthesisOutput_BulletList_RepeatedMetricsPass(t *testing.T) {
+	// Real-world pattern from lead_source_by_owner: distinct account owners
+	// that share an identical metric value ("— 1 total lead -").
+	// This must NOT trigger false positive repetition rejections.
+	output := "# Leads by Account Owner\n\n" +
+		"- Alice — 1 total lead - Sources: Web\n" +
+		"- Bob — 1 total lead - Sources: Referral\n" +
+		"- Charlie — 1 total lead - Sources: Email\n" +
+		"- Dave — 1 total lead - Sources: Direct\n" +
+		"- Eve — 1 total lead - Sources: Partner\n" +
+		"\nTotal 5 leads across 5 owners."
+
+	reason := validateSynthesisOutput(output)
+	if reason != "" {
+		t.Errorf("expected structured bullet list with shared metric counts to pass, got: %s", reason)
+	}
+
+	preCheckResult, preCheckReason := StructuralPreCheck(output)
+	if preCheckResult != "passed" {
+		t.Errorf("expected StructuralPreCheck to pass for bullet list, got: %s (%s)", preCheckResult, preCheckReason)
+	}
+}
+

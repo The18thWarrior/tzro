@@ -67,15 +67,20 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	discoverTools := filterTools(config.AllowedTools, []string{"list_dir", "search_files", "read_file"})
 	deepReadTools := filterTools(config.AllowedTools, []string{"read_file"})
 
-	// ADR-0058 port: Initialize Exploration Queue from PreloadPaths for
-	// deterministic loop-breaking. When a duplicate read_file is detected,
-	// redirect to the next unvisited file via ToolFixup.
+	// ADR-0058 / ADR-0082: Initialize Exploration Queue from PreloadPaths for
+	// deterministic loop-breaking and prune using neural embedding top-K ranking.
 	var explorationQueue *ExplorationQueue
 	if len(config.PreloadPaths) > 0 {
 		queueFiles := collectPreloadFiles(config.PreloadPaths)
 		if len(queueFiles) > 0 {
 			explorationQueue = NewExplorationQueue(queueFiles)
-			fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue initialized with %d files\n", len(queueFiles))
+			// ADR-0082: Prune broad candidate list to top-K relevance-scored items
+			if len(queueFiles) > 10 && config.Goal != "" {
+				explorationQueue.ScoreAndPrune(context.Background(), config.Goal, 10)
+				fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue pruned from %d to %d files for goal\n", len(queueFiles), len(explorationQueue.files))
+			} else {
+				fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue initialized with %d files\n", len(queueFiles))
+			}
 		}
 	}
 

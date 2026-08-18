@@ -72,6 +72,30 @@ func RunStructuralQualityGate(output, language string) QualityGateResult {
 		}
 	}
 
+	// Check 5: AST import validation (ADR-0082)
+	dummyPath := "snippet." + language
+	if language == "go" {
+		dummyPath = "snippet.go"
+	} else if language == "python" {
+		dummyPath = "snippet.py"
+	} else if language == "typescript" {
+		dummyPath = "snippet.ts"
+	} else if language == "javascript" {
+		dummyPath = "snippet.js"
+	}
+	linter := NewTreeSitterASTLinter()
+	violations, err := linter.CheckImports(dummyPath, []byte(trimmed))
+	if err == nil && len(violations) > 0 {
+		var msgs []string
+		for _, v := range violations {
+			msgs = append(msgs, v.Message)
+		}
+		return QualityGateResult{
+			Pass:   false,
+			Reason: fmt.Sprintf("AST import validation failed: %s", strings.Join(msgs, "; ")),
+		}
+	}
+
 	return QualityGateResult{Pass: true}
 }
 

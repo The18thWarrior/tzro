@@ -384,7 +384,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			// Fallback to terminal synthesis if no file was written
 			outputText = extractTerminalSynthesis(graph, taskID)
 		}
-	} else if t.Category == CategoryDocgen {
+	} else if t.Category == CategoryDocgen || t.Category == CategoryResearch {
 		if docContent := extractLastWriteContent(taskID, graph, testOutputDir); docContent != "" {
 			outputText = docContent
 		} else {

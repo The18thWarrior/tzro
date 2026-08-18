@@ -11,7 +11,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"tzro/internal/cache"
@@ -53,274 +52,36 @@ type QueryConfidence struct {
 	Sources   map[string]string // field → "regex" | "model" | "embedding" | "default"
 }
 
-// --- Regex Pattern Libraries ---
-
-// Filter patterns: "where {col} is/equals/= {val}", "{col} equals {val}", etc.
-var filterPatterns = []*regexp.Regexp{
-	// "where (the)? {col} (column)? is/equals/=/matches "{val}""
-	regexp.MustCompile(`(?i)where\s+(?:the\s+)?(\S+?)(?:\s+column)?\s+(?:is|equals|=|matches|like)\s+["']([^"']+)["']`),
-	// "where (the)? {col} (column)? is/equals/= {val}" (unquoted)
-	regexp.MustCompile(`(?i)where\s+(?:the\s+)?(\S+?)(?:\s+column)?\s+(?:is|equals|=|matches)\s+(\S+)`),
-	// "{col} (column)? equals/is/matches "{val}""
-	regexp.MustCompile(`(?i)(\S+?)(?:\s+column)?\s+(?:equals|is|matches)\s+["']([^"']+)["']`),
-	// "matching "{val}" (or '...')" in (the)? {col} (column)?
-	regexp.MustCompile(`(?i)(?:matching|for)\s+["']([^"']+)["']\s+(?:in|for)\s+(?:the\s+)?(\S+?)(?:\s+column)?`),
-	// "filter by {col} = {val}"
-	regexp.MustCompile(`(?i)filter\s+by\s+(\S+)\s*=\s*["']?([^"']+)["']?\s*$`),
-	// "{col} = "{val}""
-	regexp.MustCompile(`(?i)(\S+?)\s*=\s*["']([^"']+)["']`),
-}
-
-// Group-by patterns: "group by {col}", "for each {col}", etc.
-var groupByPatterns = []*regexp.Regexp{
-	// "group (words) by (the)? {col} (column)?"
-	regexp.MustCompile(`(?i)group\s+(?:\w+\s+)*by\s+(?:the\s+)?(\S+?)(?:\s+column)?(?:\s|$|,|\.)`),
-	// "for each (unique)? {multi-word col}"
-	regexp.MustCompile(`(?i)for\s+each\s+(?:unique\s+)?(.+?)(?:\s*\(|\s*,|\s+count|\s+and\b|$)`),
-	// "per {col}"
-	regexp.MustCompile(`(?i)\bper\s+(\S+)`),
-	// "breakdown by {col}"
-	regexp.MustCompile(`(?i)breakdown\s+by\s+(\S+)`),
-	// "by the {col} column"
-	regexp.MustCompile(`(?i)by\s+the\s+(\S+)\s+column`),
-	// "in the {col} column"
-	regexp.MustCompile(`(?i)in\s+the\s+(\S+)\s+column`),
-	// "leads by {col}" / "these by {col}"
-	regexp.MustCompile(`(?i)(?:leads|these|them|results)\s+by\s+(\S+)`),
-}
-
-// Aggregate patterns: "count (the)? (total)? number", "distinct {col} values"
-var aggregatePatterns = []*regexp.Regexp{
-	// "count (the|their)? (total)? number"
-	regexp.MustCompile(`(?i)\bcount\s+(?:the\s+|their\s+)?(?:total\s+)?(?:number|leads|records|rows|entries|items)`),
-	// "total number of"
-	regexp.MustCompile(`(?i)\btotal\s+number\s+of\b`),
-	// "provide a count"
-	regexp.MustCompile(`(?i)\bprovide\s+a\s+count\b`),
-	// "calculate the average {col}"
-	regexp.MustCompile(`(?i)\bcalculate\s+(?:the\s+)?average\s+(?:\w+\s+)?(?:from\s+(?:the\s+)?)?([\w_]+)`),
-}
-
-// Distinct/GROUP_CONCAT patterns: "distinct {col} values"
-var distinctPatterns = []*regexp.Regexp{
-	// "distinct {col} values/entries/items"
-	regexp.MustCompile(`(?i)\b(?:distinct|unique)\s+([\w_]+)\s*(?:values|entries|items|names|types|sources|list)?`),
-	// "list (the)? distinct {col}"
-	regexp.MustCompile(`(?i)\b(?:list|including|with|show)\s+(?:the\s+)?(?:distinct|unique)\s+([\w_]+)`),
-}
-
-// Order patterns: "sort by", "descending", "top N", etc.
-var orderPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\bsort(?:ed)?\s+(?:by\s+\w+\s+)?(?:in\s+)?descending`),
-	regexp.MustCompile(`(?i)\bdescending\s+order\b`),
-	regexp.MustCompile(`(?i)\bcount\s+descending\b`),
-	regexp.MustCompile(`(?i)\bhighest\b`),
-	regexp.MustCompile(`(?i)\bmost\b`),
-	regexp.MustCompile(`(?i)\btop\s+\d+\b`),
-	regexp.MustCompile(`(?i)\branked\s+by\b`),
-	regexp.MustCompile(`(?i)\bsort\s+by\b`),
-}
-
-// extractIntentFromPhrases runs per-phrase regex scan and returns all matches.
-// All pattern types run independently on every phrase (a single phrase can
-// emit both group_by and aggregate signals).
-// Deduplicates by (type, column).
-func extractIntentFromPhrases(goal string, columns []string) []RegexIntentMatch {
-	phrases := splitGoalIntoPhrases(goal)
-	var matches []RegexIntentMatch
-	seen := map[string]bool{} // dedupe key: "type:column"
-
-	for _, phrase := range phrases {
-		// Filter patterns
-		for _, pat := range filterPatterns {
-			if m := pat.FindStringSubmatch(phrase); m != nil {
-				rawCol := m[1]
-				rawVal := m[2]
-				col := matchColumnName(rawCol, columns)
-				if col == "" {
-					continue
-				}
-				key := "filter:" + strings.ToLower(col)
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				matches = append(matches, RegexIntentMatch{
-					Type:     "filter",
-					Column:   col,
-					Value:    rawVal,
-					Operator: "=",
-					Phrase:   phrase,
-				})
-			}
-		}
-
-		// Group-by patterns
-		for _, pat := range groupByPatterns {
-			if m := pat.FindStringSubmatch(phrase); m != nil {
-				rawCol := strings.TrimSpace(m[1])
-				col := matchColumnName(rawCol, columns)
-				// Multi-word: try underscore-joined form (e.g., "Account Owner" → "Account_Owner")
-				if col == "" && strings.Contains(rawCol, " ") {
-					col = matchColumnName(strings.ReplaceAll(rawCol, " ", "_"), columns)
-				}
-				// If still unresolved, keep the raw text for embedding resolution
-				if col == "" {
-					col = rawCol // Will be resolved by embedding in Slice 5
-				}
-				key := "group_by:" + strings.ToLower(col)
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				matches = append(matches, RegexIntentMatch{
-					Type:   "group_by",
-					Column: col,
-					Phrase: phrase,
-				})
-			}
-		}
-
-		// COUNT aggregate patterns (no column extraction — COUNT(*))
-		for _, pat := range aggregatePatterns {
-			if pat.MatchString(phrase) {
-				key := "aggregate:COUNT"
-				if seen[key] {
-					continue
-				}
-				// Check for AVG pattern specifically
-				if m := aggregatePatterns[3].FindStringSubmatch(phrase); m != nil && m[1] != "" {
-					avgCol := matchColumnName(m[1], columns)
-					if avgCol != "" {
-						avgKey := "aggregate:AVG:" + strings.ToLower(avgCol)
-						if !seen[avgKey] {
-							seen[avgKey] = true
-							matches = append(matches, RegexIntentMatch{
-								Type:     "aggregate",
-								Function: "AVG",
-								Column:   avgCol,
-								Phrase:   phrase,
-							})
-						}
-					}
-				}
-				seen[key] = true
-				matches = append(matches, RegexIntentMatch{
-					Type:     "aggregate",
-					Function: "COUNT",
-					Phrase:   phrase,
-				})
-				break
-			}
-		}
-
-		// Distinct/GROUP_CONCAT patterns
-		for _, pat := range distinctPatterns {
-			if m := pat.FindStringSubmatch(phrase); m != nil {
-				rawCol := m[1]
-				col := matchColumnName(rawCol, columns)
-				if col == "" {
-					continue
-				}
-				key := "aggregate:GROUP_CONCAT:" + strings.ToLower(col)
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				matches = append(matches, RegexIntentMatch{
-					Type:     "aggregate",
-					Function: "GROUP_CONCAT",
-					Column:   col,
-					Distinct: true,
-					Phrase:   phrase,
-				})
-			}
-		}
-
-		// Order patterns (direction only — column comes from context)
-		for _, pat := range orderPatterns {
-			if pat.MatchString(phrase) {
-				key := "order:DESC"
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				matches = append(matches, RegexIntentMatch{
-					Type:      "order",
-					Direction: "DESC",
-					Phrase:    phrase,
-				})
-				break
-			}
-		}
+// ExtractDeterministicQueryIntent extracts structured QueryIntent using the neural
+// embedding sidecar (with bag-of-words fallback) and computes its QueryConfidence.
+func ExtractDeterministicQueryIntent(ctx context.Context, goal string, cacheID string) (*QueryIntent, QueryConfidence, error) {
+	intent, err := ExtractQueryIntent(ctx, goal, cacheID)
+	if err != nil {
+		return nil, QueryConfidence{Archetype: "unknown", Score: 0.0}, err
 	}
 
-	if len(matches) > 0 {
-		fmt.Fprintf(os.Stderr, "[RegexIntent] Extracted %d matches from %d phrases\n", len(matches), len(phrases))
-		for _, m := range matches {
-			fmt.Fprintf(os.Stderr, "[RegexIntent]   %s: col=%s val=%s func=%s distinct=%v\n",
-				m.Type, m.Column, m.Value, m.Function, m.Distinct)
-		}
-	}
-
-	return matches
-}
-
-// applyRegexMatchesToIntent populates a QueryIntent from regex matches.
-// Returns the intent and a sources map tracking which fields came from regex.
-func applyRegexMatchesToIntent(matches []RegexIntentMatch) (*QueryIntent, map[string]string) {
-	intent := &QueryIntent{}
 	sources := map[string]string{}
-
-	for _, m := range matches {
-		switch m.Type {
-		case "filter":
-			intent.Filters = append(intent.Filters, FilterClause{
-				Column:   m.Column,
-				Operator: m.Operator,
-				Value:    m.Value,
-			})
-			sources["filter:"+m.Column] = "regex"
-
-		case "group_by":
-			if intent.GroupColumn == "" {
-				intent.GroupColumn = m.Column
-				sources["groupColumn"] = "regex"
-			}
-
-		case "aggregate":
-			if m.Function == "GROUP_CONCAT" {
-				intent.AggExtras = append(intent.AggExtras, AggClause{
-					Function: m.Function,
-					Column:   m.Column,
-					Distinct: m.Distinct,
-				})
-				sources["aggExtra:"+m.Column] = "regex"
-			} else if m.Function == "AVG" {
-				intent.AggExtras = append(intent.AggExtras, AggClause{
-					Function: m.Function,
-					Column:   m.Column,
-				})
-				sources["aggExtra:"+m.Column] = "regex"
-			} else {
-				// Primary aggregate (COUNT, SUM, etc.)
-				if intent.AggFunction == "" {
-					intent.AggFunction = m.Function
-					intent.AggColumn = m.Column
-					if intent.AggColumn == "" {
-						intent.AggColumn = "*"
-					}
-					sources["aggFunction"] = "regex"
-				}
-			}
-
-		case "order":
-			intent.OrderDirection = m.Direction
-			sources["orderDirection"] = "regex"
-		}
+	if intent.GroupColumn != "" {
+		sources["groupColumn"] = "embedding"
+	}
+	if intent.AggFunction != "" {
+		sources["aggFunction"] = "embedding"
+	}
+	for _, f := range intent.Filters {
+		sources["filter:"+f.Column] = "embedding"
+	}
+	if len(intent.Filters) == 0 && intent.FilterColumn != "" {
+		sources["filter:"+intent.FilterColumn] = "embedding"
+	}
+	for _, agg := range intent.AggExtras {
+		sources["aggExtra:"+agg.Column] = "embedding"
+	}
+	if intent.OrderDirection != "" {
+		sources["orderDirection"] = "embedding"
 	}
 
-	return intent, sources
+	confidence := ScoreIntent(intent, sources)
+	return intent, confidence, nil
 }
 
 // IntentToQuerySpec converts a QueryIntent to a QuerySpec for BuildSQL.
@@ -384,14 +145,21 @@ func IntentToQuerySpec(intent *QueryIntent, cacheID string) tools.QuerySpec {
 		})
 	}
 
-	// Extra Aggregates (GROUP_CONCAT, AVG, etc.)
+	// Extra Aggregates (GROUP_CONCAT, AVG, PERCENTAGE, etc.)
 	for _, agg := range intent.AggExtras {
+		alias := strings.ToLower(agg.Function)
+		if agg.Column != "" && agg.Column != "*" {
+			alias += "_" + strings.ToLower(agg.Column)
+		}
+		if strings.ToUpper(agg.Function) == "PERCENTAGE" || strings.ToUpper(agg.Function) == "RATIO" {
+			alias = "percentage"
+		}
 		ops = append(ops, tools.Operation{
 			Type:     "aggregate",
 			Function: strings.ToUpper(agg.Function),
 			Column:   agg.Column,
 			Distinct: agg.Distinct,
-			Alias:    strings.ToLower(agg.Function) + "_" + strings.ToLower(agg.Column),
+			Alias:    alias,
 		})
 	}
 

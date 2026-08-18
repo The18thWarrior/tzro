@@ -124,6 +124,16 @@ var embedLimitPatterns = []string{
 	"best twenty records",
 }
 
+var embedRatioPatterns = []string{
+	"percentage of total",
+	"percent share by category",
+	"ratio of leads",
+	"proportion across groups",
+	"breakdown with percentages",
+	"share of total records",
+	"percentage breakdown",
+}
+
 // limitNumberRe extracts a number adjacent to limit keywords like "top", "first".
 var limitNumberRe = regexp.MustCompile(`(?i)\b(?:top|first|bottom|last|best|worst|show|limit\s+(?:to)?)\s+(\d+)\b`)
 
@@ -132,6 +142,7 @@ type operationScores struct {
 	groupScore    float32
 	filterScore   float32
 	distinctScore float32
+	ratioScore    float32
 	descScore     float32
 	ascScore      float32
 	limitScore    float32
@@ -172,7 +183,7 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		scores.groupScore, scores.filterScore, scores.distinctScore, scores.descScore, scores.ascScore, scores.limitScore)
 
 	// Thresholds for operation activation.
-	const groupThreshold float32 = 0.45
+	const groupThreshold float32 = 0.40
 	const filterThreshold float32 = 0.35
 	const distinctThreshold float32 = 0.35
 	const limitThreshold float32 = 0.45
@@ -180,7 +191,7 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 	goalLower := strings.ToLower(goal)
 
 	// --- GROUP BY ---
-	if scores.groupScore >= groupThreshold {
+	if scores.groupScore >= groupThreshold || strings.Contains(goalLower, "for each") || strings.Contains(goalLower, "group by") || strings.Contains(goalLower, "breakdown by") {
 		col := resolveColumnLiteral(goalLower, columns)
 		if col != "" {
 			intent.GroupColumn = col
@@ -188,22 +199,47 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		}
 	}
 
-	// --- FILTER ---
-	if scores.filterScore >= filterThreshold {
-		// Find a column different from the group column for filtering.
+	// --- FILTERS (Multi-Filter Phrase Scanning) ---
+	seenFilters := make(map[string]bool)
+	for _, phrase := range phrases {
+		phraseLower := strings.ToLower(phrase)
+		col := resolveFilterColumnLiteral(phraseLower, columns, intent.GroupColumn)
+		if col != "" && !seenFilters[strings.ToLower(col)] {
+			val := extractLiteralValue(phrase, col)
+			if val != "" {
+				seenFilters[strings.ToLower(col)] = true
+				clause := FilterClause{
+					Column:   col,
+					Operator: "=",
+					Value:    val,
+				}
+				intent.Filters = append(intent.Filters, clause)
+				if intent.FilterColumn == "" {
+					intent.FilterColumn = col
+					intent.FilterOperator = "="
+					intent.FilterValue = val
+				}
+				fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: FILTER %s = %q (from phrase: %q)\n", col, val, phrase)
+			}
+		}
+	}
+
+	// Fallback to full goal filter scan if phrase scanning didn't match any filter
+	if len(intent.Filters) == 0 && scores.filterScore >= filterThreshold {
 		col := resolveFilterColumnLiteral(goalLower, columns, intent.GroupColumn)
 		if col != "" {
-			intent.FilterColumn = col
-			intent.FilterOperator = "="
-			// Extract filter value from goal text ONLY — never from data.
-			intent.FilterValue = extractLiteralValue(goal, col)
-			if intent.FilterValue == "" {
-				// No literal value in goal → false positive. Discard filter.
-				fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: filter column=%s but no literal value in goal — discarding\n", col)
-				intent.FilterColumn = ""
-				intent.FilterOperator = ""
-			} else {
-				fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: FILTER %s = %q (score=%.3f)\n", col, intent.FilterValue, scores.filterScore)
+			val := extractLiteralValue(goal, col)
+			if val != "" {
+				clause := FilterClause{
+					Column:   col,
+					Operator: "=",
+					Value:    val,
+				}
+				intent.Filters = append(intent.Filters, clause)
+				intent.FilterColumn = col
+				intent.FilterOperator = "="
+				intent.FilterValue = val
+				fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding fallback: FILTER %s = %q (score=%.3f)\n", col, val, scores.filterScore)
 			}
 		}
 	}
@@ -221,6 +257,16 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		}
 	}
 
+	// --- RATIO / PERCENTAGE Aggregates ---
+	const ratioThreshold float32 = 0.35
+	if scores.ratioScore >= ratioThreshold || strings.Contains(goalLower, "percent") || strings.Contains(goalLower, "%") || strings.Contains(goalLower, "proportion") || strings.Contains(goalLower, "share") {
+		intent.AggExtras = append(intent.AggExtras, AggClause{
+			Function: "PERCENTAGE",
+			Column:   "*",
+		})
+		fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: AGGREGATE PERCENTAGE(*) (score=%.3f)\n", scores.ratioScore)
+	}
+
 	// --- ORDER direction ---
 	if intent.GroupColumn != "" || intent.FilterColumn != "" {
 		if scores.descScore > scores.ascScore {
@@ -234,6 +280,12 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		}
 		fmt.Fprintf(os.Stderr, "[QueryIntent] Embedding: ORDER BY %s %s (desc=%.3f asc=%.3f)\n",
 			intent.OrderColumn, intent.OrderDirection, scores.descScore, scores.ascScore)
+	}
+
+	// Default primary aggregate to COUNT(*) if GROUP BY is active
+	if intent.GroupColumn != "" && intent.AggFunction == "" {
+		intent.AggFunction = "COUNT"
+		intent.AggColumn = "*"
 	}
 
 	// --- LIMIT ---
@@ -268,7 +320,7 @@ func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationSco
 	// Batch embed everything in one call: [phrases..., patterns...]
 	allTexts := make([]string, 0,
 		len(phrases)+len(embedGroupPatterns)+len(embedFilterPatterns)+len(embedDistinctPatterns)+
-			len(embedDescPatterns)+len(embedAscPatterns)+len(embedLimitPatterns))
+			len(embedRatioPatterns)+len(embedDescPatterns)+len(embedAscPatterns)+len(embedLimitPatterns))
 
 	allTexts = append(allTexts, phrases...)
 	pEnd := len(phrases)
@@ -282,8 +334,11 @@ func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationSco
 	allTexts = append(allTexts, embedDistinctPatterns...)
 	distEnd := fEnd + len(embedDistinctPatterns)
 
+	allTexts = append(allTexts, embedRatioPatterns...)
+	rEnd := distEnd + len(embedRatioPatterns)
+
 	allTexts = append(allTexts, embedDescPatterns...)
-	dEnd := distEnd + len(embedDescPatterns)
+	dEnd := rEnd + len(embedDescPatterns)
 
 	allTexts = append(allTexts, embedAscPatterns...)
 	aEnd := dEnd + len(embedAscPatterns)
@@ -305,7 +360,8 @@ func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationSco
 	groupVecs := vecs[pEnd:gEnd]
 	filterVecs := vecs[gEnd:fEnd]
 	distinctVecs := vecs[fEnd:distEnd]
-	descVecs := vecs[distEnd:dEnd]
+	ratioVecs := vecs[distEnd:rEnd]
+	descVecs := vecs[rEnd:dEnd]
 	ascVecs := vecs[dEnd:aEnd]
 	limitVecs := vecs[aEnd:]
 
@@ -313,6 +369,7 @@ func classifyOpsViaEmbedding(ctx context.Context, phrases []string) operationSco
 		groupScore:    maxCategorySim(phraseVecs, groupVecs),
 		filterScore:   maxCategorySim(phraseVecs, filterVecs),
 		distinctScore: maxCategorySim(phraseVecs, distinctVecs),
+		ratioScore:    maxCategorySim(phraseVecs, ratioVecs),
 		descScore:     maxCategorySim(phraseVecs, descVecs),
 		ascScore:      maxCategorySim(phraseVecs, ascVecs),
 		limitScore:    maxCategorySim(phraseVecs, limitVecs),
@@ -356,6 +413,7 @@ func classifyOpsViaBagOfWords(phrases []string) operationScores {
 		groupScore:    bowMax(embedGroupPatterns),
 		filterScore:   bowMax(embedFilterPatterns),
 		distinctScore: bowMax(embedDistinctPatterns),
+		ratioScore:    bowMax(embedRatioPatterns),
 		descScore:     bowMax(embedDescPatterns),
 		ascScore:      bowMax(embedAscPatterns),
 		limitScore:    bowMax(embedLimitPatterns),
@@ -414,6 +472,7 @@ func resolveColumnLiteral(goalLower string, columns []string) string {
 	paddedGoal := " " + goalLower + " "
 	for _, col := range sorted {
 		colLower := strings.ToLower(col)
+		normCol := strings.TrimRight(normalizeColumnName(colLower), "_")
 		// Word boundary check: " sector ", " country "
 		if strings.Contains(paddedGoal, " "+colLower+" ") ||
 			strings.Contains(paddedGoal, " "+colLower+",") ||
@@ -426,6 +485,14 @@ func resolveColumnLiteral(goalLower string, columns []string) string {
 		spaced := strings.ReplaceAll(colLower, "_", " ")
 		if spaced != colLower && strings.Contains(paddedGoal, " "+spaced+" ") {
 			return col
+		}
+		// Normalized / fuzzy match (e.g. "accout owner" -> "Accout_Owner", "target_account?" -> "Target_Account_")
+		if normCol != "" && normCol != colLower {
+			normSpaced := strings.ReplaceAll(normCol, "_", " ")
+			if strings.Contains(paddedGoal, " "+normCol+" ") || strings.Contains(paddedGoal, " "+normSpaced+" ") ||
+				strings.Contains(paddedGoal, normCol) {
+				return col
+			}
 		}
 	}
 	return ""
@@ -453,8 +520,10 @@ func resolveFilterColumnLiteral(goalLower string, columns []string, excludeCol s
 				continue
 			}
 			colLower := strings.ToLower(col)
+			normCol := strings.TrimRight(normalizeColumnName(colLower), "_")
 			if strings.Contains(paddedWindow, " "+colLower+" ") ||
-				strings.Contains(paddedWindow, " "+colLower+"=") {
+				strings.Contains(paddedWindow, " "+colLower+"=") ||
+				(normCol != "" && strings.Contains(paddedWindow, normCol)) {
 				return col
 			}
 		}
@@ -466,8 +535,10 @@ func resolveFilterColumnLiteral(goalLower string, columns []string, excludeCol s
 			continue
 		}
 		colLower := strings.ToLower(col)
+		normCol := strings.TrimRight(normalizeColumnName(colLower), "_")
 		paddedGoal := " " + goalLower + " "
-		if strings.Contains(paddedGoal, " "+colLower+" ") {
+		if strings.Contains(paddedGoal, " "+colLower+" ") ||
+			(normCol != "" && strings.Contains(paddedGoal, normCol)) {
 			return col
 		}
 	}
@@ -481,21 +552,28 @@ func resolveFilterColumnLiteral(goalLower string, columns []string, excludeCol s
 func extractLiteralValue(goal string, filterColumn string) string {
 	goalLower := strings.ToLower(goal)
 	colLower := strings.ToLower(filterColumn)
+	normCol := strings.TrimRight(normalizeColumnName(colLower), "_")
 
-	// Pattern 1: quoted value after column mention
-	// e.g., 'where Target_Account equals "Yes"' or "Country = 'USA'"
-	quotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(colLower) + `\s*(?:equals|=|is)\s*["']([^"']+)["']`)
-	if m := quotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
-		// Return the original-case version from goal text
-		return findOriginalCase(goal, m[1])
+	candidates := []string{colLower}
+	if normCol != "" && normCol != colLower {
+		candidates = append(candidates, normCol)
 	}
 
-	// Pattern 2: unquoted value after "column equals/is value"
-	unquotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(colLower) + `\s*(?:equals|=|is)\s+(\S+)`)
-	if m := unquotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
-		val := strings.TrimRight(m[1], ".,;)")
-		if val != "" && len(val) < 50 {
-			return findOriginalCase(goal, val)
+	for _, cand := range candidates {
+		// Pattern 1: quoted value after column mention
+		// e.g., 'where Target_Account equals "Yes"' or "Country = 'USA'" or 'Target_Account? column equals "Yes"'
+		quotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(cand) + `[^"'\s]*(?:\s+column)?\s*(?:equals|=|is|matches|like)\s*["']([^"']+)["']`)
+		if m := quotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
+			return findOriginalCase(goal, m[1])
+		}
+
+		// Pattern 2: unquoted value after "column equals/is value"
+		unquotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(cand) + `[^"'\s]*(?:\s+column)?\s*(?:equals|=|is|matches)\s+(\S+)`)
+		if m := unquotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
+			val := strings.TrimRight(m[1], ".,;)")
+			if val != "" && len(val) < 50 {
+				return findOriginalCase(goal, val)
+			}
 		}
 	}
 
@@ -623,8 +701,23 @@ func IntentToOperations(intent *QueryIntent) []interface{} {
 
 	var ops []interface{}
 
-	// Filter
-	if intent.FilterColumn != "" && intent.FilterValue != "" {
+	// Filters (Multi-filter support)
+	if len(intent.Filters) > 0 {
+		for _, f := range intent.Filters {
+			if f.Column != "" && f.Value != "" {
+				op := f.Operator
+				if op == "" {
+					op = "="
+				}
+				ops = append(ops, map[string]interface{}{
+					"type":     "filter",
+					"column":   f.Column,
+					"operator": op,
+					"value":    f.Value,
+				})
+			}
+		}
+	} else if intent.FilterColumn != "" && intent.FilterValue != "" {
 		op := intent.FilterOperator
 		if op == "" {
 			op = "="
@@ -670,6 +763,8 @@ func IntentToOperations(intent *QueryIntent) []interface{} {
 	}
 
 	// Extra Aggregates (e.g. GROUP_CONCAT)
+	// Extra Aggregates (e.g. GROUP_CONCAT, AVG, SUM, PERCENTAGE)
+	var metricAggregateAlias string
 	for _, extra := range intent.AggExtras {
 		if extra.Column == "" {
 			continue
@@ -680,12 +775,24 @@ func IntentToOperations(intent *QueryIntent) []interface{} {
 			"column":   extra.Column,
 			"distinct": extra.Distinct,
 		}
-		if extra.Distinct {
-			extraOp["alias"] = "distinct_" + strings.ToLower(extra.Column)
+		var alias string
+		funcUpper := strings.ToUpper(extra.Function)
+		if funcUpper == "PERCENTAGE" || funcUpper == "RATIO" {
+			alias = strings.ToLower(extra.Function)
+		} else if extra.Distinct {
+			alias = "distinct_" + strings.ToLower(extra.Column)
 		} else {
-			extraOp["alias"] = strings.ToLower(extra.Function) + "_" + strings.ToLower(extra.Column)
+			alias = strings.ToLower(extra.Function) + "_" + strings.ToLower(extra.Column)
 		}
+		extraOp["alias"] = alias
 		ops = append(ops, extraOp)
+
+		// Track scalar metric aggregates for order precedence
+		if funcUpper == "AVG" || funcUpper == "SUM" || funcUpper == "MIN" || funcUpper == "MAX" {
+			if metricAggregateAlias == "" {
+				metricAggregateAlias = alias
+			}
+		}
 	}
 
 	// Order By
@@ -696,9 +803,13 @@ func IntentToOperations(intent *QueryIntent) []interface{} {
 		}
 		orderCol := intent.OrderColumn
 		// For GROUP BY + aggregate queries, sort by the aggregate result
-		// (e.g., "count") instead of the group column name (e.g., "Country").
-		if intent.GroupColumn != "" && orderCol == intent.GroupColumn && intent.AggFunction != "" {
-			orderCol = strings.ToLower(intent.AggFunction)
+		// (e.g., metric aggregate like "avg_deal_size" or "count") instead of group column.
+		if intent.GroupColumn != "" && orderCol == intent.GroupColumn {
+			if metricAggregateAlias != "" {
+				orderCol = metricAggregateAlias
+			} else if intent.AggFunction != "" {
+				orderCol = strings.ToLower(intent.AggFunction)
+			}
 		}
 		ops = append(ops, map[string]interface{}{
 			"type":      "order_by",

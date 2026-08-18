@@ -126,7 +126,10 @@ func StructuralPreCheck(synthesis string) (result string, reason string) {
 	// at frontier scale. Detect outputs dominated by meta-response patterns.
 	// Skip for structured data passthrough (analyze node v3) — raw JSON/tabular
 	// query results would false-positive on meta-response and repetition checks.
-	isStructuredData := strings.Contains(trimmed, "## Query Result") || strings.Contains(trimmed, "## Cache Reference")
+	isStructuredData := strings.Contains(trimmed, "## Query Result") ||
+		strings.Contains(trimmed, "## Cache Reference") ||
+		strings.Contains(trimmed, "## Data Cache Reference") ||
+		strings.Contains(trimmed, "cacheId:")
 	if !isStructuredData {
 		if metaReason := detectMetaResponse(trimmed); metaReason != "" {
 			return "failed", metaReason
@@ -213,9 +216,6 @@ type CloudVerifier interface {
 	ReSynthesize(ctx context.Context, goal, fullContext, synthesis, reason string) (string, error)
 }
 
-// DefaultCloudVerifier calls inference.CallCloudModel with structured schemas.
-type DefaultCloudVerifier struct{}
-
 // verificationEvaluateSystemPrompt is the system prompt for the Tier 1 Terminal evaluation gate.
 const verificationEvaluateSystemPrompt = `You are the Verification Gate for a local AI model's output.
 
@@ -228,10 +228,10 @@ Your job:
 - Evaluate the attempt against the goal and exploration context
 - Score on four dimensions (0.0 to 1.0):
   - goalAlignment: Does the output address what was asked?
-  - factualGrounding: Are claims supported by the exploration context?
+  - factualGrounding: Are claims supported by the exploration context? Check whether technical claims, identifiers (e.g. CVE-YYYY-NNNN, version numbers, package names), dates, and quantitative values are explicitly corroborated by the exploration context. If the attempt presents fabricated identifiers, dates outside the goal range, unverifiable numbers, or duplicate hallucinated rows as facts, factualGrounding MUST be < 0.5.
   - coherence: Is the output well-structured and readable?
   - completeness: Does it cover all aspects of the goal?
-- Set "accepted" to true if ALL scores >= 0.6
+- Set "accepted" to true if ALL scores >= 0.65
 - Set "reason" explaining the score justification and noting any gaps.
 
 Be strict but fair. Accept well-structured output that addresses the goal with minor gaps. Reject output containing meta-commentary about the task, fabricated data, or missing key requirements.
@@ -258,7 +258,10 @@ Your job:
 
 RE-EXPLORE DETECTION: If the step failed to collect data due to tool errors, 0 search results, or wrong directory exploration, set "reExplore" to true and provide "reExploreHint".`
 
-// Verify calls the cloud model to evaluate local synthesis against the goal and pruned context (Tier 1 Terminal).
+// DefaultCloudVerifier implements CloudVerifier using the configured Cloud LLM.
+type DefaultCloudVerifier struct{}
+
+// Verify calls the cloud model to evaluate local output against goal and context (Tier 1 Terminal).
 func (v *DefaultCloudVerifier) Verify(ctx context.Context, goal, synthesis, prunedContext string) (*VerificationResult, error) {
 	userMessage := fmt.Sprintf(
 		"## GOAL\n\n%s\n\n## EXPLORATION CONTEXT\n\n%s\n\n## LOCAL MODEL'S ATTEMPT\n\n%s",
@@ -321,12 +324,17 @@ func (v *DefaultCloudVerifier) ReSynthesize(ctx context.Context, goal, fullConte
 		reason, goal, fullContext,
 	)
 
-	fallbackMessages := []inference.InferenceMessage{
-		{Role: "system", Content: "You are a technical writer. Produce a comprehensive, well-structured response to the goal using only the provided exploration context. Output the response directly with no meta-commentary."},
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: "You are an expert technical writer. Produce a comprehensive, well-structured replacement document fulfilling the goal. Cite verified sources and provide complete data points."},
 		{Role: "user", Content: fallbackPrompt},
 	}
 
-	return inference.CallCloudModel(ctx, fallbackMessages, "")
+	response, err := inference.CallCloudModel(ctx, messages, "")
+	if err != nil {
+		return "", fmt.Errorf("cloud re-synthesis failed: %w", err)
+	}
+
+	return response, nil
 }
 
 var codeBlockRegex = regexp.MustCompile("(?s)```([a-zA-Z0-9_-]*)\n(.*?)```")
@@ -357,10 +365,33 @@ func PruneContextForVerification(rawContext string, targetMaxChars int) string {
 		return pruned
 	}
 
-	// 2. Compact tool outputs / content if structured
-	pruned = compactor.CompactContent(pruned, targetMaxChars)
-	if len(pruned) <= targetMaxChars {
-		return pruned
+	// 2. For research/evidence context: extract all evidence card lines and bullets across all URLs
+	if strings.Contains(pruned, "## Evidence Card:") || strings.Contains(pruned, "## Scraped Sources") {
+		var evidenceLines []string
+		lines := strings.Split(pruned, "\n")
+		currLen := 0
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "## Evidence Card:") || strings.HasPrefix(trimmed, "## Scraped Sources") ||
+				strings.HasPrefix(trimmed, "- [") || strings.HasPrefix(trimmed, "- ") {
+				if currLen+len(trimmed)+1 <= targetMaxChars {
+					evidenceLines = append(evidenceLines, trimmed)
+					currLen += len(trimmed) + 1
+				}
+			}
+		}
+		if len(evidenceLines) >= 5 && currLen >= 500 {
+			return strings.Join(evidenceLines, "\n")
+		}
+	}
+
+	// 3. Compact tool outputs / content if structured
+	compacted := compactor.CompactContent(pruned, targetMaxChars)
+	if len(compacted) > 0 && len(compacted) <= targetMaxChars {
+		return compacted
+	}
+	if len(compacted) > targetMaxChars {
+		pruned = compacted
 	}
 
 	// 3. Fallback: deterministic head/tail budget preservation
@@ -371,6 +402,12 @@ func PruneContextForVerification(rawContext string, targetMaxChars int) string {
 	}
 	if len(pruned) > targetMaxChars {
 		return pruned[:targetMaxChars-25] + "\n... [truncated] ..."
+	}
+	if len(pruned) == 0 && len(rawContext) > 0 {
+		if len(rawContext) > targetMaxChars {
+			return rawContext[:targetMaxChars-25] + "\n... [truncated] ..."
+		}
+		return rawContext
 	}
 
 	return pruned

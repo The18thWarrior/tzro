@@ -120,6 +120,7 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		fmt.Fprintf(os.Stderr, "[RecallStrategy] In-place re-exploration triggered for upstream nodes %v with hint: %s\n",
 			upstreamNodeIDs, verificationResult.ReExploreHint)
 
+		var lastRefinedContext string
 		for _, upstreamID := range upstreamNodeIDs {
 			for _, upstreamNode := range graph.Nodes {
 				if upstreamNode.ID == upstreamID && (upstreamNode.Type == "probe" || upstreamNode.Type == "research") {
@@ -139,7 +140,23 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 							upstreamID, len(reSynth))
 						freshRecall, freshErr := s.runRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
 						if freshErr == nil && freshRecall.Synthesis != "" {
-							if len(freshRecall.Synthesis) >= 200 && !strings.Contains(freshRecall.Synthesis, "[GENERATION_ABORTED]") {
+							lastRefinedContext = freshRecall.RefinedContext
+							reFinalSynth, reVResult, reVErr := VerifyTaskOutputWithOptions(
+								ctx,
+								&DefaultCloudVerifier{},
+								vGoal,
+								freshRecall.Synthesis,
+								freshRecall.RefinedContext,
+								VerificationOpts{
+									Mode:          vMode,
+									FeedsToolSink: feedsSink,
+								},
+							)
+							if reVErr == nil && reVResult != nil {
+								synthesis = reFinalSynth
+								verificationResult = reVResult
+								break
+							} else if len(freshRecall.Synthesis) >= 200 {
 								synthesis = freshRecall.Synthesis
 								verificationResult.Accepted = true
 								break
@@ -154,8 +171,20 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		}
 
 		// Ensure we never return rejected broken local synthesis
-		if !verificationResult.Accepted && verificationResult.ReSynthesis != "" {
-			synthesis = verificationResult.ReSynthesis
+		if !verificationResult.Accepted {
+			if verificationResult.ReSynthesis != "" {
+				synthesis = verificationResult.ReSynthesis
+			} else {
+				ctxToUse := recallResult.RefinedContext
+				if lastRefinedContext != "" {
+					ctxToUse = lastRefinedContext
+				}
+				fmt.Fprintf(os.Stderr, "[RecallStrategy] Re-synthesis fallback triggered for rejected recall (context: %d chars)\n", len(ctxToUse))
+				if cloudSynth, cErr := (&DefaultCloudVerifier{}).ReSynthesize(ctx, vGoal, ctxToUse, synthesis, verificationResult.Reason); cErr == nil && cloudSynth != "" {
+					synthesis = cloudSynth
+					verificationResult.Accepted = true
+				}
+			}
 		}
 	}
 

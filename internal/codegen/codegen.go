@@ -251,6 +251,8 @@ func BuildCodePrompt(spec, filePath, language, action, existingContent string, s
 	b.WriteString(fmt.Sprintf("- Maximum %d lines\n", maxLines))
 	b.WriteString("- Follow the conventions visible in sibling files (naming, formatting, imports)\n")
 	b.WriteString("- Include appropriate imports/package declarations\n")
+	b.WriteString("- Use standard library functions (e.g. strings.Contains) instead of writing custom helper loops or reimplementing basic utilities\n")
+	b.WriteString("- Ensure validation logic is clean, without redundant condition checks or off-by-one errors\n")
 
 	return b.String()
 }

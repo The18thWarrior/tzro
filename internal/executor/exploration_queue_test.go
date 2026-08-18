@@ -1,6 +1,10 @@
 package executor
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestExplorationQueue_NextUnvisited(t *testing.T) {
 	eq := NewExplorationQueue([]string{"a.go", "b.go", "c.go"})
@@ -71,5 +75,33 @@ func TestExplorationQueue_RedirectsToUnvisited(t *testing.T) {
 	next, ok = eq.NextUnvisited()
 	if !ok || next != "c.go" {
 		t.Errorf("expected redirect to c.go, got %q", next)
+	}
+}
+
+func TestExplorationQueue_ScoreAndPrune(t *testing.T) {
+	files := []string{
+		"internal/executor/auth.go",
+		"internal/tools/database.go",
+		"internal/executor/token_validator.go",
+		"internal/tools/web_browse.go",
+		"internal/executor/jwt.go",
+		"internal/tools/filesystem.go",
+	}
+
+	eq := NewExplorationQueue(files)
+	eq.ScoreAndPrune(context.Background(), "Authenticate JWT token and validation", 3)
+
+	_, total := eq.Stats()
+	if total != 3 {
+		t.Fatalf("expected pruned queue of size 3, got %d", total)
+	}
+
+	// First unvisited should be a top relevance file
+	first, ok := eq.NextUnvisited()
+	if !ok {
+		t.Fatal("expected unvisited item")
+	}
+	if !strings.Contains(first, "token") && !strings.Contains(first, "jwt") && !strings.Contains(first, "auth") {
+		t.Errorf("expected top relevant file, got %q", first)
 	}
 }

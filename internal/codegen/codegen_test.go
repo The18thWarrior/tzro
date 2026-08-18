@@ -499,3 +499,15 @@ func TestCleanGeneratedCode_StripsFencesBeforeCounting(t *testing.T) {
 		t.Error("fences should be stripped")
 	}
 }
+
+func TestLanguageExemplars_Validation(t *testing.T) {
+	spec := "Add a Validate() error method to the User struct checking ID, Email contains '@', Name, and Age."
+	exemplars := LanguageExemplars("go", spec)
+	if !strings.Contains(exemplars, "Go Validation & String Checks") {
+		t.Errorf("expected Go validation exemplars to be included, got: %s", exemplars)
+	}
+	if !strings.Contains(exemplars, "strings.Contains") {
+		t.Errorf("expected strings.Contains in Go validation exemplars, got: %s", exemplars)
+	}
+}
+

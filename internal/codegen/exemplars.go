@@ -23,8 +23,11 @@ func LanguageExemplars(language, spec string) string {
 		"generic", "type parameter", "discriminated union", "mapped type", "interface{", "any",
 		"comparable", "constraints", "template", "where clause", "bounded type", "enum variant",
 	)
+	needsValidation := containsAny(specLower,
+		"validate", "validation", "validator", "contains '@'", "contains \"@\"", "check id", "checking id",
+	)
 
-	if !needsConcurrency && !needsGenerics {
+	if !needsConcurrency && !needsGenerics && !needsValidation {
 		return ""
 	}
 
@@ -63,6 +66,16 @@ func LanguageExemplars(language, spec string) string {
 			sb.WriteString("}\n\n")
 			sb.WriteString("func NewCache[K comparable, V any]() *Cache[K, V] {\n")
 			sb.WriteString("\treturn &Cache[K, V]{entries: make(map[K]V)}\n")
+			sb.WriteString("}\n")
+			sb.WriteString("```\n\n")
+		}
+		if needsValidation {
+			sb.WriteString("### Go Validation & String Checks\n")
+			sb.WriteString("```go\n")
+			sb.WriteString("import (\n\t\"fmt\"\n\t\"strings\"\n)\n\n")
+			sb.WriteString("// Use strings.Contains for substring checks (e.g. '@' in email)\n")
+			sb.WriteString("if u.Email == \"\" || !strings.Contains(u.Email, \"@\") {\n")
+			sb.WriteString("\treturn fmt.Errorf(\"email must contain '@'\")\n")
 			sb.WriteString("}\n")
 			sb.WriteString("```\n\n")
 		}

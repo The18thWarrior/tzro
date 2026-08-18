@@ -8,13 +8,15 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"tzro/internal/compiler"
+	"tzro/internal/embeddings"
 	"tzro/internal/inference"
 )
 
@@ -90,6 +92,7 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 	}
 
 	var discoveredURLs []string
+	var discoveredResults []DiscoveredSearchResult
 	visitedURLs := make(map[string]bool)
 	var evidenceCards []EvidenceCard
 	var secondaryQueries []string
@@ -120,15 +123,25 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 			switch toolName {
 			case "web_search":
 				if err == nil {
-					urls := extractURLsFromWebSearch(output)
-					for _, u := range urls {
-						if !visitedURLs[u] {
-							discoveredURLs = append(discoveredURLs, u)
+					results := extractSearchResultsFromOutput(output)
+					for _, r := range results {
+						if !visitedURLs[r.URL] {
+							discoveredResults = append(discoveredResults, r)
+							discoveredURLs = append(discoveredURLs, r.URL)
 						}
 					}
-					if len(urls) > 0 {
-						fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolPostProcess: extracted %d URLs from web_search (total queue: %d)\n",
-							len(urls), len(discoveredURLs))
+					if len(results) == 0 {
+						urls := extractURLsFromWebSearch(output)
+						for _, u := range urls {
+							if !visitedURLs[u] {
+								discoveredURLs = append(discoveredURLs, u)
+								discoveredResults = append(discoveredResults, DiscoveredSearchResult{URL: u})
+							}
+						}
+					}
+					if len(discoveredURLs) > 0 {
+						fmt.Fprintf(os.Stderr, "[ResearchPhases] ToolPostProcess: tracked %d candidate URLs from web_search (total queue: %d)\n",
+							len(results), len(discoveredURLs))
 					}
 					// ADR-0080: Extract secondary search hints from first-phase search results
 					if !refinedSearchDispatched && len(secondaryQueries) < 2 {
@@ -144,7 +157,7 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 				if err == nil {
 					if url, ok := args["url"].(string); ok && url != "" {
 						visitedURLs[url] = true
-						card := extractEvidenceCardFromPage(url, output)
+						card := extractEvidenceCardFromPage(context.Background(), url, output, config.Goal)
 						evidenceCards = append(evidenceCards, card)
 						fmt.Fprintf(os.Stderr, "[ResearchPhases] Ingested EvidenceCard for %s (%d facts extracted)\n", url, len(card.KeyFacts))
 					}
@@ -191,14 +204,66 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 				SystemPrompt: buildPhaseResearchPrompt("deep_read", config.Goal, config.TaskContext),
 				StepBudget:   5,
 				Driver: NewDynamicQueueDriver(func() []QueueItem {
-					var browseItems []QueueItem
-					for _, u := range discoveredURLs {
-						if !visitedURLs[u] {
-							browseItems = append(browseItems, QueueItem{
-								Tool: "web_browse",
-								Args: map[string]interface{}{"url": u},
-							})
+					var unvisited []DiscoveredSearchResult
+					seen := make(map[string]bool)
+					for _, res := range discoveredResults {
+						if !visitedURLs[res.URL] && !seen[res.URL] {
+							seen[res.URL] = true
+							unvisited = append(unvisited, res)
 						}
+					}
+					if len(unvisited) == 0 {
+						for _, u := range discoveredURLs {
+							if !visitedURLs[u] && !seen[u] {
+								seen[u] = true
+								unvisited = append(unvisited, DiscoveredSearchResult{URL: u})
+							}
+						}
+					}
+
+					// Neural semantic reranking against goal vector with domain authority weighting
+					if len(unvisited) > 1 && inference.GlobalEmbeddingSidecar != nil && inference.GlobalEmbeddingSidecar.IsAvailable() {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+
+						goalVec, err := inference.GlobalEmbeddingSidecar.Embed(ctx, config.Goal)
+						if err == nil && len(goalVec) > 0 {
+							var texts []string
+							for _, r := range unvisited {
+								txt := fmt.Sprintf("%s %s %s", r.Title, r.Snippet, r.URL)
+								texts = append(texts, txt)
+							}
+							vecs, err := inference.GlobalEmbeddingSidecar.EmbedBatch(ctx, texts)
+							if err == nil && len(vecs) == len(unvisited) {
+								type scoredRes struct {
+									res DiscoveredSearchResult
+									sim float32
+								}
+								var scored []scoredRes
+								for i, vec := range vecs {
+									baseSim := inference.GlobalEmbeddingSidecar.CosineSimilarity(goalVec, vec)
+									authorityFactor := calculateStructuralAuthority(unvisited[i].URL)
+									rankFactor := searchRankDecay(unvisited[i].Rank)
+									weightedSim := baseSim * authorityFactor * rankFactor
+									scored = append(scored, scoredRes{res: unvisited[i], sim: weightedSim})
+								}
+								sort.Slice(scored, func(i, j int) bool {
+									return scored[i].sim > scored[j].sim
+								})
+								unvisited = nil
+								for _, s := range scored {
+									unvisited = append(unvisited, s.res)
+								}
+							}
+						}
+					}
+
+					var browseItems []QueueItem
+					for i := 0; i < len(unvisited) && i < 5; i++ {
+						browseItems = append(browseItems, QueueItem{
+							Tool: "web_browse",
+							Args: map[string]interface{}{"url": unvisited[i].URL},
+						})
 					}
 					return browseItems
 				}),
@@ -233,15 +298,112 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 	return runner
 }
 
+// calculateStructuralAuthority computes a generalized, domain-agnostic quality multiplier
+// based on URL path topology, documentation hierarchy, and structural signals.
+func calculateStructuralAuthority(u string) float32 {
+	lower := strings.ToLower(u)
+	multiplier := float32(1.0)
+
+	// 1. Institutional / non-commercial TLD trust signals
+	if strings.Contains(lower, ".gov") || strings.Contains(lower, ".edu") {
+		multiplier *= 1.25
+	} else if strings.Contains(lower, ".org") {
+		multiplier *= 1.10
+	}
+
+	// 2. Canonical documentation / developer reference subdomains
+	if strings.Contains(lower, "://docs.") || strings.Contains(lower, "://developer.") ||
+		strings.Contains(lower, "://api.") || strings.Contains(lower, "://pkg.") ||
+		strings.Contains(lower, "://guide.") || strings.Contains(lower, "://manual.") {
+		multiplier *= 1.20
+	}
+
+	// 3. Canonical documentation / release / specification URL paths
+	if strings.Contains(lower, "/docs/") || strings.Contains(lower, "/documentation/") ||
+		strings.Contains(lower, "/api/") || strings.Contains(lower, "/releases/") ||
+		strings.Contains(lower, "/reference/") || strings.Contains(lower, "/spec/") ||
+		strings.Contains(lower, "/manual/") || strings.Contains(lower, "/guide/") ||
+		strings.Contains(lower, "/blob/") || strings.Contains(lower, "/tree/") {
+		multiplier *= 1.15
+	}
+
+	// 4. Dampen speculative listicles, SEO aggregate tag pages, and generic blogs
+	if strings.Contains(lower, "/blog/") || strings.Contains(lower, "/posts/") ||
+		strings.Contains(lower, "/article/") || strings.Contains(lower, "showdown") ||
+		strings.Contains(lower, "top-10") || strings.Contains(lower, "best-") {
+		multiplier *= 0.85
+	}
+	if strings.Contains(lower, "/tag/") || strings.Contains(lower, "/category/") ||
+		strings.Contains(lower, "?q=") || strings.Contains(lower, "?query=") {
+		multiplier *= 0.80
+	}
+
+	return multiplier
+}
+
+// searchRankDecay computes rank decay from search engine ordering.
+func searchRankDecay(rank int) float32 {
+	if rank <= 0 {
+		return 1.0
+	}
+	// Smooth reciprocal decay: rank 0 -> 1.0, rank 1 -> 0.89, rank 2 -> 0.80, rank 5 -> 0.62
+	return 1.0 / (1.0 + 0.12*float32(rank))
+}
+
+// DiscoveredSearchResult represents a search result item discovered during research.
+type DiscoveredSearchResult struct {
+	URL     string
+	Title   string
+	Snippet string
+	Rank    int
+}
+
+func extractSearchResultsFromOutput(toolOutput string) []DiscoveredSearchResult {
+	var results []DiscoveredSearchResult
+
+	var envelope struct {
+		Data struct {
+			Results []struct {
+				URL     string `json:"url"`
+				Title   string `json:"title"`
+				Snippet string `json:"snippet"`
+			} `json:"results"`
+		} `json:"data"`
+		Results []struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			Snippet string `json:"snippet"`
+		} `json:"results"`
+	}
+	if json.Unmarshal([]byte(toolOutput), &envelope) == nil {
+		sourceList := envelope.Data.Results
+		if len(sourceList) == 0 {
+			sourceList = envelope.Results
+		}
+		for i, r := range sourceList {
+			if r.URL != "" {
+				results = append(results, DiscoveredSearchResult{
+					URL:     r.URL,
+					Title:   r.Title,
+					Snippet: r.Snippet,
+					Rank:    i,
+				})
+			}
+		}
+	}
+	return results
+}
+
 // extractSecondaryQueriesFromOutput generates targeted second-order queries from search snippets (ADR-0080).
 func extractSecondaryQueriesFromOutput(goal, toolOutput string) []string {
 	var queries []string
 	lowerGoal := strings.ToLower(goal)
 
-	// If goal mentions vulnerabilities/CVEs, target official vulnerability database
+	// If goal mentions vulnerabilities/CVEs, target official vulnerability database & announcements
 	if strings.Contains(lowerGoal, "vulnerabilit") || strings.Contains(lowerGoal, "cve") || strings.Contains(lowerGoal, "advisory") {
 		if strings.Contains(lowerGoal, "go") || strings.Contains(lowerGoal, "golang") {
 			queries = append(queries, "site:pkg.go.dev/vuln Go standard library security")
+			queries = append(queries, "Go standard library security release announcement 2024 2025")
 		} else {
 			queries = append(queries, "site:nvd.nist.gov "+extractSearchQueryFromGoal(goal))
 		}
@@ -250,21 +412,8 @@ func extractSecondaryQueriesFromOutput(goal, toolOutput string) []string {
 	// If goal mentions frameworks/comparisons, target benchmark & pricing metrics
 	if strings.Contains(lowerGoal, "compare") || strings.Contains(lowerGoal, "framework") || strings.Contains(lowerGoal, "vs") {
 		base := extractSearchQueryFromGoal(goal)
-		queries = append(queries, base+" benchmarks latency throughput")
-	}
-
-	// Extract domain-level search targets from discovered URLs in output
-	urlRe := regexp.MustCompile(`https?://([^/\s]+)`)
-	matches := urlRe.FindAllStringSubmatch(toolOutput, 5)
-	for _, m := range matches {
-		if len(m) > 1 {
-			domain := m[1]
-			if !strings.Contains(domain, "google") && !strings.Contains(domain, "bing") && !strings.Contains(domain, "duckduckgo") {
-				targetQuery := fmt.Sprintf("site:%s %s", domain, extractSearchQueryFromGoal(goal))
-				queries = append(queries, targetQuery)
-				break
-			}
-		}
+		queries = append(queries, base+" pricing enterprise open source")
+		queries = append(queries, base+" benchmark latency throughput")
 	}
 
 	return queries
@@ -323,15 +472,52 @@ type EvidenceCard struct {
 }
 
 // extractEvidenceCardFromPage parses scraped page content into concise bullet points
-// and structured data using deterministic structural parsing and entity density scoring (ADR-0080).
-func extractEvidenceCardFromPage(url, content string) EvidenceCard {
+// and structured data using neural embedding cosine similarity and k-nearest neighbor (k-NN) ranking.
+func extractEvidenceCardFromPage(ctx context.Context, url, content, goal string) EvidenceCard {
 	card := EvidenceCard{
 		URL: url,
 	}
 
-	lines := strings.Split(content, "\n")
+	pageText := content
+
+	// Unpack JSON tool result envelope if present (standard ToolResult with Data or top-level)
+	var envelope struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Content string `json:"content"`
+			URL     string `json:"url"`
+			Text    string `json:"text"`
+		} `json:"data"`
+		Content string `json:"content"`
+		URL     string `json:"url"`
+		Output  string `json:"output"`
+	}
+	if json.Unmarshal([]byte(content), &envelope) == nil {
+		if envelope.Data.Content != "" {
+			pageText = envelope.Data.Content
+		} else if envelope.Data.Text != "" {
+			pageText = envelope.Data.Text
+		} else if envelope.Content != "" {
+			pageText = envelope.Content
+		} else if envelope.Output != "" {
+			pageText = envelope.Output
+		}
+		if card.URL == "" {
+			if envelope.Data.URL != "" {
+				card.URL = envelope.Data.URL
+			} else if envelope.URL != "" {
+				card.URL = envelope.URL
+			}
+		}
+	}
+
+	// Normalize escaped newlines if unescaping was partial
+	pageText = strings.ReplaceAll(pageText, "\r\n", "\n")
+	pageText = strings.ReplaceAll(pageText, "\r", "\n")
+
+	lines := strings.Split(pageText, "\n")
 	var rawCandidates []string
-	var tableRows []string
+	var tableBlocks []string
 
 	// 1. Extract Page Title
 	for _, l := range lines {
@@ -358,118 +544,120 @@ func extractEvidenceCardFromPage(url, content string) EvidenceCard {
 		card.Title = url
 	}
 
-	// 2. Structural Parsing: Table rows & Key-Value / Bullet points
-	tableDividerRe := regexp.MustCompile(`^\|\s*[-:]+\s*\|`)
-	kvRe := regexp.MustCompile(`(?i)^\s*(\*\*|\*|__)?([a-zA-Z0-9_\-\s]{2,30})(\*\*|\*|__)?\s*[:=]\s*(.+)$`)
-	cveRe := regexp.MustCompile(`(?i)\bCVE-\d{4}-\d{4,7}\b`)
-	metricRe := regexp.MustCompile(`(?i)\b\d+(\.\d+)?(%|ms|s|t/s|x|gb|mb|kb|tokens|req/s|\$)?\b`)
-	acronymRe := regexp.MustCompile(`\b[A-Z]{2,}\b`)
-	keywordRe := regexp.MustCompile(`(?i)\b(cve|vulnerability|benchmark|version|throughput|latency|release|support|feature|architecture|pricing|performance|method|sdk|framework|loader|quantization|model)\b`)
-	noiseRe := regexp.MustCompile(`(?i)\b(cookie|subscribe|privacy policy|all rights reserved|sign up|terms of service|click here|javascript|404 not found|login|menu|navigation)\b`)
-
+	// 2. Structural Parsing: extract candidate paragraphs and table rows/blocks
+	var currentTable []string
 	for _, l := range lines {
 		trimmed := strings.TrimSpace(l)
-		if len(trimmed) < 15 || noiseRe.MatchString(trimmed) {
+		if len(trimmed) < 10 {
+			if len(currentTable) > 0 {
+				tableBlocks = append(tableBlocks, strings.Join(currentTable, "\n"))
+				currentTable = nil
+			}
 			continue
 		}
 
 		// Markdown Table Row
 		if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
-			if !tableDividerRe.MatchString(trimmed) && len(tableRows) < 4 {
-				cleanRow := strings.TrimSpace(trimmed)
-				tableRows = append(tableRows, cleanRow)
+			currentTable = append(currentTable, trimmed)
+			if len(currentTable) >= 6 {
+				tableBlocks = append(tableBlocks, strings.Join(currentTable, "\n"))
+				currentTable = nil
 			}
 			continue
+		} else if len(currentTable) > 0 {
+			tableBlocks = append(tableBlocks, strings.Join(currentTable, "\n"))
+			currentTable = nil
 		}
 
-		// Key-Value Definition
-		if m := kvRe.FindStringSubmatch(trimmed); len(m) >= 5 {
-			k := strings.TrimSpace(m[2])
-			v := strings.TrimSpace(m[4])
-			if len(v) > 5 && !noiseRe.MatchString(k) && !noiseRe.MatchString(v) {
-				rawCandidates = append(rawCandidates, fmt.Sprintf("**%s:** %s", k, v))
-				continue
-			}
-		}
-
-		// Markdown Bullet or Factual Sentence
-		cleanText := strings.TrimLeft(trimmed, "-*# \t")
-		if len(cleanText) >= 20 {
+		cleanText := strings.TrimLeft(trimmed, "-*# \t•")
+		cleanText = strings.TrimSpace(cleanText)
+		if len(cleanText) >= 15 {
 			rawCandidates = append(rawCandidates, cleanText)
 		}
 	}
-
-	// 3. Density-Score Sentence Candidates
-	type scoredFact struct {
-		text  string
-		score float64
+	if len(currentTable) > 0 {
+		tableBlocks = append(tableBlocks, strings.Join(currentTable, "\n"))
 	}
-	var scored []scoredFact
+
+	// Pool all candidates (text chunks + table blocks)
+	var allCandidates []string
 	seen := make(map[string]bool)
-
-	for _, text := range rawCandidates {
-		norm := strings.ToLower(text)
-		if seen[norm] {
-			continue
+	for _, c := range rawCandidates {
+		norm := strings.ToLower(c)
+		if !seen[norm] && len(c) <= 1500 {
+			seen[norm] = true
+			allCandidates = append(allCandidates, c)
 		}
-		seen[norm] = true
-
-		score := 0.0
-		// Score CVEs highly
-		cveCount := len(cveRe.FindAllString(text, -1))
-		score += float64(cveCount) * 6.0
-
-		// Score numbers/metrics
-		metricCount := len(metricRe.FindAllString(text, -1))
-		score += float64(metricCount) * 2.0
-
-		// Score uppercase acronyms
-		acronymCount := len(acronymRe.FindAllString(text, -1))
-		score += float64(acronymCount) * 1.5
-
-		// Score technical keywords
-		keywordCount := len(keywordRe.FindAllString(text, -1))
-		score += float64(keywordCount) * 2.0
-
-		// Penalize very long run-on sentences (> 300 chars)
-		if len(text) > 300 {
-			score -= 2.0
-		}
-
-		if score >= 2.0 {
-			scored = append(scored, scoredFact{text: text, score: score})
+	}
+	for _, tb := range tableBlocks {
+		if !seen[tb] {
+			seen[tb] = true
+			allCandidates = append(allCandidates, tb)
 		}
 	}
 
-	// Sort candidates by descending density score
+	if len(allCandidates) == 0 {
+		return card
+	}
+
+	targetGoal := goal
+	if targetGoal == "" {
+		targetGoal = card.Title
+	}
+
+	// 3. Neural Embedding & k-NN Ranking
+	type candidateScore struct {
+		text  string
+		score float32
+	}
+	var scored []candidateScore
+
+	if inference.GlobalEmbeddingSidecar != nil && inference.GlobalEmbeddingSidecar.IsAvailable() {
+		embCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+
+		goalVec, err := inference.GlobalEmbeddingSidecar.Embed(embCtx, targetGoal)
+		if err == nil && len(goalVec) > 0 {
+			// Chunk batch requests in groups of 16 to respect sidecar constraints
+			const batchChunkSize = 16
+			for i := 0; i < len(allCandidates); i += batchChunkSize {
+				end := i + batchChunkSize
+				if end > len(allCandidates) {
+					end = len(allCandidates)
+				}
+				chunk := allCandidates[i:end]
+				vecs, err := inference.GlobalEmbeddingSidecar.EmbedBatch(embCtx, chunk)
+				if err == nil && len(vecs) == len(chunk) {
+					for j, vec := range vecs {
+						sim := inference.GlobalEmbeddingSidecar.CosineSimilarity(goalVec, vec)
+						scored = append(scored, candidateScore{text: chunk[j], score: sim})
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback to pure Go cosine similarity if neural sidecar was unavailable
+	if len(scored) == 0 {
+		for _, c := range allCandidates {
+			sim := float32(embeddings.CosineSimilarity(targetGoal, c))
+			scored = append(scored, candidateScore{text: c, score: sim})
+		}
+	}
+
+	// Sort candidates by descending similarity score (k-NN)
 	sort.Slice(scored, func(i, j int) bool {
 		return scored[i].score > scored[j].score
 	})
 
-	var facts []string
-	for _, s := range scored {
-		facts = append(facts, s.text)
-		if len(facts) >= 6 {
-			break
-		}
+	// Select top-k nearest neighbors (k = 8)
+	const kNN = 8
+	var topFacts []string
+	for i := 0; i < len(scored) && i < kNN; i++ {
+		topFacts = append(topFacts, scored[i].text)
 	}
 
-	// Append table rows if present to preserve comparison structure
-	if len(tableRows) > 0 {
-		facts = append(facts, tableRows...)
-	}
-
-	// Fallback: If no dense facts found, use top non-empty lines
-	if len(facts) == 0 && len(rawCandidates) > 0 {
-		for _, c := range rawCandidates {
-			facts = append(facts, c)
-			if len(facts) >= 3 {
-				break
-			}
-		}
-	}
-
-	card.KeyFacts = facts
+	card.KeyFacts = topFacts
 	return card
 }
 
@@ -480,14 +668,28 @@ func buildCitationPreamble(sources []ScrapedSource, cards []EvidenceCard) string
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("## Verified Research Evidence & Sources\n\n")
+	b.WriteString("## Verified Research Evidence & Numbered Sources\n\n")
 	b.WriteString("The following URLs were successfully read during research. ")
-	b.WriteString("IMPORTANT: You MUST cite these exact URLs when referencing facts or data points.\n")
-	b.WriteString("Do NOT invent or hallucinate additional URLs, future CVE IDs, or unvisited sources.\n\n")
+	b.WriteString("IMPORTANT: Every factual claim, version, and quantitative metric in your response MUST include an inline numbered citation tag (e.g. [1], [2]) citing these sources.\n")
+	b.WriteString("Do NOT invent or hallucinate additional URLs, future CVE IDs, or unvisited sources. If data is not in the sources, write 'Not reported in sources'.\n\n")
 
 	if len(cards) > 0 {
-		for _, card := range cards {
-			b.WriteString(fmt.Sprintf("### [%s](%s)\n", card.Title, card.URL))
+		b.WriteString("### Numbered Bibliography (Use inline tags [1], [2] in your analysis):\n")
+		for i, card := range cards {
+			title := card.Title
+			if title == "" || title == card.URL {
+				title = "Documentation"
+			}
+			b.WriteString(fmt.Sprintf("[%d] [%s](%s)\n", i+1, title, card.URL))
+		}
+		b.WriteString("\n")
+
+		for i, card := range cards {
+			title := card.Title
+			if title == "" || title == card.URL {
+				title = "Documentation"
+			}
+			b.WriteString(fmt.Sprintf("### [%d] [%s](%s)\n", i+1, title, card.URL))
 			if len(card.KeyFacts) > 0 {
 				b.WriteString("Key Evidence:\n")
 				for _, f := range card.KeyFacts {
@@ -497,12 +699,13 @@ func buildCitationPreamble(sources []ScrapedSource, cards []EvidenceCard) string
 			b.WriteString("\n")
 		}
 	} else {
-		for _, s := range sources {
+		b.WriteString("### Numbered Bibliography:\n")
+		for i, s := range sources {
 			title := s.Title
 			if title == "" {
 				title = s.URL
 			}
-			b.WriteString(fmt.Sprintf("- [%s](%s)\n", title, s.URL))
+			b.WriteString(fmt.Sprintf("[%d] [%s](%s)\n", i+1, title, s.URL))
 		}
 		b.WriteString("\n")
 	}

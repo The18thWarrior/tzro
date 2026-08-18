@@ -178,3 +178,30 @@ However, they also claimed "The system uses microservices with event sourcing" w
 		t.Errorf("expected 1 fabricated quote issue, got %d", fabQuoteCount)
 	}
 }
+
+func TestValidateCitationAttribution(t *testing.T) {
+	validText := `## Architectural Comparison
+	
+	Temporal uses a persistent event log architecture [1] which guarantees deterministic replay.
+	Restate achieves durable execution using suspended promises and distributed state journals [2].
+	Overall throughput is estimated at 15,000 transactions per second [1].`
+
+	issues := ValidateCitationAttribution(validText, 2)
+	if len(issues) != 0 {
+		t.Errorf("expected 0 issues for valid citations, got %d: %v", len(issues), issues)
+	}
+
+	invalidText := `## Architectural Comparison
+	
+	Temporal uses an event log [1].
+	Restate uses journals [9].
+	Kafka is also mentioned [15].`
+
+	badIssues := ValidateCitationAttribution(invalidText, 2)
+	if len(badIssues) != 2 {
+		t.Fatalf("expected 2 invalid citation issues, got %d: %v", len(badIssues), badIssues)
+	}
+	if badIssues[0].Type != "invalid_citation" || badIssues[1].Type != "invalid_citation" {
+		t.Errorf("expected invalid_citation issue types, got %v", badIssues)
+	}
+}

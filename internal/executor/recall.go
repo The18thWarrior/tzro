@@ -220,15 +220,27 @@ Every factual claim in your response MUST reference a source from the extracted 
 If the extracted facts are insufficient to answer the question, say so explicitly.`
 	}
 
+	// Build research formatting constraint if the task is research- or comparison-oriented
+	researchConstraint := ""
+	lowerGoal := strings.ToLower(goal)
+	if strings.Contains(lowerGoal, "research") || strings.Contains(lowerGoal, "compare") || strings.Contains(lowerGoal, "framework") || strings.Contains(lowerGoal, "vulnerabilit") || strings.Contains(lowerGoal, "cve") || strings.Contains(lowerGoal, "format") || strings.Contains(lowerGoal, "engine") || strings.Contains(lowerGoal, "analysis") {
+		researchConstraint = `
+IMPORTANT: You MUST cite specific URLs from the verified discovery context for all referenced facts, metrics, and specifications using inline markdown links with descriptive names (e.g. [System Documentation](https://example.com/docs)). Do NOT output literal placeholder tokens like "[Source Title]".
+IMPORTANT: When comparing tools, technologies, architectures, or frameworks, include a structured markdown comparison table with corroborated data points.
+IMPORTANT: All concrete identifiers, version strings, release numbers, quantitative metrics, dates, and architectural claims must be corroborated by the retrieved discovery context. Do NOT invent unverified version numbers, fabricate non-existent identifiers, or extrapolate speculative future dates. If specific data points are absent from the retrieved evidence, state the limitation explicitly.
+IMPORTANT: For cost arbitrage or economic analysis, provide concrete quantitative estimates based on verified evidence in the context.
+IMPORTANT: Structure and pace your response concisely so all requested dimensions are completely written without reaching token limits or ending abruptly.`
+	}
+
 	synthPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
 Goal: %s
 
 ## Refined Discovery Context (Verified Facts):
-%s%s%s
+%s%s%s%s
 
 Review the gathered facts and produce a comprehensive, structured final answer.
 IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.
-IMPORTANT: Begin your response with the content directly. Do NOT describe what you are about to do. Do NOT write meta-commentary like "I will now synthesize" or "The answer is below". Start with "# " followed by a descriptive heading.`, goal, synthesisInput, symbolRefBlock, factConstraint)
+IMPORTANT: Begin your response with the content directly. Do NOT describe what you are about to do. Do NOT write meta-commentary like "I will now synthesize" or "The answer is below". Start with "# " followed by a descriptive heading.`, goal, synthesisInput, symbolRefBlock, factConstraint, researchConstraint)
 
 	// Synthesis escalation policy: if any upstream probe had its synthesis
 	// escalated to cloud (local model produced invalid/repetitive output),
@@ -307,22 +319,38 @@ IMPORTANT: Begin your response with the content directly. Do NOT write meta-comm
 
 	if upstreamSynthEscalated && !isCloudEscalationBlocked() {
 		fmt.Fprintf(os.Stderr, "[Recall] Upstream probe synthesis was escalated to cloud — using cloud for Recall synthesis\n")
+		synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
 		cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
 			{Role: "system", Content: synthPrompt},
-			{Role: "user", Content: lastResult},
+			{Role: "user", Content: synthUserPrompt},
 		}, "", taskID)
 		if cloudErr != nil {
 			// Cloud failed — fall back to local
 			fmt.Fprintf(os.Stderr, "[Recall] Cloud synthesis failed (%v), falling back to local engine\n", cloudErr)
-			synthesis, err = engine.Infer(synthCtx, synthPrompt, lastResult, "", TargetWorker)
+			synthesis, err = engine.Infer(synthCtx, synthPrompt, synthUserPrompt, "", TargetWorker)
 			if err != nil {
 				return RecallResult{}, err
 			}
 		} else {
 			synthesis = cloudResult
 		}
+	} else if IsMultiSectionResearchGoal(goal) {
+		fmt.Fprintf(os.Stderr, "[Recall] Sectioned Map-Reduce synthesis triggered for multi-dimensional goal (ADR-0082)\n")
+		secSections := DecomposeResearchGoalIntoSections(goal)
+		secSynth, secErr := ExecuteSectionedSynthesis(synthCtx, goal, synthesisInput, secSections, engine)
+		if secErr == nil && len(secSynth) > 200 {
+			synthesis = secSynth
+		} else {
+			fmt.Fprintf(os.Stderr, "[Recall] Sectioned synthesis failed (%v) — falling back to single-pass\n", secErr)
+			synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
+			synthesis, err = engine.Infer(synthCtx, synthPrompt, synthUserPrompt, "", TargetWorker)
+			if err != nil {
+				return RecallResult{}, err
+			}
+		}
 	} else {
-		synthesis, err = engine.Infer(synthCtx, synthPrompt, lastResult, "", TargetWorker)
+		synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
+		synthesis, err = engine.Infer(synthCtx, synthPrompt, synthUserPrompt, "", TargetWorker)
 		if err != nil {
 			return RecallResult{}, err
 		}
@@ -381,9 +409,10 @@ postSynthesis:
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "[Recall] Synthesis output invalid (%s), escalating to cloud\n", reason)
 		if !isCloudEscalationBlocked() {
+			synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
 			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
 				{Role: "system", Content: synthPrompt},
-				{Role: "user", Content: lastResult},
+				{Role: "user", Content: synthUserPrompt},
 			}, "", taskID)
 			if cloudErr == nil && validateSynthesisOutput(cloudResult, recallValidationOpts...) == "" {
 				fmt.Fprintf(os.Stderr, "[Recall] Cloud escalation succeeded for synthesis (%d chars)\n", len(cloudResult))
@@ -504,13 +533,35 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 	// headers and structural patterns. ADR-0066: 4-gram→5-gram, 3x→scaled.
 	// ADR-run32: WithCodegenOutput raises minimum from 4 to 8.
 	if !cfg.isAnalyzeNode {
-		ngramInput := cleaned
+		// Filter out markdown table rows so repeated table delimiters (e.g. "| Yes | Yes |")
+		// do not trigger false positive repetition rejections on valid comparison tables.
+		var nonTableLines []string
+		var listLineCount int
+		for _, line := range strings.Split(cleaned, "\n") {
+			trimmedLine := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmedLine, "|") && strings.HasSuffix(trimmedLine, "|") {
+				continue
+			}
+			if strings.HasPrefix(trimmedLine, "- ") || strings.HasPrefix(trimmedLine, "* ") ||
+				strings.HasPrefix(trimmedLine, "• ") || strings.HasPrefix(trimmedLine, "+ ") ||
+				(len(trimmedLine) > 2 && trimmedLine[0] >= '0' && trimmedLine[0] <= '9' && (trimmedLine[1] == '.' || trimmedLine[2] == '.')) {
+				listLineCount++
+			}
+			nonTableLines = append(nonTableLines, line)
+		}
+		ngramInput := strings.Join(nonTableLines, "\n")
+
 		ngramMinThreshold := 4
 		if cfg.isCodegenOutput {
 			// For generated code, raise the minimum repetition threshold from 4 to 8.
 			// Valid Go files with multiple handlers naturally repeat structural patterns
 			// (function signatures, error checks) fewer than 8 times per 5-word n-gram.
 			// ADR-run32: min threshold 4 → 8 for codegen output.
+			ngramMinThreshold = 8
+		} else if listLineCount >= 3 {
+			// Structured bullet/enumerated lists naturally repeat structural metric templates
+			// (e.g. "— 1 total lead - Sources:" or "Total: 10 leads") across distinct items.
+			// Raise threshold from 4 to 8 to prevent false-positive rejection of valid tabular reports.
 			ngramMinThreshold = 8
 		}
 		words := strings.Fields(ngramInput)

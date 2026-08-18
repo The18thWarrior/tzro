@@ -65,6 +65,31 @@ func TestBuildSQL_GroupByWithCount(t *testing.T) {
 	}
 }
 
+func TestBuildSQL_PercentageWindowFunction(t *testing.T) {
+	spec := QuerySpec{
+		CacheID: "cache_1234567890",
+		Operations: []Operation{
+			{Type: "group_by", Column: "Sector"},
+			{Type: "aggregate", Function: "COUNT", Alias: "lead_count"},
+			{Type: "aggregate", Function: "PERCENTAGE", Alias: "pct_of_total"},
+			{Type: "order_by", Column: "lead_count", Direction: "DESC"},
+		},
+		Limit: 10,
+	}
+
+	sql, err := BuildSQL(spec)
+	if err != nil {
+		t.Fatalf("BuildSQL failed: %v", err)
+	}
+
+	if !strings.Contains(sql, "ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS pct_of_total") {
+		t.Errorf("expected window percentage expression, got: %s", sql)
+	}
+	if !strings.Contains(sql, "GROUP BY COALESCE(NULLIF([Sector], ''), '(Unspecified)')") {
+		t.Errorf("expected imputed group by, got: %s", sql)
+	}
+}
+
 func TestBuildSQL_ComplexComposite(t *testing.T) {
 	// lead_target_account_analysis: filter + group_by + COUNT + GROUP_CONCAT(DISTINCT) + order_by
 	spec := QuerySpec{
@@ -378,4 +403,57 @@ func TestBuildSQL_CountStar_NoColumnBrackets(t *testing.T) {
 		t.Errorf("expected COUNT(*) in SQL, got: %s", sql)
 	}
 }
+
+func TestBuildSQL_MultiFilter_MultiAggregate(t *testing.T) {
+	spec := QuerySpec{
+		CacheID: "cache_1234567890",
+		Operations: []Operation{
+			{Type: "filter", Column: "Country", Operator: "=", Value: "USA"},
+			{Type: "filter", Column: "Target_Account", Operator: "=", Value: "Yes"},
+			{Type: "group_by", Column: "Sector"},
+			{Type: "aggregate", Function: "COUNT", Column: "*", Alias: "lead_count"},
+			{Type: "aggregate", Function: "PERCENTAGE", Column: "*", Alias: "percentage"},
+			{Type: "aggregate", Function: "AVG", Column: "Deal_Size", Alias: "avg_deal_size"},
+			{Type: "aggregate", Function: "GROUP_CONCAT", Column: "Company", Distinct: true, Alias: "distinct_companies"},
+			{Type: "order_by", Column: "avg_deal_size", Direction: "DESC"},
+		},
+		Limit: 25,
+	}
+
+	sql, err := BuildSQL(spec)
+	if err != nil {
+		t.Fatalf("BuildSQL failed: %v", err)
+	}
+
+	// Verify multi-filter AND joining
+	if !strings.Contains(sql, "WHERE [Country] = 'USA' AND [Target_Account] = 'Yes'") {
+		t.Errorf("expected multi-filter WHERE clause, got: %s", sql)
+	}
+
+	// Verify multi-aggregate SELECT list
+	if !strings.Contains(sql, "COUNT(*) AS lead_count") {
+		t.Errorf("expected COUNT(*) in SELECT, got: %s", sql)
+	}
+	if !strings.Contains(sql, "ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS percentage") {
+		t.Errorf("expected percentage window expression, got: %s", sql)
+	}
+	if !strings.Contains(sql, "AVG([Deal_Size]) AS avg_deal_size") {
+		t.Errorf("expected AVG([Deal_Size]) in SELECT, got: %s", sql)
+	}
+	if !strings.Contains(sql, "GROUP_CONCAT(DISTINCT [Company]) AS distinct_companies") {
+		t.Errorf("expected GROUP_CONCAT(DISTINCT [Company]), got: %s", sql)
+	}
+
+	// Verify grouping and ordering
+	if !strings.Contains(sql, "GROUP BY COALESCE(NULLIF([Sector], ''), '(Unspecified)')") {
+		t.Errorf("expected imputed group by, got: %s", sql)
+	}
+	if !strings.Contains(sql, "ORDER BY avg_deal_size DESC") {
+		t.Errorf("expected ORDER BY avg_deal_size DESC, got: %s", sql)
+	}
+	if !strings.Contains(sql, "LIMIT 25") {
+		t.Errorf("expected LIMIT 25, got: %s", sql)
+	}
+}
+
 

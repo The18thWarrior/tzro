@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -17,8 +18,8 @@ func TestBuildCitationPreamble_IncludesAllURLs(t *testing.T) {
 
 	preamble := buildCitationPreamble(sources, nil)
 
-	if !strings.Contains(preamble, "## Verified Research Evidence & Sources") {
-		t.Error("expected '## Verified Research Evidence & Sources' section in preamble")
+	if !strings.Contains(preamble, "## Verified Research Evidence & Numbered Sources") {
+		t.Error("expected '## Verified Research Evidence & Numbered Sources' section in preamble")
 	}
 	if !strings.Contains(preamble, "https://openai.com/blog") {
 		t.Error("expected first URL in preamble")
@@ -28,6 +29,9 @@ func TestBuildCitationPreamble_IncludesAllURLs(t *testing.T) {
 	}
 	if !strings.Contains(preamble, "OpenAI Blog") {
 		t.Error("expected first source title in preamble")
+	}
+	if !strings.Contains(preamble, "[1]") || !strings.Contains(preamble, "[2]") {
+		t.Error("expected numbered bibliography indices [1] and [2] in preamble")
 	}
 }
 
@@ -59,7 +63,7 @@ func TestExtractEvidenceCardFromPage(t *testing.T) {
 - Memory throughput improved by 15% on Apple Silicon.
 - Supported architecture includes arm64 and amd64.
 `
-	card := extractEvidenceCardFromPage("https://go.dev/doc/devel/release", content)
+	card := extractEvidenceCardFromPage(context.Background(), "https://go.dev/doc/devel/release", content, "Investigate Go CVEs and performance")
 	if card.Title != "Go Release Notes" {
 		t.Errorf("expected title 'Go Release Notes', got %q", card.Title)
 	}
@@ -82,7 +86,7 @@ func TestExtractEvidenceCardFromPage_ComplexTableAndKeyValue(t *testing.T) {
 - LangChain v0.3 introduces improved multi-agent state machines.
 - LlamaIndex supports over 160 vector store integrations as of 2025.
 `
-	card := extractEvidenceCardFromPage("https://example.com/llm-comparison", content)
+	card := extractEvidenceCardFromPage(context.Background(), "https://example.com/llm-comparison", content, "Compare LLM Orchestration Frameworks")
 	if card.Title != "LLM Orchestration Frameworks Comparison" {
 		t.Errorf("expected parsed title, got %q", card.Title)
 	}
@@ -122,3 +126,27 @@ func TestExtractSecondaryQueriesFromOutput(t *testing.T) {
 		t.Errorf("expected query targeting pkg.go.dev for Go vulnerability goal, got: %v", queries)
 	}
 }
+
+func TestExtractEvidenceCardFromPage_JSONWrapped(t *testing.T) {
+	jsonPayload := `{"url":"https://example.com/cve-report","content":"# Vulnerability Report\n\n- CVE-2024-24790 affects net/netip and enables unbounded resource consumption.\n- Patched in Go 1.22.4 and Go 1.21.11.\n- CVSS score is 7.5 High.\n","chars":200}`
+	card := extractEvidenceCardFromPage(context.Background(), "https://example.com/cve-report", jsonPayload, "Analyze Go standard library CVEs and patched versions")
+	if card.Title != "Vulnerability Report" {
+		t.Errorf("expected parsed title 'Vulnerability Report', got %q", card.Title)
+	}
+	if len(card.KeyFacts) < 2 {
+		t.Fatalf("expected at least 2 key facts extracted from JSON payload, got %d", len(card.KeyFacts))
+	}
+}
+
+func TestExtractEvidenceCardFromPage_ToolResultEnvelope(t *testing.T) {
+	envelopeJSON := `{"success":true,"data":{"url":"https://pkg.go.dev/vuln/GO-2024-24790","content":"# Go Security Advisory GO-2024-24790\n\n- Package net/netip is affected by denial of service.\n- Patched in version 1.22.4.\n- CVSS: 7.5.\n","chars":150},"_meta":{"tool":"web_browse"}}`
+	card := extractEvidenceCardFromPage(context.Background(), "https://pkg.go.dev/vuln/GO-2024-24790", envelopeJSON, "Analyze Go standard library CVEs and patched versions")
+	if card.Title != "Go Security Advisory GO-2024-24790" {
+		t.Errorf("expected parsed title 'Go Security Advisory GO-2024-24790', got %q", card.Title)
+	}
+	if len(card.KeyFacts) < 2 {
+		t.Fatalf("expected at least 2 key facts extracted from ToolResult envelope, got %d", len(card.KeyFacts))
+	}
+}
+
+

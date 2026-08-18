@@ -178,152 +178,167 @@ func TestIntentToOperations_BackwardCompatible(t *testing.T) {
 // Slice 4: Unified Regex Intent Scanner (ADR-0076)
 // =======================================
 
-func TestRegexExtract_LeadLookup(t *testing.T) {
+// =======================================
+// Slice 4: Neural/BoW Intent Extraction (ADR-0081 / ADR-0082)
+// =======================================
+
+func TestNeuralExtract_LeadLookup(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	cacheID := "cache_lookup"
+	rawPayload := `[{"account_name": "Walmart", "full_name": "John Doe", "email": "j@w.com", "Country": "USA", "Sector": "Retail"}]`
+	types := map[string]string{"account_name": "TEXT", "full_name": "TEXT", "email": "TEXT", "Country": "TEXT", "Sector": "TEXT"}
+	if err := cache.MaterializeTable(cacheID, rawPayload, types, "task_1"); err != nil {
+		t.Fatalf("MaterializeTable failed: %v", err)
+	}
+
 	goal := `Read the CSV file at helpers/LeadSuccess.csv. Find all leads where the account_name is "Walmart". Return each lead's full name and email.`
-	columns := []string{"account_name", "full_name", "email", "Country", "Sector"}
-
-	matches := extractIntentFromPhrases(goal, columns)
-
-	hasFilter := false
-	hasGroupBy := false
-	for _, m := range matches {
-		if m.Type == "filter" && m.Column == "account_name" && m.Value == "Walmart" {
-			hasFilter = true
-		}
-		if m.Type == "group_by" {
-			hasGroupBy = true
-		}
+	intent, conf, err := ExtractDeterministicQueryIntent(context.Background(), goal, cacheID)
+	if err != nil {
+		t.Fatalf("ExtractDeterministicQueryIntent failed: %v", err)
 	}
-	if !hasFilter {
-		t.Error("expected filter(account_name, Walmart) match")
+
+	if intent.FilterColumn != "account_name" || intent.FilterValue != "Walmart" {
+		t.Errorf("expected filter account_name='Walmart', got col=%q val=%q", intent.FilterColumn, intent.FilterValue)
 	}
-	if hasGroupBy {
-		t.Error("should NOT have group_by match for a lookup query")
+	if intent.GroupColumn != "" {
+		t.Errorf("should NOT have group_by for lookup, got %q", intent.GroupColumn)
+	}
+	if conf.Score < 0.20 {
+		t.Errorf("expected positive confidence score, got %.2f", conf.Score)
 	}
 }
 
-func TestRegexExtract_CountByCountry(t *testing.T) {
+func TestNeuralExtract_CountByCountry(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	cacheID := "cache_country"
+	rawPayload := `[{"Country": "USA", "Sector": "Tech", "Lead_Source": "Web", "account_name": "Acme"}]`
+	types := map[string]string{"Country": "TEXT", "Sector": "TEXT", "Lead_Source": "TEXT", "account_name": "TEXT"}
+	if err := cache.MaterializeTable(cacheID, rawPayload, types, "task_1"); err != nil {
+		t.Fatalf("MaterializeTable failed: %v", err)
+	}
+
 	goal := `Read the CSV file at helpers/LeadSuccess.csv. Count the total number of leads for each unique value in the Country column. Sort the results by count in descending order.`
-	columns := []string{"Country", "Sector", "Lead_Source", "account_name"}
+	intent, conf, err := ExtractDeterministicQueryIntent(context.Background(), goal, cacheID)
+	if err != nil {
+		t.Fatalf("ExtractDeterministicQueryIntent failed: %v", err)
+	}
 
-	matches := extractIntentFromPhrases(goal, columns)
-
-	hasGroupBy := false
-	hasCount := false
-	hasOrder := false
-	hasFilter := false
-	for _, m := range matches {
-		if m.Type == "group_by" && m.Column == "Country" {
-			hasGroupBy = true
-		}
-		if m.Type == "aggregate" && m.Function == "COUNT" {
-			hasCount = true
-		}
-		if m.Type == "order" {
-			hasOrder = true
-		}
-		if m.Type == "filter" {
-			hasFilter = true
-		}
+	if intent.GroupColumn != "Country" {
+		t.Errorf("expected group_by Country, got %q", intent.GroupColumn)
 	}
-	if !hasGroupBy {
-		t.Error("expected group_by(Country)")
+	if intent.AggFunction != "COUNT" {
+		t.Errorf("expected aggregate COUNT, got %q", intent.AggFunction)
 	}
-	if !hasCount {
-		t.Error("expected aggregate(COUNT)")
+	if intent.OrderDirection != "DESC" {
+		t.Errorf("expected order DESC, got %q", intent.OrderDirection)
 	}
-	if !hasOrder {
-		t.Error("expected order(DESC)")
-	}
-	if hasFilter {
-		t.Error("should NOT have filter match")
+	if conf.Score < 0.30 {
+		t.Errorf("expected confidence score >= 0.30, got %.2f", conf.Score)
 	}
 }
 
-func TestRegexExtract_SectorBreakdown(t *testing.T) {
+func TestNeuralExtract_SectorBreakdown(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	cacheID := "cache_sector"
+	rawPayload := `[{"Sector": "Tech", "Country": "USA", "Lead_Source": "Web"}]`
+	types := map[string]string{"Sector": "TEXT", "Country": "TEXT", "Lead_Source": "TEXT"}
+	if err := cache.MaterializeTable(cacheID, rawPayload, types, "task_1"); err != nil {
+		t.Fatalf("MaterializeTable failed: %v", err)
+	}
+
 	goal := `Read the CSV file at helpers/LeadSuccess.csv. Group all leads by the Sector column and provide a count for each sector. Sort by count descending.`
-	columns := []string{"Sector", "Country", "Lead_Source"}
-
-	matches := extractIntentFromPhrases(goal, columns)
-
-	hasGroupBy := false
-	for _, m := range matches {
-		if m.Type == "group_by" && m.Column == "Sector" {
-			hasGroupBy = true
-		}
+	intent, _, err := ExtractDeterministicQueryIntent(context.Background(), goal, cacheID)
+	if err != nil {
+		t.Fatalf("ExtractDeterministicQueryIntent failed: %v", err)
 	}
-	if !hasGroupBy {
-		t.Error("expected group_by(Sector)")
+
+	if intent.GroupColumn != "Sector" {
+		t.Errorf("expected group_by Sector, got %q", intent.GroupColumn)
 	}
 }
 
-func TestRegexExtract_SourceByOwner(t *testing.T) {
+func TestNeuralExtract_SourceByOwner(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	cacheID := "cache_owner"
+	rawPayload := `[{"Accout_Owner": "Alice", "Lead_Source": "Web", "Country": "USA", "Sector": "Tech"}]`
+	types := map[string]string{"Accout_Owner": "TEXT", "Lead_Source": "TEXT", "Country": "TEXT", "Sector": "TEXT"}
+	if err := cache.MaterializeTable(cacheID, rawPayload, types, "task_1"); err != nil {
+		t.Fatalf("MaterializeTable failed: %v", err)
+	}
+
 	goal := `Read the CSV file at helpers/LeadSuccess.csv. For each unique Account Owner (the Accout_Owner column — note the column name is misspelled in the data), count their total number of leads and list the distinct Lead_Source values for their leads. Sort by total lead count descending.`
-	columns := []string{"Accout_Owner", "Lead_Source", "Country", "Sector"}
+	intent, _, err := ExtractDeterministicQueryIntent(context.Background(), goal, cacheID)
+	if err != nil {
+		t.Fatalf("ExtractDeterministicQueryIntent failed: %v", err)
+	}
 
-	matches := extractIntentFromPhrases(goal, columns)
+	if intent.GroupColumn != "Accout_Owner" {
+		t.Errorf("expected group_by Accout_Owner, got %q", intent.GroupColumn)
+	}
 
-	hasGroupBy := false
-	hasCount := false
-	hasGroupConcat := false
-	for _, m := range matches {
-		if m.Type == "group_by" {
-			hasGroupBy = true
-		}
-		if m.Type == "aggregate" && m.Function == "COUNT" {
-			hasCount = true
-		}
-		if m.Type == "aggregate" && m.Function == "GROUP_CONCAT" && m.Distinct {
-			hasGroupConcat = true
+	foundDistinct := false
+	for _, extra := range intent.AggExtras {
+		if extra.Function == "GROUP_CONCAT" && extra.Distinct && extra.Column == "Lead_Source" {
+			foundDistinct = true
 		}
 	}
-	if !hasGroupBy {
-		t.Error("expected group_by match")
-	}
-	if !hasCount {
-		t.Error("expected COUNT aggregate match")
-	}
-	if !hasGroupConcat {
-		t.Error("expected GROUP_CONCAT DISTINCT aggregate match")
+	if !foundDistinct {
+		t.Errorf("expected distinct Lead_Source in AggExtras, got: %+v", intent.AggExtras)
 	}
 }
 
-func TestRegexExtract_TargetAccount(t *testing.T) {
+func TestNeuralExtract_TargetAccount(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	cacheID := "cache_target"
+	rawPayload := `[{"Target_Account_": "Yes", "Primary_Incumbent_CDN": "Cloudflare", "Deal_Size": 1000, "Country": "USA"}]`
+	types := map[string]string{"Target_Account_": "TEXT", "Primary_Incumbent_CDN": "TEXT", "Deal_Size": "INTEGER", "Country": "TEXT"}
+	if err := cache.MaterializeTable(cacheID, rawPayload, types, "task_1"); err != nil {
+		t.Fatalf("MaterializeTable failed: %v", err)
+	}
+
 	goal := `Read the CSV file at helpers/LeadSuccess.csv. Find all leads where the Target_Account? column equals "Yes". Group these leads by Primary_Incumbent_CDN. For each group, count the total number of leads and calculate the average deal size from the Deal_Size column. Sort by lead count descending.`
-	columns := []string{"Target_Account_", "Primary_Incumbent_CDN", "Deal_Size", "Country"}
-
-	matches := extractIntentFromPhrases(goal, columns)
-
-	hasFilter := false
-	hasGroupBy := false
-	for _, m := range matches {
-		if m.Type == "filter" && m.Value == "Yes" {
-			hasFilter = true
-		}
-		if m.Type == "group_by" {
-			hasGroupBy = true
-		}
+	intent, _, err := ExtractDeterministicQueryIntent(context.Background(), goal, cacheID)
+	if err != nil {
+		t.Fatalf("ExtractDeterministicQueryIntent failed: %v", err)
 	}
-	if !hasFilter {
-		t.Error("expected filter match with value=Yes")
+
+	if intent.GroupColumn != "Primary_Incumbent_CDN" {
+		t.Errorf("expected group_by Primary_Incumbent_CDN, got %q", intent.GroupColumn)
 	}
-	if !hasGroupBy {
-		t.Error("expected group_by match")
+	if intent.FilterValue != "Yes" {
+		t.Errorf("expected filter value Yes, got %q", intent.FilterValue)
 	}
 }
 
-func TestRegexExtract_NoFalsePositives(t *testing.T) {
+func TestNeuralExtract_NoFalsePositives(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	cacheID := "cache_fp"
+	rawPayload := `[{"Country": "USA", "Sector": "Tech"}]`
+	types := map[string]string{"Country": "TEXT", "Sector": "TEXT"}
+	if err := cache.MaterializeTable(cacheID, rawPayload, types, "task_1"); err != nil {
+		t.Fatalf("MaterializeTable failed: %v", err)
+	}
+
 	goal := `Read the CSV file at helpers/LeadSuccess.csv`
-	columns := []string{"Country", "Sector"}
+	intent, _, err := ExtractDeterministicQueryIntent(context.Background(), goal, cacheID)
+	if err != nil {
+		t.Fatalf("ExtractDeterministicQueryIntent failed: %v", err)
+	}
 
-	matches := extractIntentFromPhrases(goal, columns)
-
-	// The only match should come from the full goal fallback phrase,
-	// but since the goal is all file-path content, nothing should match
-	for _, m := range matches {
-		if m.Type == "filter" || m.Type == "group_by" {
-			t.Errorf("unexpected match on file-path-only goal: %+v", m)
-		}
+	if intent.GroupColumn != "" || intent.FilterColumn != "" {
+		t.Errorf("unexpected match on file-path-only goal: %+v", intent)
 	}
 }
 
@@ -648,6 +663,36 @@ func TestDeterministicPath_MaterializesDerived(t *testing.T) {
 	}
 	if !hasDerived {
 		t.Error("expected a derived table to be created for GROUP BY query")
+	}
+}
+
+func TestDeterministicPath_RatioQuery(t *testing.T) {
+	cleanup := setupTestQueryDB(t)
+	defer cleanup()
+
+	materializeTestData(t, "cache_ratio_test")
+
+	intent := &QueryIntent{
+		GroupColumn:  "Sector",
+		AggFunction: "COUNT",
+		AggColumn:   "*",
+		AggExtras: []AggClause{
+			{Function: "PERCENTAGE", Column: "*"},
+		},
+		OrderDirection: "DESC",
+	}
+
+	result, demoted, err := executeDeterministicQuery(context.Background(), intent, "cache_ratio_test")
+	if err != nil {
+		t.Fatalf("executeDeterministicQuery failed: %v", err)
+	}
+	if demoted {
+		t.Error("expected demoted=false")
+	}
+
+	// Verify result contains percentage column
+	if !strings.Contains(result, `"percentage"`) {
+		t.Errorf("expected result to contain 'percentage' column, got: %s", result)
 	}
 }
 
