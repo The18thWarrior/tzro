@@ -197,8 +197,15 @@ You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 		var sb strings.Builder
 		sb.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
 		sb.WriteString("Use ONLY these exact names when referring to types, functions, and interfaces:\n")
-		for _, sym := range symbolIndex {
+		maxSyms := 40
+		if len(symbolIndex) < maxSyms {
+			maxSyms = len(symbolIndex)
+		}
+		for _, sym := range symbolIndex[:maxSyms] {
 			sb.WriteString(fmt.Sprintf("- %s (%s): %s\n", sym.Name, sym.Kind, sym.Signature))
+		}
+		if len(symbolIndex) > maxSyms {
+			sb.WriteString(fmt.Sprintf("... and %d more verified symbols\n", len(symbolIndex)-maxSyms))
 		}
 		symbolRefBlock = sb.String()
 	}
@@ -240,7 +247,7 @@ Goal: %s
 
 Review the gathered facts and produce a comprehensive, structured final answer.
 IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.
-IMPORTANT: Begin your response with the content directly. Do NOT describe what you are about to do. Do NOT write meta-commentary like "I will now synthesize" or "The answer is below". Start with "# " followed by a descriptive heading.`, goal, synthesisInput, symbolRefBlock, factConstraint, researchConstraint)
+IMPORTANT: The output must be ONLY the final document requested by the user. Do NOT include sections describing the execution process, such as "Execution History", "Explore Node", "Discovered Facts Summary", "Probe Findings", or "Traversal Steps". Start directly with "# " followed by a descriptive title for the actual document itself (e.g. "# System Architecture Overview" or "# Project Overview"). Never include process commentary or node execution post-mortems.`, goal, synthesisInput, symbolRefBlock, factConstraint, researchConstraint)
 
 	// Synthesis escalation policy: if any upstream probe had its synthesis
 	// escalated to cloud (local model produced invalid/repetitive output),
@@ -272,50 +279,6 @@ IMPORTANT: Begin your response with the content directly. Do NOT describe what y
 		AllowedLength: 2,
 	})
 	synthCtx = context.WithValue(synthCtx, inference.PresencePenaltyKey, 0.2)
-
-	// P1: Hybrid Synthesis for Recall — when the synthesis input is large,
-	// use local outline + cloud expansion instead of sending the full context
-	// to the local model (which reliably produces repetitive output).
-	if len(synthesisInput) > hybridSynthesisThreshold() && !isCloudEscalationBlocked() && !upstreamSynthEscalated {
-		fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis triggered: synthesisInput=%d chars exceeds threshold=%d\n", len(synthesisInput), hybridSynthesisThreshold())
-
-		outlinePrompt := fmt.Sprintf(`You are a structured note-taker. Your goal was: %s
-
-Given the refined discovery context below, produce a CONCISE STRUCTURED OUTLINE with:
-- Section headers for each major topic
-- Key bullet points with specific data values, names, and numbers
-- Source references where available
-- NO prose paragraphs — bullet points ONLY
-- Include ALL relevant facts from the discovery context`, goal)
-
-		outline, outlineErr := engine.Infer(synthCtx, outlinePrompt, synthesisInput, "", TargetWorker)
-		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
-			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
-
-			expandPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
-Goal: %s
-
-Expand the structured outline below into a comprehensive, well-cited final answer.
-Preserve all data values, names, and numbers from the outline.
-Add proper prose transitions and paragraph structure.
-IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y].
-IMPORTANT: Begin your response with the content directly. Do NOT write meta-commentary. Start with "# " followed by a heading.%s`, goal, symbolRefBlock)
-
-			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
-				{Role: "system", Content: expandPrompt},
-				{Role: "user", Content: outline},
-			}, "", taskID)
-
-			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
-				fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis succeeded: outline=%d chars, expansion=%d chars\n", len(outline), len(cloudResult))
-				synthesis = cloudResult
-				goto postSynthesis
-			}
-			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 2 (cloud expansion) failed, falling through to standard synthesis\n")
-		} else if outlineErr != nil {
-			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline) failed: %v, falling through to standard synthesis\n", outlineErr)
-		}
-	}
 
 	if upstreamSynthEscalated && !isCloudEscalationBlocked() {
 		fmt.Fprintf(os.Stderr, "[Recall] Upstream probe synthesis was escalated to cloud — using cloud for Recall synthesis\n")
@@ -355,6 +318,51 @@ IMPORTANT: Begin your response with the content directly. Do NOT write meta-comm
 				goto postSynthesis
 			}
 			fmt.Fprintf(os.Stderr, "[Recall] Research sectioned synthesis failed (%v) — falling back to single-pass\n", secErr)
+		}
+
+		synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
+		synthesis, err = engine.Infer(synthCtx, synthPrompt, synthUserPrompt, "", TargetWorker)
+		if err != nil {
+			return RecallResult{}, err
+		}
+	} else if len(synthesisInput) > hybridSynthesisThreshold() && !isCloudEscalationBlocked() && !upstreamSynthEscalated {
+		fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis triggered: synthesisInput=%d chars exceeds threshold=%d\n", len(synthesisInput), hybridSynthesisThreshold())
+
+		outlinePrompt := fmt.Sprintf(`You are a structured note-taker. Your goal was: %s
+
+Given the refined discovery context below, produce a CONCISE STRUCTURED OUTLINE with:
+- Section headers for each major topic
+- Key bullet points with specific data values, names, and numbers
+- Source references where available
+- NO prose paragraphs — bullet points ONLY
+- Include ALL relevant facts from the discovery context`, goal)
+
+		outline, outlineErr := engine.Infer(synthCtx, outlinePrompt, synthesisInput, "", TargetWorker)
+		if outlineErr == nil && len(strings.TrimSpace(outline)) > 100 {
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline): %d chars\n", len(outline))
+
+			expandPrompt := fmt.Sprintf(`You are the Synthesis Engine (Reduce Phase) for a Recall Node.
+Goal: %s
+
+Expand the structured outline below into a comprehensive, well-cited final answer.
+Preserve all data values, names, and numbers from the outline.
+Add proper prose transitions and paragraph structure.
+IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y].
+IMPORTANT: Begin your response with the content directly. Do NOT write meta-commentary. Start with "# " followed by a heading.%s`, goal, symbolRefBlock)
+
+			cloudResult, cloudErr := retryWithCloud(ctx, []inference.InferenceMessage{
+				{Role: "system", Content: expandPrompt},
+				{Role: "user", Content: outline},
+			}, "", taskID)
+
+			if cloudErr == nil && validateSynthesisOutput(cloudResult) == "" {
+				fmt.Fprintf(os.Stderr, "[Recall] Hybrid synthesis succeeded: outline=%d chars, expansion=%d chars\n", len(outline), len(cloudResult))
+				synthesis = cloudResult
+				goto postSynthesis
+			}
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 2 (cloud expansion) failed, falling through to standard synthesis\n")
+		} else if outlineErr != nil {
+			fmt.Fprintf(os.Stderr, "[Recall] Hybrid Phase 1 (local outline) failed: %v, falling through to standard synthesis\n", outlineErr)
 		}
 
 		synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)

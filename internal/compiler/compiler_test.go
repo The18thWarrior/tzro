@@ -801,11 +801,11 @@ func TestExpandToSCTGraph_WriteFileAutoBinding(t *testing.T) {
 		t.Fatal("expected write_docs_exec node")
 	}
 
-	if validatorNode.DynamicBindings == nil || validatorNode.DynamicBindings["content"] != "explore.output" {
-		t.Errorf("expected validatorNode.DynamicBindings[\"content\"] = \"explore.output\", got %v", validatorNode.DynamicBindings)
+	if validatorNode.DynamicBindings == nil || validatorNode.DynamicBindings["content"] != "explore_recall.output" {
+		t.Errorf("expected validatorNode.DynamicBindings[\"content\"] = \"explore_recall.output\", got %v", validatorNode.DynamicBindings)
 	}
-	if execNode.DynamicBindings == nil || execNode.DynamicBindings["content"] != "explore.output" {
-		t.Errorf("expected execNode.DynamicBindings[\"content\"] = \"explore.output\", got %v", execNode.DynamicBindings)
+	if execNode.DynamicBindings == nil || execNode.DynamicBindings["content"] != "explore_recall.output" {
+		t.Errorf("expected execNode.DynamicBindings[\"content\"] = \"explore_recall.output\", got %v", execNode.DynamicBindings)
 	}
 }
 

@@ -86,13 +86,22 @@ func (e *ExecutionEngine) runDeterministicCore(
 	}
 
 	// Hard-override any dynamically bound params with resolved upstream values.
-	// ADR-0030: High-confidence tiers override unconditionally.
+	// ADR-0030: High-confidence tiers override, UNLESS the validator already extracted
+	// a substantial deliverable (> 200 chars) that is more specific than whole_output.
 	if len(node.DynamicBindings) > 0 {
 		resolved := resolveDynamicBindings(ctx, node.DynamicBindings, taskID, graph)
 		for paramName, rb := range resolved {
 			if rb.Value != "" && rb.Value != "null" {
 				existingVal, exists := toolArguments[paramName]
 				existingStr := fmt.Sprintf("%v", existingVal)
+
+				// If validator already extracted a substantial structured document (> 200 chars),
+				// do NOT overwrite it with raw whole_output or plain_text_fallback.
+				if exists && len(strings.TrimSpace(existingStr)) > 200 && (rb.Tier == "whole_output" || rb.Tier == "plain_text_fallback") {
+					fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Preserving validator deliverable '%s' (%d chars) over %s (%d chars)\n", paramName, len(existingStr), rb.Tier, len(rb.Value))
+					continue
+				}
+
 				if rb.Tier == "recursive_key" || rb.Tier == "fuzzy_key" || rb.Tier == "kv_line" || rb.Tier == "whole_output" || rb.Tier == "plain_text_fallback" || rb.Tier == "derived_cache" {
 					fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Overriding exec arg '%s': %q -> %q (tier: %s)\n", paramName, existingStr, rb.Value, rb.Tier)
 					toolArguments[paramName] = rb.Value

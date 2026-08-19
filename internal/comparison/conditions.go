@@ -202,15 +202,12 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}
 	} else if t.ID == "internal_architecture" {
 		internalDir := filepath.Join(testOutputDir, "internal")
-		graphSymbols, graphEdges, err := symbols.BuildCallGraph(internalDir)
-		if err == nil && len(graphSymbols) > 0 {
-			archContent, err := symbols.AssembleContext(graphSymbols, graphEdges, internalDir, false)
-			if err == nil {
-				combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
-				_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
-				fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled internal architecture via call graph into %s\n", combinedPath)
-			}
-		}
+		graphSymbols, graphEdges, _ := symbols.BuildCallGraph(internalDir)
+		summaries, _ := symbols.ExtractPackageSummaries(internalDir)
+		archContent := symbols.AssembleArchitectureMap(internalDir, summaries, graphSymbols, graphEdges)
+		combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
+		_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
+		fmt.Fprintf(os.Stderr, "[Comparison] Dynamically extracted package architecture for %d packages into %s\n", len(summaries), combinedPath)
 	} else if t.ID == "comprehensive_readme" {
 		// Pre-compile ADRs
 		adrDir := filepath.Join(testOutputDir, "docs/adr")
@@ -230,30 +227,19 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			adrsCombined = combined.String()
 		}
 
-		// Pre-compile internal architecture via call graph
+		// Dynamically extract package architecture, CLI entrypoints, and overview
 		internalDir := filepath.Join(testOutputDir, "internal")
-		graphSymbols, graphEdges, cgErr := symbols.BuildCallGraph(internalDir)
-		var archContentStr string
-		if cgErr == nil && len(graphSymbols) > 0 {
-			archContentStr, _ = symbols.AssembleContext(graphSymbols, graphEdges, internalDir, false)
-		}
+		graphSymbols, graphEdges, _ := symbols.BuildCallGraph(internalDir)
+		summaries, _ := symbols.ExtractPackageSummaries(internalDir)
+		entrypoints := symbols.ExtractEntrypoints(testOutputDir)
+		archContent := symbols.AssembleArchitectureMap(internalDir, summaries, graphSymbols, graphEdges)
 		archPath := filepath.Join(internalDir, "all_internal_combined.md")
-		if archContentStr != "" {
-			_ = os.WriteFile(archPath, []byte(archContentStr), 0644)
-		}
-		archContent, _ := os.ReadFile(archPath)
+		_ = os.WriteFile(archPath, []byte(archContent), 0644)
 
-		// Create unified project compilation
-		var projectCombined strings.Builder
-		projectCombined.WriteString("# TZRO PROJECT COMPILATION FOR README\n\n")
-		projectCombined.WriteString("## ARCHITECTURE OVERVIEW & PACKAGE MAP\n\n")
-		projectCombined.WriteString(string(archContent))
-		projectCombined.WriteString("\n\n---\n\n## DECISION LOGS & ADRS\n\n")
-		projectCombined.WriteString(adrsCombined)
-
+		projectContent := symbols.AssembleProjectReadmeMap(testOutputDir, summaries, entrypoints, adrsCombined)
 		projectPath := filepath.Join(testOutputDir, "all_project_combined.md")
-		_ = os.WriteFile(projectPath, []byte(projectCombined.String()), 0644)
-		fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled project map into %s\n", projectPath)
+		_ = os.WriteFile(projectPath, []byte(projectContent), 0644)
+		fmt.Fprintf(os.Stderr, "[Comparison] Dynamically compiled project map for %d packages and %d CLI entrypoints into %s\n", len(summaries), len(entrypoints), projectPath)
 	}
 
 	// Re-register write_file with a validator scoped to ONLY the testOutputDir.
@@ -387,7 +373,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}
 	} else if t.Category == CategoryDocgen || t.Category == CategoryResearch {
 		if docContent := extractLastWriteContent(taskID, graph, testOutputDir); docContent != "" {
-			outputText = docContent
+			outputText = sanitizeSynthesisOutput(docContent, 10)
 		} else {
 			outputText = extractTerminalSynthesis(graph, taskID)
 		}
@@ -478,6 +464,31 @@ func sanitizeSynthesisOutput(raw string, minChars int) string {
 	thinkingRe := regexp.MustCompile(`(?s)<thinking>.*?</thinking>`)
 	cleaned = thinkingRe.ReplaceAllString(cleaned, "")
 
+	// Strip trailing tool invocation traces like `path:../../...`
+	traceRe := regexp.MustCompile(`(?s)\s+path:\S+\]\s*$`)
+	cleaned = traceRe.ReplaceAllString(cleaned, "")
+
+	// Strip meta sections about agent execution history / explore node logs if present
+	lines := strings.Split(cleaned, "\n")
+	var filtered []string
+	skipping := false
+	metaHeaderRe := regexp.MustCompile(`(?i)^##+\s*(?:\d+\.\s*)?(?:Execution History|Summary of (?:All )?Discovered Facts|Probe Node Exploration|Explore Node)`)
+	headerRe := regexp.MustCompile(`^##+\s+`)
+
+	for _, line := range lines {
+		if metaHeaderRe.MatchString(line) {
+			skipping = true
+			continue
+		}
+		if skipping && headerRe.MatchString(line) {
+			skipping = false
+		}
+		if !skipping {
+			filtered = append(filtered, line)
+		}
+	}
+	cleaned = strings.Join(filtered, "\n")
+
 	// Strip leading/trailing whitespace
 	cleaned = strings.TrimSpace(cleaned)
 
@@ -522,34 +533,89 @@ func extractLastWriteContent(taskID string, graph *compiler.ExecutionGraph, test
 
 	adrFileRegex := regexp.MustCompile(`^\d{4}-.*\.md$`)
 
-	// Scan testOutputDir for any created Markdown files, ignoring pre-compiled fixtures and input documents.
+	dirsToScan := []string{testOutputDir}
+	if realDir, err := filepath.EvalSymlinks(testOutputDir); err == nil && realDir != testOutputDir {
+		dirsToScan = append(dirsToScan, realDir)
+	}
+
+	// Scan testOutputDir and its canonical symlink-resolved path for any created Markdown files.
 	var content string
-	_ = filepath.Walk(testOutputDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	for _, dir := range dirsToScan {
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			// Prefer .md files for docgen tasks
+			if strings.HasSuffix(strings.ToLower(path), ".md") {
+				base := filepath.Base(path)
+				// Ignore input ADR markdown files copied into docs/adr/
+				if strings.Contains(path, filepath.Join("docs", "adr")) && adrFileRegex.MatchString(base) {
+					return nil
+				}
+				data, readErr := os.ReadFile(path)
+				if readErr == nil && len(data) > 0 {
+					// Prefer the largest file — the generated output is always the
+					// most substantive file; pre-existing fixtures are small.
+					if len(data) > len(content) {
+						content = string(data)
+					}
+				}
+			}
 			return nil
+		})
+	}
+
+	if content != "" {
+		return content
+	}
+
+	// Fix 7: Fallback — extract content from deterministic/tool_sink nodes'
+	// StructuredOutput when the write_file tool used a relative path that
+	// escaped the sandbox (e.g., ../../..). The structured output captures
+	// the tool_arguments.content field which contains the actual deliverable.
+	for i := len(graph.Nodes) - 1; i >= 0; i-- {
+		node := graph.Nodes[i]
+		if node.Type != "deterministic" && node.Type != "tool_sink" {
+			continue
 		}
-		// Prefer .md files for docgen tasks
-		if strings.HasSuffix(strings.ToLower(path), ".md") {
-			base := filepath.Base(path)
-			// Ignore pre-compiled fixtures
-			if strings.HasSuffix(base, "_combined.md") || (strings.HasPrefix(base, "all_") && strings.HasSuffix(base, ".md")) {
-				return nil
+		state, ok := memory.DB.GetNodeState(taskID, node.ID)
+		if !ok || state.Status != "completed" || state.StructuredOutput == "" {
+			continue
+		}
+		// Extract "content" field from the structured output JSON.
+		// Format: {"tool_arguments":{"content":"...","path":"..."}}
+		if idx := strings.Index(state.StructuredOutput, `"content":"`); idx >= 0 {
+			start := idx + len(`"content":"`)
+			remaining := state.StructuredOutput[start:]
+			// Find the closing quote, handling escaped quotes
+			end := 0
+			for end < len(remaining) {
+				if remaining[end] == '\\' {
+					end += 2 // skip escaped char
+					continue
+				}
+				if remaining[end] == '"' {
+					break
+				}
+				end++
 			}
-			// Ignore input ADR markdown files copied into docs/adr/
-			if strings.Contains(path, filepath.Join("docs", "adr")) && adrFileRegex.MatchString(base) {
-				return nil
-			}
-			data, readErr := os.ReadFile(path)
-			if readErr == nil && len(data) > 0 {
-				content = string(data)
-				return filepath.SkipAll // found it
+			if end > 100 && end < len(remaining) {
+				extracted := remaining[:end]
+				// Unescape JSON string
+				extracted = strings.ReplaceAll(extracted, `\n`, "\n")
+				extracted = strings.ReplaceAll(extracted, `\"`, `"`)
+				extracted = strings.ReplaceAll(extracted, `\\`, `\`)
+				extracted = strings.ReplaceAll(extracted, `\t`, "\t")
+				fmt.Fprintf(os.Stderr, "[extractLastWriteContent] Fix 7: Recovered %d chars from deterministic node %s structured output\n", len(extracted), node.ID)
+				return extracted
 			}
 		}
-		return nil
-	})
+	}
 
 	return content
 }
+
+
 
 // extractLastSourceCodeOutput finds the last completed source_code node's
 // output from the DAG. This handles the case where spawned repair nodes

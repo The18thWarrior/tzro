@@ -103,6 +103,24 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 			probeConfig.TaskContext = graph.GoalPrompt
 		}
 
+		// Fix 5 (Goal Propagation): Override a generic/template probe goal with
+		// the full GoalPrompt. The 4B local planner often fails to mutate the
+		// template probe goal (e.g., leaves "Explore the target and produce content
+		// for documentation" instead of the specific task). This causes the probe
+		// to explore with a vague goal → off-topic synthesis (benchmark: docgen
+		// avg quality 1.50/5 due to task misunderstanding).
+		//
+		// Deterministic scaffolding (SOLUTION_APPROACH Principle 3): the Go harness
+		// guarantees correct goal propagation instead of relying on the small model.
+		if graph.GoalPrompt != "" {
+			goalIsGeneric := isGenericTemplateGoal(probeConfig.Goal)
+			if goalIsGeneric {
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: overriding generic goal %q with GoalPrompt (%d chars)\n",
+					node.ID, probeConfig.Goal, len(graph.GoalPrompt))
+				probeConfig.Goal = graph.GoalPrompt
+			}
+		}
+
 		// Inject accumulated context from completed upstream nodes so the
 		// probe/analyze Thought Chain can see outputs from prior DAG steps
 		// (e.g., cacheId from an upstream read_file execution). Without this,
@@ -198,7 +216,7 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 			// window; 8K tokens for content leaves 8K for system prompt + output.
 			// At 200K (the original value), 52K files consumed 15K tokens and
 			// left ~1K for output → hallucination (benchmark: cache_function_index).
-			const maxDirectSynthesisChars = 28_000
+			const maxDirectSynthesisChars = 40_000
 			if len(probeConfig.PreloadPaths) > 0 && !probeConfig.DirectSynthesis && probeConfig.SourceHint != "web" && probeConfig.SourceHint != "cache" {
 				fullContent := preloadDirectoryContext(probeConfig.PreloadPaths, 10*1024*1024)
 				if len(fullContent) > 0 && len(fullContent) <= maxDirectSynthesisChars {
@@ -316,4 +334,34 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 		}
 
 	return synthesis, nil
+}
+
+// isGenericTemplateGoal returns true if the probe goal is a generic template
+// default from the plan template registry that the local planner failed to
+// customize with the specific task prompt. These vague goals cause off-topic
+// exploration and synthesis.
+func isGenericTemplateGoal(goal string) bool {
+	if goal == "" {
+		return true
+	}
+	// Known template defaults from internal/templates/registry.go
+	genericGoals := []string{
+		"Explore the target and produce a comprehensive analysis.",
+		"Explore the target and produce content for documentation.",
+		"Research the topic using web search and browsing.",
+		"Explore the first source.",
+		"Explore the second source.",
+		"Explore the codebase to gather context for code generation.",
+	}
+	goalLower := strings.ToLower(strings.TrimSpace(goal))
+	for _, g := range genericGoals {
+		if goalLower == strings.ToLower(g) {
+			return true
+		}
+	}
+	// Also detect very short goals that are likely poorly mutated
+	if len(goal) < 30 && !strings.ContainsAny(goal, "/\\") {
+		return true
+	}
+	return false
 }

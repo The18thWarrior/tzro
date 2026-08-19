@@ -246,7 +246,10 @@ func (v *PathValidator) ValidateWritePath(requestedPath string) (string, error) 
 	}
 
 	for _, root := range roots {
-		if isInsideRoot(checkPath, root) || isInsideRoot(absPath, root) {
+		if isInsideRoot(checkPath, root) {
+			return checkPath, nil
+		}
+		if isInsideRoot(absPath, root) {
 			return absPath, nil
 		}
 	}

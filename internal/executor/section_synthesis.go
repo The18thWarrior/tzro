@@ -300,112 +300,179 @@ func IsFunctionIndexGoal(goal string) bool {
 
 // BuildDocGenSafetyFloorOutline builds a deterministic multi-section outline partitioned by module layers or symbol categories (ADR-0084, ADR-0085).
 func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbol) *SynthesisOutline {
-	lowerGoal := strings.ToLower(goal)
-	lowerCtx := strings.ToLower(refinedCtx)
 
-	if IsFunctionIndexGoal(goal) {
-		sections := []SectionSpec{
-			{
-				Heading:    "## 1. Exported Types & Interfaces",
-				Objective:  "List all exported structs, types, and interfaces with exact fields, signatures, and descriptions.",
-				FormatHint: "bulleted_deep_dive",
-				IsInitial:  false,
-				IsTerminal: false,
-			},
-			{
-				Heading:    "## 2. Package Functions & Constructors",
-				Objective:  "List all exported standalone package functions with exact parameter types, return values, and behavior descriptions.",
-				FormatHint: "bulleted_deep_dive",
-				IsInitial:  false,
-				IsTerminal: false,
-			},
-			{
-				Heading:    "## 3. Exported Methods on Types",
-				Objective:  "List all exported methods defined on structs and interfaces with receiver signatures and behavior.",
-				FormatHint: "bulleted_deep_dive",
-				IsInitial:  false,
-				IsTerminal: false,
-			},
-			{
-				Heading:    "## 4. Comprehensive Symbol Reference Table",
-				Objective:  "Provide an exhaustive, structured table of all exported symbols, their defining files, signatures, and one-line summaries.",
-				FormatHint: "table",
-				IsInitial:  false,
-				IsTerminal: true,
-			},
-		}
-		return &SynthesisOutline{
-			Title:    deriveCleanDocumentTitle(goal),
-			Sections: sections,
-		}
-	}
-
-	sections := []SectionSpec{
+	// Classify documentation archetype via Neural Embedding Semantic Vector Space (ADR-0081, SOLUTION_APPROACH.md Principle 1)
+	archetypes := []struct {
+		ID        string
+		Prototype string
+	}{
 		{
-			Heading:    "## 1. Architecture Overview & Design Principles",
-			Objective:  "Synthesize an in-depth breakdown of module architecture, core design principles, responsibilities, and structural organization.",
-			FormatHint: "prose",
-			IsInitial:  true,
-			IsTerminal: false,
+			ID:        "function_index",
+			Prototype: "Exhaustive function index listing every exported function, exported method on types, and struct signatures.",
+		},
+		{
+			ID:        "project_readme",
+			Prototype: "Comprehensive README documentation, project overview, quickstart guide, CLI command usage, and package directory index.",
+		},
+		{
+			ID:        "system_architecture",
+			Prototype: "System architecture documentation, package dependency graph, data flow, subsystem responsibilities, and core interfaces.",
+		},
+		{
+			ID:        "decision_log",
+			Prototype: "Consolidated decision log, architectural decision records ADRs, status dates and key implications.",
+		},
+		{
+			ID:        "module_reference",
+			Prototype: "Module-level technical documentation covering public types, subsystem layers, component interactions, and usage patterns.",
 		},
 	}
 
-	// Check for core/local backend layers
-	if strings.Contains(lowerCtx, "backend") || strings.Contains(lowerCtx, "local_model") || strings.Contains(lowerGoal, "core") || strings.Contains(lowerGoal, "local") {
-		sections = append(sections, SectionSpec{
-			Heading:    fmt.Sprintf("## %d. Core Backends & Local Engine Management", len(sections)+1),
-			Objective:  "Detail InferenceBackend interface, LocalModelManager, backend implementations (llama-server, remote OpenAI), and context configurations.",
-			FormatHint: "prose",
-			IsInitial:  false,
-			IsTerminal: false,
-		})
+	bestArchetype := "module_reference"
+	var maxSim float32 = -1.0
+
+	for _, arch := range archetypes {
+		sim := float32(embeddings.CosineSimilarity(goal, arch.Prototype))
+		if sim > maxSim {
+			maxSim = sim
+			bestArchetype = arch.ID
+		}
 	}
 
-	// Check for routing layer
-	if strings.Contains(lowerCtx, "routing") || strings.Contains(lowerCtx, "sidecar") || strings.Contains(lowerGoal, "routing") || strings.Contains(lowerGoal, "sidecar") {
-		sections = append(sections, SectionSpec{
-			Heading:    fmt.Sprintf("## %d. Routing & Dual-Sidecar Mechanics", len(sections)+1),
-			Objective:  "Document dual-sidecar routing architecture, CallRouter and CallWorker dispatch flows, streaming variants, and cloud fallback mechanisms.",
-			FormatHint: "prose",
-			IsInitial:  false,
-			IsTerminal: false,
-		})
-	}
+	switch bestArchetype {
+	case "function_index":
+		return &SynthesisOutline{
+			Title: deriveCleanDocumentTitle(goal),
+			Sections: []SectionSpec{
+				{
+					Heading:    "## 1. Exported Types & Interfaces",
+					Objective:  "List all exported structs, types, and interfaces with exact fields, signatures, and descriptions.",
+					FormatHint: "bulleted_deep_dive",
+				},
+				{
+					Heading:    "## 2. Package Functions & Constructors",
+					Objective:  "List all exported standalone package functions with exact parameter types, return values, and behavior descriptions.",
+					FormatHint: "bulleted_deep_dive",
+				},
+				{
+					Heading:    "## 3. Exported Methods on Types",
+					Objective:  "List all exported methods defined on structs and interfaces with receiver signatures and behavior.",
+					FormatHint: "bulleted_deep_dive",
+				},
+				{
+					Heading:    "## 4. Comprehensive Symbol Reference Table",
+					Objective:  "Provide an exhaustive, structured table of all exported symbols, their defining files, signatures, and one-line summaries.",
+					FormatHint: "table",
+					IsTerminal: true,
+				},
+			},
+		}
 
-	// Check for support/metrics/telemetry/thermal
-	if strings.Contains(lowerCtx, "thermal") || strings.Contains(lowerCtx, "token_tracker") || strings.Contains(lowerCtx, "metric") || strings.Contains(lowerGoal, "support") {
-		sections = append(sections, SectionSpec{
-			Heading:    fmt.Sprintf("## %d. Support Subsystems, Telemetry & Thermal Controls", len(sections)+1),
-			Objective:  "Document ThermalState, TokenTracker, GlobalMetrics, SQLite persistence callbacks, and model catalog entries.",
-			FormatHint: "prose",
-			IsInitial:  false,
-			IsTerminal: false,
-		})
-	}
+	case "project_readme":
+		return &SynthesisOutline{
+			Title: deriveCleanDocumentTitle(goal),
+			Sections: []SectionSpec{
+				{
+					Heading:    "## 1. Project Overview & Core Mission",
+					Objective:  "Synthesize a clear, professional project overview explaining what the project is, its core capabilities, and high-level architecture.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+				{
+					Heading:    "## 2. Quickstart & Usage Guide",
+					Objective:  "Provide a concrete quickstart guide showing build instructions, CLI commands, and practical usage examples based on verified source files.",
+					FormatHint: "prose",
+				},
+				{
+					Heading:    "## 3. Package & Directory Index",
+					Objective:  "Provide a structured index documenting all discovered packages and key directories with architectural responsibilities.",
+					FormatHint: "bulleted_deep_dive",
+				},
+				{
+					Heading:    "## 4. Public API & Symbol Reference",
+					Objective:  "Document key public types, interfaces, and exported functions discovered across packages with signatures and behavior descriptions.",
+					FormatHint: "bulleted_deep_dive",
+					IsTerminal: true,
+				},
+			},
+		}
 
-	// Fallback generic subsystems section if fewer than 3 sections planned
-	if len(sections) < 3 {
-		sections = append(sections, SectionSpec{
-			Heading:    fmt.Sprintf("## %d. Core Components & Subsystem Breakdown", len(sections)+1),
-			Objective:  "Detail all major structs, functions, lifecycle methods, and operational interactions discovered in the codebase.",
-			FormatHint: "prose",
-			IsInitial:  false,
-			IsTerminal: false,
-		})
-	}
+	case "system_architecture":
+		return &SynthesisOutline{
+			Title: deriveCleanDocumentTitle(goal),
+			Sections: []SectionSpec{
+				{
+					Heading:    "## 1. System Architecture & High-Level Design",
+					Objective:  "Synthesize the system architecture overview explaining overall design principles, subsystem boundaries, and execution models.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+				{
+					Heading:    "## 2. Core Subsystems & Package Responsibilities",
+					Objective:  "Systematically document all discovered packages and subsystems detailing their specific roles, responsibilities, and boundaries.",
+					FormatHint: "bulleted_deep_dive",
+				},
+				{
+					Heading:    "## 3. Package Dependencies & Data Flow",
+					Objective:  "Detail the directional data flow and dependency relationships between packages including call sequences and state lifecycles.",
+					FormatHint: "prose",
+				},
+				{
+					Heading:    "## 4. Key Abstractions & Cross-Cutting Mechanics",
+					Objective:  "Document key interfaces, core abstractions, state management, and configuration mechanisms discovered across the codebase.",
+					FormatHint: "bulleted_deep_dive",
+					IsTerminal: true,
+				},
+			},
+		}
 
-	// Terminal Public API & Usage Reference
-	sections = append(sections, SectionSpec{
-		Heading:    fmt.Sprintf("## %d. Public Symbols, Interfaces & Usage Patterns", len(sections)+1),
-		Objective:  "Provide an exhaustive reference of all public types, interfaces, methods, configuration context keys, and concrete code usage patterns.",
-		FormatHint: "bulleted_deep_dive",
-		IsInitial:  false,
-		IsTerminal: true,
-	})
+	case "decision_log":
+		return &SynthesisOutline{
+			Title: deriveCleanDocumentTitle(goal),
+			Sections: []SectionSpec{
+				{
+					Heading:    "## 1. Architectural Decisions Summary",
+					Objective:  "Synthesize an executive summary of architectural decisions and systemic design patterns established in the project.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+				{
+					Heading:    "## 2. Consolidated Decision Records",
+					Objective:  "Provide a comprehensive, chronologically organized record of all decisions with status, date, context, and key technical implications.",
+					FormatHint: "bulleted_deep_dive",
+				},
+				{
+					Heading:    "## 3. Cross-Cutting Implications & Technical Trade-offs",
+					Objective:  "Synthesize the combined architectural impacts, constraints, and operational trade-offs across decisions.",
+					FormatHint: "prose",
+					IsTerminal: true,
+				},
+			},
+		}
 
-	return &SynthesisOutline{
-		Title:    deriveCleanDocumentTitle(goal),
-		Sections: sections,
+	default: // "module_reference"
+		return &SynthesisOutline{
+			Title: deriveCleanDocumentTitle(goal),
+			Sections: []SectionSpec{
+				{
+					Heading:    "## 1. Architecture Overview & Design Principles",
+					Objective:  "Synthesize an in-depth breakdown of module architecture, core design principles, responsibilities, and structural organization.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+				{
+					Heading:    "## 2. Core Components & Subsystem Breakdown",
+					Objective:  "Detail all major structs, functions, lifecycle methods, and operational interactions discovered in the codebase.",
+					FormatHint: "prose",
+				},
+				{
+					Heading:    "## 3. Public Symbols, Interfaces & Usage Patterns",
+					Objective:  "Provide an exhaustive reference of all public types, interfaces, methods, configuration context keys, and concrete code usage patterns.",
+					FormatHint: "bulleted_deep_dive",
+					IsTerminal: true,
+				},
+			},
+		}
 	}
 }
 
@@ -614,8 +681,15 @@ func PartitionDocGenContext(
 	if len(selectedSyms) > 0 {
 		symBuilder.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
 		symBuilder.WriteString("Use ONLY these exact names when referring to types, functions, and interfaces:\n")
-		for _, s := range selectedSyms {
+		maxSyms := 40
+		if len(selectedSyms) < maxSyms {
+			maxSyms = len(selectedSyms)
+		}
+		for _, s := range selectedSyms[:maxSyms] {
 			symBuilder.WriteString(fmt.Sprintf("- %s (%s, %s): %s\n", s.Name, s.Kind, filepathBase(s.File), s.Signature))
+		}
+		if len(selectedSyms) > maxSyms {
+			symBuilder.WriteString(fmt.Sprintf("... and %d more verified symbols\n", len(selectedSyms)-maxSyms))
 		}
 	}
 
@@ -985,17 +1059,30 @@ CRITICAL INSTRUCTIONS:
 			allSymBlock = sb.String()
 		}
 
+		terminalCtx := bodyContext
+		if len(refinedCtx) > 0 {
+			if len(terminalCtx) > 0 {
+				terminalCtx += "\n\n## Source Code & Exploration Context:\n" + refinedCtx
+			} else {
+				terminalCtx = refinedCtx
+			}
+		}
+		if len(terminalCtx) > 35000 {
+			terminalCtx = terminalCtx[:35000] + "\n... [truncated for reference context]"
+		}
+
 		sysPrompt := fmt.Sprintf(`You are the Technical Documentation Synthesis Engine (Terminal Reference Phase).
 Document Goal: %s
 
-## Synthesized Document Body Sections:
+## Authoritative Codebase & Synthesized Context:
 %s%s
 
 CRITICAL INSTRUCTIONS:
 - Synthesize the final Reference Section: "%s".
 - Begin your response directly with the section heading "%s".
-- Provide an exhaustive, well-structured reference table or symbol listing of all verified types, methods, and functions.
-- Conclude cleanly without trailing fragments.`, goal, bodyContext, allSymBlock, sec.Heading, sec.Heading)
+- Provide an exhaustive, well-structured reference listing every single exported function, method, and type with its full signature and description.
+- Do NOT omit any exported symbols present in the context.
+- Conclude cleanly without trailing fragments.`, goal, terminalCtx, allSymBlock, sec.Heading, sec.Heading)
 
 		userPrompt := fmt.Sprintf("Synthesize Section: %s\nObjective: %s\nWrite the complete markdown reference section now:", sec.Heading, sec.Objective)
 

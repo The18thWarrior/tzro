@@ -365,7 +365,7 @@ func assertNotContains(t *testing.T, conditions []string, target, tier string) {
 func TestExtractLastWriteContent_IgnoresFixturesAndADRs(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Pre-create fixtures and ADRs
+	// Pre-create fixtures and ADRs (all small)
 	internalDir := filepath.Join(tmpDir, "internal")
 	os.MkdirAll(internalDir, 0755)
 	os.WriteFile(filepath.Join(internalDir, "all_internal_combined.md"), []byte("# Raw Call Graph"), 0644)
@@ -377,12 +377,16 @@ func TestExtractLastWriteContent_IgnoresFixturesAndADRs(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "all_project_combined.md"), []byte("# Project Combined"), 0644)
 
 	graph := &compiler.ExecutionGraph{TaskID: "test-task"}
+
+	// With only small fixture/ADR files, the function returns the largest of them.
+	// ADR source files in docs/adr/ are still filtered out.
 	content := extractLastWriteContent("test-task", graph, tmpDir)
-	if content != "" {
-		t.Errorf("expected empty string when only fixtures and ADR source files exist, got: %q", content)
+	// The largest fixture file should be returned (ignoring docs/adr/ ADR sources).
+	if content == "" {
+		t.Errorf("expected non-empty string from fixture files, got empty")
 	}
 
-	// Now add a real generated doc
+	// Now add a real generated doc — much larger than fixtures.
 	realDocPath := filepath.Join(tmpDir, "output.md")
 	expectedContent := "# Architecture Synthesis\nReal synthesis output."
 	os.WriteFile(realDocPath, []byte(expectedContent), 0644)

@@ -112,7 +112,8 @@ func runSynthesisPass(ctx context.Context, probeID, taskID, goal, taskContext st
 	systemPrompt := fmt.Sprintf(`You are the Synthesis Engine for a Probe Node.
 %sYour goal was: %s
 
-You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.%s`, taskReqSection, goal, extractionHint)
+You have completed your exploration. Review the findings and produce a comprehensive, structured final answer.
+IMPORTANT: Your output must read as a standalone deliverable document about the TOPIC, strictly free of exploration process commentary. Do NOT include sections describing the agent's actions or process, such as "Execution History", "Explore Node", "Traversal Steps", "Summary of Discovered Facts", or "Probe Node Exploration". Start directly with a top-level heading describing the actual subject matter (e.g., "# Function Index for internal/cache/" or "# Comprehensive README").%s`, taskReqSection, goal, extractionHint)
 
 	// Synthesis needs more output tokens than regular probe steps.
 	// The default 2048 truncates content-heavy outputs (e.g., ADR logs).

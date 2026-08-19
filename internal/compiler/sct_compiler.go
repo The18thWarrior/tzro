@@ -96,8 +96,13 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 							for _, orig := range graph.Nodes {
 								if orig.ID == upstreamID {
 									if orig.Type == "probe" || orig.Type == "analyze" || orig.Type == "recall" || orig.Type == "synthesis" || isSynthesisGoal(orig.Instructions) {
-										node.DynamicBindings["content"] = fmt.Sprintf("%s.output", upstreamID)
-										fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-wired DynamicBinding content for %s -> %s.output\n", node.ID, upstreamID)
+										// If the upstream is a probe/analyze that gets an auto-injected recall node, bind to the recall node output
+										targetBindingNode := upstreamID
+										if orig.Type == "probe" || orig.Type == "analyze" {
+											targetBindingNode = upstreamID + "_recall"
+										}
+										node.DynamicBindings["content"] = fmt.Sprintf("%s.output", targetBindingNode)
+										fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-wired DynamicBinding content for %s -> %s.output\n", node.ID, targetBindingNode)
 									}
 									break
 								}

@@ -37,6 +37,7 @@ func (e *ExecutionEngine) runSemanticValidatorCore(
 
 		var inferenceResult string
 		var err error
+		var usedCloud bool
 
 		// ===== ADR-0030: Proactive Binding Splice =====
 		// Resolve bindings and partition by confidence tier BEFORE inference.
@@ -128,6 +129,7 @@ func (e *ExecutionEngine) runSemanticValidatorCore(
 			}
 
 			if useCloud {
+				usedCloud = true
 				xmlResult, err = retryWithCloud(ctx, msgs, schemaStr, taskID)
 			} else {
 				// Executor Pass 1 (XML extraction): standard structured extraction
@@ -265,8 +267,27 @@ func (e *ExecutionEngine) runSemanticValidatorCore(
 		if len(highConfBindings) > 0 {
 			var parsedResult map[string]interface{}
 			if json.Unmarshal([]byte(inferenceResult), &parsedResult) == nil {
+				// Ensure tool_arguments map exists and is populated
+				var toolArgs map[string]interface{}
+				if existingArgs, ok := parsedResult["tool_arguments"].(map[string]interface{}); ok {
+					toolArgs = existingArgs
+				} else {
+					toolArgs = make(map[string]interface{})
+					parsedResult["tool_arguments"] = toolArgs
+				}
+
 				for paramName, val := range highConfBindings {
+					// If the validator escalated to cloud and cloud produced a substantial
+					// deliverable for this parameter (> 200 chars), preserve the cloud deliverable
+					// rather than overwriting it with upstream whole_output synthesis.
+					if existingVal, exists := toolArgs[paramName].(string); exists && len(strings.TrimSpace(existingVal)) > 200 && usedCloud {
+						fmt.Fprintf(os.Stderr, "[Executor ADR-0030] Preserving cloud-generated '%s' (%d chars) over upstream splice (%d chars)\n", paramName, len(existingVal), len(val))
+						parsedResult[paramName] = existingVal
+						continue
+					}
+
 					parsedResult[paramName] = val
+					toolArgs[paramName] = val
 					fmt.Fprintf(os.Stderr, "[Executor ADR-0030] Spliced '%s' = %q (tier: high-confidence)\n", paramName, val)
 				}
 				splicedJSON, _ := json.MarshalIndent(parsedResult, "", "  ")

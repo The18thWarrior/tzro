@@ -58,6 +58,11 @@ type EngineConfig struct {
 	MMProjModelPath string `json:"mmProjModelPath,omitempty"` // Path to mmproj GGUF for vision; empty = auto-detect in models dir
 	PDFOcrBackend   string `json:"pdfOcrBackend,omitempty"`   // "vision" | "tesseract" | "auto" (default: "auto")
 
+	// Entrypoint Discovery (ADR-0084)
+	// EntrypointDirectories lists candidate directory names/paths scanned for CLI entrypoints,
+	// root commands, and executable interfaces (e.g. "cmd", "cli", "commands", "bin", "src/cli").
+	EntrypointDirectories []string `json:"entrypointDirectories,omitempty"`
+
 	// Web Research & Synthesis Parity (ADR-0083)
 	ResearchEvidenceSnippetsPerSource int     `json:"researchEvidenceSnippetsPerSource,omitempty"` // default 8
 	ResearchCitationRemapThreshold   float32 `json:"researchCitationRemapThreshold,omitempty"`   // default 0.45
@@ -403,7 +408,25 @@ func Override(cfg *EngineConfig) {
 	}
 }
 
-// GetResearchEvidenceSnippetsPerSource returns the configured snippet count per source (default 8).
+// GetEntrypointDirectories returns configured entrypoint directory candidates,
+// or defaults across Go, Python, TypeScript, Rust, and Java frameworks.
+func (c *EngineConfig) GetEntrypointDirectories() []string {
+	if len(c.EntrypointDirectories) > 0 {
+		return c.EntrypointDirectories
+	}
+	return []string{
+		"cmd",
+		"cli",
+		"commands",
+		"bin",
+		"src/cli",
+		"src/commands",
+		"app/commands",
+		"entrypoints",
+	}
+}
+
+// GetResearchEvidenceSnippetsPerSource returns configured count (default 8, range 1-20).
 func (c EngineConfig) GetResearchEvidenceSnippetsPerSource() int {
 	if c.ResearchEvidenceSnippetsPerSource > 0 {
 		return c.ResearchEvidenceSnippetsPerSource
