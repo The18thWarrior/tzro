@@ -28,6 +28,7 @@ const maxFingerprintCalls = 5
 // Function bodies are replaced with fingerprints.
 // If the skeleton fits within targetChars, returns it directly.
 // If targetChars <= 0, no budget constraint is applied (skeleton only).
+// If no code declarations are found, falls back to TruncateTextMiddleOut to prevent 0-char stripping.
 func ExtractSkeleton(content string, targetChars int) string {
 	lines := strings.Split(content, "\n")
 	if len(lines) == 0 {
@@ -36,6 +37,24 @@ func ExtractSkeleton(content string, targetChars int) string {
 
 	// Parse lines into structural elements
 	elements := parseCodeStructure(lines)
+
+	// Check if elements contain any actual code declarations
+	hasCodeDecl := false
+	for _, elem := range elements {
+		if elem.kind == elemFunc || elem.kind == elemType || elem.kind == elemConst ||
+			elem.kind == elemVar || elem.kind == elemPackage || elem.kind == elemImport {
+			hasCodeDecl = true
+			break
+		}
+	}
+
+	// Fallback to text truncation if no real code declarations exist
+	if !hasCodeDecl {
+		if targetChars > 0 {
+			return TruncateTextMiddleOut(content, targetChars)
+		}
+		return content
+	}
 
 	// Build skeleton from elements
 	skeleton := buildSkeleton(elements)

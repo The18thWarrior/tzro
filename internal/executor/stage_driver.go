@@ -68,6 +68,7 @@ type PhaseRunnerContext struct {
 	ToolFixup         func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{})
 	ToolPostProcess   func(phaseName, toolName string, args map[string]interface{}, output string, err error)
 	PersistStep       func(phaseName, toolName string, args map[string]interface{}, output, reasoning string)
+	SourceTracker     *SourceTracker
 }
 
 // StageDriver executes a phase's tool execution logic without step-level LLM inference.

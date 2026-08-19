@@ -18,12 +18,15 @@ const (
 	SegmentCode    SegmentType = iota // Source code — deterministic skeleton
 	SegmentText                       // Prose/logs/reasoning — deterministic middle-out
 	SegmentTabular                    // Structured data — header + sample rows
+	SegmentJSON                       // JSON data — deterministic middle-out
 )
 
 func (s SegmentType) String() string {
 	switch s {
 	case SegmentCode:
 		return "code"
+	case SegmentJSON:
+		return "json"
 	case SegmentText:
 		return "text"
 	case SegmentTabular:
@@ -133,6 +136,8 @@ func classifySingleSegment(content string) Segment {
 	switch ct {
 	case SegmentCode:
 		return Segment{Type: SegmentCode, Content: content}
+	case SegmentJSON:
+		return Segment{Type: SegmentJSON, Content: content}
 	case SegmentTabular:
 		return Segment{Type: SegmentTabular, Content: content}
 	default:
@@ -142,6 +147,9 @@ func classifySingleSegment(content string) Segment {
 
 // ClassifyContent heuristically determines the content type of text.
 func ClassifyContent(content string) SegmentType {
+	if looksJSON(content) {
+		return SegmentJSON
+	}
 	if looksTabular(content) {
 		return SegmentTabular
 	}
@@ -149,6 +157,19 @@ func ClassifyContent(content string) SegmentType {
 		return SegmentCode
 	}
 	return SegmentText
+}
+
+// looksJSON checks if content is a JSON object or array.
+func looksJSON(content string) bool {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) < 2 {
+		return false
+	}
+	if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+		(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+		return true
+	}
+	return false
 }
 
 // looksTabular checks for CSV/TSV/JSON-array/table patterns.
@@ -204,7 +225,6 @@ func looksLikeCode(content string) bool {
 		if strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "}") ||
 			strings.HasSuffix(trimmed, "};") || strings.HasSuffix(trimmed, "()") {
 			codeIndicators++
-			hasRealCodePattern = true
 		}
 		// Import/package statements
 		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "package ") ||

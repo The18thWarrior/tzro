@@ -124,6 +124,9 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		for _, upstreamID := range upstreamNodeIDs {
 			for _, upstreamNode := range graph.Nodes {
 				if upstreamNode.ID == upstreamID && (upstreamNode.Type == "probe" || upstreamNode.Type == "research") {
+					// Wipe invalidated upstream probe history so re-exploration starts fresh
+					_ = memory.DB.ClearProbeHistory(taskID, upstreamID)
+
 					stepBudget := 10
 					if upstreamNode.ProbeConfig != nil && upstreamNode.ProbeConfig.StepBudget > 0 {
 						stepBudget = upstreamNode.ProbeConfig.StepBudget
@@ -235,6 +238,12 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 	// Stash verification result for envelope assembly
 	if verificationResult != nil {
 		s.stashVerification(taskID, verificationResult)
+	}
+
+	// Normalize references across the final synthesis using upstream context sources
+	st := ExtractSourcesFromRefinedContext(recallResult.RefinedContext)
+	if st.HasSources() {
+		synthesis = st.InjectOrNormalizeReferences(synthesis)
 	}
 
 	// Normal completion — envelope handles hooks + state

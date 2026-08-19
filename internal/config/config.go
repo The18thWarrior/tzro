@@ -58,6 +58,11 @@ type EngineConfig struct {
 	MMProjModelPath string `json:"mmProjModelPath,omitempty"` // Path to mmproj GGUF for vision; empty = auto-detect in models dir
 	PDFOcrBackend   string `json:"pdfOcrBackend,omitempty"`   // "vision" | "tesseract" | "auto" (default: "auto")
 
+	// Web Research & Synthesis Parity (ADR-0083)
+	ResearchEvidenceSnippetsPerSource int     `json:"researchEvidenceSnippetsPerSource,omitempty"` // default 8
+	ResearchCitationRemapThreshold   float32 `json:"researchCitationRemapThreshold,omitempty"`   // default 0.45
+	ResearchMetricBindingThreshold   float32 `json:"researchMetricBindingThreshold,omitempty"`   // default 0.65
+
 	// Visual dashboard pacing delays in milliseconds
 	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
 	ExecutorLevelDelayMs int `json:"executorLevelDelayMs,omitempty"`
@@ -328,6 +333,9 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	GlobalConfig.DefaultTemperature = cfg.DefaultTemperature
+	GlobalConfig.ResearchEvidenceSnippetsPerSource = cfg.ResearchEvidenceSnippetsPerSource
+	GlobalConfig.ResearchCitationRemapThreshold = cfg.ResearchCitationRemapThreshold
+	GlobalConfig.ResearchMetricBindingThreshold = cfg.ResearchMetricBindingThreshold
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -377,9 +385,36 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.CodeModelPath = cfg.CodeModelPath
 	GlobalConfig.RouterModelPath = cfg.RouterModelPath
 	GlobalConfig.DefaultTemperature = cfg.DefaultTemperature
+	GlobalConfig.ResearchEvidenceSnippetsPerSource = cfg.ResearchEvidenceSnippetsPerSource
+	GlobalConfig.ResearchCitationRemapThreshold = cfg.ResearchCitationRemapThreshold
+	GlobalConfig.ResearchMetricBindingThreshold = cfg.ResearchMetricBindingThreshold
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
+}
+
+// GetResearchEvidenceSnippetsPerSource returns the configured snippet count per source (default 8).
+func (c EngineConfig) GetResearchEvidenceSnippetsPerSource() int {
+	if c.ResearchEvidenceSnippetsPerSource > 0 {
+		return c.ResearchEvidenceSnippetsPerSource
+	}
+	return 8
+}
+
+// GetResearchCitationRemapThreshold returns the cosine similarity threshold for remapping out-of-bounds tags (default 0.45).
+func (c EngineConfig) GetResearchCitationRemapThreshold() float32 {
+	if c.ResearchCitationRemapThreshold > 0 {
+		return c.ResearchCitationRemapThreshold
+	}
+	return 0.45
+}
+
+// GetResearchMetricBindingThreshold returns the cosine similarity threshold for auto-binding unsourced metrics (default 0.65).
+func (c EngineConfig) GetResearchMetricBindingThreshold() float32 {
+	if c.ResearchMetricBindingThreshold > 0 {
+		return c.ResearchMetricBindingThreshold
+	}
+	return 0.65
 }
 
 // IsObserverEnabled returns true if the observer agent is enabled.

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -67,6 +68,25 @@ func RunResearchPhases(
 	manifest := runner.BuildManifest(results)
 	finalSynthesis := results[len(results)-1].Summary
 
+	// ADR-0083: If EvidenceCards were collected during deep_read, execute the
+	// 4-stage Dynamic Sectioned Map-Reduce Synthesis Pipeline for grounded synthesis
+	if runner.EvidenceCardsProvider != nil {
+		cards := runner.EvidenceCardsProvider()
+		if len(cards) > 0 {
+			fmt.Fprintf(os.Stderr, "[ResearchPhases] Executing Dynamic Sectioned Map-Reduce Synthesis for %d evidence cards\n", len(cards))
+			sectionedDoc, err := RunSectionedSynthesisPipeline(ctx, synthesisEngine, queryGoal, cards)
+			if err == nil && len(sectionedDoc) > 100 {
+				finalSynthesis = sectionedDoc
+			} else {
+				fmt.Fprintf(os.Stderr, "[ResearchPhases] Sectioned synthesis fallback to phase summary (%v)\n", err)
+			}
+		}
+	}
+
+	if runner.SourceTracker != nil {
+		finalSynthesis = runner.SourceTracker.InjectOrNormalizeReferences(finalSynthesis)
+	}
+
 	fmt.Fprintf(os.Stderr, "[ResearchPhases] Completed %d phases, %d total steps, %d backtracks\n",
 		len(manifest.Phases), manifest.TotalStepsUsed, manifest.TotalBacktracks)
 
@@ -97,8 +117,10 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 	var evidenceCards []EvidenceCard
 	var secondaryQueries []string
 	refinedSearchDispatched := false
+	sourceTracker := NewSourceTracker()
 
 	runner := &PhaseRunner{
+		SourceTracker: sourceTracker,
 		ToolFixup: func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{}) {
 			switch toolName {
 			case "web_search":
@@ -159,6 +181,7 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 						visitedURLs[url] = true
 						card := extractEvidenceCardFromPage(context.Background(), url, output, config.Goal)
 						evidenceCards = append(evidenceCards, card)
+						sourceTracker.AddWebSource(url, card.Title, "", card.KeyFacts)
 						fmt.Fprintf(os.Stderr, "[ResearchPhases] Ingested EvidenceCard for %s (%d facts extracted)\n", url, len(card.KeyFacts))
 					}
 				}
@@ -202,7 +225,17 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 				Name:         "deep_read",
 				AllowedTools: []string{"web_browse"},
 				SystemPrompt: buildPhaseResearchPrompt("deep_read", config.Goal, config.TaskContext),
-				StepBudget:   5,
+				StepBudget: func() int {
+					ents := extractTargetEntities(config.Goal)
+					if len(ents) >= 2 {
+						b := len(ents) * 2
+						if b > 8 {
+							return 8
+						}
+						return b
+					}
+					return 5
+				}(),
 				Driver: NewDynamicQueueDriver(func() []QueueItem {
 					var unvisited []DiscoveredSearchResult
 					seen := make(map[string]bool)
@@ -258,8 +291,19 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 						}
 					}
 
+					// Entity-aware round-robin partitioning for multi-entity tasks
+					entities := extractTargetEntities(config.Goal)
+					targetBudget := 5
+					if len(entities) >= 2 {
+						targetBudget = len(entities) * 2
+						if targetBudget > 8 {
+							targetBudget = 8
+						}
+						unvisited = PartitionDiscoveredURLsByEntity(unvisited, entities, targetBudget)
+					}
+
 					var browseItems []QueueItem
-					for i := 0; i < len(unvisited) && i < 5; i++ {
+					for i := 0; i < len(unvisited) && i < targetBudget; i++ {
 						browseItems = append(browseItems, QueueItem{
 							Tool: "web_browse",
 							Args: map[string]interface{}{"url": unvisited[i].URL},
@@ -295,7 +339,140 @@ func buildResearchPhaseRunner(config compiler.ProbeConfig, queries []string) *Ph
 		return buildCitationPreamble(sources, evidenceCards)
 	}
 
+	runner.EvidenceCardsProvider = func() []EvidenceCard {
+		return evidenceCards
+	}
+
 	return runner
+}
+
+// extractTargetEntities parses a goal/prompt to identify multiple distinct comparison subjects or framework entities.
+func extractTargetEntities(goal string) []string {
+	if goal == "" {
+		return nil
+	}
+	lower := strings.ToLower(goal)
+	if !strings.Contains(lower, "compare") && !strings.Contains(lower, "vs") && !strings.Contains(lower, "versus") && !strings.Contains(lower, "between") {
+		return nil
+	}
+
+	cleaned := goal
+	prefixPatterns := []string{
+		"Compare ", "compare ", "Research and compare ", "research and compare ",
+		"Identify and compare ", "identify and compare ", "Conduct research on ",
+	}
+	for _, p := range prefixPatterns {
+		if strings.HasPrefix(cleaned, p) {
+			cleaned = strings.TrimPrefix(cleaned, p)
+			break
+		}
+	}
+
+	delims := []string{" across ", " for ", " in 20", " regarding ", " based on ", " to compare "}
+	for _, d := range delims {
+		if idx := strings.Index(strings.ToLower(cleaned), d); idx > 0 {
+			cleaned = cleaned[:idx]
+			break
+		}
+	}
+
+	reReplace := regexp.MustCompile(`(?i)\b(and|&|vs\.?|versus|or)\b`)
+	cleaned = reReplace.ReplaceAllString(cleaned, ",")
+
+	parts := strings.Split(cleaned, ",")
+	var entities []string
+	seen := make(map[string]bool)
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		trimmed = strings.Trim(trimmed, `"'.,;:()`)
+		lowerT := strings.ToLower(trimmed)
+		if len(trimmed) >= 2 && !seen[lowerT] {
+			if lowerT != "the" && lowerT != "a" && lowerT != "top" && lowerT != "leading" && lowerT != "frameworks" && lowerT != "engines" {
+				seen[lowerT] = true
+				entities = append(entities, trimmed)
+			}
+		}
+	}
+
+	if len(entities) >= 2 {
+		return entities
+	}
+	return nil
+}
+
+// PartitionDiscoveredURLsByEntity groups candidate search results by target entity and picks
+// round-robin with at least 1 and up to 2 slots per entity for multi-entity tasks.
+func PartitionDiscoveredURLsByEntity(candidates []DiscoveredSearchResult, entities []string, maxSlots int) []DiscoveredSearchResult {
+	if len(entities) <= 1 || len(candidates) <= 1 {
+		if len(candidates) > maxSlots {
+			return candidates[:maxSlots]
+		}
+		return candidates
+	}
+
+	entityBuckets := make(map[string][]DiscoveredSearchResult)
+	var unassigned []DiscoveredSearchResult
+
+	for _, cand := range candidates {
+		assigned := false
+		candText := strings.ToLower(cand.URL + " " + cand.Title + " " + cand.Snippet)
+		for _, ent := range entities {
+			if strings.Contains(candText, strings.ToLower(ent)) {
+				entityBuckets[ent] = append(entityBuckets[ent], cand)
+				assigned = true
+				break
+			}
+		}
+		if !assigned {
+			unassigned = append(unassigned, cand)
+		}
+	}
+
+	var selected []DiscoveredSearchResult
+	selectedURLs := make(map[string]bool)
+
+	// Pass 1: Round-robin 1 slot per entity
+	for _, ent := range entities {
+		bucket := entityBuckets[ent]
+		for _, item := range bucket {
+			if !selectedURLs[item.URL] && len(selected) < maxSlots {
+				selectedURLs[item.URL] = true
+				selected = append(selected, item)
+				break
+			}
+		}
+	}
+
+	// Pass 2: Round-robin 2nd slot per entity (up to 2 per entity)
+	for _, ent := range entities {
+		bucket := entityBuckets[ent]
+		countForEntity := 0
+		for _, s := range selected {
+			sText := strings.ToLower(s.URL + " " + s.Title + " " + s.Snippet)
+			if strings.Contains(sText, strings.ToLower(ent)) {
+				countForEntity++
+			}
+		}
+		if countForEntity < 2 {
+			for _, item := range bucket {
+				if !selectedURLs[item.URL] && len(selected) < maxSlots {
+					selectedURLs[item.URL] = true
+					selected = append(selected, item)
+					break
+				}
+			}
+		}
+	}
+
+	// Pass 3: Fill remaining slots from unassigned or remaining bucket items
+	for _, cand := range candidates {
+		if !selectedURLs[cand.URL] && len(selected) < maxSlots {
+			selectedURLs[cand.URL] = true
+			selected = append(selected, cand)
+		}
+	}
+
+	return selected
 }
 
 // calculateStructuralAuthority computes a generalized, domain-agnostic quality multiplier
@@ -327,7 +504,12 @@ func calculateStructuralAuthority(u string) float32 {
 		multiplier *= 1.15
 	}
 
-	// 4. Dampen speculative listicles, SEO aggregate tag pages, and generic blogs
+	// 4. Boost primary open source repositories
+	if strings.Contains(lower, "github.com/") || strings.Contains(lower, "gitlab.com/") {
+		multiplier *= 1.20
+	}
+
+	// 5. Dampen speculative listicles, SEO aggregate tag pages, and generic blogs
 	if strings.Contains(lower, "/blog/") || strings.Contains(lower, "/posts/") ||
 		strings.Contains(lower, "/article/") || strings.Contains(lower, "showdown") ||
 		strings.Contains(lower, "top-10") || strings.Contains(lower, "best-") {
@@ -336,6 +518,13 @@ func calculateStructuralAuthority(u string) float32 {
 	if strings.Contains(lower, "/tag/") || strings.Contains(lower, "/category/") ||
 		strings.Contains(lower, "?q=") || strings.Contains(lower, "?query=") {
 		multiplier *= 0.80
+	}
+
+	// 6. Explicitly penalize known SEO aggregator / AI-generated scraper domains
+	if strings.Contains(lower, "markaicode.com") || strings.Contains(lower, "local-llm.net") ||
+		strings.Contains(lower, "oflight.co.jp") || strings.Contains(lower, "aimultiple.com") ||
+		strings.Contains(lower, "artificial-intelligence-wiki.com") || strings.Contains(lower, "eonsr.com") {
+		multiplier *= 0.40
 	}
 
 	return multiplier

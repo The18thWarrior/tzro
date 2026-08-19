@@ -1176,3 +1176,13 @@ func TestVerifyTaskOutput_MilestoneMode_CallsReSynthesis_WhenFeedsToolSink(t *te
 	}
 }
 
+func TestVerification_SystemPromptConstraints(t *testing.T) {
+	if !strings.Contains(verificationEvaluateSystemPrompt, "top N") {
+		t.Errorf("expected verification system prompt to mention 'top N' constraints")
+	}
+	if !strings.Contains(verificationEvaluateSystemPrompt, "lacks primary entity records") {
+		t.Errorf("expected verification system prompt to mention evidence void detection")
+	}
+}
+
+

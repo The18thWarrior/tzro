@@ -340,9 +340,6 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 					callbacks.OnJudgeStart(taskResults[i].TaskID, taskResults[i].Condition)
 				}
 
-				var score float64
-				var notes string
-
 				// For datanal tasks, inject expected answer into the judge input
 				judgeOutput := taskResults[i].OutputText
 				if g.category == CategoryDatanal && task.ExpectedAnswer != "" {
@@ -350,21 +347,30 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 						taskResults[i].OutputText, task.ExpectedAnswer)
 				}
 
-				score, notes, err = JudgeOutputWithOptions(ctx, judgeOutput, task.QualityRubric, JudgeOptions{
+				judgeResp, judgeErr := JudgeOutputDetailed(ctx, judgeOutput, task.QualityRubric, JudgeOptions{
 					Endpoint: opts.JudgeEndpoint,
 					Category: g.category,
 					Model:    opts.JudgeModel,
+					Prompt:   task.Prompt,
 				})
 
-				if err != nil {
+				if judgeErr != nil {
 					fmt.Fprintf(os.Stderr, "[Comparison] Judge error for %s/%s: %v\n",
-						taskResults[i].TaskID, taskResults[i].Condition, err)
+						taskResults[i].TaskID, taskResults[i].Condition, judgeErr)
 				} else {
-					taskResults[i].QualityScore = score
-					taskResults[i].QualityNotes = notes
+					taskResults[i].QualityScore = judgeResp.OverallScore
+					taskResults[i].GoalAlignment = judgeResp.GoalAlignment
+					taskResults[i].FactualGrounding = judgeResp.FactualGrounding
+					taskResults[i].Coherence = judgeResp.Coherence
+					taskResults[i].Completeness = judgeResp.Completeness
+					taskResults[i].QualityNotes = judgeResp.Summary
 				}
 
 				if callbacks != nil && callbacks.OnJudgeComplete != nil {
+					score := 0.0
+					if judgeResp != nil {
+						score = judgeResp.OverallScore
+					}
 					callbacks.OnJudgeComplete(taskResults[i].TaskID, taskResults[i].Condition, score)
 				}
 			}

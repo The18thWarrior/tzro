@@ -332,6 +332,67 @@ func searchDDG(ctx context.Context, query string, limit int) ([]SearchResult, er
 	return results, nil
 }
 
+// ── DuckDuckGo Lite Scraper (Tier 1 Non-Key Scraper) ──────────────────────────
+
+var (
+	ddgLiteResultRe  = regexp.MustCompile(`(?s)<a[^>]*rel=['"]nofollow['"][^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>`)
+	ddgLiteSnippetRe = regexp.MustCompile(`(?s)<td[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>`)
+)
+
+func searchDDGLite(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+	formData := url.Values{"q": {query}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://lite.duckduckgo.com/lite/", strings.NewReader(formData.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", randomUserAgent())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	body, err := doSearchRequest(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("ddg-lite: %w", err)
+	}
+
+	rawHTML := string(body)
+	linkMatches := ddgLiteResultRe.FindAllStringSubmatch(rawHTML, limit*3)
+	snippetMatches := ddgLiteSnippetRe.FindAllStringSubmatch(rawHTML, limit*3)
+
+	var results []SearchResult
+	for i, m := range linkMatches {
+		if len(results) >= limit {
+			break
+		}
+		rawURL := m[1]
+
+		if parsed, parseErr := url.Parse(rawURL); parseErr == nil {
+			if uddg := parsed.Query().Get("uddg"); uddg != "" {
+				rawURL = uddg
+			}
+		}
+
+		title := cleanHTMLText(m[2])
+		snippet := ""
+		if i < len(snippetMatches) && len(snippetMatches[i]) > 1 {
+			snippet = cleanHTMLText(snippetMatches[i][1])
+		}
+		if title == "" || rawURL == "" {
+			continue
+		}
+		results = append(results, SearchResult{
+			Title:   title,
+			URL:     rawURL,
+			Snippet: snippet,
+		})
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("ddg-lite: no results parsed from %d bytes", len(body))
+	}
+	return results, nil
+}
+
 // ── Metasearch Orchestrator ──────────────────────────────────────────────────
 
 // WebSearchMetasearch executes a multi-engine search with parallel and
@@ -342,10 +403,12 @@ func WebSearchMetasearch(ctx context.Context, query string, limit int) ([]Search
 		limit = 5
 	}
 
+	query = DistillSearchQuery(ctx, query)
+
 	braveKey := os.Getenv("BRAVE_SEARCH_KEY")
 	bingKey := os.Getenv("BING_SEARCH_KEY")
 
-	// ── Tier 1: Parallel (Startpage + Brave) ────────────────────────
+	// ── Tier 1: Parallel (DDG Lite + Startpage + Brave) ───────────────
 	type tierResult struct {
 		results []SearchResult
 		source  string
@@ -355,9 +418,15 @@ func WebSearchMetasearch(ctx context.Context, query string, limit int) ([]Search
 	tier1Ctx, tier1Cancel := context.WithTimeout(ctx, searchTierTimeout)
 	defer tier1Cancel()
 
-	ch := make(chan tierResult, 2)
+	ch := make(chan tierResult, 3)
 
-	// Startpage goroutine — always fires (no API key needed)
+	// DDG Lite goroutine — always fires (no API key needed, high reliability)
+	go func() {
+		results, err := searchDDGLite(tier1Ctx, query, limit)
+		ch <- tierResult{results, "ddg-lite", err}
+	}()
+
+	// Startpage goroutine — always fires
 	go func() {
 		results, err := searchStartpage(tier1Ctx, query, limit)
 		ch <- tierResult{results, "startpage", err}
@@ -377,7 +446,7 @@ func WebSearchMetasearch(ctx context.Context, query string, limit int) ([]Search
 
 	// Collect Tier 1 results — first success wins
 	var tier1Errors []string
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		select {
 		case r := <-ch:
 			if r.err == nil && len(r.results) > 0 {
@@ -410,7 +479,7 @@ tier2:
 		}
 	}
 
-	// ── Tier 3: DuckDuckGo (Last Resort) ────────────────────────────
+	// ── Tier 3: DuckDuckGo HTML & DDG-Lite Sequential Fallback ──────
 	tier3Ctx, tier3Cancel := context.WithTimeout(ctx, searchTierTimeout)
 	defer tier3Cancel()
 	results, err := searchDDG(tier3Ctx, query, limit)
@@ -420,6 +489,13 @@ tier2:
 	}
 	if err != nil {
 		log.Printf("[web_search] tier-3 ddg failed: %v", err)
+	}
+
+	// Final retry with DDG-Lite on Tier 3 context
+	resultsLite, errLite := searchDDGLite(tier3Ctx, query, limit)
+	if errLite == nil && len(resultsLite) > 0 {
+		log.Printf("[web_search] tier-3 success via ddg-lite fallback (%d results)", len(resultsLite))
+		return resultsLite, "ddg-lite"
 	}
 
 	// All tiers exhausted

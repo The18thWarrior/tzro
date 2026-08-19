@@ -30,4 +30,5 @@ const NodeTypeReferenceCard = `## Node Type Reference
 2. For code generation tasks, use an action node calling "tzro_code" — never write code through write_file action nodes.
 3. For exploration tasks where the next step depends on what you discover, ALWAYS use a probe node.
 4. Do NOT reference tools not in the Available Tool Inventory.
-5. Keep graphs concise (typically 2-6 nodes).`
+5. Keep graphs concise (typically 2-6 nodes).
+6. For compound tasks requesting 3+ distinct deliverables (e.g., Quickstart + API Reference + Architecture), decompose into multiple focused sub-nodes or sub-graphs feeding into the final action/synthesis node rather than a single monolithic probe.`

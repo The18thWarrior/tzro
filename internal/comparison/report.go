@@ -68,8 +68,8 @@ func generateMarkdown(results []ComparisonResult, datestamp, jsonPath string) st
 
 	// 2. Per-Task Comparison Table
 	sb.WriteString("## Per-Task Comparison Table\n\n")
-	sb.WriteString("| Task | Condition | Cloud Tokens | Local Tokens | Cost ($) | Wall Clock (ms) | Tool Calls | Quality |\n")
-	sb.WriteString("|------|-----------|-------------|-------------|---------|----------------|-----------|--------|\n")
+	sb.WriteString("| Task | Condition | Cloud Tokens | Local Tokens | Cost ($) | Wall Clock (ms) | Tool Calls | Goal | Fact | Cohr | Comp | Quality |\n")
+	sb.WriteString("|------|-----------|-------------|-------------|---------|----------------|-----------|------|------|------|------|--------|\n")
 
 	for _, taskID := range sortedTaskIDs(byTask) {
 		for _, r := range byTask[taskID] {
@@ -77,10 +77,27 @@ func generateMarkdown(results []ComparisonResult, datestamp, jsonPath string) st
 			if r.Error != "" {
 				qualityStr = "ERR"
 			}
-			sb.WriteString(fmt.Sprintf("| %s | %s | %d | %d | %.4f | %d | %d | %s |\n",
+			goalStr := "-"
+			if r.GoalAlignment > 0 {
+				goalStr = fmt.Sprintf("%.2f", r.GoalAlignment)
+			}
+			factStr := "-"
+			if r.FactualGrounding > 0 {
+				factStr = fmt.Sprintf("%.2f", r.FactualGrounding)
+			}
+			cohrStr := "-"
+			if r.Coherence > 0 {
+				cohrStr = fmt.Sprintf("%.2f", r.Coherence)
+			}
+			compStr := "-"
+			if r.Completeness > 0 {
+				compStr = fmt.Sprintf("%.2f", r.Completeness)
+			}
+			sb.WriteString(fmt.Sprintf("| %s | %s | %d | %d | %.4f | %d | %d | %s | %s | %s | %s | %s |\n",
 				r.TaskID, r.Condition,
 				r.CloudTokens.TotalTokens, r.LocalTokens.TotalTokens,
-				r.EstCostUSD, r.WallClockMs, r.ToolCallCount, qualityStr))
+				r.EstCostUSD, r.WallClockMs, r.ToolCallCount,
+				goalStr, factStr, cohrStr, compStr, qualityStr))
 		}
 	}
 	sb.WriteString("\n")
@@ -145,13 +162,35 @@ func generateMarkdown(results []ComparisonResult, datestamp, jsonPath string) st
 
 	// 5. Quality Comparison
 	sb.WriteString("## Quality Comparison\n\n")
-	sb.WriteString("| Condition | Avg Quality Score |\n")
-	sb.WriteString("|-----------|------------------|\n")
+	sb.WriteString("| Condition | Goal | Fact | Cohr | Comp | Avg Quality Score |\n")
+	sb.WriteString("|-----------|------|------|------|------|------------------|\n")
 
 	for _, cond := range AllConditions() {
 		condResults := byCondition[cond]
 		avgQuality := avgQualityScore(condResults)
-		sb.WriteString(fmt.Sprintf("| %s | %.2f |\n", cond, avgQuality))
+		avgGoal := avgRating(condResults, func(r ComparisonResult) float64 { return r.GoalAlignment })
+		avgFact := avgRating(condResults, func(r ComparisonResult) float64 { return r.FactualGrounding })
+		avgCohr := avgRating(condResults, func(r ComparisonResult) float64 { return r.Coherence })
+		avgComp := avgRating(condResults, func(r ComparisonResult) float64 { return r.Completeness })
+
+		goalStr := "-"
+		if avgGoal > 0 {
+			goalStr = fmt.Sprintf("%.2f", avgGoal)
+		}
+		factStr := "-"
+		if avgFact > 0 {
+			factStr = fmt.Sprintf("%.2f", avgFact)
+		}
+		cohrStr := "-"
+		if avgCohr > 0 {
+			cohrStr = fmt.Sprintf("%.2f", avgCohr)
+		}
+		compStr := "-"
+		if avgComp > 0 {
+			compStr = fmt.Sprintf("%.2f", avgComp)
+		}
+
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %.2f |\n", cond, goalStr, factStr, cohrStr, compStr, avgQuality))
 	}
 	sb.WriteString("\n")
 
@@ -214,6 +253,27 @@ func avgQualityScore(results []ComparisonResult) float64 {
 		if r.Error == "" {
 			total += r.QualityScore
 			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return total / float64(count)
+}
+
+func avgRating(results []ComparisonResult, getter func(r ComparisonResult) float64) float64 {
+	if len(results) == 0 {
+		return 0
+	}
+	total := 0.0
+	count := 0
+	for _, r := range results {
+		if r.Error == "" {
+			val := getter(r)
+			if val > 0 {
+				total += val
+				count++
+			}
 		}
 	}
 	if count == 0 {

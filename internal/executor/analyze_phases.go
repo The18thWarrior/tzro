@@ -71,6 +71,10 @@ func RunAnalyzePhases(
 	// them through directly eliminates FM-21 hangs and VTE rejections.
 	finalOutput := buildDataPassthrough(config.Goal, results, probeID)
 
+	if runner.SourceTracker != nil {
+		finalOutput = runner.SourceTracker.InjectOrNormalizeReferences(finalOutput)
+	}
+
 	fmt.Fprintf(os.Stderr, "[AnalyzePhases] Data passthrough: %d chars (no LLM synthesis)\n", len(finalOutput))
 	return finalOutput, nil
 }
@@ -292,7 +296,10 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 	var preBuiltLimit int
 	var sampleValues map[string][]string
 
+	sourceTracker := NewSourceTracker()
+
 	runner := &PhaseRunner{
+		SourceTracker: sourceTracker,
 		ToolFixup: func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{}) {
 			switch toolName {
 			case "introspect_cache":
@@ -392,6 +399,20 @@ func buildAnalyzePhaseRunner(config compiler.ProbeConfig) (*PhaseRunner, *[]stri
 					knownCacheIds = append(knownCacheIds, discovered)
 					fmt.Fprintf(os.Stderr, "[AnalyzePhases] ToolPostProcess: discovered new cacheId=%q\n", discovered)
 				}
+				if cacheId, ok := args["cacheId"].(string); ok && cacheId != "" {
+					sourceTracker.AddDataSource(cacheId, "schema", "introspect_cache", 0, "")
+				}
+			} else if (toolName == "query_builder" || toolName == "sql_cached_data") && err == nil {
+				cacheId, _ := args["cacheId"].(string)
+				query, _ := args["query"].(string)
+				if query == "" {
+					if qbOps, ok := args["operations"]; ok {
+						if qbJSON, err := json.Marshal(qbOps); err == nil {
+							query = string(qbJSON)
+						}
+					}
+				}
+				sourceTracker.AddDataSource(cacheId, toolName, query, 0, "")
 			}
 		},
 		Phases: map[string]*Phase{

@@ -1011,6 +1011,60 @@ func TestWriteFile_CountsLines(t *testing.T) {
 	}
 }
 
+func TestWriteFile_DirectoryPathAppendsDefaultFilename(t *testing.T) {
+	tmpDir := t.TempDir()
+	v := NewStaticPathValidator([]string{tmpDir})
+	tool := NewWriteFileTool(v)
+
+	// Case 1: Pass an existing directory path
+	content := "# Architecture Overview\nSystem components."
+	result, err := tool.Call(context.Background(), map[string]interface{}{
+		"path":    tmpDir,
+		"content": content,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var res ToolResult
+	json.Unmarshal([]byte(result), &res)
+	if !res.Success {
+		t.Fatalf("expected success when writing to directory, got error: %s", res.Error)
+	}
+
+	expectedFile := filepath.Join(tmpDir, "output.md")
+	data, readErr := os.ReadFile(expectedFile)
+	if readErr != nil {
+		t.Fatalf("expected output.md to be created in directory: %v", readErr)
+	}
+	if string(data) != content {
+		t.Errorf("content mismatch: got %q, want %q", string(data), content)
+	}
+
+	// Case 2: Pass a path with trailing slash
+	subDir := filepath.Join(tmpDir, "subdir") + "/"
+	result2, err2 := tool.Call(context.Background(), map[string]interface{}{
+		"path":    subDir,
+		"content": "sub content",
+	})
+	if err2 != nil {
+		t.Fatalf("unexpected error: %v", err2)
+	}
+	var res2 ToolResult
+	json.Unmarshal([]byte(result2), &res2)
+	if !res2.Success {
+		t.Fatalf("expected success when writing to path with trailing slash, got error: %s", res2.Error)
+	}
+	expectedSubFile := filepath.Join(tmpDir, "subdir", "output.md")
+	subData, subReadErr := os.ReadFile(expectedSubFile)
+	if subReadErr != nil {
+		t.Fatalf("expected output.md in subdir: %v", subReadErr)
+	}
+	if string(subData) != "sub content" {
+		t.Errorf("content mismatch: got %q, want %q", string(subData), "sub content")
+	}
+}
+
 // ── Phase 3: read_file tabular routing integration tests ─────────────────
 
 func TestReadFile_CSVRoute_ReturnsProfile(t *testing.T) {

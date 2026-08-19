@@ -1047,9 +1047,11 @@ func NewWriteFileTool(validator *PathValidator) *BaseAgentTool {
 				return ToolError(fmt.Sprintf("path validation failed: %v", err)), nil
 			}
 
-			// Reject directories
+			// If path points to an existing directory or ends in a slash, append default filename output.md
 			if info, err := os.Stat(resolvedPath); err == nil && info.IsDir() {
-				return ToolError(fmt.Sprintf("path '%s' is a directory, not a file. Specify a file path.", in.Path)), nil
+				resolvedPath = filepath.Join(resolvedPath, "output.md")
+			} else if strings.HasSuffix(in.Path, "/") || strings.HasSuffix(in.Path, "\\") {
+				resolvedPath = filepath.Join(resolvedPath, "output.md")
 			}
 
 			// Reject binary content (null bytes)

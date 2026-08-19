@@ -89,6 +89,7 @@ type JudgeOptions struct {
 	Endpoint string // Override judge API endpoint (for testing)
 	Category string // Task category for prompt selection
 	Model    string // OpenRouter model ID (e.g. "anthropic/claude-sonnet-4"); empty = default Gemini
+	Prompt   string // The original user task prompt/goal
 }
 
 // SuiteOptions configures a comparison benchmark run.
@@ -107,21 +108,25 @@ type SuiteOptions struct {
 
 // ComparisonResult captures metrics for one condition × task execution run.
 type ComparisonResult struct {
-	TaskID        string               `json:"taskId"`
-	TaskTier      int                  `json:"taskTier"`
-	Holdout       bool                 `json:"holdout,omitempty"`
-	Condition     string               `json:"condition"`
-	CloudTokens   inference.TokenUsage `json:"cloudTokens"`
-	LocalTokens   inference.TokenUsage `json:"localTokens"`
-	WallClockMs   int64                `json:"wallClockMs"`
-	EstCostUSD    float64              `json:"estCostUSD"`
-	ToolCallCount int                  `json:"toolCallCount"`
-	OutputText    string               `json:"outputText"`
-	DraftText     string               `json:"draftText,omitempty"` // Raw local draft before cloud fix (populated when draft mode activates)
-	QualityScore  float64              `json:"qualityScore"`
-	QualityNotes  string               `json:"qualityNotes"`
-	Error         string               `json:"error,omitempty"`
-	Logs          string               `json:"logs,omitempty"`
+	TaskID           string               `json:"taskId"`
+	TaskTier         int                  `json:"taskTier"`
+	Holdout          bool                 `json:"holdout,omitempty"`
+	Condition        string               `json:"condition"`
+	CloudTokens      inference.TokenUsage `json:"cloudTokens"`
+	LocalTokens      inference.TokenUsage `json:"localTokens"`
+	WallClockMs      int64                `json:"wallClockMs"`
+	EstCostUSD       float64              `json:"estCostUSD"`
+	ToolCallCount    int                  `json:"toolCallCount"`
+	OutputText       string               `json:"outputText"`
+	DraftText        string               `json:"draftText,omitempty"` // Raw local draft before cloud fix (populated when draft mode activates)
+	QualityScore     float64              `json:"qualityScore"`
+	GoalAlignment    float64              `json:"goalAlignment,omitempty"`
+	FactualGrounding float64              `json:"factualGrounding,omitempty"`
+	Coherence        float64              `json:"coherence,omitempty"`
+	Completeness     float64              `json:"completeness,omitempty"`
+	QualityNotes     string               `json:"qualityNotes"`
+	Error            string               `json:"error,omitempty"`
+	Logs             string               `json:"logs,omitempty"`
 }
 
 // PricingTable holds per-1K-token pricing for cloud model inference.

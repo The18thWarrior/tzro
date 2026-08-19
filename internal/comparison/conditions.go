@@ -98,6 +98,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		absOut, _ := filepath.Abs(outputDir)
 		outputDir = absOut
 		testOutputDir = filepath.Join(outputDir, "test_outputs", conditionID, t.ID)
+		_ = os.RemoveAll(testOutputDir) // Clean slate for rerun isolation
 		if err := os.MkdirAll(testOutputDir, 0755); err != nil {
 			return ComparisonResult{}, fmt.Errorf("failed to create test output dir: %w", err)
 		}
@@ -519,7 +520,9 @@ func extractLastWriteContent(taskID string, graph *compiler.ExecutionGraph, test
 		return ""
 	}
 
-	// Scan testOutputDir for any created Markdown files.
+	adrFileRegex := regexp.MustCompile(`^\d{4}-.*\.md$`)
+
+	// Scan testOutputDir for any created Markdown files, ignoring pre-compiled fixtures and input documents.
 	var content string
 	_ = filepath.Walk(testOutputDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -527,6 +530,15 @@ func extractLastWriteContent(taskID string, graph *compiler.ExecutionGraph, test
 		}
 		// Prefer .md files for docgen tasks
 		if strings.HasSuffix(strings.ToLower(path), ".md") {
+			base := filepath.Base(path)
+			// Ignore pre-compiled fixtures
+			if strings.HasSuffix(base, "_combined.md") || (strings.HasPrefix(base, "all_") && strings.HasSuffix(base, ".md")) {
+				return nil
+			}
+			// Ignore input ADR markdown files copied into docs/adr/
+			if strings.Contains(path, filepath.Join("docs", "adr")) && adrFileRegex.MatchString(base) {
+				return nil
+			}
 			data, readErr := os.ReadFile(path)
 			if readErr == nil && len(data) > 0 {
 				content = string(data)

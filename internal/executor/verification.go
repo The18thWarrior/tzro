@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"tzro/internal/compactor"
 	"tzro/internal/inference"
@@ -227,16 +228,16 @@ You will receive:
 Your job:
 - Evaluate the attempt against the goal and exploration context
 - Score on four dimensions (0.0 to 1.0):
-  - goalAlignment: Does the output address what was asked?
+  - goalAlignment: Does the output address what was asked? Verify that explicit constraints (e.g. selecting "top N" frameworks, specific metrics, comparison dimensions) are directly fulfilled rather than producing an unranked general list.
   - factualGrounding: Are claims supported by the exploration context? Check whether technical claims, identifiers (e.g. CVE-YYYY-NNNN, version numbers, package names), dates, and quantitative values are explicitly corroborated by the exploration context. If the attempt presents fabricated identifiers, dates outside the goal range, unverifiable numbers, or duplicate hallucinated rows as facts, factualGrounding MUST be < 0.5.
   - coherence: Is the output well-structured and readable?
-  - completeness: Does it cover all aspects of the goal?
+  - completeness: Does it cover all aspects of the goal? If required sections, rankings, or comparison tables are missing, completeness MUST be < 0.60.
 - Set "accepted" to true if ALL scores >= 0.65
 - Set "reason" explaining the score justification and noting any gaps.
 
 Be strict but fair. Accept well-structured output that addresses the goal with minor gaps. Reject output containing meta-commentary about the task, fabricated data, or missing key requirements.
 
-RE-EXPLORE DETECTION: If the output reports tool failures, query errors, or explores the local filesystem instead of answering the research question (e.g., "I searched for files but found no results", "The tool returned an error", meta-commentary about internal diagnostics), set "reExplore" to true and provide a "reExploreHint" describing what data needs to be collected. This signals that the data collection phase was insufficient and should be re-run — re-synthesis alone cannot fix a data gap. Only set reExplore when the failure is clearly about missing data, not about poor writing quality.`
+RE-EXPLORE DETECTION: If the output reports tool failures or query errors, OR if the exploration context completely lacks primary entity records, security advisories, or quantitative data points needed to answer the goal (e.g. only high-level landing pages were fetched and 0 specific CVE records or benchmark numbers exist in context), set "reExplore" to true and provide a "reExploreHint" describing specific queries or sources to investigate. Re-synthesis cannot fabricate missing primary evidence.`
 
 // milestoneEvaluateSystemPrompt is the system prompt for the Tier 1 Milestone evaluation gate (ADR-0079).
 const milestoneEvaluateSystemPrompt = `You are the Milestone Verification Gate for an intermediate step in a multi-step workflow.
@@ -273,7 +274,19 @@ func (v *DefaultCloudVerifier) Verify(ctx context.Context, goal, synthesis, prun
 		{Role: "user", Content: userMessage},
 	}
 
-	response, err := inference.CallCloudModel(ctx, messages, verificationEvaluateSchema)
+	var response string
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		verifyCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+		response, err = inference.CallCloudModel(verifyCtx, messages, verificationEvaluateSchema)
+		cancel()
+		if err == nil {
+			break
+		}
+		if attempt == 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("verification cloud call failed: %w", err)
 	}
@@ -300,7 +313,19 @@ func (v *DefaultCloudVerifier) VerifyMilestone(ctx context.Context, stepObjectiv
 		{Role: "user", Content: userMessage},
 	}
 
-	response, err := inference.CallCloudModel(ctx, messages, milestoneEvaluateSchema)
+	var response string
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		verifyCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+		response, err = inference.CallCloudModel(verifyCtx, messages, milestoneEvaluateSchema)
+		cancel()
+		if err == nil {
+			break
+		}
+		if attempt == 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("milestone verification cloud call failed: %w", err)
 	}
@@ -325,11 +350,23 @@ func (v *DefaultCloudVerifier) ReSynthesize(ctx context.Context, goal, fullConte
 	)
 
 	messages := []inference.InferenceMessage{
-		{Role: "system", Content: "You are an expert technical writer. Produce a comprehensive, well-structured replacement document fulfilling the goal. Cite verified sources and provide complete data points."},
+		{Role: "system", Content: "You are an expert technical writer. Produce a comprehensive, well-structured replacement document fulfilling the goal. Cite verified sources and provide complete data points. CRITICAL GROUNDING INVARIANT: If specific records, CVE IDs, or quantitative metrics are absent from the exploration context, explicitly state 'Data not found in source evidence' or 'Not reported in sources'. Do NOT estimate, invent, or hallucinate identifiers, CVEs, or numbers."},
 		{Role: "user", Content: fallbackPrompt},
 	}
 
-	response, err := inference.CallCloudModel(ctx, messages, "")
+	var response string
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		synthCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		response, err = inference.CallCloudModel(synthCtx, messages, "")
+		cancel()
+		if err == nil {
+			break
+		}
+		if attempt == 0 {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("cloud re-synthesis failed: %w", err)
 	}
@@ -487,6 +524,11 @@ func VerifyTaskOutputWithOptions(ctx context.Context, verifier CloudVerifier, go
 			}, nil
 		}
 
+		st := ExtractSourcesFromRefinedContext(refinedContext)
+		if st.HasSources() {
+			reSynth = st.InjectOrNormalizeReferences(reSynth)
+		}
+
 		vResult := &VerificationResult{
 			Accepted:       false,
 			PreCheckResult: "failed",
@@ -591,6 +633,11 @@ func VerifyTaskOutputWithOptions(ctx context.Context, verifier CloudVerifier, go
 	if synthErr != nil || reSynth == "" {
 		fmt.Fprintf(os.Stderr, "[VTE] Re-synthesis failed: %v — returning original synthesis\n", synthErr)
 		return synthesis, vResult, nil
+	}
+
+	st := ExtractSourcesFromRefinedContext(refinedContext)
+	if st.HasSources() {
+		reSynth = st.InjectOrNormalizeReferences(reSynth)
 	}
 
 	vResult.ReSynthesis = reSynth

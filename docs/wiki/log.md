@@ -2,6 +2,25 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-18T14:20:00-07:00] tdd | Dynamic Sectioned Map-Reduce Synthesis & Semantic Citation Remapping (ADR-0083)
+
+- **Activity**: Implemented the complete 4-stage Dynamic Sectioned Map-Reduce Synthesis pipeline and Semantic Citation Remapping verification gate for Web Research nodes under ADR-0083.
+- **Key Deliverables**:
+  1. **Config & Sizing Knobs** ([`internal/config/config.go`](file:///Users/jp/Desktop/Repos/tzro/internal/config/config.go)):
+     - Added `ResearchEvidenceSnippetsPerSource` (default: 8, tuneable), `ResearchCitationRemapThreshold` (default: 0.45), and `ResearchMetricBindingThreshold` (default: 0.65).
+  2. **Map Phase (Evidence Ranking)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `RankEvidenceForSource` extracting quantitative metrics (`metricPattern`) and top-$K$ snippets via `GlobalEmbeddingSidecar.EmbedBatch` / cosine similarity into structured `EvidenceTable` structs.
+  3. **Step 2 (Dynamic Synthesis Outline Planner)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `GenerateSynthesisOutline` with GBNF JSON grammar producing unbounded `[]SectionSpec` with explicit `target_source_ids` and deterministic fallback on syntax failure.
+  4. **Step 3 (Section Assembler with Rolling Prefix Context)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `AssembleSection` with rolling `sectionLeads` context buffer and terminal reference set inflation ensuring conclusions receive all evidence tables.
+  5. **Step 4 (Verification Gate & Semantic Citation Remapping)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `RemapAndGroundCitations` remapping out-of-bounds `[N]` tags ($\ge 0.45$), auto-binding unsourced quantitative metrics ($\ge 0.65$), and appending verified bibliography tables.
+  6. **End-to-End Integration** ([`internal/executor/research_phases.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/research_phases.go)):
+     - Wired `RunSectionedSynthesisPipeline` into `RunResearchPhases` and PhaseRunner `EvidenceCardsProvider`.
+- **Verification**: All unit and integration test suites (`go test ./...`) passed 100% with zero regressions.
+
+
 ## [2026-08-18T10:50:00-07:00] tdd | Semantic Regex Migration & Neural Query Intent (ADR-0081 / ADR-0082)
 
 - **Activity**: Implemented complete deprecation of 46 semantic parsing regexes across `deterministic_query.go`, `query_intent.go`, and `promotion.go`, replacing heuristic pattern matching with the on-device Neural Embedding Sidecar (`inference.GlobalEmbeddingSidecar`) and deterministic Bag-of-Words fallback.
@@ -2149,3 +2168,17 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 
 **Modified files**:
 - [MODIFY] [probe.go](internal/executor/probe.go) — conditional few-shot, generic fallback, updated cacheId handling guidance
+
+---
+
+## [2026-08-18T18:15:00-07:00] design | Research Benchmark 23 Evaluation & Cooperative Hardening Grilling Session
+
+- **Activity**: Conducted a `/grill-with-docs` alignment session evaluating research benchmark run 23 (`.scratch/benchmark/results-research-23`). Resolved four critical failure modes across search rate limiting, entity-balanced queueing, structured outline synthesis, and upstream evidence void detection.
+- **Key Design Decisions**:
+  - **Fast-Fail Multi-Tier Search Fallback**: HTTP 202/rate-limits on DuckDuckGo immediately trigger fast-failover across alternative non-key tiers (Startpage, rotating user-agents) rather than blocking with a 30-second sleep. Returns `SearchRateLimited` on full exhaustion to redirect budget to deep reading existing URLs.
+  - **Entity-Partitioned Deep-Read Allocation**: In multi-subject research tasks, candidate URLs are partitioned by target entity and consumed round-robin (minimum 1, maximum 2 deep-read slots per entity). The 5-slot hard limit applies only to single-entity tasks. Low-authority SEO blog aggregator domains are filtered in favor of official docs and primary repositories.
+  - **Two-Stage Outline-Gated Synthesis & Strict VTE Verification**: In `RunSectionedSynthesisPipeline`, the 4B model emits a structured JSON outline enforcing entity selection and section constraints before map-reduce generation. In `verificationEvaluateSystemPrompt`, VTE explicitly audits cardinality, ranking, and structural constraints (e.g. verifying "top 3" selection).
+  - **Re-Exploration on Evidence Voids & Grounding Guardrails**: When the verification gate identifies that required specific identifiers/records (e.g., specific CVEs or version matrices) are completely absent from the evidence context, VTE triggers `reExplore: true` with a targeted hint instead of blind Tier 2 cloud re-synthesis. In `ReSynthesize`, negative constraints explicitly enforce stating "Data not found in source evidence" rather than estimating or hallucinating parameters.
+- **Key Files Modified/Updated**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Updated Research Node definition with Entity-Partitioned Deep-Read Allocation)
+  - [MODIFY] [log.md](log.md) (This log entry)

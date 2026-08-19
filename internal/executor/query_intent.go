@@ -168,10 +168,14 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		return nil, fmt.Errorf("no columns available for cacheId %s", cacheId)
 	}
 
+	// Fetch sample values for grounding candidate filter values
+	sampleValues := cache.GetCacheSampleValues(cacheId, columns, 15)
+
 	intent := &QueryIntent{}
 
-	// Split goal into phrases for independent embedding comparison.
-	phrases := splitGoalIntoPhrases(goal)
+	// Split goal into phrases for independent embedding comparison (strip meta parentheticals first)
+	cleanGoal := stripMetaParentheticals(goal)
+	phrases := splitGoalIntoPhrases(cleanGoal)
 	if len(phrases) == 0 {
 		phrases = []string{goal}
 	}
@@ -199,14 +203,14 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 		}
 	}
 
-	// --- FILTERS (Multi-Filter Phrase Scanning) ---
+	// --- FILTERS (Multi-Filter Phrase Scanning with Value Grounding) ---
 	seenFilters := make(map[string]bool)
 	for _, phrase := range phrases {
 		phraseLower := strings.ToLower(phrase)
 		col := resolveFilterColumnLiteral(phraseLower, columns, intent.GroupColumn)
 		if col != "" && !seenFilters[strings.ToLower(col)] {
 			val := extractLiteralValue(phrase, col)
-			if val != "" {
+			if val != "" && isValidFilterValue(val, col, sampleValues) {
 				seenFilters[strings.ToLower(col)] = true
 				clause := FilterClause{
 					Column:   col,
@@ -228,8 +232,8 @@ func ExtractQueryIntent(ctx context.Context, goal string, cacheId string) (*Quer
 	if len(intent.Filters) == 0 && scores.filterScore >= filterThreshold {
 		col := resolveFilterColumnLiteral(goalLower, columns, intent.GroupColumn)
 		if col != "" {
-			val := extractLiteralValue(goal, col)
-			if val != "" {
+			val := extractLiteralValue(cleanGoal, col)
+			if val != "" && isValidFilterValue(val, col, sampleValues) {
 				clause := FilterClause{
 					Column:   col,
 					Operator: "=",
@@ -1058,3 +1062,72 @@ func splitGoalIntoPhrases(goal string) []string {
 
 	return filtered
 }
+
+// stripMetaParentheticals removes explanatory parenthetical remarks from goal text
+// (e.g., "(note the column name is misspelled)", "(the Accout_Owner column — note...")")
+// so instructional meta-language does not pollute filter value extraction.
+func stripMetaParentheticals(s string) string {
+	re := regexp.MustCompile(`\([^)]*(?:note|misspell|column|ignore|case-insensitive|format|named|spelled)[^)]*\)`)
+	return re.ReplaceAllString(s, " ")
+}
+
+// isValidFilterValue checks whether a candidate filter value is grounded in actual data.
+// Rejects meta-instructions (e.g. "misspelled", "unspecified") and validates that
+// string values match actual sample values in the target column when available.
+func isValidFilterValue(val string, col string, sampleValues map[string][]string) bool {
+	if val == "" {
+		return false
+	}
+	valTrimmed := strings.TrimSpace(val)
+	valLower := strings.ToLower(valTrimmed)
+
+	// Explicit meta-instruction blacklist
+	metaValues := map[string]bool{
+		"misspelled":  true,
+		"correct":     true,
+		"null":        true,
+		"empty":       true,
+		"specified":   true,
+		"missing":     true,
+		"unknown":     true,
+		"unspecified": true,
+		"note":        true,
+		"data":        true,
+		"column":      true,
+		"file":        true,
+		"header":      true,
+		"table":       true,
+	}
+	if metaValues[valLower] {
+		// Only permit if it is literally an extant value in the column's sample set
+		if samples, ok := sampleValues[col]; ok {
+			for _, s := range samples {
+				if strings.EqualFold(s, valTrimmed) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// If sample values exist for this column, verify candidate value is grounded
+	if samples, ok := sampleValues[col]; ok && len(samples) > 0 {
+		for _, s := range samples {
+			if strings.EqualFold(s, valTrimmed) || strings.Contains(strings.ToLower(s), valLower) {
+				return true
+			}
+		}
+		// Allow standard numeric filter values (e.g. "100", "0", "42.5")
+		if _, err := strconv.ParseFloat(valTrimmed, 64); err == nil {
+			return true
+		}
+		// Allow date-like filter values (e.g. "2024", "2024-01-01")
+		if len(valTrimmed) >= 4 && (strings.HasPrefix(valTrimmed, "20") || strings.HasPrefix(valTrimmed, "19")) {
+			return true
+		}
+		return false
+	}
+
+	return true
+}
+

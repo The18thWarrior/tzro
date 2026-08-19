@@ -221,7 +221,49 @@ func extractSearchQueryVariantsFromGoal(goal string) []string {
 	if len(queries) == 0 {
 		queries = []string{goal}
 	}
-	return queries
+	return appendDomainAnchorsIfRelevant(goal, queries)
+}
+
+// appendDomainAnchorsIfRelevant appends targeted domain filters for recognized technical ecosystems.
+func appendDomainAnchorsIfRelevant(goal string, queries []string) []string {
+	lower := strings.ToLower(goal)
+	var anchors []string
+	if strings.Contains(lower, "go ") || strings.Contains(lower, "golang") || strings.Contains(lower, "cve") {
+		if strings.Contains(lower, "cve") || strings.Contains(lower, "vulnerabilit") || strings.Contains(lower, "security") {
+			anchors = append(anchors, "site:pkg.go.dev/vuln OR site:go.dev/doc/security")
+		}
+	}
+	if strings.Contains(lower, "temporal") {
+		anchors = append(anchors, "site:docs.temporal.io")
+	}
+	if strings.Contains(lower, "restate") {
+		anchors = append(anchors, "site:docs.restate.dev")
+	}
+	if strings.Contains(lower, "inngest") {
+		anchors = append(anchors, "site:inngest.com")
+	}
+	if strings.Contains(lower, "gguf") || strings.Contains(lower, "llama.cpp") {
+		anchors = append(anchors, "site:github.com/ggerganov/llama.cpp")
+	}
+
+	if len(anchors) == 0 {
+		return queries
+	}
+
+	result := append([]string{}, queries...)
+	if len(queries) > 0 {
+		cleanBase := queries[0]
+		for _, p := range []string{"site:pkg.go.dev/vuln", "site:go.dev", "site:docs.temporal.io", "site:docs.restate.dev", "site:inngest.com", "site:github.com"} {
+			cleanBase = strings.ReplaceAll(cleanBase, p, "")
+		}
+		cleanBase = strings.TrimSpace(cleanBase)
+		if cleanBase != "" {
+			for _, a := range anchors {
+				result = append(result, fmt.Sprintf("%s %s", cleanBase, a))
+			}
+		}
+	}
+	return result
 }
 
 func stripToolMetaPhrases(s string) string {

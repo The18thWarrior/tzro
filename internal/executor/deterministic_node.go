@@ -93,7 +93,7 @@ func (e *ExecutionEngine) runDeterministicCore(
 			if rb.Value != "" && rb.Value != "null" {
 				existingVal, exists := toolArguments[paramName]
 				existingStr := fmt.Sprintf("%v", existingVal)
-				if rb.Tier == "recursive_key" || rb.Tier == "fuzzy_key" || rb.Tier == "kv_line" {
+				if rb.Tier == "recursive_key" || rb.Tier == "fuzzy_key" || rb.Tier == "kv_line" || rb.Tier == "whole_output" || rb.Tier == "plain_text_fallback" || rb.Tier == "derived_cache" {
 					fmt.Fprintf(os.Stderr, "[Executor DynamicBindings] Overriding exec arg '%s': %q -> %q (tier: %s)\n", paramName, existingStr, rb.Value, rb.Tier)
 					toolArguments[paramName] = rb.Value
 				} else if exists && (existingStr == "null" || existingStr == "" || existingStr == "<nil>") {

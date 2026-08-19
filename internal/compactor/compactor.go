@@ -109,6 +109,11 @@ func compactSegment(seg Segment, budget int) string {
 	switch seg.Type {
 	case SegmentCode:
 		return ExtractSkeleton(seg.Content, budget)
+	case SegmentJSON:
+		if budget > 0 {
+			return TruncateTextMiddleOut(seg.Content, budget)
+		}
+		return seg.Content
 	case SegmentTabular:
 		if budget > 0 {
 			return TruncateTabular(seg.Content, budget)

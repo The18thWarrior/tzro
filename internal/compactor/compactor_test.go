@@ -257,3 +257,38 @@ func TestCompactSteps_PreserveToolOutput(t *testing.T) {
 			resultPreserved.OutputChars, resultCompacted.OutputChars)
 	}
 }
+
+func TestCompactContent_JSON(t *testing.T) {
+	jsonContent := "{\n  \"tool_arguments\": {\n    \"content\": \"# Architecture Log\\n\\nSome details here.\",\n    \"path\": \"docs/adr.md\"\n  }\n}"
+	for len(jsonContent) < 5000 {
+		jsonContent += "\n{\n  \"extra\": \"data\"\n}"
+	}
+
+	result := CompactContent(jsonContent, 1000)
+	if len(result) == 0 {
+		t.Fatal("expected non-empty compaction for JSON content")
+	}
+	if len(result) > 1050 {
+		t.Errorf("expected compacted within budget (~1000), got %d", len(result))
+	}
+	if !strings.Contains(result, "tool_arguments") {
+		t.Error("expected tool_arguments to be preserved in JSON head")
+	}
+}
+
+func TestExtractSkeleton_NonCodeFallback(t *testing.T) {
+	// Curly-brace structured text that has no Go language keywords
+	nonCode := "{\n  section: 1,\n  details: [\n    item1,\n    item2\n  ]\n}"
+	for len(nonCode) < 2000 {
+		nonCode += "\n{\n  section: 2\n}"
+	}
+
+	result := ExtractSkeleton(nonCode, 500)
+	if len(result) == 0 {
+		t.Fatal("expected non-empty fallback from ExtractSkeleton")
+	}
+	if !strings.Contains(result, "section") {
+		t.Error("expected section text preserved in fallback")
+	}
+}
+

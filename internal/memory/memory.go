@@ -1767,3 +1767,25 @@ func (sdb *SqliteDatabase) GetPhaseResults(taskID, nodeID string) ([]PhaseResult
 	}
 	return results, nil
 }
+
+// ClearProbeHistory deletes all thought steps, summaries, symbol index entries,
+// phase results, and node state for a probe node. Called before in-place
+// re-exploration so invalidated/poisoned discovery context from a rejected pass
+// does not contaminate the new exploration.
+func (sdb *SqliteDatabase) ClearProbeHistory(taskID, nodeID string) error {
+	sdb.mutex.Lock()
+	defer sdb.mutex.Unlock()
+
+	if sdb.db == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	probeID := taskID + "_" + nodeID
+	_, _ = sdb.db.Exec(`DELETE FROM thought_chain WHERE probe_id = ?`, probeID)
+	_, _ = sdb.db.Exec(`DELETE FROM thought_chain_summaries WHERE probe_id = ?`, probeID)
+	_, _ = sdb.db.Exec(`DELETE FROM symbol_index WHERE probe_id = ?`, probeID)
+	_, _ = sdb.db.Exec(`DELETE FROM phase_results WHERE task_id = ? AND node_id = ?`, taskID, nodeID)
+	_, _ = sdb.db.Exec(`DELETE FROM node_states WHERE task_id = ? AND node_id = ?`, taskID, nodeID)
+	return nil
+}
+

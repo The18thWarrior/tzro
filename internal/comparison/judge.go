@@ -53,32 +53,57 @@ type JudgeCriterionScore struct {
 	Reasoning string  `json:"reasoning"`
 }
 
-// JudgeResponse is the structured response from the LLM-as-judge.
-type JudgeResponse struct {
-	Criteria     []JudgeCriterionScore `json:"criteria"`
-	OverallScore float64               `json:"overallScore"`
-	Summary      string                `json:"summary"`
+// JudgeRatings holds canonical 4-dimensional VTE-aligned evaluation scores (1-5 scale).
+type JudgeRatings struct {
+	GoalAlignment    float64 `json:"goalAlignment"`
+	FactualGrounding float64 `json:"factualGrounding"`
+	Coherence        float64 `json:"coherence"`
+	Completeness     float64 `json:"completeness"`
 }
 
-const judgeSystemPrompt = `You are a documentation quality evaluator. You will receive a generated documentation file and a quality rubric. Score each criterion on a 1-5 scale:
+// JudgeResponse is the structured response from the LLM-as-judge.
+type JudgeResponse struct {
+	Criteria         []JudgeCriterionScore `json:"criteria"`
+	Ratings          *JudgeRatings         `json:"ratings,omitempty"`
+	GoalAlignment    float64               `json:"goalAlignment,omitempty"`
+	FactualGrounding float64               `json:"factualGrounding,omitempty"`
+	Coherence        float64               `json:"coherence,omitempty"`
+	Completeness     float64               `json:"completeness,omitempty"`
+	OverallScore     float64               `json:"overallScore"`
+	Summary          string                `json:"summary"`
+}
+
+const judgeSystemPrompt = `You are a documentation quality evaluator. You will receive a task prompt/goal, a generated documentation file, and a quality rubric. Score each criterion on a 1-5 scale:
   1 = Missing/wrong
   2 = Minimal/mostly incorrect
   3 = Adequate but incomplete
   4 = Good, covers most requirements
   5 = Excellent, comprehensive and accurate
 
+Also rate the output on the 4 canonical evaluation dimensions (1.0 to 5.0 scale):
+- goalAlignment: Does the output satisfy the exact intent, constraints, and target paths requested in the task prompt?
+- factualGrounding: Are documented package names, functions, signatures, and types accurate and verified against the actual codebase?
+- coherence: Is the output clean, well-structured, professional, and easy to navigate?
+- completeness: Are all requested packages, files, symbols, and sections covered?
+
 Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
 {
   "criteria": [
     {"name": "CriterionName", "score": 4, "reasoning": "Brief explanation"}
   ],
-  "overallScore": 4.0,
+  "ratings": {
+    "goalAlignment": 4.5,
+    "factualGrounding": 4.5,
+    "coherence": 5.0,
+    "completeness": 4.0
+  },
+  "overallScore": 4.5,
   "summary": "Brief overall assessment"
 }
 
 Do NOT wrap the JSON in code fences. Output raw JSON only.`
 
-const codeJudgeSystemPrompt = `You are a code quality evaluator. You will receive generated source code and a quality rubric. Score each criterion on a 1-5 scale:
+const codeJudgeSystemPrompt = `You are a code quality evaluator. You will receive a task prompt/goal, generated source code, and a quality rubric. Score each criterion on a 1-5 scale:
   1 = Does not compile/parse, or completely wrong
   2 = Compiles but major logic errors or missing requirements
   3 = Functional but incomplete or has style issues
@@ -87,19 +112,31 @@ const codeJudgeSystemPrompt = `You are a code quality evaluator. You will receiv
 
 For "Preservation" criteria (update tasks): verify that existing code, types, method signatures, and imports that were not part of the spec remain unchanged.
 
+Also rate the output on the 4 canonical evaluation dimensions (1.0 to 5.0 scale):
+- goalAlignment: Does the code implement the exact spec, constraints, endpoints, and types requested in the task prompt?
+- factualGrounding: Does the code compile, use valid imports/types, and preserve untouched methods?
+- coherence: Is the code clean, idiomatic, and well-structured?
+- completeness: Are all methods, error cases, validation rules, and defaults implemented?
+
 Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
 {
   "criteria": [
     {"name": "CriterionName", "score": 4, "reasoning": "Brief explanation"}
   ],
-  "overallScore": 4.0,
+  "ratings": {
+    "goalAlignment": 4.5,
+    "factualGrounding": 4.5,
+    "coherence": 5.0,
+    "completeness": 4.0
+  },
+  "overallScore": 4.5,
   "summary": "Brief overall assessment"
 }
 
 Do NOT wrap the JSON in code fences. Output raw JSON only.`
 
 const datanalJudgeSystemPrompt = `You are a data analysis quality evaluator. You will receive a data analysis result
-produced by an AI model, along with the expected correct answer. Score each criterion
+produced by an AI model, along with the expected correct answer and the original task prompt. Score each criterion
 on a 1-5 scale:
   1 = Completely wrong or missing
   2 = Partially correct but major errors in values or groupings
@@ -109,37 +146,54 @@ on a 1-5 scale:
 
 Compare the model's output against the Expected Correct Answer section.
 
+Also rate the output on the 4 canonical evaluation dimensions (1.0 to 5.0 scale):
+- goalAlignment: Does the analysis answer the exact question, filter criteria, and columns requested in the prompt?
+- factualGrounding: Are values, counts, percentages, and lists factually matching the expected answer?
+- coherence: Is the output clearly formatted and structured?
+- completeness: Are all requested groups, top-N ranks, and categories present without omissions?
+
 Respond with ONLY a JSON object in this exact format:
 {
-  "scores": {
-    "Correctness": <1-5>,
-    "Completeness": <1-5>,
-    "Formatting": <1-5>,
-    "Methodology": <1-5>
+  "criteria": [
+    {"name": "Correctness", "score": 5, "reasoning": "Values match expected answer"},
+    {"name": "Completeness", "score": 5, "reasoning": "All records included"}
+  ],
+  "ratings": {
+    "goalAlignment": 5.0,
+    "factualGrounding": 5.0,
+    "coherence": 5.0,
+    "completeness": 5.0
   },
+  "overallScore": 5.0,
   "summary": "Brief overall assessment"
 }
 
 Do NOT wrap the JSON in code fences. Output raw JSON only.`
 
-const researchJudgeSystemPrompt = `You are a research quality evaluator. You will receive a web research synthesis and a quality rubric. Score each criterion on a 1-5 scale:
+const researchJudgeSystemPrompt = `You are a research quality evaluator. You will receive a task prompt/goal, a web research synthesis generated to answer that prompt, and a quality rubric. Score each criterion on a 1-5 scale:
   1 = Missing, wrong, or no sources cited
   2 = Minimal research with unreliable or fabricated sources
   3 = Adequate research but incomplete coverage or weak sourcing
-  4 = Good research with multiple real sources and solid analysis
-  5 = Excellent, comprehensive research with authoritative sources and insightful synthesis
+  4 = Good research with multiple real sources and solid analysis fulfilling the goal
+  5 = Excellent, comprehensive research with authoritative sources, structured comparison tables/data, and insightful synthesis
 
-Pay special attention to:
-- Whether cited URLs appear to be real and relevant (not fabricated)
-- Whether the synthesis goes beyond simply listing search snippets
-- Whether claims are supported by the cited sources
-- Whether the analysis addresses all aspects of the research question
+Evaluation dimensions:
+- goalAlignment (1.0 - 5.0): Whether the synthesis directly addresses all aspects requested in the Task Prompt (e.g. top N selection, comparison matrix).
+- factualGrounding (1.0 - 5.0): Whether cited URLs are real, accessible, and reputable (official docs, GitHub repos, CVE databases, recognized tech publications) with verified metrics.
+- coherence (1.0 - 5.0): Structured comparative presentation (tables, trade-off analysis) rather than unorganized snippet dumps.
+- completeness (1.0 - 5.0): Whether all requested frameworks, versions, metrics, and comparisons are covered.
 
 Respond ONLY with valid JSON (no markdown fences) matching this exact schema:
 {
   "criteria": [
     {"name": "CriterionName", "score": 4, "reasoning": "Brief explanation"}
   ],
+  "ratings": {
+    "goalAlignment": 4.0,
+    "factualGrounding": 4.0,
+    "coherence": 4.0,
+    "completeness": 4.0
+  },
   "overallScore": 4.0,
   "summary": "Brief overall assessment"
 }
@@ -173,9 +227,18 @@ func JudgeOutputWithEndpoint(ctx context.Context, outputText string, rubric Qual
 	return JudgeOutputWithOptions(ctx, outputText, rubric, JudgeOptions{Endpoint: endpoint})
 }
 
-// JudgeOutputWithOptions is the full-featured judge function supporting category-aware prompts,
-// endpoint overrides, and configurable judge models via OpenRouter.
+// JudgeOutputWithOptions is the full-featured judge function returning overall score and summary.
 func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric QualityRubric, opts JudgeOptions) (float64, string, error) {
+	resp, err := JudgeOutputDetailed(ctx, outputText, rubric, opts)
+	if err != nil {
+		return 0, "", err
+	}
+	return resp.OverallScore, resp.Summary, nil
+}
+
+// JudgeOutputDetailed sends the generated output and rubric to the cloud model for quality scoring.
+// Returns the full JudgeResponse containing criteria, ratings (goal/fact/cohr/comp), overall score, and summary.
+func JudgeOutputDetailed(ctx context.Context, outputText string, rubric QualityRubric, opts JudgeOptions) (*JudgeResponse, error) {
 	// Select the appropriate system prompt
 	sysPrompt := JudgeSystemPromptForCategory(opts.Category)
 
@@ -197,7 +260,12 @@ func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric Quali
 		contentLabel = "Generated Documentation"
 	}
 
-	userMessage := fmt.Sprintf("## %s\n\n%s\n\n## Evaluation Rubric\n\n%s", contentLabel, outputText, rubricText)
+	var userMessage string
+	if opts.Prompt != "" {
+		userMessage = fmt.Sprintf("## Task Prompt / Goal\n\n%s\n\n## %s\n\n%s\n\n## Evaluation Rubric\n\n%s", opts.Prompt, contentLabel, outputText, rubricText)
+	} else {
+		userMessage = fmt.Sprintf("## %s\n\n%s\n\n## Evaluation Rubric\n\n%s", contentLabel, outputText, rubricText)
+	}
 
 	var responseText string
 	var err error
@@ -217,52 +285,170 @@ func JudgeOutputWithOptions(ctx context.Context, outputText string, rubric Quali
 		responseText, err = inference.CallCloudModel(ctx, messages, "")
 	}
 	if err != nil {
-		return 0, "", fmt.Errorf("judge API call failed: %w", err)
+		return nil, fmt.Errorf("judge API call failed: %w", err)
 	}
 
 	responseText = stripCodeFences(responseText)
 
 	// Try structured JudgeResponse first
 	var judgeResp JudgeResponse
-	if err := json.Unmarshal([]byte(responseText), &judgeResp); err == nil && judgeResp.OverallScore > 0 {
-		return judgeResp.OverallScore, judgeResp.Summary, nil
+	if err := json.Unmarshal([]byte(responseText), &judgeResp); err == nil && (judgeResp.OverallScore > 0 || judgeResp.Ratings != nil) {
+		normalizeJudgeResponse(&judgeResp, rubric)
+		return &judgeResp, nil
 	}
 
 	// Fallback: handle flat {"criterionName": score, ...} format that models often produce
-	score, summary, fallbackErr := parseFlatJudgeResponse(responseText, rubric)
+	resp, fallbackErr := parseFlatJudgeResponseDetailed(responseText, rubric)
 	if fallbackErr != nil {
-		return 0, "", fmt.Errorf("failed to parse judge response in any format (raw: %s)", responseText)
+		return nil, fmt.Errorf("failed to parse judge response in any format (raw: %s)", responseText)
 	}
-	return score, summary, nil
+	return resp, nil
 }
 
-// parseFlatJudgeResponse handles responses where the model returns a flat map
-// of criterion names to scores, e.g. {"completeness": 5, "accuracy": 4}.
-// Returns the mean score and an auto-generated summary.
-func parseFlatJudgeResponse(responseText string, rubric QualityRubric) (float64, string, error) {
-	var flat map[string]interface{}
-	if err := json.Unmarshal([]byte(responseText), &flat); err != nil {
-		return 0, "", err
+func normalizeJudgeResponse(resp *JudgeResponse, rubric QualityRubric) {
+	if resp.Ratings != nil {
+		if resp.GoalAlignment == 0 {
+			resp.GoalAlignment = resp.Ratings.GoalAlignment
+		}
+		if resp.FactualGrounding == 0 {
+			resp.FactualGrounding = resp.Ratings.FactualGrounding
+		}
+		if resp.Coherence == 0 {
+			resp.Coherence = resp.Ratings.Coherence
+		}
+		if resp.Completeness == 0 {
+			resp.Completeness = resp.Ratings.Completeness
+		}
 	}
 
-	// Extract summary if present at root level
+	if resp.OverallScore == 0 && len(resp.Criteria) > 0 {
+		var total float64
+		for _, c := range resp.Criteria {
+			total += c.Score
+		}
+		resp.OverallScore = total / float64(len(resp.Criteria))
+	}
+
+	if resp.OverallScore == 0 && (resp.GoalAlignment > 0 || resp.FactualGrounding > 0 || resp.Coherence > 0 || resp.Completeness > 0) {
+		var sum float64
+		var count int
+		for _, val := range []float64{resp.GoalAlignment, resp.FactualGrounding, resp.Coherence, resp.Completeness} {
+			if val > 0 {
+				sum += val
+				count++
+			}
+		}
+		if count > 0 {
+			resp.OverallScore = sum / float64(count)
+		}
+	}
+
+	// If ratings were missing, backfill from criteria or overall score
+	if resp.GoalAlignment == 0 {
+		resp.GoalAlignment = resp.OverallScore
+	}
+	if resp.FactualGrounding == 0 {
+		resp.FactualGrounding = resp.OverallScore
+	}
+	if resp.Coherence == 0 {
+		resp.Coherence = resp.OverallScore
+	}
+	if resp.Completeness == 0 {
+		resp.Completeness = resp.OverallScore
+	}
+}
+
+// parseFlatJudgeResponseDetailed handles responses where the model returns a flat map
+// of criterion names to scores, e.g. {"completeness": 5, "accuracy": 4}.
+func parseFlatJudgeResponseDetailed(responseText string, rubric QualityRubric) (*JudgeResponse, error) {
+	var flat map[string]interface{}
+	if err := json.Unmarshal([]byte(responseText), &flat); err != nil {
+		return nil, err
+	}
+
 	summaryText := ""
 	if s, ok := flat["summary"].(string); ok {
 		summaryText = s
 	}
 
-	// Try nested {"scores": {"Correctness": 1, ...}} format first
+	var resp JudgeResponse
+	resp.Summary = summaryText
+
+	// Try nested {"scores": {"Correctness": 1, ...}} format or "criteria" array
+	scoresMap := flat
 	if scoresObj, ok := flat["scores"]; ok {
-		if scoresMap, ok := scoresObj.(map[string]interface{}); ok {
-			score, summary, err := matchCriteriaScores(scoresMap, rubric, summaryText)
-			if err == nil {
-				return score, summary, nil
+		if sm, ok := scoresObj.(map[string]interface{}); ok {
+			scoresMap = sm
+		}
+	} else if critObj, ok := flat["criteria"]; ok {
+		if critArr, ok := critObj.([]interface{}); ok {
+			scoresMap = make(map[string]interface{}, len(critArr))
+			for _, item := range critArr {
+				if cMap, ok := item.(map[string]interface{}); ok {
+					if name, ok := cMap["name"].(string); ok {
+						if score, ok := cMap["score"]; ok {
+							scoresMap[name] = score
+						}
+					}
+				}
 			}
 		}
 	}
 
-	// Fallback: flat root-level {"correctness": 5, "accuracy": 4} format
-	return matchCriteriaScores(flat, rubric, summaryText)
+	score, summary, err := matchCriteriaScores(scoresMap, rubric, summaryText)
+	if err != nil {
+		return nil, err
+	}
+
+	if osVal := extractFloat(flat, "overallScore", "overall_score", "overall"); osVal > 0 {
+		resp.OverallScore = osVal
+	} else {
+		resp.OverallScore = score
+	}
+	if resp.Summary == "" {
+		resp.Summary = summary
+	}
+
+	// Check if ratings object is present
+	if rObj, ok := flat["ratings"]; ok {
+		if rMap, ok := rObj.(map[string]interface{}); ok {
+			resp.GoalAlignment = extractFloat(rMap, "goalAlignment", "goal_alignment")
+			resp.FactualGrounding = extractFloat(rMap, "factualGrounding", "factual_grounding")
+			resp.Coherence = extractFloat(rMap, "coherence")
+			resp.Completeness = extractFloat(rMap, "completeness")
+		}
+	}
+
+	normalizeJudgeResponse(&resp, rubric)
+	return &resp, nil
+}
+
+func extractFloat(m map[string]interface{}, keys ...string) float64 {
+	lowerMap := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		lowerMap[strings.ToLower(k)] = v
+	}
+	for _, key := range keys {
+		if val, ok := lowerMap[strings.ToLower(key)]; ok {
+			switch n := val.(type) {
+			case float64:
+				return n
+			case json.Number:
+				f, _ := n.Float64()
+				return f
+			}
+		}
+	}
+	return 0
+}
+
+// parseFlatJudgeResponse handles legacy callers.
+func parseFlatJudgeResponse(responseText string, rubric QualityRubric) (float64, string, error) {
+	resp, err := parseFlatJudgeResponseDetailed(responseText, rubric)
+	if err != nil {
+		return 0, "", err
+	}
+	return resp.OverallScore, resp.Summary, nil
 }
 
 // matchCriteriaScores extracts criterion scores from a map using case-insensitive

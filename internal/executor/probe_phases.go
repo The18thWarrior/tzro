@@ -46,6 +46,10 @@ func RunProbePhases(
 	// The final synthesis is the last phase's summary
 	finalSynthesis := results[len(results)-1].Summary
 
+	if runner.SourceTracker != nil {
+		finalSynthesis = runner.SourceTracker.InjectOrNormalizeReferences(finalSynthesis)
+	}
+
 	fmt.Fprintf(os.Stderr, "[ProbePhases] Completed %d phases, %d total steps, %d backtracks\n",
 		len(manifest.Phases), manifest.TotalStepsUsed, manifest.TotalBacktracks)
 
@@ -126,7 +130,10 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 		deepReadBudget = 1
 	}
 
+	sourceTracker := NewSourceTracker()
+
 	runner := &PhaseRunner{
+		SourceTracker: sourceTracker,
 		ToolFixup: func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{}) {
 			if toolName == "read_file" && explorationQueue != nil {
 				path, _ := args["path"].(string)
@@ -140,9 +147,12 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 			return toolName, args
 		},
 		ToolPostProcess: func(phaseName, toolName string, args map[string]interface{}, output string, err error) {
-			if toolName == "read_file" && err == nil && explorationQueue != nil {
+			if toolName == "read_file" && err == nil {
 				if path, ok := args["path"].(string); ok && path != "" {
-					explorationQueue.MarkVisited(path)
+					if explorationQueue != nil {
+						explorationQueue.MarkVisited(path)
+					}
+					sourceTracker.AddFileSource(path, nil, strings.Count(output, "\n")+1, "")
 				}
 			}
 		},

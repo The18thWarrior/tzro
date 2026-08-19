@@ -2,8 +2,11 @@ package comparison
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"tzro/internal/compiler"
 	"tzro/internal/inference"
 )
 
@@ -356,5 +359,36 @@ func assertNotContains(t *testing.T, conditions []string, target, tier string) {
 			t.Errorf("CodegenConditionsForTier(%s) = %v, should NOT include %s", tier, conditions, target)
 			return
 		}
+	}
+}
+
+func TestExtractLastWriteContent_IgnoresFixturesAndADRs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Pre-create fixtures and ADRs
+	internalDir := filepath.Join(tmpDir, "internal")
+	os.MkdirAll(internalDir, 0755)
+	os.WriteFile(filepath.Join(internalDir, "all_internal_combined.md"), []byte("# Raw Call Graph"), 0644)
+
+	adrDir := filepath.Join(tmpDir, "docs", "adr")
+	os.MkdirAll(adrDir, 0755)
+	os.WriteFile(filepath.Join(adrDir, "all_adrs_combined.md"), []byte("# Precompiled ADRs"), 0644)
+	os.WriteFile(filepath.Join(adrDir, "0001-record-architecture-decisions.md"), []byte("# 1. Record decisions"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "all_project_combined.md"), []byte("# Project Combined"), 0644)
+
+	graph := &compiler.ExecutionGraph{TaskID: "test-task"}
+	content := extractLastWriteContent("test-task", graph, tmpDir)
+	if content != "" {
+		t.Errorf("expected empty string when only fixtures and ADR source files exist, got: %q", content)
+	}
+
+	// Now add a real generated doc
+	realDocPath := filepath.Join(tmpDir, "output.md")
+	expectedContent := "# Architecture Synthesis\nReal synthesis output."
+	os.WriteFile(realDocPath, []byte(expectedContent), 0644)
+
+	content = extractLastWriteContent("test-task", graph, tmpDir)
+	if content != expectedContent {
+		t.Errorf("expected real generated doc %q, got %q", expectedContent, content)
 	}
 }

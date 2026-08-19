@@ -128,6 +128,12 @@ type PhaseRunner struct {
 	// citation hallucination.
 	SynthesisPromptPrefix func() string
 
+	// EvidenceCardsProvider is an optional callback returning ingested EvidenceCards (ADR-0083).
+	EvidenceCardsProvider func() []EvidenceCard
+
+	// SourceTracker records universal provenance across Web, File, and Data operations.
+	SourceTracker *SourceTracker
+
 	// Goal is the probe's exploration goal, injected into tool context
 	// via tools.FileReadGoalKey so read_file can goal-compress large outputs.
 	Goal string
@@ -156,6 +162,10 @@ func (pr *PhaseRunner) Run(
 ) ([]PhaseResult, error) {
 	if pr.MaxCycles <= 0 {
 		pr.MaxCycles = 3
+	}
+
+	if pr.SourceTracker == nil {
+		pr.SourceTracker = NewSourceTracker()
 	}
 
 	// Store IDs for ThoughtStep persistence in executePhase.
@@ -290,6 +300,7 @@ func (pr *PhaseRunner) executePhase(
 		ToolFixup:         pr.ToolFixup,
 		ToolPostProcess:   pr.ToolPostProcess,
 		PersistStep:       pr.persistThoughtStep,
+		SourceTracker:     pr.SourceTracker,
 	}
 
 	driverResult, driverErr := driver.Execute(phaseCtx, phase, runnerCtx)
