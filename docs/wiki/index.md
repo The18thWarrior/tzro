@@ -130,6 +130,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0082: Deterministic Harness Scaffolding for Small-Model Parity](../adr/0082-deterministic-harness-scaffolding-for-small-model-parity.md) - Defines the four-pillar harness engineering framework (Relevance-Scored Exploration Queue, Neural Semantic QueryIntent with window functions, Numbered Citation Preambles with Pre-Flight Citation Assertions, and Tree-Sitter AST Import Validators) to elevate 4B on-device models to 4.25+ benchmark quality.
 - [ADR-0083: Dynamic Sectioned Map-Reduce and Semantic Citation Remapping](../adr/0083-dynamic-sectioned-map-reduce-and-semantic-citation-remapping.md) - Dynamic synthesis outlines, rolling prefix context for sectioned generation, and neural citation remapping for verified research citations.
 - [ADR-0084: Generalized Sectioned Map-Reduce Synthesis for DocGen and Research](../adr/0084-generalized-sectioned-map-reduce-synthesis.md) - Generalizes Sectioned Map-Reduce to codebase documentation (DocGen) and multi-domain research tasks with dynamic GBNF-constrained outline planning, static context broadcasting with KV cache reuse, and section truncation guards.
+- [ADR-0086: Repository Pre-Index, Dual-Plane Indexing, and Context Budget Packing](../adr/0086-repository-pre-index-and-dual-plane-retrieval.md) - Persistent SQLite repository index combining an AST Code Plane, chunked Document Plane, hybrid FTS5/Vector retrieval, and dynamic Context Budget Packing for instant Probe node synthesis.
 
 ## Ingested Sources
 

@@ -246,6 +246,15 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 				}
 			}
 
+			// ADR-0086: Check Repository Pre-Index for instant DirectSynthesis promotion
+			if !probeConfig.DirectSynthesis && probeConfig.SourceHint != "web" && probeConfig.SourceHint != "cache" {
+				if ApplyIndexPreflightToProbe(ctx, &probeConfig, taskID, node.ID) {
+					if probeConfig.ContextFile != "" {
+						defer os.Remove(probeConfig.ContextFile)
+					}
+				}
+			}
+
 			if probeConfig.DirectSynthesis {
 				// Bypass PhaseRunner — run single-shot synthesis via legacy path
 				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: DirectSynthesis promoted — bypassing PhaseRunner\n", node.ID)

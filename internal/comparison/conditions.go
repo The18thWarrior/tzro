@@ -14,6 +14,7 @@ import (
 	"tzro/internal/compiler"
 	"tzro/internal/config"
 	"tzro/internal/executor"
+	"tzro/internal/index"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/symbols"
@@ -307,10 +308,29 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 
 	taskID := fmt.Sprintf("comparison_%s_%s", conditionID, t.ID)
 
+	// ADR-0086: Initialize and populate task-isolated Repository Pre-Index in testOutputDir
+	projectRoot := tools.GetAllowedPaths()[0]
+	indexDBPath := filepath.Join(testOutputDir, ".tzro", "index.db")
+	if idxStore, idxErr := index.NewIndexStore(indexDBPath); idxErr == nil {
+		index.SetGlobalIndex(idxStore)
+		defer func() {
+			index.SetGlobalIndex(nil)
+			idxStore.Close()
+			_ = os.Remove(indexDBPath)
+		}()
+
+		// Index the virtual test output directory
+		_, _ = index.ScanAndIndexWorkspace(ctx, testOutputDir, idxStore, inference.GlobalEmbeddingSidecar)
+
+		// For docgen and codegen, also index the project root
+		if t.Category == CategoryDocgen || t.Category == CategoryCodegen {
+			_, _ = index.ScanAndIndexWorkspace(ctx, projectRoot, idxStore, inference.GlobalEmbeddingSidecar)
+		}
+	}
+
 	// For codegen tasks, augment the prompt with the target path inside testOutputDir
 	// so the planner directs write_file to the correct location.
 	taskPrompt := t.Prompt
-	projectRoot := tools.GetAllowedPaths()[0]
 	if codegenTargetPath != "" {
 		relCodegenPath, _ := filepath.Rel(projectRoot, codegenTargetPath)
 		taskPrompt = fmt.Sprintf("%s\n\nWrite the output file to: %s", taskPrompt, relCodegenPath)
@@ -816,6 +836,21 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 	// For TypeScript tasks, scaffold tsconfig + ambient type shims
 	if language == "typescript" {
 		scaffoldTypeScriptEnv(testOutputDir)
+	}
+
+	// ADR-0086: Initialize and populate task-isolated Repository Pre-Index in testOutputDir
+	projectRoot := tools.GetAllowedPaths()[0]
+	indexDBPath := filepath.Join(testOutputDir, ".tzro", "index.db")
+	if idxStore, idxErr := index.NewIndexStore(indexDBPath); idxErr == nil {
+		index.SetGlobalIndex(idxStore)
+		defer func() {
+			index.SetGlobalIndex(nil)
+			idxStore.Close()
+			_ = os.Remove(indexDBPath)
+		}()
+
+		_, _ = index.ScanAndIndexWorkspace(ctx, testOutputDir, idxStore, inference.GlobalEmbeddingSidecar)
+		_, _ = index.ScanAndIndexWorkspace(ctx, projectRoot, idxStore, inference.GlobalEmbeddingSidecar)
 	}
 
 	// Route: cloud mode always uses direct generation.

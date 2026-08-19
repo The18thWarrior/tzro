@@ -27,11 +27,18 @@ func TestInstallScript(t *testing.T) {
 	}
 
 	// Prepare environment for install.sh execution
+	// Sandbox HOME to prevent the MCP installer from writing to the real
+	// ~/.gemini/config/mcp_config.json — it resolves the config directory
+	// relative to HOME, so we must redirect it into the temp directory.
+	fakeHome := filepath.Join(tempDir, "fakehome")
+	os.MkdirAll(fakeHome, 0o755)
 	cmd := exec.Command("bash", "install.sh")
 	cmd.Env = append(os.Environ(),
 		"TZRO_INSTALL_DIR="+tempDir,
 		"TZRO_MOCK_DOWNLOAD=true",
 		"TZRO_SOURCE_BIN="+realBinPath,
+		"TZRO_NON_INTERACTIVE=true",
+		"HOME="+fakeHome,
 	)
 
 	// Capture output

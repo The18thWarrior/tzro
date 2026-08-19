@@ -2,6 +2,36 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-19T11:12:00-07:00] tdd | Repository Pre-Index, Dual-Plane Indexing & Context Budget Packing (ADR-0086)
+
+- **Activity**: Implemented the complete 5-slice vertical tracer-bullet architecture for the Repository Pre-Index, Dual-Plane Indexing, Hybrid Search with Reciprocal Rank Fusion, Context Budget Packing, and Probe Node Direct Synthesis Pre-flight integration.
+- **Key Deliverables**:
+  1. **IndexStore Persistence & Schema** ([`internal/index/store.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/store.go)):
+     - SQLite-backed storage (`.tzro/index.db`) managing `index_files`, `index_symbols`, `index_edges`, `index_doc_chunks`, and `index_fts` virtual table for BM25 text search.
+  2. **Document Plane Parser & Chunker** ([`internal/index/chunker.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/chunker.go)):
+     - Structural Markdown heading decomposition (`#`, `##`, `###`), plain-text paragraph chunking, and backticked symbol identifier extraction.
+  3. **Hybrid Search & Reciprocal Rank Fusion** ([`internal/index/search.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/search.go)):
+     - Concurrent FTS5 BM25 match + EmbeddingSidecar vector cosine similarity merged via $\text{RRF} = 1/(60+\text{Rank}_{\text{FTS}}) + 1/(60+\text{Rank}_{\text{Vec}})$.
+  4. **Context Budget Packer** ([`internal/index/packer.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/packer.go)):
+     - Knapsack-style budget packer filtering below confidence floor and packing up to 70% Reserve-Ratio context budget (~6,000 tokens) into structured Markdown sections.
+  5. **Workspace Scanner & Probe Direct Synthesis Pre-flight** ([`internal/index/indexer.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/indexer.go), [`internal/executor/probe_index.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_index.go), [`internal/executor/probe_analyze_node.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_analyze_node.go)):
+     - Scans workspace with file-hash staleness checks and auto-promotes Probe Nodes with high index confidence ($\ge 0.012$ RRF) to instant `DirectSynthesis`.
+- **Verification**: 100% test pass rate across `internal/index/...`, `internal/symbols/...`, `internal/compiler/...`, and `internal/executor/...`.
+
+## [2026-08-19T11:08:00-07:00] grill-with-docs | Repository Pre-Index, Dual-Plane Indexing & Context Budget Packing (ADR-0086)
+
+- **Activity**: Grill-with-docs session stress-testing the architecture for workspace pre-indexing (AST + Documents + Embeddings) against Probe Node wall-clock latency, token usage, and multi-modal document search.
+- **Key Design Decisions Resolved**:
+  1. **Index Lifecycle & Invalidation (Option 1)**: Eager background index ingestion by the daemon at workspace startup (`.tzro/index.db`), with `<10ms` incremental file invalidation on filesystem save events via `fsnotify`.
+  2. **Dual-Plane Indexing & Vector Scope (Option 1)**: Partitioning into an AST-backed **Code Plane** (symbols, signatures, call edges, package docstrings) and a heading/page-chunked **Document Plane** (`.md`, `.txt`, `.pdf`, `.docx`). Embedding Sidecar vectorizes document chunks and package/struct docstrings, while internal symbol bodies rely on AST graph + FTS5 BM25 search.
+  3. **Context Budget Packing (Option 1)**: Knapsack-style budget packer filtering candidate chunks against a confidence floor and packing up to a 70% Context Reserve Ratio (with 15% Prompt overhead and 15% Generation room), bypassing multi-turn Probe Thought Chains into single-shot synthesis.
+  4. **Fallback & Exploration Escape Hatch (Option 1)**: Transparent hybrid demotion to the multi-step `Thought Chain` / `Deterministic Walker` (ADR-0019, ADR-0078) when retrieval confidence is low (< 0.50) or targets unindexed ephemeral paths.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added canonical definitions for **Repository Pre-Index**, **Dual-Plane Indexing**, and **Context Budget Packer**.
+  - `docs/adr/0086-repository-pre-index-and-dual-plane-retrieval.md`: Authored and accepted ADR-0086.
+  - `docs/wiki/index.md`: Registered ADR-0086 in the architecture decision log.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
 ## [2026-08-18T20:56:00-07:00] grill-with-docs | Goal-Specific Inventory Extractor & Map-Reduce Documentation Pipeline (ADR-0084)
 
 - **Activity**: Grill-with-docs session analyzing `adr_summary`, `internal_architecture`, and `comprehensive_readme` benchmark regressions (caused by hardcoded top-10 candidate pruning and sequential tool loops) and architecting the **Goal-Specific Inventory Extractor** Map-Reduce pipeline.
