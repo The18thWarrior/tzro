@@ -121,6 +121,13 @@ type LocalModelManager struct {
 	consecutiveSpeedFail       map[string]int
 	thermalCloudEscalationTime map[string]time.Time // taskID → when thermal cloud escalation was triggered
 	fallbackMutex              sync.RWMutex
+
+	// MoE-aware memory tracking: MoE models mmap weights lazily — different expert
+	// layers page into resident memory as diverse inputs activate them. Over time,
+	// the RSS grows monotonically as the resident expert working set expands. The
+	// only way to reclaim this memory is a full process restart.
+	baselineRSS       int64 // RSS (bytes) recorded after first task; 0 = not yet measured
+	tasksSinceRecycle int   // tasks completed since last sidecar start/recycle
 }
 
 func (m *LocalModelManager) getPublisher() telemetry.EventPublisher {
@@ -220,6 +227,10 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		m.GGUFModelPath = filepath.Join(config.GetModelsDir(), filepath.Base(m.GGUFModelPath))
 	}
 	m.Status = "Starting"
+
+	// Reset MoE memory tracking for fresh sidecar lifecycle
+	m.baselineRSS = 0
+	m.tasksSinceRecycle = 0
 
 	// Acquire exclusive filesystem lock to prevent concurrent llama-server spawning
 	// across processes (tzro-mcp and tzrod race on simultaneous IDE restart).
@@ -699,46 +710,92 @@ func (m *LocalModelManager) getProcessRSS(pid int) (int64, error) {
 	return kb * 1024, nil
 }
 
-// CheckAndTriggerTier2GC evaluates Resident Set Size (RSS) memory after a task completes,
-// and gracefully recycles the local inference sidecar if memory limits are exceeded (e.g., 12GB).
+// CheckAndTriggerTier2GC evaluates memory growth and task count after a task completes,
+// and gracefully recycles the local inference sidecar when thresholds are exceeded.
+//
+// MoE-aware recycling: MoE models (e.g., Ling) mmap their weights lazily — different
+// expert layers page into resident memory as diverse inputs activate them. Over time,
+// the RSS grows monotonically as the resident expert working set expands. The only way
+// to reclaim this memory is a full process restart, which resets the mmap page table.
+//
+// Three recycling triggers (OR logic — first to fire wins):
+//  1. RSS delta: current RSS exceeds baseline by >1GB (MoE expert page accumulation)
+//  2. Task count: 10 tasks since last recycle (prevents gradual degradation)
+//  3. Absolute RSS: process exceeds memory-proportional absolute cap (safety net)
 func (m *LocalModelManager) CheckAndTriggerTier2GC(ctx context.Context) {
+	const (
+		recycleRSSDeltaBytes = 1 * 1024 * 1024 * 1024 // 1GB growth from baseline triggers recycle
+		recycleTaskInterval  = 10                      // Recycle every 10 tasks
+	)
+
 	m.mutex.Lock()
 	pid := m.ActivePID
 	status := m.Status
+	m.tasksSinceRecycle++
+	taskCount := m.tasksSinceRecycle
+	baseline := m.baselineRSS
 	m.mutex.Unlock()
 
 	if (status != "Active" && status != "Adopted") || pid <= 0 {
 		return
 	}
 
-	if rss, err := m.getProcessRSS(pid); err == nil {
-		// 8GB threshold limit = 8 * 1024 * 1024 * 1024 bytes (adjusted for E4B model + 2GB cache)
-		const threshold = 8 * 1024 * 1024 * 1024
-		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Current sidecar RSS memory usage: %dMB (Threshold: 8192MB)\n", rss/(1024*1024))
-
-		if rss > threshold {
-			fmt.Fprintln(os.Stderr, "[Llama Sidecar GC] RSS threshold exceeded. Triggering Tier 2 Graceful Process Recycling...")
-
-			m.getPublisher().PublishEvent("sidecar_recycling", "system", strconv.Itoa(pid), fmt.Sprintf("RSS memory (%dMB) exceeded threshold; recycling sidecar process", rss/(1024*1024)))
-
-			// Stop the server sidecar gracefully
-			_ = m.Stop()
-
-			// Start a fresh one in the background asynchronously
-			go func() {
-				time.Sleep(1 * time.Second)
-				bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				defer cancel()
-				if err := m.Start(bgCtx); err != nil {
-					fmt.Fprintf(os.Stderr, "[Llama Sidecar GC Error] Asynchronous process restart failed: %v\n", err)
-				} else {
-					fmt.Fprintln(os.Stderr, "[Llama Sidecar GC] Successfully completed Tier 2 sidecar process recycling!")
-				}
-			}()
-		}
-	} else {
+	rss, err := m.getProcessRSS(pid)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC Warning] Failed to check RSS memory usage: %v\n", err)
+		return
 	}
+
+	// Record baseline RSS on first measurement (after model is warm from first task)
+	if baseline == 0 {
+		m.mutex.Lock()
+		m.baselineRSS = rss
+		m.mutex.Unlock()
+		fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Baseline RSS recorded: %dMB (PID %d)\n", rss/(1024*1024), pid)
+		return
+	}
+
+	// Compute thresholds
+	rssDelta := rss - baseline
+	absoluteThreshold := getAbsoluteRSSThreshold(getSystemMemoryGB())
+
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] RSS: %dMB (baseline: %dMB, delta: %+dMB, tasks: %d) | Thresholds: delta>%dMB, tasks>%d, absolute>%dMB\n",
+		rss/(1024*1024), baseline/(1024*1024), rssDelta/(1024*1024),
+		taskCount, recycleRSSDeltaBytes/(1024*1024), recycleTaskInterval, absoluteThreshold/(1024*1024))
+
+	// Evaluate triggers (OR logic)
+	var reason string
+	switch {
+	case rssDelta > recycleRSSDeltaBytes:
+		reason = fmt.Sprintf("RSS delta %dMB exceeds %dMB threshold (MoE expert page accumulation)",
+			rssDelta/(1024*1024), recycleRSSDeltaBytes/(1024*1024))
+	case taskCount >= recycleTaskInterval:
+		reason = fmt.Sprintf("task count %d reached %d-task recycle interval",
+			taskCount, recycleTaskInterval)
+	case rss > absoluteThreshold:
+		reason = fmt.Sprintf("absolute RSS %dMB exceeds %dMB safety threshold",
+			rss/(1024*1024), absoluteThreshold/(1024*1024))
+	default:
+		return // No trigger fired
+	}
+
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar GC] Recycling sidecar: %s\n", reason)
+	m.getPublisher().PublishEvent("sidecar_recycling", "system", strconv.Itoa(pid), reason)
+
+	// Stop the server sidecar gracefully
+	_ = m.Stop()
+
+	// Start a fresh one in the background asynchronously
+	go func() {
+		time.Sleep(1 * time.Second)
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := m.Start(bgCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "[Llama Sidecar GC Error] Asynchronous process restart failed: %v\n", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "[Llama Sidecar GC] Sidecar recycled successfully — fresh mmap, clean expert working set")
+		}
+	}()
 }
 
 // PreemptForChat (KV Cache Preemption) saves active background task context to slot_0.bin,
@@ -923,6 +980,22 @@ func getSystemMemoryGB() int {
 
 	// Fallback: assume 16GB (conservative default)
 	return 16
+}
+
+// getAbsoluteRSSThreshold returns the absolute RSS ceiling (in bytes) for
+// sidecar recycling as a safety net. Uses max(3GB, 25% of system RAM):
+//
+//	 8GB system → 3.0GB threshold
+//	16GB system → 4.0GB threshold
+//	24GB system → 6.0GB threshold
+//	32GB system → 8.0GB threshold
+func getAbsoluteRSSThreshold(memoryGB int) int64 {
+	proportional := int64(memoryGB) * 1024 * 1024 * 1024 / 4 // 25% of system RAM
+	const minimum = 3 * 1024 * 1024 * 1024                   // 3GB floor
+	if proportional > minimum {
+		return proportional
+	}
+	return minimum
 }
 
 // getWorkerParallelSlots returns the number of parallel inference slots

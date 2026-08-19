@@ -550,9 +550,9 @@ func resolveFilterColumnLiteral(goalLower string, columns []string, excludeCol s
 	return ""
 }
 
-// extractLiteralValue extracts a filter value from the goal text by looking
-// for quoted strings or values adjacent to the column name. No LLM involved —
-// pure string extraction from the user's original text.
+// extractLiteralValue extracts a filter value from the goal text by scanning
+// for the column name, then an operator keyword, then a quoted or unquoted value.
+// Uses deterministic string scanning — no regex (per SOLUTION_APPROACH.md Principle 1).
 func extractLiteralValue(goal string, filterColumn string) string {
 	goalLower := strings.ToLower(goal)
 	colLower := strings.ToLower(filterColumn)
@@ -563,25 +563,75 @@ func extractLiteralValue(goal string, filterColumn string) string {
 		candidates = append(candidates, normCol)
 	}
 
+	operators := []string{"equals ", "= ", "is ", "matches ", "like "}
+
 	for _, cand := range candidates {
-		// Pattern 1: quoted value after column mention
-		// e.g., 'where Target_Account equals "Yes"' or "Country = 'USA'" or 'Target_Account? column equals "Yes"'
-		quotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(cand) + `[^"'\s]*(?:\s+column)?\s*(?:equals|=|is|matches|like)\s*["']([^"']+)["']`)
-		if m := quotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
-			return findOriginalCase(goal, m[1])
+		// Find the column mention in the text
+		colIdx := strings.Index(goalLower, cand)
+		if colIdx < 0 {
+			continue
 		}
 
-		// Pattern 2: unquoted value after "column equals/is value"
-		unquotedRe := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(cand) + `[^"'\s]*(?:\s+column)?\s*(?:equals|=|is|matches)\s+(\S+)`)
-		if m := unquotedRe.FindStringSubmatch(goalLower); len(m) > 1 {
-			val := strings.TrimRight(m[1], ".,;)")
-			if val != "" && len(val) < 50 {
-				return findOriginalCase(goal, val)
+		// Scan forward from end of column name, skipping optional suffixes and "column" keyword
+		afterCol := goalLower[colIdx+len(cand):]
+		afterColOrig := goal[colIdx+len(cand):]
+
+		// Skip non-alphanumeric chars (handles "Target_Account?" etc.) and optional " column"
+		trimmed := afterCol
+		trimmedOrig := afterColOrig
+		for len(trimmed) > 0 && trimmed[0] != ' ' && !isAlphaChar(trimmed[0]) {
+			trimmed = trimmed[1:]
+			trimmedOrig = trimmedOrig[1:]
+		}
+		trimmed = strings.TrimLeft(trimmed, " ")
+		trimmedOrig = strings.TrimLeft(trimmedOrig, " ")
+		if strings.HasPrefix(trimmed, "column ") {
+			trimmed = trimmed[7:]
+			trimmedOrig = trimmedOrig[7:]
+		}
+
+		// Look for an operator keyword
+		for _, op := range operators {
+			if !strings.HasPrefix(trimmed, op) {
+				continue
+			}
+			afterOp := trimmed[len(op):]
+			afterOpOrig := trimmedOrig[len(op):]
+
+			// Skip leading whitespace
+			afterOp = strings.TrimLeft(afterOp, " ")
+			afterOpOrig = strings.TrimLeft(afterOpOrig, " ")
+
+			if len(afterOp) == 0 {
+				continue
+			}
+
+			// Check for quoted value (single or double quotes)
+			if afterOp[0] == '\'' || afterOp[0] == '"' {
+				quote := afterOp[0]
+				endIdx := strings.IndexByte(afterOp[1:], quote)
+				if endIdx >= 0 && endIdx < 50 {
+					return afterOpOrig[1 : 1+endIdx]
+				}
+			}
+
+			// Unquoted value: take the next word
+			endIdx := strings.IndexAny(afterOp, " .,;)\n\t")
+			if endIdx < 0 {
+				endIdx = len(afterOp)
+			}
+			if endIdx > 0 && endIdx < 50 {
+				return afterOpOrig[:endIdx]
 			}
 		}
 	}
 
 	return ""
+}
+
+// isAlphaChar checks if a byte is an ASCII letter, digit, or underscore.
+func isAlphaChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
 // findOriginalCase finds the original-cased version of a value in the goal text.
@@ -1046,10 +1096,15 @@ func splitGoalIntoPhrases(goal string) []string {
 		if len(p) < 4 {
 			continue
 		}
-		// Skip phrases that are predominantly file paths
+		// Skip phrases that are predominantly file-reading instructions,
+		// but only if they don't also contain filter clauses (e.g., "Read the file... and filter where X is Y")
 		lower := strings.ToLower(p)
 		if strings.HasPrefix(lower, "read the csv") || strings.HasPrefix(lower, "read the contents") {
-			continue
+			hasFilter := strings.Contains(lower, "where ") || strings.Contains(lower, "filter ") ||
+				strings.Contains(lower, "equals ") || strings.Contains(lower, "matching ")
+			if !hasFilter {
+				continue
+			}
 		}
 		if strings.Contains(p, "/") && !strings.Contains(p, " ") {
 			continue // Pure file path
@@ -1066,9 +1121,43 @@ func splitGoalIntoPhrases(goal string) []string {
 // stripMetaParentheticals removes explanatory parenthetical remarks from goal text
 // (e.g., "(note the column name is misspelled)", "(the Accout_Owner column — note...")")
 // so instructional meta-language does not pollute filter value extraction.
+// Uses deterministic string scanning — no regex (per SOLUTION_APPROACH.md Principle 1).
 func stripMetaParentheticals(s string) string {
-	re := regexp.MustCompile(`\([^)]*(?:note|misspell|column|ignore|case-insensitive|format|named|spelled)[^)]*\)`)
-	return re.ReplaceAllString(s, " ")
+	metaKeywords := []string{"note", "misspell", "column", "ignore", "case-insensitive", "format", "named", "spelled"}
+	result := s
+	for {
+		openIdx := strings.Index(result, "(")
+		if openIdx < 0 {
+			break
+		}
+		closeIdx := strings.Index(result[openIdx:], ")")
+		if closeIdx < 0 {
+			break
+		}
+		closeIdx += openIdx
+		parenContent := strings.ToLower(result[openIdx : closeIdx+1])
+		isMeta := false
+		for _, kw := range metaKeywords {
+			if strings.Contains(parenContent, kw) {
+				isMeta = true
+				break
+			}
+		}
+		if isMeta {
+			result = result[:openIdx] + " " + result[closeIdx+1:]
+		} else {
+			// Skip past this parenthetical and continue scanning
+			// To avoid infinite loop, advance past the close paren
+			if closeIdx+1 >= len(result) {
+				break
+			}
+			// Temporarily replace this open paren to skip it
+			result = result[:openIdx] + "\x00" + result[openIdx+1:]
+		}
+	}
+	// Restore any sentinel bytes
+	result = strings.ReplaceAll(result, "\x00", "(")
+	return result
 }
 
 // isValidFilterValue checks whether a candidate filter value is grounded in actual data.
@@ -1125,9 +1214,22 @@ func isValidFilterValue(val string, col string, sampleValues map[string][]string
 		if len(valTrimmed) >= 4 && (strings.HasPrefix(valTrimmed, "20") || strings.HasPrefix(valTrimmed, "19")) {
 			return true
 		}
+		// Full-cache SQL fallback: if the value wasn't in the limited sample,
+		// check the actual cache table. This prevents false rejections when
+		// the target value (e.g., "Walmart") doesn't appear in the random sample.
+		if cacheValueExistsInColumn(col, valTrimmed) {
+			fmt.Fprintf(os.Stderr, "[QueryIntent] Filter value %q validated via full-cache SQL check for column %s\n", valTrimmed, col)
+			return true
+		}
 		return false
 	}
 
 	return true
 }
 
+// cacheValueExistsInColumn checks whether a candidate filter value actually exists
+// in the named column across any active cache table. This is the full-cache SQL
+// fallback for isValidFilterValue when the limited sample doesn't contain the value.
+func cacheValueExistsInColumn(col string, value string) bool {
+	return cache.ValueExistsInColumn(col, value)
+}

@@ -184,3 +184,30 @@ func TestGetRouterContextSize(t *testing.T) {
 		})
 	}
 }
+
+// --- getAbsoluteRSSThreshold: memory-proportional RSS safety net ---
+
+func TestGetAbsoluteRSSThreshold(t *testing.T) {
+	const GB = 1024 * 1024 * 1024
+	tests := []struct {
+		name     string
+		memoryGB int
+		expected int64
+	}{
+		{"8GB system gets 3GB floor", 8, 3 * GB},
+		{"12GB system gets 3GB floor", 12, 3 * GB},
+		{"16GB system gets 4GB (25%)", 16, 4 * GB},
+		{"24GB system gets 6GB (25%)", 24, 6 * GB},
+		{"32GB system gets 8GB (25%)", 32, 8 * GB},
+		{"64GB system gets 16GB (25%)", 64, 16 * GB},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getAbsoluteRSSThreshold(tt.memoryGB)
+			if got != tt.expected {
+				t.Errorf("getAbsoluteRSSThreshold(%d) = %d, want %d", tt.memoryGB, got, tt.expected)
+			}
+		})
+	}
+}

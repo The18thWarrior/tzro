@@ -415,6 +415,45 @@ func GetCacheSampleValues(cacheID string, columns []string, limit int) map[strin
 	return result
 }
 
+// ValueExistsInColumn checks whether a value exists in the specified column across
+// all active cache tables. Used as a full-cache fallback when sample-based grounding
+// rejects a filter value that may exist beyond the sampled rows.
+func ValueExistsInColumn(col string, value string) bool {
+	db := QueryDB()
+	if db == nil {
+		return false
+	}
+
+	// Get all active cache table names
+	rows, err := db.Query("SELECT table_name FROM _cache_tables")
+	if err != nil {
+		return false
+	}
+	var tables []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err == nil {
+			tables = append(tables, t)
+		}
+	}
+	rows.Close()
+
+	for _, table := range tables {
+		// Check if the column exists in this table before querying
+		var count int
+		query := fmt.Sprintf("SELECT COUNT(*) FROM [%s] WHERE [%s] = ? LIMIT 1", table, col)
+		if err := db.QueryRow(query, value).Scan(&count); err == nil && count > 0 {
+			return true
+		}
+		// Also try case-insensitive match
+		query = fmt.Sprintf("SELECT COUNT(*) FROM [%s] WHERE LOWER([%s]) = LOWER(?) LIMIT 1", table, col)
+		if err := db.QueryRow(query, value).Scan(&count); err == nil && count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // DropTaskTables removes all materialized cache tables owned by the given taskID.
 func DropTaskTables(taskID string) {
 	db := QueryDB()
