@@ -2,6 +2,19 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-18T20:56:00-07:00] grill-with-docs | Goal-Specific Inventory Extractor & Map-Reduce Documentation Pipeline (ADR-0084)
+
+- **Activity**: Grill-with-docs session analyzing `adr_summary`, `internal_architecture`, and `comprehensive_readme` benchmark regressions (caused by hardcoded top-10 candidate pruning and sequential tool loops) and architecting the **Goal-Specific Inventory Extractor** Map-Reduce pipeline.
+- **Key Design Decisions Resolved**:
+  1. **Architectural Placement (Option A)**: Embed as a specialized `Inventory Extractor` Phase within `ProbePhases` (`PhaseRunner`) rather than introducing new compiler-level nodes.
+  2. **Triggering & Intent Matching**: Trigger when target file candidates $> 5$ and neural cosine similarity between the goal vector and bulk-documentation intent prototypes $\ge 0.65$ (using the `EmbeddingSidecar`).
+  3. **Dynamic Schema Derivation (Option A)**: The local model derives 3–6 extraction fields with `minLength` and `maxLength` ($\le 256$ chars, configurable in `config.json`) and compiles a live GBNF grammar for the Map phase, falling back to a universal schema on failure.
+  4. **Deterministic File Tagging & Relevance Skipping**: The Go harness injects the file path deterministically (`file: string`), while the GBNF schema includes `{ "relevant": false }` to cleanly discard uninformative files.
+  5. **Content-Aware Slicing in Map Phase (Option A)**: Pass full content for small files ($\le 200$ lines), AST Code Skeletons for large code files, and top-150 lines for large markdown docs to ensure high throughput (<0.5s per file).
+  6. **Tagged YAML Matrix & Synthesis Gating (Option A)**: Transmit the aggregated Inventory Matrix to the Reduce phase in compact tagged block YAML (`---`), routing to single-pass synthesis for $\le 20$ rows and Sectioned Map-Reduce Synthesis for $> 20$ rows or multi-section documents.
+- **Artifacts Updated**:
+  - `CONTEXT.md`: Added canonical definitions for `Inventory Extractor` and `Inventory Matrix`.
+
 ## [2026-08-18T14:20:00-07:00] tdd | Dynamic Sectioned Map-Reduce Synthesis & Semantic Citation Remapping (ADR-0083)
 
 - **Activity**: Implemented the complete 4-stage Dynamic Sectioned Map-Reduce Synthesis pipeline and Semantic Citation Remapping verification gate for Web Research nodes under ADR-0083.
@@ -2182,3 +2195,23 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 - **Key Files Modified/Updated**:
   - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Updated Research Node definition with Entity-Partitioned Deep-Read Allocation)
   - [MODIFY] [log.md](log.md) (This log entry)
+
+---
+
+## [2026-08-18T21:40:00-07:00] grill-with-docs | Generalized Sectioned Map-Reduce Synthesis for DocGen and Research (ADR-0084)
+
+- **Activity**: Conducted a `/grill-with-docs` session diagnosing single-pass generation cap truncations in DocGen benchmark runs (`inference_module_docs`, `comprehensive_readme`). Formalized and aligned on the generalized Sectioned Map-Reduce Synthesis architecture.
+- **Terminology & Glossary Updates**:
+  - Broadened **Sectioned Map-Reduce Synthesis** in `CONTEXT.md` to encompass docgen and long-form codebase documentation while explicitly exempting pure code generation (`tzro_code`).
+  - Added **Dynamic Synthesis Outline** to `CONTEXT.md` defining GBNF-constrained outline blueprints with deterministic package/layer safety floors.
+- **Key Architectural Decisions**:
+  - **Dynamic GBNF Outline Planning**: Replaced brittle keyword regex checks (`compare`, `framework`) and static comparison templates with dynamic Local Model outline planning (`title`, `sections[]: {heading, objective, is_terminal}`).
+  - **Deterministic Safety Floor**: If a 4B model under-decomposes a large multi-file/multi-layer context ($>4,000$ chars, $>4$ packages), deterministic package/directory boundary partitioning kicks in.
+  - **Full Context Broadcasting & KV Cache Prefix Reuse**: Section generators receive the complete `refinedContext` + static AST Symbol reference block in the system prompt prefix (maximizing llama.cpp KV cache hit rate across sections $2 \dots N$) alongside Rolling Prefix Context (lead sentences of prior sections) and the specific section objective.
+  - **Deterministic Reduce Assembly & Section Truncation Guard**: Normalizes and stitches sections sequentially, verifies no individual section was cut off mid-sentence (triggering localized section retries rather than full-document cloud rewrites), validates AST Symbol Anchoring ($\ge 80\%$), and deterministically appends verified references.
+- **Key Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Broadened Sectioned Map-Reduce Synthesis, added Dynamic Synthesis Outline)
+  - [NEW] [0084-generalized-sectioned-map-reduce-synthesis.md](../adr/0084-generalized-sectioned-map-reduce-synthesis.md)
+  - [MODIFY] [index.md](index.md) (Indexed ADR-0083 and ADR-0084)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+

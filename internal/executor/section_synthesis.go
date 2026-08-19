@@ -13,6 +13,7 @@ import (
 	"tzro/internal/config"
 	"tzro/internal/embeddings"
 	"tzro/internal/inference"
+	"tzro/internal/symbols"
 )
 
 // EvidenceTable represents structured facts extracted from a single source URL (ADR-0083).
@@ -25,13 +26,14 @@ type EvidenceTable struct {
 	RawSnippets []string `json:"raw_snippets"` // Top-K k-NN text chunks
 }
 
-// SectionSpec represents a planned section in the document outline (ADR-0083).
+// SectionSpec represents a planned section in the document outline (ADR-0083, ADR-0085).
 type SectionSpec struct {
-	Heading         string `json:"heading"`          // e.g. "## 1. Core Architectural Patterns"
-	Objective       string `json:"objective"`        // What this section must cover
-	TargetSourceIDs []int  `json:"target_source_ids"`// [1, 2] or empty
-	FormatHint      string `json:"format_hint"`      // "table", "bulleted_deep_dive", "prose_comparison"
-	IsTerminal      bool   `json:"is_terminal"`      // True if conclusion/synthesis (gets all sources)
+	Heading         string `json:"heading"`           // e.g. "## 1. Core Architectural Patterns"
+	Objective       string `json:"objective"`         // What this section must cover
+	TargetSourceIDs []int  `json:"target_source_ids"` // [1, 2] or empty
+	FormatHint      string `json:"format_hint"`       // "table", "bulleted_deep_dive", "prose_comparison"
+	IsInitial       bool   `json:"is_initial"`        // True if overview/intro (synthesized after body)
+	IsTerminal      bool   `json:"is_terminal"`       // True if conclusion/synthesis (gets all sources)
 }
 
 // SynthesisOutline is the dynamic multi-section plan generated in Step 2 (ADR-0083).
@@ -145,6 +147,7 @@ const outlineGBNFSchema = `{
           "objective": {"type": "string"},
           "target_source_ids": {"type": "array", "items": {"type": "integer"}},
           "format_hint": {"type": "string"},
+          "is_initial": {"type": "boolean"},
           "is_terminal": {"type": "boolean"}
         },
         "required": ["heading", "objective", "target_source_ids", "is_terminal"]
@@ -172,6 +175,7 @@ func GenerateSynthesisOutline(ctx context.Context, engine ProbeInferenceEngine, 
 	systemPrompt := `You are an expert research architect designing a comprehensive synthesis outline.
 Plan a structured, multi-section technical document that thoroughly answers the user's research goal.
 Allocate specific source IDs (e.g. [1, 2]) to each section based on where the evidence belongs.
+Mark the first section (if executive summary or overview) with is_initial: true.
 The final section must be marked with is_terminal: true to perform the terminal synthesis.
 Return ONLY a valid JSON object matching the schema.`
 
@@ -210,9 +214,419 @@ Return ONLY a valid JSON object matching the schema.`
 			outline.Sections[i].Heading = fmt.Sprintf("## %d. %s", i+1, outline.Sections[i].Heading)
 		}
 	}
+	if len(outline.Sections) > 1 && isIntroHeading(outline.Sections[0].Heading) {
+		outline.Sections[0].IsInitial = true
+	}
 	outline.Sections[len(outline.Sections)-1].IsTerminal = true
 
 	return &outline, nil
+}
+
+// GenerateDocGenOutline dynamically plans a multi-section documentation outline from codebase context and symbols (ADR-0084, ADR-0085).
+func GenerateDocGenOutline(ctx context.Context, engine ProbeInferenceEngine, goal, refinedCtx string, syms []symbols.Symbol) (*SynthesisOutline, error) {
+	// Summary of discovered context for planning
+	var symSummary strings.Builder
+	if len(syms) > 0 {
+		symSummary.WriteString("\nDiscovered AST Symbols:\n")
+		for i, s := range syms {
+			if i >= 30 {
+				symSummary.WriteString(fmt.Sprintf("... and %d more symbols\n", len(syms)-30))
+				break
+			}
+			symSummary.WriteString(fmt.Sprintf("- %s (%s): %s\n", s.Name, s.Kind, s.Signature))
+		}
+	}
+
+	systemPrompt := `You are an expert technical documentation architect.
+Plan a structured, multi-section documentation outline that faithfully addresses the documentation goal (e.g. module architecture, API reference, function/symbol index, or system manual).
+Plan between 2 to 6 distinct sections. Do NOT collapse everything into one section.
+Mark the first section (if it is an overview or executive summary) with is_initial: true.
+Mark the final section (if it is a symbol index, API reference, or conclusion) with is_terminal: true.
+Return ONLY a valid JSON object matching the schema.`
+
+	userPrompt := fmt.Sprintf("Documentation Goal: %s\n%s\n\nDiscovery Context Preview:\n%s\nPlan the document outline in JSON now.",
+		goal, symSummary.String(), truncateForPrompt(refinedCtx, 4000))
+
+	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, outlineGBNFSchema, TargetWorker)
+	if err != nil || strings.TrimSpace(resp) == "" {
+		fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Warning: Outline generation failed (%v), using safety floor\n", err)
+		return BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms), nil
+	}
+
+	var outline SynthesisOutline
+	cleanedResp := stripThoughtAndFences(resp)
+	if err := json.Unmarshal([]byte(cleanedResp), &outline); err != nil || len(outline.Sections) == 0 {
+		firstBrace := strings.Index(cleanedResp, "{")
+		lastBrace := strings.LastIndex(cleanedResp, "}")
+		if firstBrace >= 0 && lastBrace > firstBrace {
+			_ = json.Unmarshal([]byte(cleanedResp[firstBrace:lastBrace+1]), &outline)
+		}
+	}
+
+	// Detect under-decomposition (lazy 1-section planner on non-trivial codebase context)
+	if len(outline.Sections) < 2 && (len(refinedCtx) >= 1500 || len(syms) >= 4 || strings.Contains(goal, "across") || strings.Contains(goal, "ALL")) {
+		fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Notice: Model under-decomposed outline (%d sections), applying safety floor\n", len(outline.Sections))
+		return BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms), nil
+	}
+
+	if len(outline.Sections) == 0 {
+		return BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms), nil
+	}
+
+	if outline.Title == "" {
+		outline.Title = deriveCleanDocumentTitle(goal)
+	}
+
+	for i := range outline.Sections {
+		if !strings.HasPrefix(outline.Sections[i].Heading, "#") {
+			outline.Sections[i].Heading = fmt.Sprintf("## %d. %s", i+1, outline.Sections[i].Heading)
+		}
+	}
+	if len(outline.Sections) > 1 && isIntroHeading(outline.Sections[0].Heading) {
+		outline.Sections[0].IsInitial = true
+	}
+	outline.Sections[len(outline.Sections)-1].IsTerminal = true
+
+	return &outline, nil
+}
+
+// IsFunctionIndexGoal detects if a prompt requests an exported function/symbol index rather than narrative docs.
+func IsFunctionIndexGoal(goal string) bool {
+	lower := strings.ToLower(goal)
+	return (strings.Contains(lower, "function index") || strings.Contains(lower, "symbol index") ||
+		strings.Contains(lower, "api index") || strings.Contains(lower, "exported function") ||
+		strings.Contains(lower, "exported type") || strings.Contains(lower, "symbol reference"))
+}
+
+// BuildDocGenSafetyFloorOutline builds a deterministic multi-section outline partitioned by module layers or symbol categories (ADR-0084, ADR-0085).
+func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbol) *SynthesisOutline {
+	lowerGoal := strings.ToLower(goal)
+	lowerCtx := strings.ToLower(refinedCtx)
+
+	if IsFunctionIndexGoal(goal) {
+		sections := []SectionSpec{
+			{
+				Heading:    "## 1. Exported Types & Interfaces",
+				Objective:  "List all exported structs, types, and interfaces with exact fields, signatures, and descriptions.",
+				FormatHint: "bulleted_deep_dive",
+				IsInitial:  false,
+				IsTerminal: false,
+			},
+			{
+				Heading:    "## 2. Package Functions & Constructors",
+				Objective:  "List all exported standalone package functions with exact parameter types, return values, and behavior descriptions.",
+				FormatHint: "bulleted_deep_dive",
+				IsInitial:  false,
+				IsTerminal: false,
+			},
+			{
+				Heading:    "## 3. Exported Methods on Types",
+				Objective:  "List all exported methods defined on structs and interfaces with receiver signatures and behavior.",
+				FormatHint: "bulleted_deep_dive",
+				IsInitial:  false,
+				IsTerminal: false,
+			},
+			{
+				Heading:    "## 4. Comprehensive Symbol Reference Table",
+				Objective:  "Provide an exhaustive, structured table of all exported symbols, their defining files, signatures, and one-line summaries.",
+				FormatHint: "table",
+				IsInitial:  false,
+				IsTerminal: true,
+			},
+		}
+		return &SynthesisOutline{
+			Title:    deriveCleanDocumentTitle(goal),
+			Sections: sections,
+		}
+	}
+
+	sections := []SectionSpec{
+		{
+			Heading:    "## 1. Architecture Overview & Design Principles",
+			Objective:  "Synthesize an in-depth breakdown of module architecture, core design principles, responsibilities, and structural organization.",
+			FormatHint: "prose",
+			IsInitial:  true,
+			IsTerminal: false,
+		},
+	}
+
+	// Check for core/local backend layers
+	if strings.Contains(lowerCtx, "backend") || strings.Contains(lowerCtx, "local_model") || strings.Contains(lowerGoal, "core") || strings.Contains(lowerGoal, "local") {
+		sections = append(sections, SectionSpec{
+			Heading:    fmt.Sprintf("## %d. Core Backends & Local Engine Management", len(sections)+1),
+			Objective:  "Detail InferenceBackend interface, LocalModelManager, backend implementations (llama-server, remote OpenAI), and context configurations.",
+			FormatHint: "prose",
+			IsInitial:  false,
+			IsTerminal: false,
+		})
+	}
+
+	// Check for routing layer
+	if strings.Contains(lowerCtx, "routing") || strings.Contains(lowerCtx, "sidecar") || strings.Contains(lowerGoal, "routing") || strings.Contains(lowerGoal, "sidecar") {
+		sections = append(sections, SectionSpec{
+			Heading:    fmt.Sprintf("## %d. Routing & Dual-Sidecar Mechanics", len(sections)+1),
+			Objective:  "Document dual-sidecar routing architecture, CallRouter and CallWorker dispatch flows, streaming variants, and cloud fallback mechanisms.",
+			FormatHint: "prose",
+			IsInitial:  false,
+			IsTerminal: false,
+		})
+	}
+
+	// Check for support/metrics/telemetry/thermal
+	if strings.Contains(lowerCtx, "thermal") || strings.Contains(lowerCtx, "token_tracker") || strings.Contains(lowerCtx, "metric") || strings.Contains(lowerGoal, "support") {
+		sections = append(sections, SectionSpec{
+			Heading:    fmt.Sprintf("## %d. Support Subsystems, Telemetry & Thermal Controls", len(sections)+1),
+			Objective:  "Document ThermalState, TokenTracker, GlobalMetrics, SQLite persistence callbacks, and model catalog entries.",
+			FormatHint: "prose",
+			IsInitial:  false,
+			IsTerminal: false,
+		})
+	}
+
+	// Fallback generic subsystems section if fewer than 3 sections planned
+	if len(sections) < 3 {
+		sections = append(sections, SectionSpec{
+			Heading:    fmt.Sprintf("## %d. Core Components & Subsystem Breakdown", len(sections)+1),
+			Objective:  "Detail all major structs, functions, lifecycle methods, and operational interactions discovered in the codebase.",
+			FormatHint: "prose",
+			IsInitial:  false,
+			IsTerminal: false,
+		})
+	}
+
+	// Terminal Public API & Usage Reference
+	sections = append(sections, SectionSpec{
+		Heading:    fmt.Sprintf("## %d. Public Symbols, Interfaces & Usage Patterns", len(sections)+1),
+		Objective:  "Provide an exhaustive reference of all public types, interfaces, methods, configuration context keys, and concrete code usage patterns.",
+		FormatHint: "bulleted_deep_dive",
+		IsInitial:  false,
+		IsTerminal: true,
+	})
+
+	return &SynthesisOutline{
+		Title:    deriveCleanDocumentTitle(goal),
+		Sections: sections,
+	}
+}
+
+type docGenUnit struct {
+	identifier string // e.g. "internal/inference/backend.go"
+	content    string
+	filePath   string
+}
+
+func parseRefinedContextUnits(refinedCtx string) []docGenUnit {
+	var units []docGenUnit
+	if strings.TrimSpace(refinedCtx) == "" {
+		return units
+	}
+
+	lines := strings.Split(refinedCtx, "\n")
+	var curIdentifier string
+	var curLines []string
+
+	flush := func() {
+		if len(curLines) > 0 {
+			content := strings.TrimSpace(strings.Join(curLines, "\n"))
+			if content != "" {
+				filePath := extractFilePathFromHeader(curIdentifier)
+				units = append(units, docGenUnit{
+					identifier: curIdentifier,
+					content:    content,
+					filePath:   filePath,
+				})
+			}
+		}
+		curLines = nil
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "File: ") || strings.HasPrefix(trimmed, "## File: ") {
+			flush()
+			curIdentifier = trimmed
+		}
+		curLines = append(curLines, line)
+	}
+	flush()
+
+	if len(units) == 0 && len(refinedCtx) > 0 {
+		units = append(units, docGenUnit{
+			identifier: "Discovery Context",
+			content:    refinedCtx,
+			filePath:   "",
+		})
+	}
+	return units
+}
+
+func extractFilePathFromHeader(header string) string {
+	lower := strings.ToLower(header)
+	re := regexp.MustCompile(`[\w\-\.\/]+\.(?:go|ts|js|py|rs|c|cpp|h|md|json)`)
+	if m := re.FindString(lower); m != "" {
+		return m
+	}
+	return ""
+}
+
+var docGenStopWords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "that": true, "this": true,
+	"from": true, "into": true, "over": true, "under": true, "about": true, "all": true,
+	"are": true, "was": true, "were": true, "will": true, "shall": true, "can": true,
+	"each": true, "every": true, "any": true, "some": true, "what": true, "how": true,
+	"section": true, "overview": true, "document": true, "documentation": true,
+}
+
+func extractQueryTokens(query string) []string {
+	words := regexp.MustCompile(`[a-zA-Z0-9_\-]+`).FindAllString(strings.ToLower(query), -1)
+	var tokens []string
+	seen := make(map[string]bool)
+	for _, w := range words {
+		if len(w) >= 3 && !docGenStopWords[w] && !seen[w] {
+			seen[w] = true
+			tokens = append(tokens, w)
+		}
+	}
+	return tokens
+}
+
+func filepathBase(path string) string {
+	idx := strings.LastIndexAny(path, "/\\")
+	if idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
+}
+
+func isIntroHeading(heading string) bool {
+	h := strings.ToLower(heading)
+	return strings.Contains(h, "overview") || strings.Contains(h, "executive summary") ||
+		strings.Contains(h, "introduction") || strings.Contains(h, "architecture overview")
+}
+
+// PartitionDocGenContext deterministically partitions refinedCtx and symbols for a given section (ADR-0085).
+// Caps context selection at maxContextChars (default 40,000 chars / ~10,000 tokens).
+func PartitionDocGenContext(
+	refinedCtx string,
+	syms []symbols.Symbol,
+	spec SectionSpec,
+	allSpecs []SectionSpec,
+	maxContextChars int,
+) (string, string) {
+	if maxContextChars <= 0 {
+		maxContextChars = 40000 // ~10,000 tokens cap
+	}
+
+	units := parseRefinedContextUnits(refinedCtx)
+	if len(units) == 0 && len(syms) == 0 {
+		return refinedCtx, ""
+	}
+
+	query := strings.ToLower(spec.Heading + " " + spec.Objective)
+	queryTokens := extractQueryTokens(query)
+
+	type scoredUnit struct {
+		unit  docGenUnit
+		score float64
+	}
+	var scored []scoredUnit
+
+	for _, u := range units {
+		score := 0.0
+		idLower := strings.ToLower(u.identifier)
+		contentLower := strings.ToLower(u.content)
+		pathLower := strings.ToLower(u.filePath)
+
+		for _, tok := range queryTokens {
+			if strings.Contains(idLower, tok) || strings.Contains(pathLower, tok) {
+				score += 5.0
+			}
+			if strings.Contains(contentLower, tok) {
+				score += 1.0
+			}
+		}
+
+		if u.filePath != "" {
+			base := strings.ToLower(filepathBase(u.filePath))
+			baseNameNoExt := strings.TrimSuffix(base, ".go")
+			if len(baseNameNoExt) >= 3 && strings.Contains(query, baseNameNoExt) {
+				score += 10.0
+			}
+		}
+
+		scored = append(scored, scoredUnit{unit: u, score: score})
+	}
+
+	// Sort descending by score
+	sort.SliceStable(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
+
+	var selectedUnits []docGenUnit
+	currentChars := 0
+	matchedFilePaths := make(map[string]bool)
+
+	for _, s := range scored {
+		unitLen := len(s.unit.content)
+		if currentChars+unitLen <= maxContextChars || len(selectedUnits) == 0 {
+			selectedUnits = append(selectedUnits, s.unit)
+			currentChars += unitLen
+			if s.unit.filePath != "" {
+				matchedFilePaths[s.unit.filePath] = true
+				matchedFilePaths[filepathBase(s.unit.filePath)] = true
+			}
+		}
+	}
+
+	var ctxBuilder strings.Builder
+	for _, u := range selectedUnits {
+		ctxBuilder.WriteString(u.content)
+		ctxBuilder.WriteString("\n\n")
+	}
+
+	// Filter symbols matching selected files or matching query tokens
+	var selectedSyms []symbols.Symbol
+	if spec.IsTerminal {
+		selectedSyms = syms
+	} else {
+		for _, sym := range syms {
+			symPath := strings.ToLower(sym.File)
+			symBase := strings.ToLower(filepathBase(sym.File))
+			symName := strings.ToLower(sym.Name)
+
+			if matchedFilePaths[symPath] || matchedFilePaths[symBase] {
+				selectedSyms = append(selectedSyms, sym)
+				continue
+			}
+			for _, tok := range queryTokens {
+				if len(tok) >= 3 && strings.Contains(symName, tok) {
+					selectedSyms = append(selectedSyms, sym)
+					break
+				}
+			}
+		}
+		if len(selectedSyms) == 0 && len(syms) > 0 {
+			selectedSyms = syms
+		}
+	}
+
+	var symBuilder strings.Builder
+	if len(selectedSyms) > 0 {
+		symBuilder.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
+		symBuilder.WriteString("Use ONLY these exact names when referring to types, functions, and interfaces:\n")
+		for _, s := range selectedSyms {
+			symBuilder.WriteString(fmt.Sprintf("- %s (%s, %s): %s\n", s.Name, s.Kind, filepathBase(s.File), s.Signature))
+		}
+	}
+
+	return strings.TrimSpace(ctxBuilder.String()), symBuilder.String()
+}
+
+func truncateForPrompt(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "\n... [truncated for outline planning]"
 }
 
 func stripThoughtAndFences(s string) string {
@@ -431,6 +845,229 @@ func RunSectionedSynthesisPipeline(ctx context.Context, engine ProbeInferenceEng
 	return finalDoc, nil
 }
 
+// ExecuteDocGenSectionedSynthesis executes Inside-Out (Sandwich) Map-Reduce sectioned synthesis for codebase documentation (ADR-0084, ADR-0085).
+func ExecuteDocGenSectionedSynthesis(ctx context.Context, goal, refinedCtx string, outline *SynthesisOutline, syms []symbols.Symbol, engine ProbeInferenceEngine) (string, error) {
+	if outline == nil || len(outline.Sections) == 0 {
+		outline = BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms)
+	}
+
+	numSections := len(outline.Sections)
+	if numSections == 0 {
+		return "", fmt.Errorf("empty outline")
+	}
+
+	// 1. Classify section roles for Inside-Out (Sandwich) execution
+	initialIdx := -1
+	terminalIdx := -1
+	var bodyIndices []int
+
+	for i, sec := range outline.Sections {
+		if sec.IsInitial || (i == 0 && numSections > 1 && isIntroHeading(sec.Heading)) {
+			if initialIdx == -1 {
+				initialIdx = i
+				continue
+			}
+		}
+		if sec.IsTerminal || (i == numSections-1 && numSections > 1) {
+			terminalIdx = i
+			continue
+		}
+		bodyIndices = append(bodyIndices, i)
+	}
+
+	// If no body indices identified (e.g. only 2 sections), make section 0 body if not initial
+	if len(bodyIndices) == 0 {
+		for i := 0; i < numSections; i++ {
+			if i != terminalIdx {
+				bodyIndices = append(bodyIndices, i)
+			}
+		}
+		initialIdx = -1
+	}
+
+	completedSections := make([]string, numSections)
+
+	// Phase 1: Synthesize all Body Sections with partitioned 10K-token context
+	for _, idx := range bodyIndices {
+		sec := outline.Sections[idx]
+		secCtx, secSymBlock := PartitionDocGenContext(refinedCtx, syms, sec, outline.Sections, 40000)
+
+		sysPrompt := fmt.Sprintf(`You are the Technical Documentation Synthesis Engine (Body Section Phase).
+Document Goal: %s
+
+## Relevant Codebase Context (Assigned Files & Verified Symbols):
+%s%s
+
+CRITICAL INSTRUCTIONS:
+- You are generating the body section: "%s".
+- Begin your response directly with the section heading "%s".
+- Focus deeply on writing comprehensive, technical, concrete code signatures, parameters, types, and operational mechanics.
+- Conclude cleanly without trailing fragments.`, goal, secCtx, secSymBlock, sec.Heading, sec.Heading)
+
+		userPrompt := fmt.Sprintf("Synthesize Section: %s\nObjective: %s\nWrite the complete markdown section now:", sec.Heading, sec.Objective)
+
+		callCtx := context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+			Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
+		})
+		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
+		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 1200)
+
+		secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		if err != nil || strings.TrimSpace(secText) == "" {
+			secText, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		}
+		secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
+		secText = strings.TrimSpace(secText)
+		if !strings.HasPrefix(secText, "#") {
+			secText = sec.Heading + "\n\n" + secText
+		}
+		completedSections[idx] = secText
+	}
+
+	// Build Body Summary Context for Initial and Terminal passes
+	var bodySummaryBuilder strings.Builder
+	for _, idx := range bodyIndices {
+		if completedSections[idx] != "" {
+			bodySummaryBuilder.WriteString(completedSections[idx])
+			bodySummaryBuilder.WriteString("\n\n---\n\n")
+		}
+	}
+	bodyContext := strings.TrimSpace(bodySummaryBuilder.String())
+	if len(bodyContext) > 30000 {
+		bodyContext = bodyContext[:30000] + "\n... [body truncated for overview context]"
+	}
+
+	// Phase 2: Synthesize Initial Section (Overview / Executive Summary) using synthesized body
+	if initialIdx >= 0 {
+		sec := outline.Sections[initialIdx]
+		sysPrompt := fmt.Sprintf(`You are the Technical Documentation Synthesis Engine (Executive Overview Phase).
+Document Goal: %s
+
+## Synthesized Document Body Sections (Authoritative Context):
+%s
+
+CRITICAL INSTRUCTIONS:
+- Synthesize the Executive Overview / Architecture Introduction for the document based directly on the synthesized body sections above.
+- Begin your response directly with the section heading "%s".
+- Ensure all architectural concepts, layer names, and referenced mechanisms match what is documented in the body.
+- Conclude cleanly without trailing fragments.`, goal, bodyContext, sec.Heading)
+
+		userPrompt := fmt.Sprintf("Synthesize Section: %s\nObjective: %s\nWrite the complete markdown overview now:", sec.Heading, sec.Objective)
+
+		callCtx := context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+			Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
+		})
+		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
+		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 1200)
+
+		secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		if err != nil || strings.TrimSpace(secText) == "" {
+			secText, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		}
+		secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
+		secText = strings.TrimSpace(secText)
+		if !strings.HasPrefix(secText, "#") {
+			secText = sec.Heading + "\n\n" + secText
+		}
+		completedSections[initialIdx] = secText
+	}
+
+	// Phase 3: Synthesize Terminal Section (Summary Table / Public API Index)
+	if terminalIdx >= 0 {
+		sec := outline.Sections[terminalIdx]
+		_, allSymBlock := PartitionDocGenContext(refinedCtx, syms, sec, outline.Sections, 40000)
+		if allSymBlock == "" && len(syms) > 0 {
+			var sb strings.Builder
+			sb.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
+			for _, s := range syms {
+				sb.WriteString(fmt.Sprintf("- %s (%s, %s): %s\n", s.Name, s.Kind, filepathBase(s.File), s.Signature))
+			}
+			allSymBlock = sb.String()
+		}
+
+		sysPrompt := fmt.Sprintf(`You are the Technical Documentation Synthesis Engine (Terminal Reference Phase).
+Document Goal: %s
+
+## Synthesized Document Body Sections:
+%s%s
+
+CRITICAL INSTRUCTIONS:
+- Synthesize the final Reference Section: "%s".
+- Begin your response directly with the section heading "%s".
+- Provide an exhaustive, well-structured reference table or symbol listing of all verified types, methods, and functions.
+- Conclude cleanly without trailing fragments.`, goal, bodyContext, allSymBlock, sec.Heading, sec.Heading)
+
+		userPrompt := fmt.Sprintf("Synthesize Section: %s\nObjective: %s\nWrite the complete markdown reference section now:", sec.Heading, sec.Objective)
+
+		callCtx := context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+			Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
+		})
+		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
+		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 1200)
+
+		secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		if err != nil || strings.TrimSpace(secText) == "" {
+			secText, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		}
+		secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
+		secText = strings.TrimSpace(secText)
+		if !strings.HasPrefix(secText, "#") {
+			secText = sec.Heading + "\n\n" + secText
+		}
+		completedSections[terminalIdx] = secText
+	}
+
+	// Phase 4: Assembly
+	var validSections []string
+	for _, s := range completedSections {
+		if strings.TrimSpace(s) != "" {
+			validSections = append(validSections, s)
+		}
+	}
+
+	var doc strings.Builder
+	docTitle := outline.Title
+	if docTitle == "" {
+		docTitle = deriveCleanDocumentTitle(goal)
+	}
+	if !strings.HasPrefix(docTitle, "#") {
+		docTitle = "# " + docTitle
+	}
+	doc.WriteString(docTitle)
+	doc.WriteString("\n\n")
+	doc.WriteString(strings.Join(validSections, "\n\n---\n\n"))
+	return doc.String(), nil
+}
+
+func checkAndRepairSectionTruncation(ctx context.Context, text, systemPrompt, userPrompt string, engine ProbeInferenceEngine) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return text
+	}
+
+	// Check if section ends abruptly (e.g. unclosed code block or trailing sentence fragment)
+	fenceCount := strings.Count(trimmed, "```")
+	isUnclosedFence := fenceCount%2 != 0
+
+	lastChar := trimmed[len(trimmed)-1:]
+	isFragment := !strings.ContainsAny(lastChar, ".!?:)]`\"'\n")
+
+	if isUnclosedFence || isFragment {
+		fmt.Fprintf(os.Stderr, "[SectionedSynthesis] Notice: Detected truncated section ending (fence=%v, fragment=%v) — repairing\n", isUnclosedFence, isFragment)
+		repairPrompt := userPrompt + "\n\nIMPORTANT: Conclude this section completely without hitting token limits. Ensure all code blocks and sentences are closed."
+		repaired, err := engine.Infer(ctx, systemPrompt, repairPrompt, "", TargetWorker)
+		if err == nil && len(strings.TrimSpace(repaired)) > 100 {
+			return repaired
+		}
+		if isUnclosedFence {
+			trimmed += "\n```"
+		}
+		return trimmed
+	}
+
+	return text
+}
+
 var citationRegex = regexp.MustCompile(`\[(\d+)\]`)
 
 // RemapAndGroundCitations validates citation tags, remaps out-of-bounds tags using embedding similarity (>= remapThresh),
@@ -577,6 +1214,47 @@ type ResearchSectionSpec struct {
 	FocusPrompt string
 	MaxTokens   int
 	IsTable     bool
+}
+
+// ShouldRunSectionedSynthesis determines if a synthesis goal warrants Sectioned Map-Reduce synthesis (ADR-0084).
+// Pure code-generation sinks (tzro_code) are strictly exempted.
+func ShouldRunSectionedSynthesis(goal, category, refinedCtx string, symbolCount, fileCount int, isCodegenSink bool) bool {
+	if isCodegenSink {
+		return false
+	}
+
+	cat := strings.ToLower(strings.TrimSpace(category))
+	if cat == "docgen" {
+		if fileCount >= 2 || symbolCount >= 4 || len(refinedCtx) >= 1500 || len(goal) >= 40 || IsDocGenGoal(goal) {
+			return true
+		}
+	}
+
+	if cat == "research" {
+		if fileCount >= 2 || len(refinedCtx) >= 1500 || len(goal) >= 40 || IsMultiSectionResearchGoal(goal) {
+			return true
+		}
+	}
+
+	// General intent detection based on goal semantics and discovered scope
+	if IsDocGenGoal(goal) || IsMultiSectionResearchGoal(goal) {
+		return true
+	}
+
+	if len(refinedCtx) >= 3500 && (symbolCount >= 4 || fileCount >= 3) {
+		return true
+	}
+
+	return false
+}
+
+// IsDocGenGoal detects if a prompt requests comprehensive module, architecture, or codebase documentation.
+func IsDocGenGoal(goal string) bool {
+	lower := strings.ToLower(goal)
+	return (strings.Contains(lower, "documentation") || strings.Contains(lower, "document") ||
+		strings.Contains(lower, "readme") || strings.Contains(lower, "architecture") ||
+		strings.Contains(lower, "module-level") || strings.Contains(lower, "covering all") ||
+		strings.Contains(lower, "public types") || strings.Contains(lower, "decision log")) && len(goal) >= 30
 }
 
 // IsMultiSectionResearchGoal determines if a goal warrants sectioned Map-Reduce synthesis.

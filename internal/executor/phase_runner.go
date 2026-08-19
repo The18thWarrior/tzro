@@ -205,18 +205,15 @@ func (pr *PhaseRunner) Run(
 			if !ok {
 				break
 			}
+			nextPhase := ""
 			// Find the matching result to determine next phase
 			for _, r := range results {
 				if r.PhaseName == currentPhaseName && phase.Transition != nil {
-					next := phase.Transition(r.StepsUsed, r, nil)
-					if next != "" {
-						currentPhaseName = next
-					} else {
-						currentPhaseName = ""
-					}
+					nextPhase = phase.Transition(r.StepsUsed, r, nil)
 					break
 				}
 			}
+			currentPhaseName = nextPhase
 			continue
 		}
 
@@ -296,6 +293,8 @@ func (pr *PhaseRunner) executePhase(
 		ProbeID:           pr.probeID,
 		GlobalStepCounter: &pr.globalStepCounter,
 		Goal:              pr.Goal,
+		Engine:            engine,
+		SynthesisEngine:   synthesisEngine,
 		ToolDispatcher:    pr.dispatchPhaseTool,
 		ToolFixup:         pr.ToolFixup,
 		ToolPostProcess:   pr.ToolPostProcess,
@@ -324,8 +323,13 @@ func (pr *PhaseRunner) executePhase(
 		}
 	}
 
-	// Synthesize phase summary using 1-shot synthesis engine
-	result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, result.ToolsCalled, driverResult.ToolOutputLog, synthesisEngine)
+	// For custom inventory drivers, preserve LastOutput directly as summary without redundant LLM pass
+	if phase.Name == "map_inventory" || phase.Name == "derive_schema" {
+		result.Summary = driverResult.LastOutput
+	} else {
+		// Synthesize phase summary using 1-shot synthesis engine
+		result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, result.ToolsCalled, driverResult.ToolOutputLog, synthesisEngine)
+	}
 
 	fmt.Fprintf(os.Stderr, "[PhaseRunner] Phase %q completed: %d steps, %d tools called\n",
 		phase.Name, result.StepsUsed, len(result.ToolsCalled))

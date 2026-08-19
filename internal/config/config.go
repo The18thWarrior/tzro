@@ -63,6 +63,12 @@ type EngineConfig struct {
 	ResearchCitationRemapThreshold   float32 `json:"researchCitationRemapThreshold,omitempty"`   // default 0.45
 	ResearchMetricBindingThreshold   float32 `json:"researchMetricBindingThreshold,omitempty"`   // default 0.65
 
+	// Inventory Extractor & Map-Reduce Documentation Pipeline (ADR-0084)
+	MinExtractionFields      int     `json:"minExtractionFields,omitempty"`      // default 3
+	MaxExtractionFields      int     `json:"maxExtractionFields,omitempty"`      // default 6
+	MaxFieldLength           int     `json:"maxFieldLength,omitempty"`           // default 256
+	InventoryIntentThreshold float64 `json:"inventoryIntentThreshold,omitempty"` // default 0.65
+
 	// Visual dashboard pacing delays in milliseconds
 	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
 	ExecutorLevelDelayMs int `json:"executorLevelDelayMs,omitempty"`
@@ -388,6 +394,10 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.ResearchEvidenceSnippetsPerSource = cfg.ResearchEvidenceSnippetsPerSource
 	GlobalConfig.ResearchCitationRemapThreshold = cfg.ResearchCitationRemapThreshold
 	GlobalConfig.ResearchMetricBindingThreshold = cfg.ResearchMetricBindingThreshold
+	GlobalConfig.MinExtractionFields = cfg.MinExtractionFields
+	GlobalConfig.MaxExtractionFields = cfg.MaxExtractionFields
+	GlobalConfig.MaxFieldLength = cfg.MaxFieldLength
+	GlobalConfig.InventoryIntentThreshold = cfg.InventoryIntentThreshold
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -1114,3 +1124,45 @@ func autoDetectRouterModel(workerPath string) string {
 
 	return bestPath
 }
+
+// GetMinExtractionFields returns the minimum number of dynamic extraction fields (default: 3).
+func GetMinExtractionFields() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	if GlobalConfig.MinExtractionFields > 0 {
+		return GlobalConfig.MinExtractionFields
+	}
+	return 3
+}
+
+// GetMaxExtractionFields returns the maximum number of dynamic extraction fields (default: 6).
+func GetMaxExtractionFields() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	if GlobalConfig.MaxExtractionFields > 0 {
+		return GlobalConfig.MaxExtractionFields
+	}
+	return 6
+}
+
+// GetMaxFieldLength returns the maximum character length for an extraction field (default: 256).
+func GetMaxFieldLength() int {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	if GlobalConfig.MaxFieldLength > 0 {
+		return GlobalConfig.MaxFieldLength
+	}
+	return 256
+}
+
+// GetInventoryIntentThreshold returns the cosine similarity threshold for inventory routing (default: 0.65).
+func GetInventoryIntentThreshold() float64 {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	if GlobalConfig.InventoryIntentThreshold > 0 {
+		return GlobalConfig.InventoryIntentThreshold
+	}
+	return 0.65
+}
+
+

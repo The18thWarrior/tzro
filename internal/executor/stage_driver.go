@@ -64,6 +64,8 @@ type PhaseRunnerContext struct {
 	ProbeID           string
 	GlobalStepCounter *int
 	Goal              string
+	Engine            ProbeInferenceEngine
+	SynthesisEngine   ProbeInferenceEngine
 	ToolDispatcher    func(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
 	ToolFixup         func(phaseName, toolName string, args map[string]interface{}, reasoning string) (string, map[string]interface{})
 	ToolPostProcess   func(phaseName, toolName string, args map[string]interface{}, output string, err error)

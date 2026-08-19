@@ -71,14 +71,19 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	discoverTools := filterTools(config.AllowedTools, []string{"list_dir", "search_files", "read_file"})
 	deepReadTools := filterTools(config.AllowedTools, []string{"read_file"})
 
-	// ADR-0058 / ADR-0082: Initialize Exploration Queue from PreloadPaths for
-	// deterministic loop-breaking and prune using neural embedding top-K ranking.
+	// ADR-0058 / ADR-0082 / ADR-0084: Initialize Exploration Queue from PreloadPaths.
+	// For multi-file documentation goals (ADR-0084), route directly to the Goal-Specific
+	// Inventory Extractor (Map-Reduce) to process all candidate files with zero omissions.
 	var explorationQueue *ExplorationQueue
 	if len(config.PreloadPaths) > 0 {
 		queueFiles := collectPreloadFiles(config.PreloadPaths)
+		if len(queueFiles) > 5 && IsInventoryGoal(context.Background(), config.Goal) {
+			fmt.Fprintf(os.Stderr, "[ProbePhases] Multi-file documentation goal detected (%d files) — routing to Goal-Specific Inventory Extractor\n", len(queueFiles))
+			return buildInventoryProbePhaseRunner(config, queueFiles)
+		}
 		if len(queueFiles) > 0 {
 			explorationQueue = NewExplorationQueue(queueFiles)
-			// ADR-0082: Prune broad candidate list to top-K relevance-scored items
+			// ADR-0082: Prune broad candidate list to top-K relevance-scored items for localized probes
 			if len(queueFiles) > 10 && config.Goal != "" {
 				explorationQueue.ScoreAndPrune(context.Background(), config.Goal, 10)
 				fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue pruned from %d to %d files for goal\n", len(queueFiles), len(explorationQueue.files))
@@ -275,3 +280,65 @@ func filterTools(available []string, allowed []string) []string {
 	}
 	return filtered
 }
+
+// buildInventoryProbePhaseRunner constructs a PhaseRunner for the Goal-Specific Inventory Extractor (ADR-0084).
+func buildInventoryProbePhaseRunner(config compiler.ProbeConfig, queueFiles []string) *PhaseRunner {
+	sourceTracker := NewSourceTracker()
+	mapDriver := &InventoryMapDriver{
+		Files: queueFiles,
+	}
+
+	runner := &PhaseRunner{
+		SourceTracker: sourceTracker,
+		Phases: map[string]*Phase{
+			"derive_schema": {
+				Name:         "derive_schema",
+				AllowedTools: []string{},
+				SystemPrompt: "Deriving extraction schema from task goal...",
+				StepBudget:   1,
+				Driver: &DynamicSchemaDriver{
+					Goal: config.Goal,
+					OnSchemaDerived: func(s *InventorySchema) {
+						mapDriver.Schema = s
+					},
+				},
+				Transition: func(step int, result PhaseResult, err error) string {
+					return "map_inventory"
+				},
+			},
+			"map_inventory": {
+				Name:         "map_inventory",
+				AllowedTools: []string{"read_file"},
+				SystemPrompt: "Extracting structured file inventory rows...",
+				StepBudget:   len(queueFiles),
+				Driver:       mapDriver,
+				Transition: func(step int, result PhaseResult, err error) string {
+					return "synthesize"
+				},
+			},
+			"synthesize": {
+				Name:         "synthesize",
+				AllowedTools: []string{},
+				SystemPrompt: buildInventorySynthesisPrompt(config.Goal),
+				StepBudget:   1,
+				Pass1Target:  TargetWorker,
+				Driver:       NewDeterministicQueueDriver(nil),
+			},
+		},
+		InitialPhase: "derive_schema",
+		MaxCycles:    1,
+		Goal:         config.Goal,
+	}
+
+	return runner
+}
+
+func buildInventorySynthesisPrompt(goal string) string {
+	var b strings.Builder
+	b.WriteString("You are synthesizing a complete, authoritative, and structured technical document based on the verified file inventory.\n")
+	b.WriteString("Every relevant file and component discovered in the inventory MUST be represented in your synthesis.\n")
+	b.WriteString("Do NOT omit, truncate, or hallucinate components.\n\n")
+	b.WriteString(fmt.Sprintf("Goal: %s", goal))
+	return b.String()
+}
+

@@ -334,19 +334,33 @@ IMPORTANT: Begin your response with the content directly. Do NOT write meta-comm
 		} else {
 			synthesis = cloudResult
 		}
-	} else if IsMultiSectionResearchGoal(goal) {
-		fmt.Fprintf(os.Stderr, "[Recall] Sectioned Map-Reduce synthesis triggered for multi-dimensional goal (ADR-0082)\n")
-		secSections := DecomposeResearchGoalIntoSections(goal)
-		secSynth, secErr := ExecuteSectionedSynthesis(synthCtx, goal, synthesisInput, secSections, engine)
-		if secErr == nil && len(secSynth) > 200 {
-			synthesis = secSynth
-		} else {
-			fmt.Fprintf(os.Stderr, "[Recall] Sectioned synthesis failed (%v) — falling back to single-pass\n", secErr)
-			synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
-			synthesis, err = engine.Infer(synthCtx, synthPrompt, synthUserPrompt, "", TargetWorker)
-			if err != nil {
-				return RecallResult{}, err
+	} else if ShouldRunSectionedSynthesis(goal, "", synthesisInput, len(symbolIndex), 0, strings.Contains(taskID, "codegen")) {
+		fmt.Fprintf(os.Stderr, "[Recall] Sectioned Map-Reduce synthesis triggered (ADR-0084)\n")
+
+		if IsDocGenGoal(goal) || strings.Contains(taskID, "docgen") {
+			outline, outErr := GenerateDocGenOutline(synthCtx, engine, goal, synthesisInput, symbolIndex)
+			if outErr == nil && outline != nil && len(outline.Sections) > 0 {
+				docSynth, docErr := ExecuteDocGenSectionedSynthesis(synthCtx, goal, synthesisInput, outline, symbolIndex, engine)
+				if docErr == nil && len(docSynth) > 200 {
+					synthesis = docSynth
+					goto postSynthesis
+				}
+				fmt.Fprintf(os.Stderr, "[Recall] DocGen sectioned synthesis failed (%v) — falling back to single-pass\n", docErr)
 			}
+		} else {
+			secSections := DecomposeResearchGoalIntoSections(goal)
+			secSynth, secErr := ExecuteSectionedSynthesis(synthCtx, goal, synthesisInput, secSections, engine)
+			if secErr == nil && len(secSynth) > 200 {
+				synthesis = secSynth
+				goto postSynthesis
+			}
+			fmt.Fprintf(os.Stderr, "[Recall] Research sectioned synthesis failed (%v) — falling back to single-pass\n", secErr)
+		}
+
+		synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
+		synthesis, err = engine.Infer(synthCtx, synthPrompt, synthUserPrompt, "", TargetWorker)
+		if err != nil {
+			return RecallResult{}, err
 		}
 	} else {
 		synthUserPrompt := fmt.Sprintf("Produce the comprehensive final response fulfilling the goal: %s", goal)
