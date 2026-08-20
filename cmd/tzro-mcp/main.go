@@ -13,6 +13,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"tzro/internal/config"
+	"tzro/internal/workspace"
 )
 
 var version = "1.0.0"
@@ -147,14 +148,38 @@ func main() {
 	// stdio transport process. The daemon itself is already singleton-guarded
 	// via daemon.lock, so multiple MCP bridges are safe to coexist.
 
+	// Workspace resolution: the InitializedHandler fires after the MCP
+	// handshake completes, at which point we can call ListRoots() to discover
+	// the IDE's workspace. The resolved workspace identity flows into
+	// bootstrapEngine() to scope the DB and allowedPaths.
+	type workspaceInfo struct {
+		rootPath   string
+		extraPaths []string
+	}
+	workspaceResolved := make(chan workspaceInfo, 1)
+
 	// Initialize MCP server and register tools FIRST so the stdio transport
 	// can start accepting the IDE's initialize handshake immediately.
 	// Heavy subsystem bootstrap (daemon discovery, inference, observer, etc.)
 	// runs in a background goroutine to avoid exceeding the IDE's connection timeout.
+	serverOpts := getResourcesServerOptions()
+	serverOpts.InitializedHandler = func(ctx context.Context, req *mcp.InitializedRequest) {
+		// Called once after the IDE sends notifications/initialized
+		rootsResult, err := req.Session.ListRoots(ctx, nil)
+		if err != nil {
+			log.Printf("[tzro-mcp] ListRoots failed (client may not support roots): %v", err)
+			workspaceResolved <- workspaceInfo{}
+			return
+		}
+		rootPath, extras := workspace.ResolveFromRoots(rootsResult.Roots)
+		log.Printf("[tzro-mcp] MCP roots resolved: root=%q, extras=%v", rootPath, extras)
+		workspaceResolved <- workspaceInfo{rootPath: rootPath, extraPaths: extras}
+	}
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "tzro",
 		Version: version,
-	}, getResourcesServerOptions())
+	}, serverOpts)
 	mcpServer = server
 
 	// Register tzro-specific tools (handlers will block on engineReady if needed)
@@ -163,7 +188,7 @@ func main() {
 	// Register dynamic MCP resources
 	registerResources(server)
 
-	// Background: daemon discovery + engine bootstrap
+	// Background: daemon discovery + workspace resolution + engine bootstrap
 	go func() {
 		if !isDaemonRunning() {
 			startDaemon()
@@ -181,8 +206,26 @@ func main() {
 			log.Println("[tzro-mcp] Reusing existing daemon at", config.GetDaemonURL())
 		}
 
+		// Wait for workspace identity resolution (from MCP roots or timeout)
+		var wsRoot string
+		var extraPaths []string
+		select {
+		case info := <-workspaceResolved:
+			wsRoot = info.rootPath
+			extraPaths = info.extraPaths
+		case <-time.After(2 * time.Second):
+			log.Println("[tzro-mcp] Workspace resolution timed out, checking env fallback")
+		}
+
+		// Fallback cascade: MCP roots → TZRO_WORKSPACE env → "default"
+		if wsRoot == "" {
+			wsRoot = workspace.ResolveFromEnv()
+		}
+		wsID := workspace.ID(wsRoot) // returns DefaultID for empty wsRoot
+		log.Printf("[tzro-mcp] Using workspace %s (root=%q)", wsID, wsRoot)
+
 		// Bootstrap engine subsystems (config, memory DB, inference, tools, observer)
-		bootstrapEngine()
+		bootstrapEngine(wsID, wsRoot, extraPaths)
 
 		// Signal that the engine is fully initialized
 		close(engineReady)

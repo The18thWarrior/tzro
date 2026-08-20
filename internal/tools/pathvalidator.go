@@ -6,15 +6,60 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"tzro/internal/config"
 )
 
+var (
+	overrideMu    sync.RWMutex
+	pathsOverride []string // when non-nil, GetAllowedPaths returns this instead of the default cascade
+)
+
+// SetAllowedPathsOverride sets a process-level override for GetAllowedPaths().
+// When set, these paths are returned INSTEAD of the mcp_config.json / TZRO_DIR / cwd cascade.
+// Pass nil to clear the override and restore default behavior.
+func SetAllowedPathsOverride(paths []string) {
+	overrideMu.Lock()
+	defer overrideMu.Unlock()
+	if paths == nil {
+		pathsOverride = nil
+		return
+	}
+	// Canonicalize and deduplicate
+	seen := make(map[string]bool)
+	var cleaned []string
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			continue
+		}
+		c := filepath.Clean(abs)
+		if real, err := filepath.EvalSymlinks(c); err == nil {
+			c = filepath.Clean(real)
+		}
+		if !seen[c] {
+			seen[c] = true
+			cleaned = append(cleaned, c)
+		}
+	}
+	pathsOverride = cleaned
+}
+
 // GetAllowedPaths resolves the allowed filesystem roots for filesystem tools.
-// Returns a deduplicated union of:
+// If a process-level override is set via SetAllowedPathsOverride, returns those paths.
+// Otherwise returns a deduplicated union of:
 //  1. allowedPaths from .tzro/mcp_config.json (if present)
 //  2. TZRO_DIR env var (always included if set, as a safety net)
 //  3. cwd (last resort, only if nothing else resolves)
 func GetAllowedPaths() []string {
+	// Check process-level override first (workspace-scoped paths)
+	overrideMu.RLock()
+	override := pathsOverride
+	overrideMu.RUnlock()
+	if override != nil {
+		return override
+	}
+
 	seen := make(map[string]bool)
 	var paths []string
 

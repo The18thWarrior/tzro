@@ -36,10 +36,17 @@ var DB = &SqliteDatabase{
 	dialect:  &db.SqliteDialect{},
 }
 
-func (sdb *SqliteDatabase) SetDBPathForTesting(path string) {
+// SetDBPath configures the database file path before Init() is called.
+// Used by workspace isolation to point memory.DB at a workspace-specific database.
+func (sdb *SqliteDatabase) SetDBPath(path string) {
 	sdb.mutex.Lock()
 	defer sdb.mutex.Unlock()
 	sdb.dbPath = path
+}
+
+// SetDBPathForTesting is an alias for SetDBPath retained for backwards compatibility.
+func (sdb *SqliteDatabase) SetDBPathForTesting(path string) {
+	sdb.SetDBPath(path)
 }
 
 func (sdb *SqliteDatabase) GetDBPathForTesting() string {

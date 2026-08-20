@@ -18,6 +18,7 @@ import (
 	"tzro/internal/sentinel"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
+	"tzro/internal/workspace"
 )
 
 // TelemetryLLMAdapter routes Observer reflection prompts using the ActiveBackend.
@@ -37,7 +38,36 @@ func (a *TelemetryLLMAdapter) CallModel(ctx context.Context, systemPrompt, userP
 	return res.Content, nil
 }
 
-func bootstrapEngine() {
+func bootstrapEngine(wsID, wsRoot string, extraPaths []string) {
+	// 0. Run legacy migration (moves $TZRO_DIR/tzro.db → workspaces/default/)
+	tzroDir := config.ResolvePath(".")
+	if migrated, err := workspace.MigrateLegacy(tzroDir); err != nil {
+		log.Printf("[tzro-mcp] Legacy migration failed: %v", err)
+	} else if migrated {
+		log.Println("[tzro-mcp] Migrated legacy tzro.db to workspaces/default/")
+	}
+
+	// 0b. Register workspace and point DB at workspace-specific path
+	reg := workspace.NewRegistry(config.ResolvePath("workspaces"))
+	if _, err := reg.Register(wsID, wsRoot); err != nil {
+		log.Printf("[tzro-mcp] Failed to register workspace %s: %v", wsID, err)
+	}
+	_ = reg.Touch(wsID)
+
+	// Set workspace-scoped DB path BEFORE Init()
+	memory.DB.SetDBPath(reg.DBPath(wsID))
+	log.Printf("[tzro-mcp] Workspace %s (root=%s) → DB: %s", wsID, wsRoot, reg.DBPath(wsID))
+
+	// Set workspace-scoped filesystem access boundary
+	allowedRoots := []string{}
+	if wsRoot != "" {
+		allowedRoots = append(allowedRoots, wsRoot)
+	}
+	allowedRoots = append(allowedRoots, extraPaths...)
+	if len(allowedRoots) > 0 {
+		tools.SetAllowedPathsOverride(allowedRoots)
+	}
+
 	// 1. Initialize Memory DB (SQLite WAL mode)
 	if err := memory.DB.Init(); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
