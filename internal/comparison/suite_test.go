@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -29,81 +28,71 @@ func TestRunComparisonSuite_RunsSingleConditionForFilteredTier(t *testing.T) {
 	finalContent := "# Function Index\n\n- `Hello() string` — returns \"world\""
 
 	// Mock ReAct server: first call = tool_call, second call = final text
-	var reactCallIdx int64
-	reactServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		idx := int(atomic.AddInt64(&reactCallIdx, 1) - 1)
-		w.Header().Set("Content-Type", "application/json")
-
-		if idx == 0 {
-			// Return tool call
-			resp := reactCompletionResponse{
-				Choices: []struct {
-					Message struct {
+	responses := []reactCompletionResponse{
+		{
+			Choices: []struct {
+				Message struct {
+					Content          *string         `json:"content"`
+					ReasoningContent *string         `json:"reasoning_content,omitempty"`
+					ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
+				} `json:"message"`
+				FinishReason string `json:"finish_reason"`
+			}{
+				{
+					Message: struct {
 						Content          *string         `json:"content"`
 						ReasoningContent *string         `json:"reasoning_content,omitempty"`
 						ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
-					} `json:"message"`
-					FinishReason string `json:"finish_reason"`
-				}{
-					{
-						Message: struct {
-							Content          *string         `json:"content"`
-							ReasoningContent *string         `json:"reasoning_content,omitempty"`
-							ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
-						}{
-							ToolCalls: []reactToolCall{
-								{
-									ID:   "call_1",
-									Type: "function",
-									Function: struct {
-										Name      string `json:"name"`
-										Arguments string `json:"arguments"`
-									}{
-										Name:      "read_file",
-										Arguments: fmt.Sprintf(`{"path": "%s"}`, testFile),
-									},
+					}{
+						ToolCalls: []reactToolCall{
+							{
+								ID:   "call_1",
+								Type: "function",
+								Function: struct {
+									Name      string `json:"name"`
+									Arguments string `json:"arguments"`
+								}{
+									Name:      "read_file",
+									Arguments: fmt.Sprintf(`{"path": "%s"}`, testFile),
 								},
 							},
 						},
-						FinishReason: "tool_calls",
 					},
+					FinishReason: "tool_calls",
 				},
-				Usage: struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-				}{PromptTokens: 100, CompletionTokens: 20},
-			}
-			_ = json.NewEncoder(w).Encode(resp)
-		} else {
-			// Return final text
-			resp := reactCompletionResponse{
-				Choices: []struct {
-					Message struct {
+			},
+			Usage: struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			}{PromptTokens: 100, CompletionTokens: 20},
+		},
+		{
+			Choices: []struct {
+				Message struct {
+					Content          *string         `json:"content"`
+					ReasoningContent *string         `json:"reasoning_content,omitempty"`
+					ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
+				} `json:"message"`
+				FinishReason string `json:"finish_reason"`
+			}{
+				{
+					Message: struct {
 						Content          *string         `json:"content"`
 						ReasoningContent *string         `json:"reasoning_content,omitempty"`
 						ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
-					} `json:"message"`
-					FinishReason string `json:"finish_reason"`
-				}{
-					{
-						Message: struct {
-							Content          *string         `json:"content"`
-							ReasoningContent *string         `json:"reasoning_content,omitempty"`
-							ToolCalls        []reactToolCall `json:"tool_calls,omitempty"`
-						}{
-							Content: &finalContent,
-						},
-						FinishReason: "stop",
+					}{
+						Content: &finalContent,
 					},
+					FinishReason: "stop",
 				},
-				Usage: struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-				}{PromptTokens: 200, CompletionTokens: 50},
-			}
-			_ = json.NewEncoder(w).Encode(resp)
-		}
-	}))
+			},
+			Usage: struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			}{PromptTokens: 200, CompletionTokens: 50},
+		},
+	}
+	reactServer := mockCloudServer(t, responses)
 	defer reactServer.Close()
 
 	// Mock judge server

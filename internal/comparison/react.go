@@ -1,6 +1,7 @@
 package comparison
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,32 +9,694 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"tzro/internal/config"
 	"tzro/internal/inference"
-	"tzro/internal/tools"
 )
 
 const (
-	maxReActIterations    = 50
-	maxAccumulatedTokens  = 200000 // Max context window size (not cumulative throughput)
-	middleOutThreshold    = 80000  // Trigger compression earlier for better quality preservation
-	middleOutKeepLines    = 80     // Lines to keep from head and tail of each tool result
-	recentToolCallsToKeep = 3      // Most recent tool results to leave uncompressed
+	reactSystemPrompt = `You are a documentation generator. You have access to filesystem tools to explore a Go codebase. Read the relevant source files, understand the code, and produce the requested documentation. Call tools as needed. When you have gathered enough information, output the final documentation as markdown.`
+
+	reactDatanalSystemPrompt = `You are a data analyst. You have access to filesystem tools (read_file, list_dir, search_files) to read and analyze structured data files. Read the specified data file, parse it as CSV/tabular data, and answer the question precisely. When analyzing CSV data: pay attention to column headers in the first row, handle empty/blank values explicitly, and count/group/filter as requested. Show your work — state the total record count and intermediate calculations before giving your final answer.`
+
+	reactResearchSystemPrompt = `You are a web researcher with access to web_search and web_browse tools. Your job is to find, verify, and synthesize information from the internet.
+
+IMPORTANT instructions:
+- Use web_search to find relevant sources for the research topic
+- Use web_browse to read full page content from the most promising URLs returned by search
+- Cross-reference information across multiple sources for accuracy
+- Always cite your sources with the actual URLs you visited
+- Do NOT fabricate or hallucinate URLs — only cite URLs you actually browsed
+- Synthesize findings into a coherent, well-structured analysis
+- When you have gathered enough information, output the final research synthesis as markdown`
+
+	localReActSystemPrompt = `You are a documentation generator running on a local model. You have access to filesystem tools to explore a Go codebase. Read the relevant source files, understand the code, and produce the requested documentation.
+
+IMPORTANT instructions for tool usage:
+- Always start by listing the project directory to understand the structure
+- Read specific files that are relevant to the documentation task
+- Use search_files to find specific patterns or function definitions
+- When you have gathered enough information, output the final documentation as markdown
+- Be thorough — explore multiple files and directories before writing
+- Do NOT hallucinate file contents — always read files before documenting them`
 )
 
-// reactMessage represents a single message in the ReAct conversation.
-type reactMessage struct {
-	Role       string          `json:"role"`
-	Content    interface{}     `json:"content,omitempty"`      // string for user/system/tool, nil for assistant with tool_calls
-	ToolCalls  []reactToolCall `json:"tool_calls,omitempty"`   // only for assistant messages
-	ToolCallID string          `json:"tool_call_id,omitempty"` // only for tool result messages
+type piReActOptions struct {
+	Task         ComparisonTask
+	Condition    string // ConditionCloudReAct or ConditionLocalReAct
+	Provider     string
+	Model        string
+	APIKey       string
+	BaseURL      string
+	SystemPrompt string
+	Pricing      PricingTable
+	IsLocal      bool
+	OutputDir    string
 }
 
-// reactToolCall represents a tool invocation from the model.
+// RunReAct executes a ReAct loop for a single task using pi-coder against the cloud model.
+func RunReAct(ctx context.Context, task ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
+	return RunReActWithEndpoint(ctx, task, pricing, "")
+}
+
+// RunReActWithEndpoint is like RunReAct but allows overriding the API endpoint (for testing or proxying).
+func RunReActWithEndpoint(ctx context.Context, task ComparisonTask, pricing PricingTable, endpoint string) (ComparisonResult, error) {
+	sysPrompt := reactSystemPrompt
+	if task.Category == CategoryDatanal {
+		sysPrompt = reactDatanalSystemPrompt
+	} else if task.Category == CategoryResearch {
+		sysPrompt = reactResearchSystemPrompt
+	}
+
+	cfg := config.Get()
+	provider := cfg.CloudProvider
+	if provider == "" {
+		provider = "google"
+	}
+	model := config.GetCloudModel()
+	if model == "" {
+		model = "gemini-flash-latest"
+	}
+	apiKey := config.GetCloudAPIKey()
+
+	var baseURL string
+	if endpoint != "" {
+		baseURL = strings.TrimSuffix(endpoint, "/chat/completions")
+		provider = "custom-cloud"
+		if apiKey == "" {
+			apiKey = "none"
+		}
+	}
+
+	opts := piReActOptions{
+		Task:         task,
+		Condition:    ConditionCloudReAct,
+		Provider:     provider,
+		Model:        model,
+		APIKey:       apiKey,
+		BaseURL:      baseURL,
+		SystemPrompt: sysPrompt,
+		Pricing:      pricing,
+		IsLocal:      false,
+	}
+
+	return runPiReAct(ctx, opts)
+}
+
+// RunLocalReAct executes a ReAct loop against the local llama-server sidecar using pi-coder.
+func RunLocalReAct(ctx context.Context, task ComparisonTask, pricing PricingTable, outputDir string) (ComparisonResult, error) {
+	localEndpoint, err := resolveLocalEndpoint()
+	if err != nil {
+		return ComparisonResult{
+			TaskID:    task.ID,
+			TaskTier:  task.Tier,
+			Condition: ConditionLocalReAct,
+			Error:     fmt.Sprintf("failed to resolve local sidecar: %v", err),
+		}, err
+	}
+
+	baseURL := strings.TrimSuffix(localEndpoint, "/chat/completions")
+
+	opts := piReActOptions{
+		Task:         task,
+		Condition:    ConditionLocalReAct,
+		Provider:     "tzro-local",
+		Model:        "local",
+		APIKey:       "none",
+		BaseURL:      baseURL,
+		SystemPrompt: localReActSystemPrompt,
+		Pricing:      pricing,
+		IsLocal:      true,
+		OutputDir:    outputDir,
+	}
+
+	return runPiReAct(ctx, opts)
+}
+
+// runPiReAct executes the pi-coder CLI in single-shot JSON mode, captures events,
+// counts tool calls, tracks token consumption, and extracts the final text response.
+func runPiReAct(ctx context.Context, opts piReActOptions) (ComparisonResult, error) {
+	tracker := inference.NewTokenTracker()
+	ctx = inference.WithTokenTracker(ctx, tracker)
+
+	piPath, err := exec.LookPath("pi")
+	if err != nil {
+		return ComparisonResult{
+			TaskID:    opts.Task.ID,
+			TaskTier:  opts.Task.Tier,
+			Condition: opts.Condition,
+			Error:     "pi CLI not found in PATH. Please install with: npm install -g @earendil-works/pi-coding-agent",
+		}, fmt.Errorf("pi executable not found in PATH: %w", err)
+	}
+
+	tempDir, err := os.MkdirTemp("", "tzro-pi-config-*")
+	if err != nil {
+		return ComparisonResult{
+			TaskID:    opts.Task.ID,
+			TaskTier:  opts.Task.Tier,
+			Condition: opts.Condition,
+			Error:     fmt.Sprintf("failed to create temp config directory: %v", err),
+		}, err
+	}
+	defer os.RemoveAll(tempDir)
+
+	if opts.BaseURL != "" {
+		modelsJSON := fmt.Sprintf(`{
+  "providers": {
+    %q: {
+      "baseUrl": %q,
+      "api": "openai-completions",
+      "apiKey": %q,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        { "id": %q }
+      ]
+    }
+  }
+}
+`, opts.Provider, opts.BaseURL, opts.APIKey, opts.Model)
+
+		if err := os.WriteFile(filepath.Join(tempDir, "models.json"), []byte(modelsJSON), 0600); err != nil {
+			return ComparisonResult{
+				TaskID:    opts.Task.ID,
+				TaskTier:  opts.Task.Tier,
+				Condition: opts.Condition,
+				Error:     fmt.Sprintf("failed to write models.json: %v", err),
+			}, err
+		}
+	}
+
+	// Write custom tools extension to make tzro's tool suite (read_file, list_dir, search_files, web_search, web_browse, write_file) available
+	extPath := filepath.Join(tempDir, "tzro-tools.js")
+	extContent := generateToolsExtension()
+	if err := os.WriteFile(extPath, []byte(extContent), 0600); err != nil {
+		return ComparisonResult{
+			TaskID:    opts.Task.ID,
+			TaskTier:  opts.Task.Tier,
+			Condition: opts.Condition,
+			Error:     fmt.Sprintf("failed to write tools extension: %v", err),
+		}, err
+	}
+
+	args := []string{"--mode", "json", "--no-session", "-e", extPath, "-p"}
+	if opts.Provider != "" {
+		args = append(args, "--provider", opts.Provider)
+	}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.APIKey != "" {
+		args = append(args, "--api-key", opts.APIKey)
+	}
+	if opts.SystemPrompt != "" {
+		args = append(args, "--system-prompt", opts.SystemPrompt)
+	}
+	args = append(args, opts.Task.Prompt)
+
+	cmd := exec.CommandContext(ctx, piPath, args...)
+	cmd.Stdin = bytes.NewReader(nil) // prevent pi from waiting for piped stdin
+
+	env := os.Environ()
+	if opts.BaseURL != "" {
+		env = append(env, "PI_CODING_AGENT_DIR="+tempDir)
+	}
+	if opts.APIKey != "" {
+		switch opts.Provider {
+		case "google":
+			env = append(env, "GEMINI_API_KEY="+opts.APIKey)
+		case "openai":
+			env = append(env, "OPENAI_API_KEY="+opts.APIKey)
+		}
+	}
+	cmd.Env = env
+
+	cwd, _ := os.Getwd()
+	cmd.Dir = cwd
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return ComparisonResult{
+			TaskID:    opts.Task.ID,
+			TaskTier:  opts.Task.Tier,
+			Condition: opts.Condition,
+			Error:     fmt.Sprintf("failed to create stdout pipe: %v", err),
+		}, err
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return ComparisonResult{
+			TaskID:    opts.Task.ID,
+			TaskTier:  opts.Task.Tier,
+			Condition: opts.Condition,
+			Error:     fmt.Sprintf("failed to create stderr pipe: %v", err),
+		}, err
+	}
+
+	startTime := time.Now()
+	if err := cmd.Start(); err != nil {
+		return ComparisonResult{
+			TaskID:    opts.Task.ID,
+			TaskTier:  opts.Task.Tier,
+			Condition: opts.Condition,
+			Error:     fmt.Sprintf("failed to start pi process: %v", err),
+		}, err
+	}
+
+	var stderrBuf bytes.Buffer
+	go func() {
+		_, _ = io.Copy(&stderrBuf, stderr)
+	}()
+
+	var finalOutput string
+	var toolCallCount int
+	var totalPromptTokens int
+	var totalCompletionTokens int
+
+	scanner := bufio.NewScanner(stdout)
+	buf := make([]byte, 1024*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+
+		var event struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+				Usage   *struct {
+					Input       int `json:"input"`
+					Output      int `json:"output"`
+					TotalTokens int `json:"totalTokens"`
+				} `json:"usage"`
+				ToolResults []json.RawMessage `json:"toolResults"`
+			} `json:"message"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+				Usage   *struct {
+					Input       int `json:"input"`
+					Output      int `json:"output"`
+					TotalTokens int `json:"totalTokens"`
+				} `json:"usage"`
+			} `json:"messages"`
+			AssistantMessageEvent *struct {
+				Type     string `json:"type"`
+				ToolName string `json:"toolName"`
+				Content  string `json:"content"`
+				Delta    string `json:"delta"`
+			} `json:"assistantMessageEvent"`
+		}
+
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+
+		if event.AssistantMessageEvent != nil {
+			if event.AssistantMessageEvent.Type == "toolcall_start" {
+				toolCallCount++
+			}
+		}
+
+		if event.Type == "agent_end" && len(event.Messages) > 0 {
+			var agentToolCalls int
+			var promptToks, complToks int
+			for _, msg := range event.Messages {
+				if msg.Role == "assistant" {
+					if msg.Usage != nil {
+						promptToks += msg.Usage.Input
+						complToks += msg.Usage.Output
+					}
+					texts, tcCount := parsePiContent(msg.Content)
+					if tcCount > 0 {
+						agentToolCalls += tcCount
+					}
+					if len(texts) > 0 {
+						finalOutput = strings.Join(texts, "\n")
+					}
+				}
+			}
+			if agentToolCalls > 0 && toolCallCount == 0 {
+				toolCallCount = agentToolCalls
+			}
+			if promptToks > 0 || complToks > 0 {
+				totalPromptTokens = promptToks
+				totalCompletionTokens = complToks
+			}
+		} else if (event.Type == "turn_end" || event.Type == "message_end") && event.Message != nil {
+			if event.Message.Role == "assistant" {
+				texts, tcCount := parsePiContent(event.Message.Content)
+				if len(texts) > 0 {
+					finalOutput = strings.Join(texts, "\n")
+				}
+				if tcCount > 0 && toolCallCount == 0 {
+					toolCallCount += tcCount
+				}
+			}
+		}
+	}
+
+	cmdErr := cmd.Wait()
+	wallClockMs := time.Since(startTime).Milliseconds()
+
+	if cmdErr != nil && finalOutput == "" {
+		errDetails := stderrBuf.String()
+		if errDetails == "" {
+			errDetails = cmdErr.Error()
+		}
+		return ComparisonResult{
+			TaskID:      opts.Task.ID,
+			TaskTier:    opts.Task.Tier,
+			Condition:   opts.Condition,
+			WallClockMs: wallClockMs,
+			Error:       fmt.Sprintf("pi process failed: %s", strings.TrimSpace(errDetails)),
+		}, cmdErr
+	}
+
+	duration := time.Since(startTime).Seconds()
+	speed := 0.0
+	if duration > 0 && totalCompletionTokens > 0 {
+		speed = float64(totalCompletionTokens) / duration
+	}
+	tracker.Record(!opts.IsLocal, totalPromptTokens, totalCompletionTokens, duration, speed)
+
+	localUsage, cloudUsage := tracker.GetUsage()
+	var estCost float64
+	if !opts.IsLocal {
+		estCost = EstimateCost(cloudUsage, inference.TokenUsage{}, opts.Pricing)
+	}
+
+	return ComparisonResult{
+		TaskID:        opts.Task.ID,
+		TaskTier:      opts.Task.Tier,
+		Condition:     opts.Condition,
+		CloudTokens:   cloudUsage,
+		LocalTokens:   localUsage,
+		WallClockMs:   wallClockMs,
+		EstCostUSD:    estCost,
+		ToolCallCount: toolCallCount,
+		OutputText:    finalOutput,
+	}, nil
+}
+
+// parsePiContent extracts text content strings and tool call occurrences from message content blocks.
+func parsePiContent(raw json.RawMessage) ([]string, int) {
+	if len(raw) == 0 {
+		return nil, 0
+	}
+
+	var str string
+	if err := json.Unmarshal(raw, &str); err == nil {
+		if str != "" {
+			return []string{str}, 0
+		}
+		return nil, 0
+	}
+
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		var texts []string
+		var toolCalls int
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				texts = append(texts, b.Text)
+			} else if b.Type == "toolCall" || b.Type == "tool_call" {
+				toolCalls++
+			}
+		}
+		return texts, toolCalls
+	}
+
+	return nil, 0
+}
+
+// generateToolsExtension creates a JavaScript extension for pi-coder that registers
+// tzro's core tool suite (read_file, list_dir, search_files, write_file, web_search, web_browse).
+func generateToolsExtension() string {
+	return `import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
+
+export default function(pi) {
+  // read_file
+  pi.registerTool({
+    name: "read_file",
+    description: "Read file content with optional line range. Returns raw content (max 200 lines per call).",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The path of the file to read." },
+        start_line: { type: "integer", description: "The starting line number to read (1-indexed, optional)." },
+        end_line: { type: "integer", description: "The ending line number to read (1-indexed, inclusive, optional)." },
+        offset: { type: "integer", description: "Line offset (alias for start_line)." },
+        limit: { type: "integer", description: "Number of lines to read (alias for count)." }
+      },
+      required: ["path"]
+    },
+    async execute(toolCallId, params) {
+      try {
+        const targetPath = params.path || params.file_path || params.filePath;
+        if (!targetPath) return { content: [{ type: "text", text: "Error: missing path parameter" }], isError: true };
+        const filePath = path.resolve(process.cwd(), targetPath);
+        const content = fs.readFileSync(filePath, "utf8");
+        const lines = content.split("\n");
+        let start = (params.start_line || params.offset || 1) - 1;
+        if (start < 0) start = 0;
+        let end = lines.length;
+        if (params.end_line) {
+          end = params.end_line;
+        } else if (params.limit) {
+          end = start + params.limit;
+        }
+        if (end > lines.length) end = lines.length;
+        const selected = lines.slice(start, end).join("\n");
+        return {
+          content: [{ type: "text", text: selected }],
+          details: {}
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: "Error reading file: " + err.message }],
+          isError: true
+        };
+      }
+    }
+  });
+
+  // list_dir
+  pi.registerTool({
+    name: "list_dir",
+    description: "List the contents of a directory with file sizes and types.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The path of the directory to list." },
+        recursive: { type: "boolean", description: "Whether to list subdirectories recursively (optional)." }
+      },
+      required: ["path"]
+    },
+    async execute(toolCallId, params) {
+      try {
+        const targetPath = params.path || params.dir_path || ".";
+        const dirPath = path.resolve(process.cwd(), targetPath);
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        const list = entries.map(e => {
+          let size = 0;
+          try {
+            if (e.isFile()) size = fs.statSync(path.join(dirPath, e.name)).size;
+          } catch (_) {}
+          return {
+            name: e.name,
+            is_dir: e.isDirectory(),
+            size: size
+          };
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(list, null, 2) }],
+          details: {}
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: "Error listing directory: " + err.message }],
+          isError: true
+        };
+      }
+    }
+  });
+
+  // search_files
+  pi.registerTool({
+    name: "search_files",
+    description: "Search for a text pattern across files using ripgrep. Returns matching file paths and line content.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The root directory to search in." },
+        pattern: { type: "string", description: "The pattern or query string to search for." },
+        query: { type: "string", description: "Query string (alias for pattern)." },
+        regex: { type: "boolean", description: "Whether pattern is a regex." }
+      },
+      required: ["path", "pattern"]
+    },
+    async execute(toolCallId, params) {
+      try {
+        const targetPath = params.path || ".";
+        const query = params.pattern || params.query || "";
+        const searchPath = path.resolve(process.cwd(), targetPath);
+        const rgArgs = ["-n", "--no-heading"];
+        if (!params.regex) rgArgs.push("-F");
+        rgArgs.push(query, searchPath);
+        const out = execSync("rg " + rgArgs.map(a => JSON.stringify(a)).join(" "), { encoding: "utf8", maxBuffer: 10*1024*1024 });
+        return {
+          content: [{ type: "text", text: out }],
+          details: {}
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: err.stdout || "No matches found" }],
+          details: {}
+        };
+      }
+    }
+  });
+
+  // write_file
+  pi.registerTool({
+    name: "write_file",
+    description: "Write content to a file. Use this to save your final documentation output.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The file path to write to" },
+        content: { type: "string", description: "The content to write to the file" }
+      },
+      required: ["path", "content"]
+    },
+    async execute(toolCallId, params) {
+      try {
+        const filePath = path.resolve(process.cwd(), params.path);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, params.content, "utf8");
+        return {
+          content: [{ type: "text", text: JSON.stringify({ status: "ok", bytes_written: Buffer.byteLength(params.content, "utf8") }) }],
+          details: {}
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: "Error writing file: " + err.message }],
+          isError: true
+        };
+      }
+    }
+  });
+
+  // web_search
+  pi.registerTool({
+    name: "web_search",
+    description: "Search the web for current information. Returns a list of results with titles, URLs, and snippets.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query" }
+      },
+      required: ["query"]
+    },
+    async execute(toolCallId, params) {
+      try {
+        const query = encodeURIComponent(params.query);
+        const res = await fetch("https://html.duckduckgo.com/html/?q=" + query, {
+          headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" }
+        });
+        const html = await res.text();
+        const results = [];
+        const regex = /<a[^>]*class="result__snippet"[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g;
+        let match;
+        while ((match = regex.exec(html)) !== null && results.length < 5) {
+          results.push({ url: match[1], snippet: match[2].replace(/<[^>]*>/g, "") });
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          details: {}
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: "Search error: " + err.message }],
+          isError: true
+        };
+      }
+    }
+  });
+
+  // web_browse
+  pi.registerTool({
+    name: "web_browse",
+    description: "Fetch a web page URL and return its text content.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The URL to browse" }
+      },
+      required: ["url"]
+    },
+    async execute(toolCallId, params) {
+      try {
+        const res = await fetch(params.url, {
+          headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" }
+        });
+        const text = await res.text();
+        const cleaned = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+                            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+                            .replace(/<[^>]+>/g, " ")
+                            .replace(/\s+/g, " ")
+                            .trim()
+                            .slice(0, 10000);
+        return {
+          content: [{ type: "text", text: cleaned }],
+          details: {}
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: "Browse error: " + err.message }],
+          isError: true
+        };
+      }
+    }
+  });
+}
+`
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Types retained for mock compatibility in test suites
+// ────────────────────────────────────────────────────────────────────────────
+
+const (
+	maxReActIterations   = 50
+	maxAccumulatedTokens = 200000
+)
+
+type reactMessage struct {
+	Role       string          `json:"role"`
+	Content    interface{}     `json:"content,omitempty"`
+	ToolCalls  []reactToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+}
+
 type reactToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
@@ -41,13 +704,9 @@ type reactToolCall struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
-	// ExtraContent carries opaque metadata from the API (e.g. thought_signature
-	// for Gemini thinking models). It MUST be echoed back verbatim in the
-	// assistant message to maintain reasoning continuity.
 	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
-// reactToolDef defines a tool for the OpenAI tools parameter.
 type reactToolDef struct {
 	Type     string `json:"type"`
 	Function struct {
@@ -57,7 +716,6 @@ type reactToolDef struct {
 	} `json:"function"`
 }
 
-// reactCompletionRequest is the request body for the OpenAI-compatible chat API with tools.
 type reactCompletionRequest struct {
 	Model       string         `json:"model"`
 	Messages    []reactMessage `json:"messages"`
@@ -65,7 +723,6 @@ type reactCompletionRequest struct {
 	Temperature float64        `json:"temperature"`
 }
 
-// reactCompletionResponse is the response from the OpenAI-compatible chat API.
 type reactCompletionResponse struct {
 	Choices []struct {
 		Message struct {
@@ -79,658 +736,6 @@ type reactCompletionResponse struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 	} `json:"usage"`
-}
-
-const reactSystemPrompt = `You are a documentation generator. You have access to filesystem tools to explore a Go codebase. Read the relevant source files, understand the code, and produce the requested documentation. Call tools as needed. When you have gathered enough information, output the final documentation as markdown.`
-
-const reactDatanalSystemPrompt = `You are a data analyst. You have access to filesystem tools (read_file, list_dir, search_files) to read and analyze structured data files. Read the specified data file, parse it as CSV/tabular data, and answer the question precisely. When analyzing CSV data: pay attention to column headers in the first row, handle empty/blank values explicitly, and count/group/filter as requested. Show your work — state the total record count and intermediate calculations before giving your final answer.`
-
-const reactResearchSystemPrompt = `You are a web researcher with access to web_search and web_browse tools. Your job is to find, verify, and synthesize information from the internet.
-
-IMPORTANT instructions:
-- Use web_search to find relevant sources for the research topic
-- Use web_browse to read full page content from the most promising URLs returned by search
-- Cross-reference information across multiple sources for accuracy
-- Always cite your sources with the actual URLs you visited
-- Do NOT fabricate or hallucinate URLs — only cite URLs you actually browsed
-- Synthesize findings into a coherent, well-structured analysis
-- When you have gathered enough information, output the final research synthesis as markdown`
-
-// buildReActTools creates the OpenAI-compatible tool definitions and a dispatch map.
-func buildReActTools() ([]reactToolDef, map[string]*tools.BaseAgentTool) {
-	// Create a path validator rooted at the project directory
-	cwd, _ := os.Getwd()
-	validator := tools.NewPathValidator([]string{cwd})
-
-	readFile := tools.NewReadFileTool(validator)
-	listDir := tools.NewListDirTool(validator)
-	searchFiles := tools.NewSearchFilesTool(validator)
-
-	dispatch := map[string]*tools.BaseAgentTool{
-		"read_file":    readFile,
-		"list_dir":     listDir,
-		"search_files": searchFiles,
-	}
-
-	var defs []reactToolDef
-	for name, tool := range dispatch {
-		schema, _ := tool.GetSchema()
-		var params interface{}
-		_ = json.Unmarshal([]byte(schema), &params)
-
-		def := reactToolDef{Type: "function"}
-		def.Function.Name = name
-		def.Function.Description = getToolDescription(name)
-		def.Function.Parameters = params
-		defs = append(defs, def)
-	}
-
-	return defs, dispatch
-}
-
-// buildResearchReActTools creates tools for web research tasks: web_search and web_browse.
-func buildResearchReActTools() ([]reactToolDef, map[string]*tools.BaseAgentTool) {
-	webSearch := tools.NewWebSearchTool()
-	webBrowse := tools.NewWebBrowseTool()
-
-	dispatch := map[string]*tools.BaseAgentTool{
-		"web_search": webSearch,
-		"web_browse": webBrowse,
-	}
-
-	var defs []reactToolDef
-	for name, tool := range dispatch {
-		schema, _ := tool.GetSchema()
-		var params interface{}
-		_ = json.Unmarshal([]byte(schema), &params)
-
-		def := reactToolDef{Type: "function"}
-		def.Function.Name = name
-		def.Function.Description = getResearchToolDescription(name)
-		def.Function.Parameters = params
-		defs = append(defs, def)
-	}
-
-	return defs, dispatch
-}
-
-// buildLocalReActTools extends buildReActTools with a synthetic write_file
-// tool that acts as an output sink. When the local model calls write_file,
-// the loop captures the content argument as the final documentation output.
-// This is needed because small local models instinctively try to "save" their
-// results to a file rather than returning them as a text response.
-func buildLocalReActTools() ([]reactToolDef, map[string]*tools.BaseAgentTool) {
-	defs, dispatch := buildReActTools()
-
-	// Add write_file as a synthetic output sink (not in dispatch — handled specially)
-	writeFileDef := reactToolDef{Type: "function"}
-	writeFileDef.Function.Name = "write_file"
-	writeFileDef.Function.Description = "Write content to a file. Use this to save your final documentation output."
-	writeFileDef.Function.Parameters = map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"path": map[string]interface{}{
-				"type":        "string",
-				"description": "The file path to write to",
-			},
-			"content": map[string]interface{}{
-				"type":        "string",
-				"description": "The content to write to the file",
-			},
-		},
-		"required": []string{"path", "content"},
-	}
-	defs = append(defs, writeFileDef)
-
-	return defs, dispatch
-}
-
-func getToolDescription(name string) string {
-	switch name {
-	case "read_file":
-		return "Read file content with optional line range. Returns raw content (max 200 lines per call)."
-	case "list_dir":
-		return "List the contents of a directory with file sizes and types."
-	case "search_files":
-		return "Search for a text pattern across files using ripgrep. Returns matching file paths and line content."
-	default:
-		return ""
-	}
-}
-
-func getResearchToolDescription(name string) string {
-	switch name {
-	case "web_search":
-		return "Search the web for current information. Returns a list of results with titles, URLs, and snippets."
-	case "web_browse":
-		return "Fetch a web page URL and return its text content. Use after web_search to read full page content from a search result URL."
-	default:
-		return ""
-	}
-}
-
-// RunReAct executes a ReAct loop for a single task, returning the result.
-// The loop sends messages to the cloud API, executes filesystem tools on
-// tool_call responses, appends raw uncompacted tool results, and repeats until
-// the model produces a final text response or safety limits are hit.
-func RunReAct(ctx context.Context, task ComparisonTask, pricing PricingTable) (ComparisonResult, error) {
-	return RunReActWithEndpoint(ctx, task, pricing, "")
-}
-
-// RunReActWithEndpoint is like RunReAct but allows overriding the API endpoint (for testing).
-func RunReActWithEndpoint(ctx context.Context, task ComparisonTask, pricing PricingTable, endpoint string) (ComparisonResult, error) {
-	tracker := inference.NewTokenTracker()
-	ctx = inference.WithTokenTracker(ctx, tracker)
-
-	toolDefs, dispatch := buildReActTools()
-
-	// Select system prompt and tools based on task category
-	sysPrompt := reactSystemPrompt
-	if task.Category == CategoryDatanal {
-		sysPrompt = reactDatanalSystemPrompt
-	} else if task.Category == CategoryResearch {
-		sysPrompt = reactResearchSystemPrompt
-		toolDefs, dispatch = buildResearchReActTools()
-	}
-
-	messages := []reactMessage{
-		{Role: "system", Content: sysPrompt},
-		{Role: "user", Content: task.Prompt},
-	}
-
-	startTime := time.Now()
-	toolCallCount := 0
-	accumulatedTokens := 0 // Context window size (current, not cumulative)
-
-	for iteration := 0; iteration < maxReActIterations; iteration++ {
-		resp, err := callCloudWithTools(ctx, messages, toolDefs, endpoint)
-		if err != nil {
-			return ComparisonResult{
-				TaskID:    task.ID,
-				TaskTier:  task.Tier,
-				Condition: ConditionCloudReAct,
-				Error:     fmt.Sprintf("cloud API call failed at iteration %d: %v", iteration, err),
-			}, err
-		}
-
-		// Track tokens — context window size (not cumulative) for limits.
-		// The TokenTracker handles cumulative throughput for cost reporting.
-		accumulatedTokens = resp.Usage.PromptTokens + resp.Usage.CompletionTokens
-		duration := time.Since(startTime).Seconds()
-		speed := 0.0
-		if duration > 0 && resp.Usage.CompletionTokens > 0 {
-			speed = float64(resp.Usage.CompletionTokens) / duration
-		}
-		tracker.Record(true, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, duration, speed)
-
-		if len(resp.Choices) == 0 {
-			return ComparisonResult{
-				TaskID:    task.ID,
-				TaskTier:  task.Tier,
-				Condition: ConditionCloudReAct,
-				Error:     "empty choices from cloud API",
-			}, fmt.Errorf("empty choices from cloud API at iteration %d", iteration)
-		}
-
-		choice := resp.Choices[0]
-
-		// If the model returned tool calls, execute them
-		if len(choice.Message.ToolCalls) > 0 {
-			// Append the assistant message with tool calls (no content)
-			messages = append(messages, reactMessage{
-				Role:      "assistant",
-				ToolCalls: choice.Message.ToolCalls,
-			})
-
-			for _, tc := range choice.Message.ToolCalls {
-				toolCallCount++
-
-				// Parse arguments
-				var args map[string]interface{}
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-				// Dispatch to the tool
-				var toolOutput string
-				if tool, ok := dispatch[tc.Function.Name]; ok {
-					result, err := tool.Call(ctx, args)
-					if err != nil {
-						toolOutput = fmt.Sprintf(`{"error": "%s"}`, err.Error())
-					} else {
-						toolOutput = result
-					}
-				} else {
-					toolOutput = fmt.Sprintf(`{"error": "unknown tool: %s"}`, tc.Function.Name)
-				}
-
-				// Append raw, uncompacted tool result
-				messages = append(messages, reactMessage{
-					Role:       "tool",
-					Content:    toolOutput,
-					ToolCallID: tc.ID,
-				})
-			}
-
-			// Middle-out compression: truncate older tool results when context grows too large
-			if accumulatedTokens >= middleOutThreshold {
-				messages = compressToolMessages(messages)
-			}
-
-			// Check token accumulation safety limit
-			if accumulatedTokens >= maxAccumulatedTokens {
-				_, cloudUsage := tracker.GetUsage()
-				return ComparisonResult{
-					TaskID:        task.ID,
-					TaskTier:      task.Tier,
-					Condition:     ConditionCloudReAct,
-					CloudTokens:   cloudUsage,
-					WallClockMs:   time.Since(startTime).Milliseconds(),
-					EstCostUSD:    EstimateCost(cloudUsage, inference.TokenUsage{}, pricing),
-					ToolCallCount: toolCallCount,
-					OutputText:    "[terminated: token limit exceeded]",
-					Error:         fmt.Sprintf("accumulated token limit exceeded (%d >= %d)", accumulatedTokens, maxAccumulatedTokens),
-				}, nil
-			}
-
-			continue
-		}
-
-		// Final text response
-		outputText := ""
-		if choice.Message.Content != nil {
-			outputText = *choice.Message.Content
-		}
-
-		_, cloudUsage := tracker.GetUsage()
-		return ComparisonResult{
-			TaskID:        task.ID,
-			TaskTier:      task.Tier,
-			Condition:     ConditionCloudReAct,
-			CloudTokens:   cloudUsage,
-			WallClockMs:   time.Since(startTime).Milliseconds(),
-			EstCostUSD:    EstimateCost(cloudUsage, inference.TokenUsage{}, pricing),
-			ToolCallCount: toolCallCount,
-			OutputText:    outputText,
-		}, nil
-	}
-
-	// Hit max iterations without final response
-	_, cloudUsage := tracker.GetUsage()
-	return ComparisonResult{
-		TaskID:        task.ID,
-		TaskTier:      task.Tier,
-		Condition:     ConditionCloudReAct,
-		CloudTokens:   cloudUsage,
-		WallClockMs:   time.Since(startTime).Milliseconds(),
-		EstCostUSD:    EstimateCost(cloudUsage, inference.TokenUsage{}, pricing),
-		ToolCallCount: toolCallCount,
-		OutputText:    "[terminated: max iterations reached]",
-		Error:         fmt.Sprintf("max iterations reached (%d)", maxReActIterations),
-	}, nil
-}
-
-// callCloudWithTools sends a chat completion request with tools to the cloud API.
-func callCloudWithTools(ctx context.Context, messages []reactMessage, toolDefs []reactToolDef, endpoint string) (*reactCompletionResponse, error) {
-	if endpoint == "" {
-		cfg := config.Get()
-		switch cfg.CloudProvider {
-		case "google":
-			endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-		case "openai":
-			endpoint = "https://api.openai.com/v1/chat/completions"
-		default:
-			return nil, fmt.Errorf("unsupported cloud provider '%s'", cfg.CloudProvider)
-		}
-	}
-
-	apiKey := config.GetCloudAPIKey()
-
-	modelName := config.GetCloudModel()
-
-	reqBody := reactCompletionRequest{
-		Model:       modelName,
-		Messages:    messages,
-		Tools:       toolDefs,
-		Temperature: 0.1,
-	}
-
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	// For Google provider, use ?key= query param (canonical Gemini API auth).
-	// For other providers, use Bearer token in Authorization header.
-	provider := config.Get().CloudProvider
-	// The /openai/ compatibility endpoint on generativelanguage.googleapis.com
-	// requires Bearer auth, same as the standard OpenAI API.
-	// The ?key= query param only works for the native Gemini REST endpoints.
-	if provider == "google" && apiKey != "" && !strings.Contains(endpoint, "/openai/") {
-		if strings.Contains(endpoint, "?") {
-			endpoint += "&key=" + apiKey
-		} else {
-			endpoint += "?key=" + apiKey
-		}
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" && (provider != "google" || strings.Contains(endpoint, "/openai/")) {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("cloud API returned status %d: %s", resp.StatusCode, string(respBytes))
-	}
-
-	var result reactCompletionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode cloud response: %w", err)
-	}
-
-	return &result, nil
-}
-
-// compressToolMessages applies middle-out compression to older tool result messages.
-// Keeps the first and last middleOutKeepLines lines of each tool result,
-// replacing the middle with a "[... N lines omitted ...]" marker.
-// Only compresses tool results older than the most recent recentToolCallsToKeep.
-func compressToolMessages(messages []reactMessage) []reactMessage {
-	// Find indices of tool-result messages
-	var toolIndices []int
-	for i, m := range messages {
-		if m.Role == "tool" {
-			toolIndices = append(toolIndices, i)
-		}
-	}
-
-	// Only compress if there are more than recentToolCallsToKeep tool results
-	if len(toolIndices) <= recentToolCallsToKeep {
-		return messages
-	}
-
-	// Compress all but the most recent recentToolCallsToKeep
-	cutoff := len(toolIndices) - recentToolCallsToKeep
-	for _, idx := range toolIndices[:cutoff] {
-		content, ok := messages[idx].Content.(string)
-		if !ok || len(content) < 500 {
-			continue // Skip small results
-		}
-		messages[idx].Content = middleOutTruncate(content, middleOutKeepLines)
-	}
-	return messages
-}
-
-// middleOutTruncate keeps the first and last N lines, replacing the middle
-// with a "[... N lines omitted ...]" marker.
-func middleOutTruncate(content string, keepLines int) string {
-	lines := strings.Split(content, "\n")
-	if len(lines) <= keepLines*2 {
-		return content
-	}
-	head := strings.Join(lines[:keepLines], "\n")
-	tail := strings.Join(lines[len(lines)-keepLines:], "\n")
-	omitted := len(lines) - keepLines*2
-	return head + "\n[... " + strconv.Itoa(omitted) + " lines omitted ...]\n" + tail
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Local ReAct — flat ReAct loop on the local model (DAG-free baseline)
-// ────────────────────────────────────────────────────────────────────────────
-
-const (
-	maxLocalReActIterations = 100
-	localReActTimeout       = 300 * time.Second // 5 minute timeout per API call
-)
-
-const localReActSystemPrompt = `You are a documentation generator running on a local model. You have access to filesystem tools to explore a Go codebase. Read the relevant source files, understand the code, and produce the requested documentation.
-
-IMPORTANT instructions for tool usage:
-- Always start by listing the project directory to understand the structure
-- Read specific files that are relevant to the documentation task
-- Use search_files to find specific patterns or function definitions
-- When you have gathered enough information, output the final documentation as markdown
-- Be thorough — explore multiple files and directories before writing
-- Do NOT hallucinate file contents — always read files before documenting them`
-
-// RunLocalReAct executes a ReAct loop against the local llama-server sidecar.
-// This is the DAG-free baseline for comparing whether structured DAG execution
-// provides quality benefits over a simple tool-calling loop.
-//
-// Key differences from RunReAct (cloud):
-//   - Calls the local llama-server's OpenAI-compatible /v1/chat/completions endpoint
-//   - 100-step budget (vs. cloud's 50) since local inference is free
-//   - Tokens tracked as LocalTokens (not CloudTokens)
-//   - Uses a more explicit system prompt to compensate for smaller model capacity
-//   - Same middle-out compaction for context management
-func RunLocalReAct(ctx context.Context, task ComparisonTask, pricing PricingTable, outputDir string) (ComparisonResult, error) {
-	tracker := inference.NewTokenTracker()
-	ctx = inference.WithTokenTracker(ctx, tracker)
-
-	// Resolve the local sidecar endpoint
-	localEndpoint, err := resolveLocalEndpoint()
-	if err != nil {
-		return ComparisonResult{
-			TaskID:    task.ID,
-			TaskTier:  task.Tier,
-			Condition: ConditionLocalReAct,
-			Error:     fmt.Sprintf("failed to resolve local sidecar: %v", err),
-		}, err
-	}
-
-	toolDefs, dispatch := buildLocalReActTools()
-
-	messages := []reactMessage{
-		{Role: "system", Content: localReActSystemPrompt},
-		{Role: "user", Content: task.Prompt},
-	}
-
-	startTime := time.Now()
-	toolCallCount := 0
-	accumulatedTokens := 0
-	var capturedOutput string // Captured from write_file sink calls
-
-	for iteration := 0; iteration < maxLocalReActIterations; iteration++ {
-		fmt.Fprintf(os.Stderr, "    [local_react] iteration %d, %d tool calls, %s elapsed...\r",
-			iteration+1, toolCallCount, time.Since(startTime).Round(time.Second))
-
-		resp, err := callLocalWithTools(ctx, messages, toolDefs, localEndpoint)
-		if err != nil {
-			fmt.Fprintln(os.Stderr) // clear \r line
-			return ComparisonResult{
-				TaskID:    task.ID,
-				TaskTier:  task.Tier,
-				Condition: ConditionLocalReAct,
-				Error:     fmt.Sprintf("local API call failed at iteration %d: %v", iteration, err),
-			}, err
-		}
-
-		// Track tokens as local (not cloud) — context window size for limits
-		accumulatedTokens = resp.Usage.PromptTokens + resp.Usage.CompletionTokens
-		duration := time.Since(startTime).Seconds()
-		speed := 0.0
-		if duration > 0 && resp.Usage.CompletionTokens > 0 {
-			speed = float64(resp.Usage.CompletionTokens) / duration
-		}
-		tracker.Record(false, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, duration, speed) // false = local
-
-		if len(resp.Choices) == 0 {
-			return ComparisonResult{
-				TaskID:    task.ID,
-				TaskTier:  task.Tier,
-				Condition: ConditionLocalReAct,
-				Error:     "empty choices from local API",
-			}, fmt.Errorf("empty choices from local API at iteration %d", iteration)
-		}
-
-		choice := resp.Choices[0]
-
-		// If the model returned tool calls, execute them
-		if len(choice.Message.ToolCalls) > 0 {
-			// Append the assistant message with tool calls
-			messages = append(messages, reactMessage{
-				Role:      "assistant",
-				ToolCalls: choice.Message.ToolCalls,
-			})
-
-			for _, tc := range choice.Message.ToolCalls {
-				toolCallCount++
-
-				var args map[string]interface{}
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-
-				// Unwrap tool_arguments nesting: local models often wrap args as
-				// {"tool_arguments": {"path": "..."}} instead of {"path": "..."}.
-				if inner, ok := args["tool_arguments"].(map[string]interface{}); ok {
-					args = inner
-				}
-
-				// Progress: show which tool is being called
-				toolArg := ""
-				if p, ok := args["path"].(string); ok {
-					toolArg = p
-				} else if q, ok := args["query"].(string); ok {
-					toolArg = q
-				}
-				fmt.Fprintf(os.Stderr, "    [local_react] → %s(%s)%s\n",
-					tc.Function.Name, toolArg, strings.Repeat(" ", 40))
-
-				var toolOutput string
-				if tc.Function.Name == "write_file" {
-					// Output sink: capture the content and signal success.
-					// The model is "writing" its final output to a file.
-					if content, ok := args["content"].(string); ok && content != "" {
-						capturedOutput = content
-					}
-					toolOutput = `{"status": "ok", "bytes_written": ` + fmt.Sprintf("%d", len(capturedOutput)) + `}`
-				} else if tool, ok := dispatch[tc.Function.Name]; ok {
-					result, err := tool.Call(ctx, args)
-					if err != nil {
-						toolOutput = fmt.Sprintf(`{"error": "%s"}`, err.Error())
-					} else {
-						toolOutput = result
-					}
-				} else {
-					toolOutput = fmt.Sprintf(`{"error": "unknown tool: %s"}`, tc.Function.Name)
-				}
-
-				messages = append(messages, reactMessage{
-					Role:       "tool",
-					Content:    toolOutput,
-					ToolCallID: tc.ID,
-				})
-			}
-
-			// If write_file was called and we captured output, terminate the loop
-			if capturedOutput != "" {
-				localUsage, _ := tracker.GetUsage()
-				return ComparisonResult{
-					TaskID:        task.ID,
-					TaskTier:      task.Tier,
-					Condition:     ConditionLocalReAct,
-					LocalTokens:   localUsage,
-					WallClockMs:   time.Since(startTime).Milliseconds(),
-					EstCostUSD:    0,
-					ToolCallCount: toolCallCount,
-					OutputText:    capturedOutput,
-				}, nil
-			}
-
-			// Middle-out compression (same thresholds as cloud ReAct)
-			if accumulatedTokens >= middleOutThreshold {
-				messages = compressToolMessages(messages)
-			}
-
-			// Token safety limit
-			if accumulatedTokens >= maxAccumulatedTokens {
-				localUsage, _ := tracker.GetUsage()
-				return ComparisonResult{
-					TaskID:        task.ID,
-					TaskTier:      task.Tier,
-					Condition:     ConditionLocalReAct,
-					LocalTokens:   localUsage,
-					WallClockMs:   time.Since(startTime).Milliseconds(),
-					EstCostUSD:    0, // local tokens are free
-					ToolCallCount: toolCallCount,
-					OutputText:    "[terminated: token limit exceeded]",
-					Error:         fmt.Sprintf("accumulated token limit exceeded (%d >= %d)", accumulatedTokens, maxAccumulatedTokens),
-				}, nil
-			}
-
-			continue
-		}
-
-		// Final text response — model is done exploring and produced output.
-		// Handle thinking models: the actual content may be in reasoning_content
-		// when content is empty or nil.
-		outputText := ""
-		if choice.Message.Content != nil && *choice.Message.Content != "" {
-			outputText = *choice.Message.Content
-		}
-
-		// Fallback: if content is empty, check reasoning_content.
-		// Thinking models (Qwen, MiniCPM) put their output here when the
-		// chat template separates reasoning from response.
-		if outputText == "" && choice.Message.ReasoningContent != nil && *choice.Message.ReasoningContent != "" {
-			reasoning := *choice.Message.ReasoningContent
-
-			// Check if reasoning contains a write_file tool call with content.
-			// Extract the content as the output (the model was trying to save its result).
-			if extracted := extractWriteFileContent(reasoning); extracted != "" {
-				outputText = extracted
-			} else if strings.Contains(reasoning, "<tool_call>") {
-				// Model tried to use tools via XML — redirect to structured calls
-				messages = append(messages, reactMessage{
-					Role:    "assistant",
-					Content: reasoning,
-				})
-				messages = append(messages, reactMessage{
-					Role:    "user",
-					Content: "Please use the tools directly by calling them, not by writing tool_call XML. Continue exploring the codebase and produce the final documentation.",
-				})
-				continue
-			} else {
-				// No embedded tool calls — use reasoning as the actual output
-				outputText = reasoning
-			}
-		}
-
-		localUsage, _ := tracker.GetUsage()
-		return ComparisonResult{
-			TaskID:        task.ID,
-			TaskTier:      task.Tier,
-			Condition:     ConditionLocalReAct,
-			LocalTokens:   localUsage,
-			WallClockMs:   time.Since(startTime).Milliseconds(),
-			EstCostUSD:    0, // local tokens are free
-			ToolCallCount: toolCallCount,
-			OutputText:    outputText,
-		}, nil
-	}
-
-	// Hit max iterations
-	localUsage, _ := tracker.GetUsage()
-	return ComparisonResult{
-		TaskID:        task.ID,
-		TaskTier:      task.Tier,
-		Condition:     ConditionLocalReAct,
-		LocalTokens:   localUsage,
-		WallClockMs:   time.Since(startTime).Milliseconds(),
-		EstCostUSD:    0,
-		ToolCallCount: toolCallCount,
-		OutputText:    "[terminated: max iterations reached]",
-		Error:         fmt.Sprintf("max iterations reached (%d)", maxLocalReActIterations),
-	}, nil
 }
 
 // resolveLocalEndpoint discovers the local llama-server sidecar port and returns
@@ -769,107 +774,3 @@ func resolveLocalEndpoint() (string, error) {
 	return fmt.Sprintf("http://localhost:%d/v1/chat/completions", activePort), nil
 }
 
-// callLocalWithTools sends a chat completion request with tools to the local
-// llama-server's OpenAI-compatible endpoint. Structurally identical to
-// callCloudWithTools but with local-appropriate timeouts and no auth.
-func callLocalWithTools(ctx context.Context, messages []reactMessage, toolDefs []reactToolDef, endpoint string) (*reactCompletionResponse, error) {
-	reqBody := reactCompletionRequest{
-		Model:       "local",
-		Messages:    messages,
-		Tools:       toolDefs,
-		Temperature: 0.1,
-	}
-
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: localReActTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read local response body: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("local API returned status %d: %s", resp.StatusCode, string(respBytes))
-	}
-
-	var result reactCompletionResponse
-	if err := json.Unmarshal(respBytes, &result); err != nil {
-		return nil, fmt.Errorf("failed to decode local response: %w", err)
-	}
-
-	return &result, nil
-}
-
-// extractWriteFileContent attempts to extract the content parameter from a
-// write_file tool call embedded as XML in reasoning_content. Local models
-// sometimes produce their final output this way:
-//
-//	<tool_call>
-//	<function=write_file>
-//	<parameter=tool_arguments>
-//	{"path": "...", "content": "...the actual documentation..."}
-//	</parameter>
-//	</function>
-//	</tool_call>
-func extractWriteFileContent(reasoning string) string {
-	if !strings.Contains(reasoning, "write_file") {
-		return ""
-	}
-
-	// Try to find JSON with a "content" field in the reasoning text.
-	// The model wraps it in various XML structures, but the JSON payload
-	// always has "content": "..." with the documentation.
-	//
-	// Strategy: find the largest JSON object containing a "content" key.
-	var bestContent string
-
-	// Look for {"path": "...", "content": "..."} or {"tool_arguments": {"path": ..., "content": ...}}
-	for i := 0; i < len(reasoning); i++ {
-		if reasoning[i] != '{' {
-			continue
-		}
-		// Find matching closing brace by counting
-		depth := 0
-		for j := i; j < len(reasoning); j++ {
-			if reasoning[j] == '{' {
-				depth++
-			} else if reasoning[j] == '}' {
-				depth--
-				if depth == 0 {
-					candidate := reasoning[i : j+1]
-					var obj map[string]interface{}
-					if json.Unmarshal([]byte(candidate), &obj) == nil {
-						// Check for content at top level
-						if c, ok := obj["content"].(string); ok && len(c) > len(bestContent) {
-							bestContent = c
-						}
-						// Check nested in tool_arguments
-						if ta, ok := obj["tool_arguments"].(map[string]interface{}); ok {
-							if c, ok := ta["content"].(string); ok && len(c) > len(bestContent) {
-								bestContent = c
-							}
-						}
-					}
-					break
-				}
-			}
-		}
-	}
-
-	return bestContent
-}
