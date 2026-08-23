@@ -946,10 +946,10 @@ func runDirectMode(ctx context.Context, conditionID, spec, language, targetPath 
 	if !compResult.Pass {
 		fmt.Fprintf(os.Stderr, "[Comparison] Compilation gate FAILED for %s/%s: %s\n", conditionID, t.ID, compResult.Reason)
 
-		// Post-DAG cloud repair: only if cloud repair has not already been
-		// executed by the hook during DAG execution (avoids double cloud repair).
-		// Uses the same narrow repair payload as the hook.
-		if !compilationHook.CloudRepairAttempted {
+		// Post-DAG cloud repair: only if condition allows cloud escalation (e.g. cooperative)
+		// and cloud repair has not already been executed by the hook during DAG execution.
+		// Never run cloud repair for local_only.
+		if conditionID != ConditionLocalOnly && conditionID != "local_only" && !compilationHook.CloudRepairAttempted {
 			fmt.Fprintf(os.Stderr, "[Comparison] Attempting post-DAG cloud repair for %s/%s\n", conditionID, t.ID)
 
 			originalModelMode := config.GlobalConfig.ModelMode
@@ -1093,8 +1093,8 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 		// Draft compiles — no fix needed, zero cloud tokens
 		fmt.Fprintf(os.Stderr, "[Comparison/Draft] Draft COMPILES for %s/%s — skipping fix phase\n", conditionID, t.ID)
 		outputText = draftText
-	} else {
-		// Draft doesn't compile — run cloud fix
+	} else if conditionID != ConditionLocalOnly && conditionID != "local_only" {
+		// Draft doesn't compile — run cloud fix (cooperative conditions only)
 		fmt.Fprintf(os.Stderr, "[Comparison/Draft] Draft FAILED compilation for %s/%s — running cloud fix\n  Errors: %s\n",
 			conditionID, t.ID, compResult.Reason)
 
@@ -1145,6 +1145,9 @@ func runDraftFixMode(ctx context.Context, conditionID, spec, language, targetPat
 
 		// Restore cooperative mode for cleanup
 		config.GlobalConfig.ModelMode = "cooperative"
+	} else {
+		fmt.Fprintf(os.Stderr, "[Comparison/Draft] Draft FAILED compilation for %s/%s — local_only active, skipping cloud fix\n", conditionID, t.ID)
+		outputText = draftText
 	}
 
 	wallClock := time.Since(startTime).Milliseconds()

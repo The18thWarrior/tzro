@@ -629,3 +629,58 @@ func TestRegistryReplace_NotRegistered(t *testing.T) {
 	}
 }
 
+func TestRegistry_NormalizeNodeType_SemanticSimilarity(t *testing.T) {
+	reg := NewStrategyRegistry()
+	reg.Register(&testStrategy{nodeType: "synthesis", plannerCard: &PlannerCard{Type: "synthesis", WhenToUse: "synthesize findings"}})
+	reg.Register(&testStrategy{nodeType: "semantic_validator", plannerCard: &PlannerCard{Type: "semantic_validator", WhenToUse: "validate outputs"}})
+	reg.Register(&testStrategy{nodeType: "probe", plannerCard: &PlannerCard{Type: "probe", WhenToUse: "explore directories"}})
+
+	// 1. Exact matches
+	if norm := reg.NormalizeNodeType("synthesis"); norm != "synthesis" {
+		t.Errorf("expected 'synthesis', got %q", norm)
+	}
+
+	// 2. High-similarity prefix / substring fallback
+	if norm := reg.NormalizeNodeType("synthesize"); norm != "synthesis" {
+		t.Errorf("expected 'synthesis' normalized from 'synthesize', got %q", norm)
+	}
+	if norm := reg.NormalizeNodeType("validator"); norm != "semantic_validator" {
+		t.Errorf("expected 'semantic_validator' normalized from 'validator', got %q", norm)
+	}
+}
+
+func TestRegistry_BuildPlanJSONSchema(t *testing.T) {
+	reg := NewStrategyRegistry()
+	reg.Register(&testStrategy{nodeType: "action", plannerCard: &PlannerCard{Type: "action", WhenToUse: "tool calls"}})
+	reg.Register(&testStrategy{nodeType: "synthesis", plannerCard: &PlannerCard{Type: "synthesis", WhenToUse: "synthesize"}})
+	reg.Register(&testStrategy{nodeType: "probe", plannerCard: &PlannerCard{Type: "probe", WhenToUse: "explore"}})
+
+	schemaJSON := reg.BuildPlanJSONSchema()
+	var parsed struct {
+		Properties struct {
+			Nodes struct {
+				Items struct {
+					Properties struct {
+						Type struct {
+							Enum []string `json:"enum"`
+						} `json:"type"`
+					} `json:"properties"`
+				} `json:"items"`
+			} `json:"nodes"`
+		} `json:"properties"`
+	}
+
+	if err := json.Unmarshal([]byte(schemaJSON), &parsed); err != nil {
+		t.Fatalf("failed to parse generated schema: %v", err)
+	}
+
+	enums := parsed.Properties.Nodes.Items.Properties.Type.Enum
+	if len(enums) != 3 {
+		t.Fatalf("expected 3 enums, got %d: %v", len(enums), enums)
+	}
+	if enums[0] != "action" || enums[1] != "synthesis" || enums[2] != "probe" {
+		t.Errorf("unexpected enums order: %v", enums)
+	}
+}
+
+

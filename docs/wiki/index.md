@@ -58,6 +58,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [Cooperative Local Cloud DAG Execution](../cooperative-local-cloud-dag-execution.md) - Hybrid model of local and remote coordination.
 - [Hybrid Cloud Local Worker Execution](../hybrid-cloud-local-worker-execution.md) - Remote task dispatching mechanisms.
 - [Disk-Backed Query Cache Architecture](architecture/disk-backed-jq-cache.md) - Deep subsystem for context compaction, page-sliced pagination, and SQL query execution against ephemeral materialized tables.
+- [ADR-0088: DAG Parity Optimization — Immutable Goal Injection, Compaction & Fast-Path](../adr/0088-dag-parity-optimization-immutable-goals-and-fast-path.md) - Architecture for closing the qualitative gap with ReAct while retaining 90%+ token compaction and sub-30s T0 latency.
 - [SQL Query Language for Cached Data — Spec](../working-specs/sql-query-language-for-cached-data.md) - Implementation spec for replacing jq with SQL. Covers ephemeral materialized tables, 4-layer safety, tool changes, prompt updates, and migration.
 - [Task-to-Workflow Promotion Engine](architecture/task-workflow-promotion.md) - Deep subsystem that dynamically elevates Single Task DAGs to persistent Multi-Task Workflows.
 - [Tool Source Paradigms](architecture/tool-source-paradigms.md) - Analysis of the four tool sources (Builtin, WASM, OpenAPI, MCP), their overlap, and why each exists.
@@ -131,6 +132,9 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0083: Dynamic Sectioned Map-Reduce and Semantic Citation Remapping](../adr/0083-dynamic-sectioned-map-reduce-and-semantic-citation-remapping.md) - Dynamic synthesis outlines, rolling prefix context for sectioned generation, and neural citation remapping for verified research citations.
 - [ADR-0084: Generalized Sectioned Map-Reduce Synthesis for DocGen and Research](../adr/0084-generalized-sectioned-map-reduce-synthesis.md) - Generalizes Sectioned Map-Reduce to codebase documentation (DocGen) and multi-domain research tasks with dynamic GBNF-constrained outline planning, static context broadcasting with KV cache reuse, and section truncation guards.
 - [ADR-0086: Repository Pre-Index, Dual-Plane Indexing, and Context Budget Packing](../adr/0086-repository-pre-index-and-dual-plane-retrieval.md) - Persistent SQLite repository index combining an AST Code Plane, chunked Document Plane, hybrid FTS5/Vector retrieval, and dynamic Context Budget Packing for instant Probe node synthesis.
+- [ADR-0087: Orthogonal Plan Templates, Single-Decision Router Invariant, and Baseline Fallback](../adr/0087-orthogonal-plan-templates-and-single-decision-routing.md) - Refactors Plan Template Registry into Topology Archetypes and Source Modalities with 2-pass 1B router classification, source-aware plan repair, and deterministic baseline template fallback.
+- [ADR-0088: DAG Parity Optimization — Immutable Goal Injection, Domain-Aware Compaction, Terminal Sinks, and Fast-Path Short-Circuiting](../adr/0088-dag-parity-optimization-immutable-goals-and-fast-path.md) - Preserves verbatim user prompts, implements type-aware compaction skeletons, auto-injects terminal write sinks, and fast-paths T0 single-node tasks.
+- [ADR-0089: Native ReAct Loop within Probe and Research Nodes](../adr/0089-react-loop-in-probe-nodes.md) - Encapsulates an unconstrained, native Go ReAct agent loop inside exploratory DAG nodes, combining ReAct's dynamic discovery power with DAG durability, token efficiency, and clean context contracts.
 
 ## Ingested Sources
 

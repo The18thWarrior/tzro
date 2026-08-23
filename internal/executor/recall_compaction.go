@@ -87,6 +87,18 @@ func buildCompactedRecallContext(
 	}
 
 	if len(allSteps) == 0 {
+		// Fallback: check node_states for upstream direct synthesis output (ADR-0086/0088)
+		for _, nodeID := range upstreamNodeIDs {
+			if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
+				out := state.RawOutput
+				if out == "" {
+					out = state.Output
+				}
+				if out != "" {
+					return out, nil
+				}
+			}
+		}
 		return "", nil
 	}
 

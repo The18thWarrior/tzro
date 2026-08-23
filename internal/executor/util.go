@@ -25,6 +25,15 @@ func GetNodeTypeReferenceCard() string {
 	return templates.NodeTypeReferenceCard
 }
 
+// GetPlanJSONSchema returns the strict GBNF JSON Schema that locks node types
+// to registered strategy enums (ADR-0088).
+func GetPlanJSONSchema() string {
+	if activeRegistry != nil {
+		return activeRegistry.BuildPlanJSONSchema()
+	}
+	return ""
+}
+
 var comparisonRegex = regexp.MustCompile(`^\s*(.*?)\s*(==|!=|>=|<=|>|<)\s*(.*?)\s*$`)
 
 func evaluateDeterministicCondition(cond string) (bool, bool) {

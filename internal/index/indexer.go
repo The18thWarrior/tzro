@@ -47,7 +47,8 @@ func ScanAndIndexWorkspace(ctx context.Context, rootDir string, store *IndexStor
 
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".tzro" || name == "bin" {
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".tzro" || name == "bin" ||
+				name == ".scratch" || name == ".gemini" || name == ".agents" || name == "dist" || name == "build" || name == "tmp" {
 				return filepath.SkipDir
 			}
 			return nil

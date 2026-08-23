@@ -552,11 +552,28 @@ func buildContextAwareSystemPrompt(toolName string, originalInstruction string, 
 	return sb.String()
 }
 
+// FormatGoalPromptContext formats the immutable raw user prompt for injection into node execution prompts (ADR-0088).
+func FormatGoalPromptContext(goalPrompt string) string {
+	cleaned := strings.TrimSpace(goalPrompt)
+	if cleaned == "" {
+		return ""
+	}
+	return fmt.Sprintf("## Primary User Specification (Authoritative Task Goal)\n%s\n\n", cleaned)
+}
+
 // buildContextAwareUserPrompt creates the user prompt with structured accumulated context.
-// The prompt includes: accumulated context blocks, optional RAG context, and the interpolated
-// instruction as a fallback reference.
 func buildContextAwareUserPrompt(accumulatedContext string, ragContext string, interpolatedInstruction string) string {
+	return buildContextAwareUserPromptWithGoal("", accumulatedContext, ragContext, interpolatedInstruction)
+}
+
+// buildContextAwareUserPromptWithGoal creates the user prompt with structured accumulated context
+// and the verbatim immutable goal prompt anchored at the top (ADR-0088).
+func buildContextAwareUserPromptWithGoal(goalPrompt string, accumulatedContext string, ragContext string, interpolatedInstruction string) string {
 	var sb strings.Builder
+
+	if goalSection := FormatGoalPromptContext(goalPrompt); goalSection != "" {
+		sb.WriteString(goalSection)
+	}
 
 	if accumulatedContext != "" {
 		sb.WriteString("## Accumulated Context from Prior Steps\n\n")
@@ -577,6 +594,25 @@ func buildContextAwareUserPrompt(accumulatedContext string, ragContext string, i
 	sb.WriteString(interpolatedInstruction)
 
 	return sb.String()
+}
+
+// buildSynthesisPrompt constructs the full prompt for synthesis nodes with the immutable goal prompt (ADR-0088).
+func buildSynthesisPrompt(graph *compiler.ExecutionGraph, nodeID string, accumulatedContext string) string {
+	var goal string
+	var instruction string
+	if graph != nil {
+		goal = graph.GoalPrompt
+		for _, n := range graph.Nodes {
+			if n.ID == nodeID {
+				instruction = n.Instructions
+				break
+			}
+		}
+	}
+	if instruction == "" {
+		instruction = "Compile all prior action outputs and query results into a final cohesive response."
+	}
+	return buildContextAwareUserPromptWithGoal(goal, accumulatedContext, "", instruction)
 }
 
 // buildStaticBaseInstruction returns the shared, invariant system prompt used by all

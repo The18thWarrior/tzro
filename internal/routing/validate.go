@@ -7,6 +7,7 @@ import (
 
 	"tzro/internal/compiler"
 	"tzro/internal/telemetry"
+	"tzro/internal/templates"
 )
 
 // PlanFunc is a function type for plan backends (local or cloud).
@@ -23,21 +24,23 @@ const maxRepairAttempts = 2
 //
 // The toolExists function should return true if the tool name is registered.
 func ValidateGraph(graph *compiler.ExecutionGraph, toolExists func(string) bool) error {
-	// Step 1: Structural check
 	if graph == nil || len(graph.Nodes) == 0 {
-		return fmt.Errorf("validation failed: empty or nil graph")
+		return fmt.Errorf("plan graph is empty")
 	}
 
-	// Step 2: Cycle detection via Kahn topological sort
+	// Structural validation: cycle detection
 	if _, err := compiler.CompileAndSort(graph); err != nil {
-		return fmt.Errorf("validation failed: %w", err)
+		return fmt.Errorf("graph has cycles or invalid structure: %w", err)
 	}
 
-	// Step 3: Tool schema conformance
-	// Probe, synthesis, and deterministic nodes are exempt from tool checks
+	// Tool conformance check
 	invalidTools := findInvalidTools(graph, toolExists)
 	if len(invalidTools) > 0 {
-		return fmt.Errorf("validation failed: nodes reference unknown tools: %v", invalidTools)
+		var toolNames []string
+		for _, it := range invalidTools {
+			toolNames = append(toolNames, fmt.Sprintf("%s (in node %s)", it.ToolName, it.NodeID))
+		}
+		return fmt.Errorf("plan references unregistered tools: %s", strings.Join(toolNames, ", "))
 	}
 
 	return nil
@@ -68,15 +71,13 @@ type InvalidTool struct {
 
 // PlanWithEscalation attempts local planning, validates the result, and escalates
 // to cloud planning if validation fails and the routing decision allows it.
+// When cloud fallback is prohibited (local-only mode), it deterministically falls
+// back to the base hydrated template from the Plan Template Registry (ADR-0087).
 //
-// The repair flow (P1 benchmark fix):
+// The repair flow:
 //  1. Local plan → validate
 //  2. If invalid tools found → surgically repair the graph (up to maxRepairAttempts)
-//  3. If repair exhausted → escalate to cloud (if allowed)
-//
-// Repair works by replacing nodes with invalid tools with a single probe node,
-// since the planner hallucinated tools typically indicate an exploration task
-// that should have used a probe node in the first place.
+//  3. If repair exhausted → baseline fallback (local-only) or cloud escalation
 func PlanWithEscalation(ctx context.Context, localPlan, cloudPlan PlanFunc, decision RoutingDecision, toolExists func(string) bool) (*compiler.ExecutionGraph, error) {
 	// Attempt local planning
 	graph, err := localPlan(ctx)
@@ -94,7 +95,7 @@ func PlanWithEscalation(ctx context.Context, localPlan, cloudPlan PlanFunc, deci
 		if len(invalidTools) == 0 {
 			// Structural validation (cycles, empty graph)
 			if _, err := compiler.CompileAndSort(graph); err != nil {
-				break // structural issue, escalate
+				break // structural issue, escalate or fallback
 			}
 			return graph, nil
 		}
@@ -113,8 +114,30 @@ func PlanWithEscalation(ctx context.Context, localPlan, cloudPlan PlanFunc, deci
 		graph = repairGraphWithProbe(graph, invalidTools)
 	}
 
-	// Repair exhausted or structural issue — escalate
+	// Repair exhausted or structural issue — escalate or baseline fallback (ADR-0087)
 	if !decision.AllowCloudFallback {
+		if graph != nil {
+			telemetry.Default.PublishEvent("plan_baseline_fallback", graph.TaskID, "",
+				"Local plan invalid after repair and cloud fallback prohibited. Falling back to base template.")
+			baseModality := templates.SourceModality(graph.SourceModality)
+			if baseModality == "" {
+				baseModality = templates.SourceLocal
+			}
+			fallbackGraph := templates.GetWithModality(templates.ProbeSynthesis, baseModality)
+			fallbackGraph.TaskID = graph.TaskID
+			fallbackGraph.GoalPrompt = graph.GoalPrompt
+			fallbackGraph.CreatedAt = graph.CreatedAt
+			fallbackGraph.SourceModality = string(baseModality)
+			for i := range fallbackGraph.Nodes {
+				if fallbackGraph.Nodes[i].Type == "probe" {
+					fallbackGraph.Nodes[i].Instructions = graph.GoalPrompt
+					if fallbackGraph.Nodes[i].ProbeConfig != nil {
+						fallbackGraph.Nodes[i].ProbeConfig.Goal = graph.GoalPrompt
+					}
+				}
+			}
+			return fallbackGraph, nil
+		}
 		return nil, fmt.Errorf("local plan invalid after repair and cloud fallback blocked by privacy policy")
 	}
 
@@ -126,12 +149,6 @@ func PlanWithEscalation(ctx context.Context, localPlan, cloudPlan PlanFunc, deci
 // repairGraphWithProbe surgically patches a graph by replacing all nodes with
 // invalid tools with a single probe node. This preserves the graph structure
 // while fixing the hallucinated-tools failure mode.
-//
-// Strategy:
-//  1. Remove all nodes with invalid tools and their associated edges
-//  2. Insert a single probe node that covers the combined goal
-//  3. Re-wire edges: nodes that depended on removed nodes now depend on the probe
-//  4. Nodes that removed nodes depended on now feed into the probe
 func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []InvalidTool) *compiler.ExecutionGraph {
 	// Build set of node IDs to remove
 	removeSet := make(map[string]bool)
@@ -151,15 +168,32 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 	// analyze (data analysis) repair nodes.
 	isDataAnalysis := isDataAnalysisRepair(invalidTools, removedInstructions)
 
+	// Check if this task is web-oriented (ADR-0087)
+	isWeb := graph.SourceModality == "web"
+	if !isWeb {
+		for _, node := range graph.Nodes {
+			if node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "web" {
+				isWeb = true
+				break
+			}
+			for _, tool := range node.AllowedTools {
+				if tool == "web_search" || tool == "web_browse" {
+					isWeb = true
+					break
+				}
+			}
+		}
+	}
+
 	var repairGoal string
 	if isDataAnalysis {
 		repairGoal = "Analyze the data to answer the following:\n"
+	} else if isWeb {
+		repairGoal = "Research the following on the web:\n"
 	} else {
 		repairGoal = "Explore and complete the following objectives:\n"
 	}
 	// Include the overall task goal so the repair probe stays on-topic.
-	// Without this, the probe only sees the removed node instructions which
-	// are often too terse to guide exploration effectively.
 	if graph.GoalPrompt != "" {
 		repairGoal = fmt.Sprintf("Overall task goal: %s\n\n%s", graph.GoalPrompt, repairGoal)
 	}
@@ -171,8 +205,6 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 	var repairNode compiler.GraphNode
 
 	if isDataAnalysis {
-		// Analyze node: cache tools are auto-provisioned by the SCT compiler.
-		// We set the type and instructions; the compiler handles the rest.
 		repairNode = compiler.GraphNode{
 			ID:           repairID,
 			Type:         "analyze",
@@ -180,20 +212,40 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 			Instructions: repairGoal,
 			Status:       "pending",
 		}
-	} else {
+	} else if isWeb {
+		probeTools := []string{"web_search", "web_browse"}
 		repairNode = compiler.GraphNode{
 			ID:           repairID,
 			Type:         "probe",
 			Action:       "",
 			Instructions: repairGoal,
-			AllowedTools: []string{"read_file", "list_dir", "search_files"},
+			AllowedTools: probeTools,
 			Status:       "pending",
 			ProbeConfig: &compiler.ProbeConfig{
 				Goal:            repairGoal,
-				AllowedTools:    []string{"read_file", "list_dir", "search_files"},
+				AllowedTools:    probeTools,
 				StepBudget:      20,
 				CompactEvery:    3,
 				CompactionLevel: compiler.CompactPreserve,
+				SourceHint:      "web",
+			},
+		}
+	} else {
+		probeTools := []string{"read_file", "list_dir", "search_files"}
+		repairNode = compiler.GraphNode{
+			ID:           repairID,
+			Type:         "probe",
+			Action:       "",
+			Instructions: repairGoal,
+			AllowedTools: probeTools,
+			Status:       "pending",
+			ProbeConfig: &compiler.ProbeConfig{
+				Goal:            repairGoal,
+				AllowedTools:    probeTools,
+				StepBudget:      20,
+				CompactEvery:    3,
+				CompactionLevel: compiler.CompactPreserve,
+				SourceHint:      "filesystem",
 			},
 		}
 	}

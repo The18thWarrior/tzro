@@ -2,6 +2,64 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-23T11:10:00-07:00] tdd | Native ReAct Loop within Probe & Research Nodes Implementation (ADR-0089)
+
+- **Activity**: Test-Driven Development (TDD) implementation of the native Go ReAct agent loop for exploratory Probe and Research nodes within the Durable DAG engine.
+- **Vertical Tracer-Bullet Slices Delivered**:
+  1. **Slice 1 (Tracer Bullet & Convergence)**: Implemented `ReActConfig`, `ReActResult`, and `RunReActLoop` in [`internal/executor/react_node.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/react_node.go) with tool definition generator and iterative tool execution. Verified via `TestReActLoop_DirectConvergence` and `TestReActLoop_MultiStepToolExecution`.
+  2. **Slice 2 (Error Recovery & Repetition Guard)**: Embedded `role: "tool"` error feedback for self-correcting agent execution and integrated `RepetitionGuard` to intercept repeated tool invocations. Verified via `TestReActLoop_ToolErrorRecovery` and `TestReActLoop_RepetitionGuard`.
+  3. **Slice 3 (Budgets & Sliding Window Pruning)**: Implemented forced final synthesis upon step budget exhaustion (`StepBudget`, default 15) and `pruneMessagesIfExceeded` sliding window turn-dropping at the 12,000 token threshold. Verified via `TestReActLoop_StepBudgetEnforcement` and `TestReActLoop_SlidingWindowContextPruning`.
+  4. **Slice 4 (DAG Integration & Live Inference)**: Implemented `LiveReActInference` in [`internal/executor/react_inference.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/react_inference.go) and wired `RunReActLoop` into `runProbeAnalyzeCore` in [`internal/executor/probe_analyze_node.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_analyze_node.go).
+- **Test Results**: All 6 ReAct unit tests pass (`0.789s`) alongside the full core test suite (`internal/executor`, `internal/compiler`, `internal/inference`, `internal/task`, `internal/routing`, `internal/strategy`).
+
+## [2026-08-23T11:06:00-07:00] grill-with-docs | Native ReAct Loop within Probe & Research Nodes (ADR-0089)
+
+
+- **Activity**: Grill-with-docs session stress-testing the architectural trade-offs between pure Kahn-compiled DAG execution, unconstrained ReAct loops, and embedded exploratory sub-graphs based on full 25-task benchmarks (`results-full-local-dag-3` vs `results-full-local-react-2`).
+- **Key Design Decisions Resolved**:
+  1. **Hybrid Execution Topology**: The outer execution engine remains a Durable DAG (preserving Kahn topological sorting, parallel layer dispatch, checkpointing, and deterministic tool sinks), while exploratory **Probe Nodes** and **Research Nodes** execute a native **ReAct Loop** internally.
+  2. **Native Go ReAct Engine (`RunReActLoop`)**: Implemented directly in Go (`internal/executor/react_node.go`) using `tools.Registry` and direct OpenAI-compatible `/v1/chat/completions` tool calling on local sidecars, eliminating external Node/npm dependencies.
+  3. **Tool Error as Observation**: Tool execution failures return as `role: "tool"` observation messages, allowing the model to naturally self-correct without aborting the node.
+  4. **Repetition Guard & Tiered Step Budgets**: Bounded by `RepetitionGuard` and configurable step budgets (15 steps default covering >90% of tasks; 25 steps for broad repo sweeps), with forced synthesis at budget exhaustion.
+  5. **Sliding Window Context Protection**: Drops oldest tool observation turn pairs when prompt tokens exceed 12k to maintain constant-time prefill and prevent context window overflow.
+  6. **Clean Terminal Return Payload Contract**: Probe nodes return only the final assistant text message (`output.text`/`output.summary`) to downstream DAG nodes, preserving context hygiene while persisting intermediate traces in SQLite for auditability.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Updated canonical definition for **Probe Node** to encapsulate an internal ReAct Loop.
+  - `docs/adr/0089-react-loop-in-probe-nodes.md`: Authored and accepted ADR-0089.
+  - `docs/wiki/index.md`: Registered ADR-0089 in Architecture & Concepts index.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
+## [2026-08-22T20:25:00-07:00] grill-with-docs | DAG Parity Optimization — Immutable Goals, Typed Compaction, Terminal Sinks & Fast-Path (ADR-0088)
+
+
+- **Activity**: Grill-with-docs session stress-testing the architectural root causes of quality and latency regressions between ReAct and DAG under 35B model parity.
+- **Key Design Decisions Resolved**:
+  1. **Immutable Goal Prompt Injection**: Preserve verbatim user prompt (`Task.GoalPrompt`) at intake and inject immutably into downstream Synthesis, Analyze, and Codegen node execution contexts under a dedicated `## Primary User Specification` block to eliminate prompt dilution during graph mutation.
+  2. **Domain-Aware Structured Compaction**: Ground Probe and Recall compaction in typed representations (Code $\to$ AST Skeletons; Web Research $\to$ Evidence Cards; Data Analysis $\to$ Analytical Evidence) rather than generic text summarization.
+  3. **Compiler-Injected Terminal Tool Sinks**: Automatically append a deterministic `write_file` Action Node bound to `terminal_synthesis.output` for all `docgen` tasks to eliminate missing-file evaluation deductions.
+  4. **Fast-Path T0 Short-Circuit**: For T0 Direct tasks (single queries, simple edits), bypass template mutation and pre-indexing to dispatch a direct single-node execution graph in <30 seconds.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added canonical definitions for **Immutable Goal Prompt**, **Terminal Tool Sink**, and **Fast-Path Execution**.
+  - `docs/adr/0088-dag-parity-optimization-immutable-goals-and-fast-path.md`: Authored and accepted ADR-0088.
+  - `docs/wiki/index.md`: Registered ADR-0088 in Architecture & Concepts index.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
+## [2026-08-22T14:22:00-07:00] grill-with-docs | Orthogonal Plan Templates, Single-Decision Router Invariant & Baseline Fallback (ADR-0087)
+
+- **Activity**: Grill-with-docs session resolving plan template dispatch and plan repair failures from ReAct vs. DAG benchmarks, decoupling graph topology from tool source modality, and enforcing sequential single-decision routing on the 1B router model.
+- **Key Design Decisions Resolved**:
+  1. **Orthogonal Plan Template Registry**: Deconstructed monolithic template categories (`explore-only`, `docgen`, `research`) into pure **Topology Archetypes** (`probe-synthesis`, `probe-and-write`, `multi-probe-synthesis`, `codegen`, `data-analysis`, `action-chain`) and **Source Modalities** (`local`, `web`, `hybrid`).
+  2. **Single-Decision Router Invariant & 2-Pass Routing**: The 1B router sidecar is constrained to single-decision GBNF passes. Intake runs Pass 1 (Topology Archetype) followed by Pass 2 (Source Modality when multi-tool domains/web tools exist, else defaults to `local`).
+  3. **Source-Aware Plan Repair**: `repairGraphWithProbe` inherits the task's resolved `SourceModality`, provisioning `web_search`/`web_browse` and `SourceHint="web"` for web research tasks.
+  4. **Deterministic Baseline Template Fallback**: When local model template mutations fail validation and repair in `local_only` mode, the engine safely falls back to the unmodified base hydrated template with prompt injection, ensuring 100% DAG compilation survival.
+  5. **Polymorphic `StaticArgs` Normalization**: `GraphNode` JSON unmarshaling normalized to accept both JSON objects/maps and flat strings seamlessly.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added **Plan Template Registry**, **Topology Archetype**, **Source Modality**, **Single-Decision Router Principle**, and **Baseline Template Fallback**.
+  - `AGENTS.md`: Added the **Single-Decision Router Invariant** under High-Reliability Prompting.
+  - `docs/adr/0087-orthogonal-plan-templates-and-single-decision-routing.md`: Authored and accepted ADR-0087.
+  - `docs/wiki/index.md`: Registered ADR-0087 in the architecture index.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
 ## [2026-08-19T11:12:00-07:00] tdd | Repository Pre-Index, Dual-Plane Indexing & Context Budget Packing (ADR-0086)
 
 - **Activity**: Implemented the complete 5-slice vertical tracer-bullet architecture for the Repository Pre-Index, Dual-Plane Indexing, Hybrid Search with Reciprocal Rank Fusion, Context Budget Packing, and Probe Node Direct Synthesis Pre-flight integration.

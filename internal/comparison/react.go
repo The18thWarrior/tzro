@@ -107,8 +107,29 @@ func RunReActWithEndpoint(ctx context.Context, task ComparisonTask, pricing Pric
 	return runPiReAct(ctx, opts)
 }
 
-// RunLocalReAct executes a ReAct loop against the local llama-server sidecar using pi-coder.
+// RunLocalReAct executes a ReAct loop against the configured local worker backend using pi-coder.
 func RunLocalReAct(ctx context.Context, task ComparisonTask, pricing PricingTable, outputDir string) (ComparisonResult, error) {
+	cfg := config.Get()
+	provider := "tzro-local"
+	model := "local"
+	apiKey := "none"
+
+	if cfg.InferenceBackend.Type == "openai-compatible" && cfg.InferenceBackend.URL != "" {
+		provider = "tzro-configured-backend"
+		if cfg.InferenceBackend.Model != "" {
+			model = cfg.InferenceBackend.Model
+		}
+		if cfg.InferenceBackend.APIKey != "" {
+			resolvedKey := cfg.InferenceBackend.APIKey
+			if strings.HasPrefix(resolvedKey, "$") {
+				resolvedKey = os.Getenv(strings.TrimPrefix(resolvedKey, "$"))
+			}
+			if resolvedKey != "" {
+				apiKey = resolvedKey
+			}
+		}
+	}
+
 	localEndpoint, err := resolveLocalEndpoint()
 	if err != nil {
 		return ComparisonResult{
@@ -124,9 +145,9 @@ func RunLocalReAct(ctx context.Context, task ComparisonTask, pricing PricingTabl
 	opts := piReActOptions{
 		Task:         task,
 		Condition:    ConditionLocalReAct,
-		Provider:     "tzro-local",
-		Model:        "local",
-		APIKey:       "none",
+		Provider:     provider,
+		Model:        model,
+		APIKey:       apiKey,
 		BaseURL:      baseURL,
 		SystemPrompt: localReActSystemPrompt,
 		Pricing:      pricing,
@@ -205,7 +226,7 @@ func runPiReAct(ctx context.Context, opts piReActOptions) (ComparisonResult, err
 		}, err
 	}
 
-	args := []string{"--mode", "json", "--no-session", "-e", extPath, "-p"}
+	args := []string{"--mode", "json", "--no-session", "--no-context-files", "-e", extPath, "-p"}
 	if opts.Provider != "" {
 		args = append(args, "--provider", opts.Provider)
 	}
@@ -312,10 +333,10 @@ func runPiReAct(ctx context.Context, opts piReActOptions) (ComparisonResult, err
 				} `json:"usage"`
 			} `json:"messages"`
 			AssistantMessageEvent *struct {
-				Type     string `json:"type"`
-				ToolName string `json:"toolName"`
-				Content  string `json:"content"`
-				Delta    string `json:"delta"`
+				Type    string          `json:"type"`
+				Content string          `json:"content"`
+				Delta   string          `json:"delta"`
+				Partial json.RawMessage `json:"partial"`
 			} `json:"assistantMessageEvent"`
 		}
 
@@ -326,6 +347,28 @@ func runPiReAct(ctx context.Context, opts piReActOptions) (ComparisonResult, err
 		if event.AssistantMessageEvent != nil {
 			if event.AssistantMessageEvent.Type == "toolcall_start" {
 				toolCallCount++
+				toolName := ""
+				if len(event.AssistantMessageEvent.Partial) > 0 {
+					var partial struct {
+						Content []struct {
+							Type string `json:"type"`
+							Name string `json:"name"`
+						} `json:"content"`
+					}
+					if err := json.Unmarshal(event.AssistantMessageEvent.Partial, &partial); err == nil {
+						for _, item := range partial.Content {
+							if item.Name != "" {
+								toolName = item.Name
+								break
+							}
+						}
+					}
+				}
+				if toolName != "" {
+					fmt.Fprintf(os.Stderr, "  [%s] Tool call #%d: %s\n", opts.Condition, toolCallCount, toolName)
+				} else {
+					fmt.Fprintf(os.Stderr, "  [%s] Tool call #%d\n", opts.Condition, toolCallCount)
+				}
 			}
 		}
 
@@ -365,6 +408,9 @@ func runPiReAct(ctx context.Context, opts piReActOptions) (ComparisonResult, err
 				}
 			}
 		}
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		fmt.Fprintf(os.Stderr, "[%s] Scanner error: %v\n", opts.Condition, scanErr)
 	}
 
 	cmdErr := cmd.Wait()
@@ -738,10 +784,23 @@ type reactCompletionResponse struct {
 	} `json:"usage"`
 }
 
-// resolveLocalEndpoint discovers the local llama-server sidecar port and returns
-// the OpenAI-compatible chat completions endpoint URL. Auto-starts the sidecar
-// if it's not running and waits for health.
+// resolveLocalEndpoint discovers the configured local inference endpoint URL
+// (either from an active InferenceBackend like openai-compatible, or the local llama-server sidecar).
 func resolveLocalEndpoint() (string, error) {
+	cfg := config.Get()
+	if cfg.InferenceBackend.Type == "openai-compatible" && cfg.InferenceBackend.URL != "" {
+		url := cfg.InferenceBackend.URL
+		if !strings.HasSuffix(url, "/chat/completions") {
+			trimmed := strings.TrimSuffix(url, "/")
+			if strings.Contains(trimmed, "/v1") || strings.Contains(trimmed, "/v2") {
+				url = trimmed + "/chat/completions"
+			} else {
+				url = trimmed + "/v1/chat/completions"
+			}
+		}
+		return url, nil
+	}
+
 	ctx := context.Background()
 
 	status, activePort, _, _, _ := inference.GlobalLocalModel.GetStatusInfo()

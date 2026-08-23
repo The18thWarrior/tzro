@@ -1,7 +1,9 @@
 package compiler
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -34,6 +36,30 @@ type GraphNode struct {
 	// Multi-branch Edge Thought evaluation (ADR-0045)
 	MCTSBranches int  `json:"mctsBranches,omitempty"` // K candidates for multi-branch mode. 0 = single-shot.
 	StreamOutput bool `json:"streamOutput,omitempty"` // Stream token generation to StreamBus for TUI consumption.
+}
+
+// UnmarshalJSON implements polymorphic unmarshaling for GraphNode.
+// Specifically, it handles staticArgs when emitted either as a JSON string
+// or as a raw JSON object/map by local models during plan mutation.
+func (n *GraphNode) UnmarshalJSON(data []byte) error {
+	type Alias GraphNode
+	var aux struct {
+		StaticArgs json.RawMessage `json:"staticArgs,omitempty"`
+		*Alias
+	}
+	aux.Alias = (*Alias)(n)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.StaticArgs) > 0 && string(aux.StaticArgs) != "null" {
+		var s string
+		if err := json.Unmarshal(aux.StaticArgs, &s); err == nil {
+			n.StaticArgs = s
+		} else {
+			n.StaticArgs = strings.TrimSpace(string(aux.StaticArgs))
+		}
+	}
+	return nil
 }
 
 // CompactionLevel controls how aggressively a node's output is compacted
@@ -113,6 +139,32 @@ type GraphEdge struct {
 	TargetID string `json:"targetId"`
 }
 
+// UnmarshalJSON implements polymorphic unmarshaling for GraphEdge,
+// supporting both "source"/"target" and "sourceId"/"targetId".
+func (e *GraphEdge) UnmarshalJSON(data []byte) error {
+	type Alias GraphEdge
+	var aux struct {
+		Source   string `json:"source"`
+		Target   string `json:"target"`
+		SourceID string `json:"sourceId"`
+		TargetID string `json:"targetId"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.SourceID != "" {
+		e.SourceID = aux.SourceID
+	} else {
+		e.SourceID = aux.Source
+	}
+	if aux.TargetID != "" {
+		e.TargetID = aux.TargetID
+	} else {
+		e.TargetID = aux.Target
+	}
+	return nil
+}
+
 type ExecutionGraph struct {
 	TaskID         string          `json:"taskId"`
 	ParentTaskID   string          `json:"parentTaskId,omitempty"` // ID of the parent task if this is a sub-DAG
@@ -124,6 +176,7 @@ type ExecutionGraph struct {
 	CreatedAt      int64           `json:"createdAt"`
 	MutationBudget *MutationBudget `json:"mutationBudget,omitempty"` // ADR-0024: per-task spawn budget
 	IsForeground   bool            `json:"isForeground,omitempty"`   // ADR-0063: foreground tasks get compute priority
+	SourceModality string          `json:"sourceModality,omitempty"` // ADR-0087: "local" | "web" | "hybrid"
 }
 
 // MutationBudget bounds dynamic graph expansion at runtime (ADR-0024).

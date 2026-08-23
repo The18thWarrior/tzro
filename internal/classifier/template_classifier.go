@@ -3,76 +3,172 @@ package classifier
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"tzro/internal/inference"
 	"tzro/internal/templates"
 )
 
-// TemplateCategorySystemPrompt instructs the router model to classify a user
-// prompt into one of the 7 Plan Template Registry categories (ADR-0048).
-const TemplateCategorySystemPrompt = `You are a template category classifier for the tzro execution engine. Classify the user's request into exactly one plan template category.
+// TopologyArchetypeSystemPrompt instructs the worker model to classify a user
+// prompt into exactly one of the 6 structural Topology Archetypes (ADR-0087).
+const TopologyArchetypeSystemPrompt = `You are a plan topology classifier for the tzro agentic execution engine. Classify the user's request into exactly one structural topology archetype.
 
-## Categories
+## Archetypes
 
-- explore-only: Codebase exploration, architecture analysis, directory traversal, file reading tasks. The task requires discovering information but NOT writing any output files.
-- docgen: Documentation generation, function indexes, API docs, report writing, creating summaries or analysis documents that must be saved to a file. Exploration followed by writing results to disk.
-- research: Web research tasks — searching the internet, reading web pages, comparing products. Includes tasks that write research results to a file.
-- data-analysis: Analyzing structured or tabular data from CSV files, databases, or cached data sources. Counting, grouping, filtering, ranking operations.
-- multi-probe-synthesis: Tasks requiring exploration of multiple independent sources that must be synthesized together. Multi-directory analysis, cross-project comparison.
-- codegen: Code generation or modification tasks — writing or editing source code files (.go, .ts, .py, etc.). Requires codebase context gathering followed by code generation.
-- action-chain: Multi-step tool workflows — sequential tool dispatch where each step uses a different tool. API calls, data pipelines, automated processes with 2+ distinct tool steps.
+- probe-synthesis: Exploration, research, discovery, or analysis tasks that produce an answer or synthesis in memory/terminal without writing an output file to disk.
+- probe-and-write: Exploration, research, documentation generation, or report writing tasks that MUST save/write output content to a file on disk (e.g. .md, .txt, README).
+- multi-probe-synthesis: Tasks requiring exploration of multiple independent sources, directories, or targets that must be synthesized together.
+- codegen: Code generation or modification tasks — writing or editing source code files (.go, .ts, .py, etc.). Context exploration followed by code generation.
+- data-analysis: Analyzing structured or tabular data from CSV files, databases, or cache tables using counting, grouping, filtering, or SQL operations.
+- action-chain: Multi-step tool workflows — sequential tool dispatch where each step uses a distinct action tool.
 
 ## Rules
 - Respond with ONLY valid JSON matching the schema. No markdown fences.
-- If the task involves generating documentation, reports, summaries, indexes, or analysis documents, choose "docgen". This includes function indexes, API docs, and architecture summaries — even if the task requires reading source code first. If the output is a .md, .txt, or documentation file about code (not executable code itself), choose "docgen".
-- If the task involves writing or modifying executable source code files (.go, .ts, .py, etc.), choose "codegen". Only choose this when the output IS source code, not documentation about source code.
-- If the task involves web search, choose "research".
+- If the task asks to generate, update, or write a documentation file, report, README, index, or summary to a file path, choose "probe-and-write".
+- If the task asks to analyze, explore, summarize, or research without writing to a file, choose "probe-synthesis".
+- If the task involves writing or modifying executable source code files (.go, .ts, .py, etc.), choose "codegen".
 - If the task involves multiple independent explorations, choose "multi-probe-synthesis".
-- If the task involves sequential tool calls (not exploration), choose "action-chain".
-- If ambiguous, default to "explore-only".
+- If ambiguous, default to "probe-synthesis".
 
 ## Response Schema
 {
-  "category": "<one of the 7 categories above>"
+  "topology": "<one of the 6 archetypes above>"
 }`
 
-// TemplateCategorySchema is the GBNF-constraining JSON schema for template
-// category classification. The enum list must match the TemplateCategory
-// constants in the templates package.
-const TemplateCategorySchema = `{
+// TopologyArchetypeSchema is the GBNF-constraining JSON schema for Pass 1 topology routing.
+const TopologyArchetypeSchema = `{
   "type": "object",
   "properties": {
-    "category": {
+    "topology": {
       "type": "string",
-      "enum": ["explore-only", "docgen", "research", "data-analysis", "multi-probe-synthesis", "codegen", "action-chain"]
+      "enum": ["probe-synthesis", "probe-and-write", "multi-probe-synthesis", "codegen", "data-analysis", "action-chain"]
     }
   },
-  "required": ["category"]
+  "required": ["topology"]
 }`
 
-// ClassifyTemplateCategory routes template category classification through the
-// router sidecar. Returns ExploreOnly as a safe default on any failure.
-func ClassifyTemplateCategory(ctx context.Context, prompt string, toolNames []string) templates.TemplateCategory {
-	req := inference.NewSimpleRequest(TemplateCategorySystemPrompt, prompt, TemplateCategorySchema)
+// SourceModalitySystemPrompt instructs the worker model to classify the data source domain (ADR-0087).
+const SourceModalitySystemPrompt = `You are a source modality classifier for the tzro agentic execution engine. Classify the user's request into exactly one source modality domain.
+
+## Modalities
+
+- local: Workspace repository, local files, directories, codebases, local documentation, or on-disk data.
+- web: Internet research, searching the web, online documentation, reading web pages, looking up external CVEs/advisories, or citing URLs.
+- hybrid: Tasks requiring BOTH local workspace exploration AND live web search/browsing.
+
+## Rules
+- Respond with ONLY valid JSON matching the schema. No markdown fences.
+- If the prompt mentions web search, browsing URLs, looking up internet information, or citing web sources, choose "web".
+- If the prompt references local files, paths, internal packages, or local repo docs, choose "local".
+- If ambiguous, default to "local".
+
+## Response Schema
+{
+  "modality": "local" | "web" | "hybrid"
+}`
+
+// SourceModalitySchema is the GBNF-constraining JSON schema for Pass 2 source modality routing.
+const SourceModalitySchema = `{
+  "type": "object",
+  "properties": {
+    "modality": {
+      "type": "string",
+      "enum": ["local", "web", "hybrid"]
+    }
+  },
+  "required": ["modality"]
+}`
+
+// Legacy aliases for backward compatibility
+const TemplateCategorySystemPrompt = TopologyArchetypeSystemPrompt
+const TemplateCategorySchema = TopologyArchetypeSchema
+
+// HasWebTools checks whether web search / browse tools are available in the tool inventory.
+func HasWebTools(toolNames []string) bool {
+	for _, name := range toolNames {
+		if name == "web_search" || name == "web_browse" || strings.HasPrefix(name, "web_") {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassifyTopologyArchetype executes Pass 1 of intake routing on the worker model.
+func ClassifyTopologyArchetype(ctx context.Context, prompt string, toolNames []string) templates.TemplateCategory {
+	req := inference.NewSimpleRequest(TopologyArchetypeSystemPrompt, prompt, TopologyArchetypeSchema)
 	req.ToolNames = toolNames
 
-	resContent, err := inference.ExecuteRouterStructured(ctx, req)
+	resContent, err := inference.ExecuteWorkerStructured(ctx, req)
 	if err != nil {
-		return templates.ExploreOnly
+		return templates.ProbeSynthesis
 	}
 
 	var result struct {
-		Category string `json:"category"`
+		Topology string `json:"topology"`
+		Category string `json:"category"` // legacy fallback
 	}
 	if json.Unmarshal([]byte(resContent), &result) != nil {
-		return templates.ExploreOnly
+		return templates.ProbeSynthesis
 	}
 
-	// Validate against registered categories
-	cat := templates.TemplateCategory(result.Category)
+	catStr := result.Topology
+	if catStr == "" {
+		catStr = result.Category
+	}
+
+	// Validate against registered categories (handles aliases)
+	cat := templates.TemplateCategory(catStr)
 	if templates.Get(cat) == nil {
-		return templates.ExploreOnly
+		return templates.ProbeSynthesis
 	}
 
 	return cat
+}
+
+// ClassifySourceModality executes Pass 2 of intake routing on the worker model.
+func ClassifySourceModality(ctx context.Context, prompt string, toolNames []string) templates.SourceModality {
+	req := inference.NewSimpleRequest(SourceModalitySystemPrompt, prompt, SourceModalitySchema)
+	req.ToolNames = toolNames
+
+	resContent, err := inference.ExecuteWorkerStructured(ctx, req)
+	if err != nil {
+		return templates.SourceLocal
+	}
+
+	var result struct {
+		Modality string `json:"modality"`
+	}
+	if json.Unmarshal([]byte(resContent), &result) != nil {
+		return templates.SourceLocal
+	}
+
+	switch templates.SourceModality(result.Modality) {
+	case templates.SourceWeb:
+		return templates.SourceWeb
+	case templates.SourceHybrid:
+		return templates.SourceHybrid
+	default:
+		return templates.SourceLocal
+	}
+}
+
+// ClassifyPlanTemplate coordinates the 2-pass Single-Decision routing process (ADR-0087).
+// Pass 1 classifies the Topology Archetype. Pass 2 classifies the Source Modality
+// only when multiple tool domains (e.g. web tools) exist in the tool inventory.
+func ClassifyPlanTemplate(ctx context.Context, prompt string, toolNames []string) (templates.TemplateCategory, templates.SourceModality) {
+	topology := ClassifyTopologyArchetype(ctx, prompt, toolNames)
+
+	var modality templates.SourceModality
+	if HasWebTools(toolNames) {
+		modality = ClassifySourceModality(ctx, prompt, toolNames)
+	} else {
+		modality = templates.SourceLocal
+	}
+
+	return topology, modality
+}
+
+// ClassifyTemplateCategory is the legacy single-pass wrapper returning the Topology Archetype.
+func ClassifyTemplateCategory(ctx context.Context, prompt string, toolNames []string) templates.TemplateCategory {
+	return ClassifyTopologyArchetype(ctx, prompt, toolNames)
 }

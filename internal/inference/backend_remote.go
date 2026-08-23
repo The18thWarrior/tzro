@@ -116,6 +116,16 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+		// Self-healing: If 400 Bad Request is due to response_format incompatibilities,
+		// retry with json_schema or plain unconstrained format.
+		if resp.StatusCode == http.StatusBadRequest && reqBody.ResponseFormat != nil && strings.Contains(string(respBody), "response_format") {
+			fmt.Fprintf(os.Stderr, "[RemoteBackend] Server rejected response_format (%s), auto-healing format...\n", string(respBody))
+			if b.schemaFormat == "json_object" {
+				b.schemaFormat = "json_schema"
+				return b.CallModel(ctx, messages, jsonSchema)
+			}
+			return b.CallModel(ctx, messages, "")
+		}
 		return nil, fmt.Errorf("remote model HTTP server returned status %s: %s", resp.Status, string(respBody))
 	}
 
@@ -234,6 +244,16 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+		// Self-healing: If 400 Bad Request is due to response_format incompatibilities,
+		// retry with json_schema or plain unconstrained format.
+		if resp.StatusCode == http.StatusBadRequest && reqBody.ResponseFormat != nil && strings.Contains(string(respBody), "response_format") {
+			fmt.Fprintf(os.Stderr, "[RemoteBackend] Server rejected streaming response_format (%s), auto-healing format...\n", string(respBody))
+			if b.schemaFormat == "json_object" {
+				b.schemaFormat = "json_schema"
+				return b.CallModelStream(ctx, messages, jsonSchema, meta)
+			}
+			return b.CallModelStream(ctx, messages, "", meta)
+		}
 		return nil, fmt.Errorf("remote model stream HTTP server returned status %s: %s", resp.Status, string(respBody))
 	}
 
@@ -427,8 +447,7 @@ func (b *RemoteOpenAIBackend) buildResponseFormat(jsonSchema string) map[string]
 	switch b.schemaFormat {
 	case "json_object":
 		return map[string]interface{}{
-			"type":   "json_object",
-			"schema": schemaObj,
+			"type": "json_object",
 		}
 	default: // "json_schema" or empty — standard OpenAI/Google/Anthropic format
 		return map[string]interface{}{

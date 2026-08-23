@@ -11,24 +11,37 @@ import (
 	"tzro/internal/compiler"
 )
 
-// TemplateCategory identifies a structural graph shape in the registry.
+// TemplateCategory identifies a structural graph shape (Topology Archetype) in the registry (ADR-0087).
 type TemplateCategory string
 
 const (
-	ExploreOnly         TemplateCategory = "explore-only"
-	Docgen              TemplateCategory = "docgen"
-	Research            TemplateCategory = "research"
-	DataAnalysis        TemplateCategory = "data-analysis"
+	ProbeSynthesis      TemplateCategory = "probe-synthesis"
+	ProbeAndWrite       TemplateCategory = "probe-and-write"
 	MultiProbeSynthesis TemplateCategory = "multi-probe-synthesis"
 	Codegen             TemplateCategory = "codegen"
+	DataAnalysis        TemplateCategory = "data-analysis"
 	ActionChain         TemplateCategory = "action-chain"
+
+	// Legacy category aliases for backward compatibility with ADR-0048
+	ExploreOnly TemplateCategory = "probe-synthesis"
+	Docgen      TemplateCategory = "probe-and-write"
+	Research    TemplateCategory = "probe-synthesis"
 )
 
-// registry holds the canonical template for each category.
+// SourceModality identifies the tool inventory and data context domain for exploration (ADR-0087).
+type SourceModality string
+
+const (
+	SourceLocal  SourceModality = "local"
+	SourceWeb    SourceModality = "web"
+	SourceHybrid SourceModality = "hybrid"
+)
+
+// registry holds the canonical template for each Topology Archetype.
 // Templates are Abstract Graphs (pre-compilation) — the Kahn Compiler
 // auto-injects Recall Nodes, semantic validators, and synthesis nodes.
 var registry = map[TemplateCategory]*compiler.ExecutionGraph{
-	ExploreOnly: {
+	ProbeSynthesis: {
 		MaxCycles: 5,
 		Nodes: []compiler.GraphNode{
 			{
@@ -48,17 +61,17 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 		Edges: []compiler.GraphEdge{},
 	},
 
-	Docgen: {
+	ProbeAndWrite: {
 		MaxCycles: 5,
 		Nodes: []compiler.GraphNode{
 			{
 				ID:           "explore",
 				Type:         "probe",
-				Instructions: "Explore the target and produce content for documentation.",
+				Instructions: "Explore the target and produce content for documentation or output.",
 				AllowedTools: []string{"read_file", "list_dir", "search_files"},
 				Status:       "pending",
 				ProbeConfig: &compiler.ProbeConfig{
-					Goal:         "Explore the target and produce content for documentation.",
+					Goal:         "Explore the target and produce content for documentation or output.",
 					AllowedTools: []string{"read_file", "list_dir", "search_files"},
 					StepBudget:   20,
 					CompactEvery: 3,
@@ -68,7 +81,7 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 				ID:           "write_output",
 				Type:         "action",
 				Action:       "write_file",
-				Instructions: "Write the documentation to the target file.",
+				Instructions: "Write the output to the target file.",
 				AllowedTools: []string{"write_file"},
 				Status:       "pending",
 			},
@@ -76,27 +89,6 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 		Edges: []compiler.GraphEdge{
 			{SourceID: "explore", TargetID: "write_output"},
 		},
-	},
-
-	Research: {
-		MaxCycles: 5,
-		Nodes: []compiler.GraphNode{
-			{
-				ID:           "research",
-				Type:         "probe",
-				Instructions: "Research the topic using web search and browsing.",
-				AllowedTools: []string{"web_search", "web_browse"},
-				Status:       "pending",
-				ProbeConfig: &compiler.ProbeConfig{
-					Goal:         "Research the topic using web search and browsing.",
-					AllowedTools: []string{"web_search", "web_browse"},
-					StepBudget:   20,
-					CompactEvery: 3,
-					SourceHint:   "web",
-				},
-			},
-		},
-		Edges: []compiler.GraphEdge{},
 	},
 
 
@@ -225,14 +217,80 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 }
 
 
-// Get returns a deep copy of the template for the given category.
-// Returns nil if the category is not registered.
-func Get(category TemplateCategory) *compiler.ExecutionGraph {
+// GetWithModality returns a deep copy of the template hydrated with tools and source hint
+// appropriate for the given SourceModality (ADR-0087).
+func GetWithModality(category TemplateCategory, modality SourceModality) *compiler.ExecutionGraph {
+	// Normalize legacy category strings
+	switch string(category) {
+	case "explore-only":
+		category = ProbeSynthesis
+		if modality == "" {
+			modality = SourceLocal
+		}
+	case "docgen":
+		category = ProbeAndWrite
+		if modality == "" {
+			modality = SourceLocal
+		}
+	case "research":
+		category = ProbeSynthesis
+		if modality == "" {
+			modality = SourceWeb
+		}
+	}
+
+	if modality == "" {
+		modality = SourceLocal
+	}
+
 	tmpl, ok := registry[category]
 	if !ok {
 		return nil
 	}
-	return deepCopy(tmpl)
+	g := deepCopy(tmpl)
+	if g == nil {
+		return nil
+	}
+	g.SourceModality = string(modality)
+
+	// Hydrate probe nodes with modality-appropriate tools and source hints
+	var probeTools []string
+	var hint string
+	switch modality {
+	case SourceWeb:
+		probeTools = []string{"web_search", "web_browse"}
+		hint = "web"
+	case SourceHybrid:
+		probeTools = []string{"read_file", "list_dir", "search_files", "web_search", "web_browse"}
+		hint = "hybrid"
+	case SourceLocal:
+		probeTools = []string{"read_file", "list_dir", "search_files"}
+		hint = "filesystem"
+	default:
+		probeTools = []string{"read_file", "list_dir", "search_files"}
+		hint = "filesystem"
+	}
+
+	for i := range g.Nodes {
+		if g.Nodes[i].Type == "probe" {
+			g.Nodes[i].AllowedTools = probeTools
+			if g.Nodes[i].ProbeConfig != nil {
+				g.Nodes[i].ProbeConfig.AllowedTools = probeTools
+				g.Nodes[i].ProbeConfig.SourceHint = hint
+			}
+		}
+	}
+
+	return g
+}
+
+// Get returns a deep copy of the template for the given category.
+// Returns nil if the category is not registered.
+func Get(category TemplateCategory) *compiler.ExecutionGraph {
+	if string(category) == "research" {
+		return GetWithModality(category, SourceWeb)
+	}
+	return GetWithModality(category, SourceLocal)
 }
 
 // Categories returns all registered template category strings, sorted.

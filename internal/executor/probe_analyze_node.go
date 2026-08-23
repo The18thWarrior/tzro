@@ -254,23 +254,34 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 					}
 				}
 			}
+		}
 
-			if probeConfig.DirectSynthesis {
-				// Bypass PhaseRunner — run single-shot synthesis via legacy path
-				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: DirectSynthesis promoted — bypassing PhaseRunner\n", node.ID)
-				synthesis, err = RunProbe(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-			} else {
-				switch probeConfig.SourceHint {
-				case "web":
-					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ResearchPhases (SourceHint=web)\n", node.ID)
-					synthesis, err = RunResearchPhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-				case "cache":
-					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to AnalyzePhases (SourceHint=cache)\n", node.ID)
-					synthesis, err = RunAnalyzePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-				default:
-					fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases\n", node.ID)
-					synthesis, err = RunProbePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
-				}
+		if node.Type == "probe" || probeConfig.SourceHint == "web" {
+			fmt.Fprintf(os.Stderr, "[Executor] Node %s (%s): dispatching to native ReAct loop (ADR-0089)\n", node.ID, node.Type)
+			reactCfg := ReActConfig{
+				Goal:            probeConfig.Goal,
+				AllowedTools:    probeConfig.AllowedTools,
+				StepBudget:      probeConfig.StepBudget,
+				TaskContext:     probeConfig.TaskContext,
+				UpstreamContext: probeConfig.UpstreamContext,
+			}
+			if reactCfg.StepBudget <= 0 {
+				reactCfg.StepBudget = 15
+			}
+			liveInf := NewLiveReActInference()
+			reactRes, reactErr := RunReActLoop(probeCtx, reactCfg, liveInf)
+			if reactErr != nil {
+				return "", fmt.Errorf("react loop failed on node %s: %w", node.ID, reactErr)
+			}
+			synthesis = reactRes.FinalOutput
+		} else if config.GetUsePhaseRunner() {
+			switch probeConfig.SourceHint {
+			case "cache":
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to AnalyzePhases (SourceHint=cache)\n", node.ID)
+				synthesis, err = RunAnalyzePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
+			default:
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases\n", node.ID)
+				synthesis, err = RunProbePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
 			}
 		} else {
 			// Legacy flat Thought Chain loop

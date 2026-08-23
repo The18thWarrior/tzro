@@ -268,3 +268,84 @@ func TestPlanWithEscalation_ValidationFailsCloudAllowed(t *testing.T) {
 		}
 	}
 }
+
+func TestRepairGraphWithProbe_WebModality(t *testing.T) {
+	webGraph := &compiler.ExecutionGraph{
+		TaskID:         "test_web_repair",
+		SourceModality: "web",
+		GoalPrompt:     "Search the web for LLM trends",
+		Nodes: []compiler.GraphNode{
+			{ID: "node_1", Type: "action", Action: "hallucinated_scraper", Instructions: "scrape results"},
+		},
+	}
+
+	invalidTools := []InvalidTool{{NodeID: "node_1", ToolName: "hallucinated_scraper"}}
+	repaired := repairGraphWithProbe(webGraph, invalidTools)
+
+	if len(repaired.Nodes) != 1 {
+		t.Fatalf("expected 1 repair node, got %d", len(repaired.Nodes))
+	}
+	repairNode := repaired.Nodes[0]
+	if repairNode.Type != "probe" {
+		t.Errorf("expected probe node, got %s", repairNode.Type)
+	}
+	if repairNode.ProbeConfig == nil || repairNode.ProbeConfig.SourceHint != "web" {
+		t.Errorf("expected SourceHint 'web', got %v", repairNode.ProbeConfig)
+	}
+	hasWebSearch := false
+	for _, tool := range repairNode.AllowedTools {
+		if tool == "web_search" {
+			hasWebSearch = true
+		}
+	}
+	if !hasWebSearch {
+		t.Errorf("expected AllowedTools to contain web_search, got %v", repairNode.AllowedTools)
+	}
+}
+
+func TestPlanWithEscalation_BaselineFallback_LocalOnly(t *testing.T) {
+	// Plan with structural cycle between valid tools that cannot be fixed by tool replacement
+	cyclicGraph := &compiler.ExecutionGraph{
+		TaskID:         "test_cyclic_fallback",
+		SourceModality: "web",
+		GoalPrompt:     "Research local LLMs on the web",
+		Nodes: []compiler.GraphNode{
+			{ID: "A", Type: "action", Action: "known_tool"},
+			{ID: "B", Type: "action", Action: "known_tool"},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "A", TargetID: "B"},
+			{SourceID: "B", TargetID: "A"},
+		},
+	}
+
+	localPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return cyclicGraph, nil
+	}
+	cloudPlan := func(ctx context.Context) (*compiler.ExecutionGraph, error) {
+		return nil, fmt.Errorf("cloud should not be called in local-only mode")
+	}
+	decision := RoutingDecision{Backend: "local", AllowCloudFallback: false, PrivacyQuarantined: true}
+	toolExists := func(name string) bool { return name == "known_tool" }
+
+	result, err := PlanWithEscalation(context.Background(), localPlan, cloudPlan, decision, toolExists)
+	if err != nil {
+		t.Fatalf("expected baseline fallback to succeed without error, got: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil fallback graph")
+	}
+	if result.TaskID != "test_cyclic_fallback" {
+		t.Errorf("expected taskID preserved, got %s", result.TaskID)
+	}
+	if result.SourceModality != "web" {
+		t.Errorf("expected SourceModality 'web', got %s", result.SourceModality)
+	}
+	if len(result.Nodes) == 0 {
+		t.Fatal("expected non-empty fallback nodes")
+	}
+	// Verify the fallback graph compiles without cycles
+	if _, err := compiler.CompileAndSort(result); err != nil {
+		t.Errorf("fallback graph failed cycle check: %v", err)
+	}
+}

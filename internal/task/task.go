@@ -323,8 +323,40 @@ func buildSelfContainedGraph(taskID, prompt string) *compiler.ExecutionGraph {
 				},
 			},
 		},
-		Edges: []compiler.GraphEdge{},
+		Edges:      []compiler.GraphEdge{},
+		GoalPrompt: prompt,
 	}
+}
+
+// BuildFastPathGraph constructs a direct execution graph for T0 tasks, bypassing template mutation (ADR-0088).
+func BuildFastPathGraph(taskID, prompt, complexityTier string) (*compiler.ExecutionGraph, bool) {
+	if complexityTier != "T0" {
+		return nil, false
+	}
+
+	node := compiler.GraphNode{
+		ID:           "direct_exec",
+		Type:         "probe",
+		Instructions: prompt,
+		AllowedTools: []string{"read_file", "list_dir", "introspect_cache", "sql_cached_data", "save_memory"},
+		Status:       "pending",
+		ProbeConfig: &compiler.ProbeConfig{
+			Goal:            prompt,
+			DirectSynthesis: false,
+			AllowedTools:    []string{"read_file", "list_dir", "introspect_cache", "sql_cached_data", "save_memory"},
+			StepBudget:      4,
+			CompactEvery:    3,
+		},
+	}
+
+	return &compiler.ExecutionGraph{
+		TaskID:     taskID,
+		GoalPrompt: prompt,
+		CreatedAt:  time.Now().Unix(),
+		MaxCycles:  1,
+		Nodes:      []compiler.GraphNode{node},
+		Edges:      []compiler.GraphEdge{},
+	}, true
 }
 
 // collectToolNames gathers all registered tool names from MCP daemons and the global tool registry.
@@ -440,20 +472,21 @@ func planWithBackend(ctx context.Context, taskID, prompt, intentType string) (*c
 		repoMap = "No repository map available."
 	}
 
-	// --- Plan Template Registry (ADR-0048) ---
-	// 1. Classify the task into a template category via GBNF-constrained inference
+	// --- Plan Template Registry (ADR-0048, ADR-0087) ---
+	// 1. 2-Pass classification: Topology Archetype + Source Modality
 	toolNames := make([]string, 0, len(toolsInfo))
 	for _, t := range tools.GetList() {
 		toolNames = append(toolNames, t.Name())
 	}
-	templateCategory := classifier.ClassifyTemplateCategory(ctx, prompt, toolNames)
-	fmt.Fprintf(os.Stderr, "[Plan Template] classified → %s\n", templateCategory)
+	templateCategory, sourceModality := classifier.ClassifyPlanTemplate(ctx, prompt, toolNames)
+	fmt.Fprintf(os.Stderr, "[Plan Template] classified → %s (modality: %s)\n", templateCategory, sourceModality)
 	telemetry.Default.PublishEvent("template_classified", taskID, "",
-		fmt.Sprintf("Category: %s", templateCategory))
+		fmt.Sprintf("Category: %s, Modality: %s", templateCategory, sourceModality))
 
-	// 2. Hydrate the template
-	tmpl := templates.Get(templateCategory)
+	// 2. Hydrate the template with modality
+	tmpl := templates.GetWithModality(templateCategory, sourceModality)
 	tmpl.TaskID = taskID
+	tmpl.SourceModality = string(sourceModality)
 	tmplJSON, _ := json.MarshalIndent(tmpl, "", "  ")
 
 	// 3. Build compact mutation system prompt (replaces the ~150-line freeform prompt)
@@ -531,7 +564,8 @@ To satisfy evaluation matching:
 
 	userPrompt := fmt.Sprintf("Modify the plan template to accomplish: '%s'", prompt)
 
-	res, err := inference.ActiveBackend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, "")
+	planSchema := executor.GetPlanJSONSchema()
+	res, err := inference.ActiveBackend.CallModel(ctx, []inference.InferenceMessage{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userPrompt}}, planSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +574,18 @@ To satisfy evaluation matching:
 
 	var graph compiler.ExecutionGraph
 	if err := json.Unmarshal([]byte(graphStr), &graph); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal backend plan: %w. Raw response: %s", err, graphStr)
+		fmt.Fprintf(os.Stderr, "[Plan Template] Failed to unmarshal local mutation (%v), falling back to base template\n", err)
+		telemetry.Default.PublishEvent("plan_unmarshal_fallback", taskID, "",
+			fmt.Sprintf("Failed to unmarshal backend plan: %v. Using base hydrated template.", err))
+		graph = *tmpl
+		for i := range graph.Nodes {
+			if graph.Nodes[i].Type == "probe" {
+				graph.Nodes[i].Instructions = prompt
+				if graph.Nodes[i].ProbeConfig != nil {
+					graph.Nodes[i].ProbeConfig.Goal = prompt
+				}
+			}
+		}
 	}
 
 	graph.TaskID = taskID
@@ -549,6 +594,7 @@ To satisfy evaluation matching:
 	if graph.MaxCycles == 0 {
 		graph.MaxCycles = 5
 	}
+	graph.SourceModality = string(sourceModality)
 
 	// Fix 2: Post-mutation binding validation — repair any DynamicBindings
 	// that reference node IDs the local model hallucinated or renamed.

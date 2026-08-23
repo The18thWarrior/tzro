@@ -144,7 +144,7 @@ func TestGet_Docgen_HasProbeAndWriteAction(t *testing.T) {
 }
 
 func TestGet_Research_HasWebProbe(t *testing.T) {
-	graph := Get(Research)
+	graph := GetWithModality(ProbeSynthesis, SourceWeb)
 	if graph == nil {
 		t.Fatal("expected non-nil graph for Research")
 	}
@@ -307,10 +307,47 @@ func TestGet_AllTemplates_PassCompilation(t *testing.T) {
 	}
 }
 
-func TestCategories_Returns7Categories(t *testing.T) {
+func TestCategories_Returns6Categories(t *testing.T) {
 	cats := Categories()
-	if len(cats) != 7 {
-		t.Fatalf("expected 7 categories, got %d: %v", len(cats), cats)
+	if len(cats) != 6 {
+		t.Fatalf("expected 6 categories, got %d: %v", len(cats), cats)
+	}
+}
+
+func TestGetWithModality_WebHydration(t *testing.T) {
+	g := GetWithModality(ProbeSynthesis, SourceWeb)
+	if g == nil {
+		t.Fatal("expected non-nil graph")
+	}
+	if g.SourceModality != string(SourceWeb) {
+		t.Errorf("expected SourceModality %q, got %q", SourceWeb, g.SourceModality)
+	}
+	if len(g.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(g.Nodes))
+	}
+	node := g.Nodes[0]
+	if node.ProbeConfig == nil || node.ProbeConfig.SourceHint != "web" {
+		t.Errorf("expected SourceHint 'web', got %v", node.ProbeConfig)
+	}
+	if len(node.AllowedTools) != 2 || node.AllowedTools[0] != "web_search" {
+		t.Errorf("expected web tools, got %v", node.AllowedTools)
+	}
+}
+
+func TestGetWithModality_HybridHydration(t *testing.T) {
+	g := GetWithModality(ProbeAndWrite, SourceHybrid)
+	if g == nil {
+		t.Fatal("expected non-nil graph")
+	}
+	if g.SourceModality != string(SourceHybrid) {
+		t.Errorf("expected SourceModality %q, got %q", SourceHybrid, g.SourceModality)
+	}
+	probe := g.Nodes[0]
+	if probe.ProbeConfig == nil || probe.ProbeConfig.SourceHint != "hybrid" {
+		t.Errorf("expected SourceHint 'hybrid', got %v", probe.ProbeConfig)
+	}
+	if len(probe.AllowedTools) != 5 {
+		t.Errorf("expected 5 hybrid tools, got %d (%v)", len(probe.AllowedTools), probe.AllowedTools)
 	}
 }
 

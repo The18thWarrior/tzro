@@ -39,6 +39,20 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 	}
 
 	for _, node := range graph.Nodes {
+		// Normalize node type synonyms from LLM mutation
+		switch strings.ToLower(strings.TrimSpace(node.Type)) {
+		case "synthesize", "summarize", "summarizer", "reducer", "reduce":
+			node.Type = "synthesis"
+		case "validator", "validation":
+			node.Type = "semantic_validator"
+		case "explore", "discover", "crawler", "scanner":
+			node.Type = "probe"
+		case "analyzer", "data_analysis", "sql":
+			node.Type = "analyze"
+		case "tool", "tool_call", "exec":
+			node.Type = "action"
+		}
+
 		// ADR-0069: Custom strategy compilation rules take precedence over
 		// built-in type switching. If ActiveExpander handles a node type,
 		// its result replaces the built-in expansion logic entirely.
@@ -327,6 +341,9 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					shouldInjectRecall := true
 					if isTerminalAnalyze {
 						shouldInjectRecall = false
+					} else if node.ProbeConfig != nil && node.ProbeConfig.DirectSynthesis {
+						shouldInjectRecall = false
+						fmt.Fprintf(os.Stderr, "[Compiler] Probe node %s is DirectSynthesis. Skipping Recall injection.\n", node.ID)
 					} else if discoveryNodesCount > 1 {
 						// ADR-0079: Dependency-Gated Recall Injection for multi-probe graphs.
 						// In multi-probe exploration graphs, only inject intermediate Recall if
@@ -489,6 +506,11 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		fmt.Printf("[Compiler] Graph already has a synthesis leaf. Skipping automatic terminal_synthesis injection.\n")
 	}
 
+	// ── Terminal File Sink injection (ADR-0088) ──
+	// For tasks requesting file output where no write_file node exists,
+	// append a deterministic write_file Action Node bound to the terminal synthesis leaf.
+	sctNodes, sctEdges = injectTerminalFileSink(graph, sctNodes, sctEdges)
+
 	return &ExecutionGraph{
 		TaskID:     graph.TaskID,
 		GoalPrompt: graph.GoalPrompt,
@@ -497,6 +519,89 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		MaxCycles:  graph.MaxCycles,
 		CreatedAt:  time.Now().Unix(),
 	}, nil
+}
+
+var targetFilePathRe = regexp.MustCompile(`(?i)(?:save|write|output|export)\s+(?:the\s+)?(?:results?|findings?|docs?|documentation|report|readme|summary|file)?\s*(?:to|into|in)\s+[` + "`" + `"]?([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)[` + "`" + `"]?`)
+
+func extractTargetFilePath(prompt string) string {
+	matches := targetFilePathRe.FindStringSubmatch(prompt)
+	if len(matches) > 1 {
+		path := strings.TrimSpace(matches[1])
+		if !strings.HasSuffix(path, ".") && strings.Contains(path, ".") {
+			return path
+		}
+	}
+	return ""
+}
+
+// injectTerminalFileSink checks if the task requests saving/writing to a file,
+// and injects a deterministic write_file Action Node bound to the terminal synthesis output if none exists (ADR-0088).
+func injectTerminalFileSink(graph *ExecutionGraph, sctNodes []GraphNode, sctEdges []GraphEdge) ([]GraphNode, []GraphEdge) {
+	if graph == nil || strings.TrimSpace(graph.GoalPrompt) == "" {
+		return sctNodes, sctEdges
+	}
+
+	// Check if write_file is already present in graph.Nodes or sctNodes
+	for _, n := range graph.Nodes {
+		if n.Action == "write_file" {
+			return sctNodes, sctEdges
+		}
+	}
+	for _, n := range sctNodes {
+		if n.Action == "write_file" {
+			return sctNodes, sctEdges
+		}
+	}
+
+	// Extract target file path from goal prompt
+	targetPath := extractTargetFilePath(graph.GoalPrompt)
+	if targetPath == "" {
+		return sctNodes, sctEdges
+	}
+
+	// Find the terminal synthesis / leaf node to bind to
+	var synthLeafID string
+	for _, n := range sctNodes {
+		if n.ID == "terminal_synthesis" {
+			synthLeafID = n.ID
+			break
+		}
+		if n.Type == "synthesis" || n.Type == "recall" {
+			synthLeafID = n.ID
+		}
+	}
+
+	if synthLeafID == "" && len(sctNodes) > 0 {
+		synthLeafID = sctNodes[len(sctNodes)-1].ID
+	}
+
+	if synthLeafID == "" {
+		return sctNodes, sctEdges
+	}
+
+	sinkID := "terminal_write_file"
+	sinkNode := GraphNode{
+		ID:           sinkID,
+		Type:         "action",
+		Action:       "write_file",
+		Instructions: fmt.Sprintf("Write the generated content to %s", targetPath),
+		AllowedTools: []string{"write_file"},
+		Status:       "pending",
+		StaticArgs:   fmt.Sprintf(`{"path": "%s"}`, targetPath),
+		DynamicBindings: map[string]interface{}{
+			"path":    targetPath,
+			"content": synthLeafID + ".output",
+		},
+	}
+
+	sctNodes = append(sctNodes, sinkNode)
+	sctEdges = append(sctEdges, GraphEdge{
+		SourceID: synthLeafID,
+		TargetID: sinkID,
+	})
+
+	fmt.Printf("[Compiler] Injected terminal write_file sink %q bound to %q for target %q (ADR-0088)\n", sinkID, synthLeafID, targetPath)
+	return sctNodes, sctEdges
 }
 
 func isSynthesisGoal(instructions string) bool {

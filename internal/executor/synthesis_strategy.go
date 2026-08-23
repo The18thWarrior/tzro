@@ -48,7 +48,11 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 		"The accumulated context below contains data retrieved by prior nodes — use it directly. " +
 		"If query results are provided, include the actual data values in your response."
 	accumulatedCtx := buildAccumulatedContext(taskID, graph, "synthesis")
-	userPrompt := buildContextAwareUserPrompt(accumulatedCtx, "", nr.InterpolatedPrompt())
+	goalPrompt := ""
+	if graph != nil {
+		goalPrompt = graph.GoalPrompt
+	}
+	userPrompt := buildContextAwareUserPromptWithGoal(goalPrompt, accumulatedCtx, "", nr.InterpolatedPrompt())
 
 	req := inference.NewSimpleRequest(systemPrompt, userPrompt, "")
 	// ADR-0045: Token-level streaming gated by compiler-set StreamOutput flag.

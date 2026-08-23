@@ -442,7 +442,7 @@ func (h *CompilationGateHook) runSpecComplianceGate(ctx context.Context, generat
 		{Role: "user", Content: evalPrompt},
 	}
 
-	result, err := inference.GlobalWorkerModel.CallLocalModel(ctx, messages, "")
+	result, err := inference.CallWorker(ctx, messages, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[CompilationGateHook] Spec compliance evaluation failed for %s: %v\n", taskID, err)
 		return nil
@@ -467,7 +467,7 @@ func (h *CompilationGateHook) attemptLocalRegeneration(ctx context.Context, prom
 		{Role: "user", Content: prompt},
 	}
 
-	result, err := inference.GlobalWorkerModel.CallLocalModel(ctx, messages, "")
+	result, err := inference.CallWorker(ctx, messages, "")
 	if err != nil {
 		return "", fmt.Errorf("local regeneration inference failed: %w", err)
 	}

@@ -304,7 +304,11 @@ func (s *ActionStrategy) runArgumentExtraction(
 			IsLowStakes: true,
 		}
 	} else {
-		userPrompt := buildContextAwareUserPrompt(accumulatedCtx, ragCtx, interpolatedPrompt)
+		goalPrompt := ""
+		if graph != nil {
+			goalPrompt = graph.GoalPrompt
+		}
+		userPrompt := buildContextAwareUserPromptWithGoal(goalPrompt, accumulatedCtx, ragCtx, interpolatedPrompt)
 		req = inference.NewSimpleRequest(systemPrompt, userPrompt, schemaStr)
 		req.StreamMeta = &meta
 		req.TaskID = taskID

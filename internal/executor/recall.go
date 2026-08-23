@@ -88,6 +88,12 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 	// The agentic loop adds to this, never replaces it.
 	refinedContext := baselineContext
 
+	// If the upstream node already provided complete synthesis output and there are no extra exploration steps in manifest, bypass the agentic refinement loop directly to synthesis pass.
+	if refinedContext != "" && manifest == "" {
+		fmt.Fprintf(os.Stderr, "[Recall] Upstream discovery already complete without raw thought steps. Bypassing refinement loop into Reduce phase.\n")
+		step = maxSteps
+	}
+
 	// ADR-0064: Updated prompt reflects Refinement Pass role (not discovery).
 	systemPrompt := fmt.Sprintf(`You are a Recall Node (Refinement Pass). Your goal is to review and refine the baseline summary of upstream discoveries.
 Target Goal: %s
@@ -213,6 +219,20 @@ You have a maximum of %d steps.`, goal, baselineContext, manifest, maxSteps)
 	// ADR-0064: The refinedContext is always populated (deterministic baseline).
 	// No need for the old buildEnrichedRecallFallback.
 	synthesisInput := refinedContext
+	if synthesisInput == "" {
+		for _, nodeID := range upstreamNodeIDs {
+			if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
+				out := state.RawOutput
+				if out == "" {
+					out = state.Output
+				}
+				if out != "" {
+					synthesisInput = out
+					break
+				}
+			}
+		}
+	}
 
 	// Build fact-citation constraint for research tasks.
 	// When the refined context contains structured facts from the extractive

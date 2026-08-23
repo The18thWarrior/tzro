@@ -132,3 +132,35 @@ func TestRemoteOpenAIBackend_Status(t *testing.T) {
 		t.Errorf("Expected status 'active', got '%s'", status)
 	}
 }
+
+func TestRemoteOpenAIBackend_BuildResponseFormat(t *testing.T) {
+	schema := `{"type":"object","properties":{"name":{"type":"string"}}}`
+
+	// 1. json_schema format (OpenAI / standard)
+	cfgSchema := config.BackendConfig{
+		Type:         "openai-compatible",
+		SchemaFormat: "json_schema",
+	}
+	backendSchema := NewRemoteOpenAIBackend(cfgSchema, telemetry.Default)
+	rfSchema := backendSchema.buildResponseFormat(schema)
+	if rfSchema["type"] != "json_schema" {
+		t.Errorf("expected type 'json_schema', got %v", rfSchema["type"])
+	}
+	if _, ok := rfSchema["json_schema"]; !ok {
+		t.Errorf("expected 'json_schema' object in payload")
+	}
+
+	// 2. json_object format (Ollama / plain)
+	cfgObject := config.BackendConfig{
+		Type:         "openai-compatible",
+		SchemaFormat: "json_object",
+	}
+	backendObject := NewRemoteOpenAIBackend(cfgObject, telemetry.Default)
+	rfObject := backendObject.buildResponseFormat(schema)
+	if rfObject["type"] != "json_object" {
+		t.Errorf("expected type 'json_object', got %v", rfObject["type"])
+	}
+	if _, hasSchema := rfObject["schema"]; hasSchema {
+		t.Errorf("expected no inner 'schema' key in json_object to prevent 400 Bad Request")
+	}
+}
