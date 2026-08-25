@@ -121,9 +121,10 @@ func TestStrategicGraphToSCTExpansion(t *testing.T) {
 }
 
 func TestExpandToSCTGraph_PlanningAware(t *testing.T) {
-	// Test 1: Skip Recall if Synthesis child exists
-	graphRecallSkip := &ExecutionGraph{
-		TaskID: "recall_skip",
+	// Test 1: Recall should ALWAYS be injected for probes, even with a synthesis child.
+	// Recall compaction (100K→30K chars) is fundamentally different from planned synthesis.
+	graphWithSynthChild := &ExecutionGraph{
+		TaskID: "recall_always",
 		Nodes: []GraphNode{
 			{ID: "p1", Type: "probe", Instructions: "Explore codebase"},
 			{ID: "s1", Type: "synthesis", Instructions: "Summarize findings"},
@@ -133,15 +134,15 @@ func TestExpandToSCTGraph_PlanningAware(t *testing.T) {
 		},
 	}
 
-	expanded1, _ := ExpandToSCTGraph(graphRecallSkip, nil)
+	expanded1, _ := ExpandToSCTGraph(graphWithSynthChild, nil)
 	hasRecall := false
 	for _, n := range expanded1.Nodes {
 		if n.ID == "p1_recall" {
 			hasRecall = true
 		}
 	}
-	if hasRecall {
-		t.Errorf("expected p1_recall to be skipped when synthesis child exists")
+	if !hasRecall {
+		t.Errorf("expected p1_recall to be injected even when synthesis child exists")
 	}
 
 	// Test 2: Skip Terminal Synthesis if a synthesis node is already the final leaf

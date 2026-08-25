@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"context"
 	"strings"
 	"testing"
 )
@@ -78,30 +77,73 @@ func TestExplorationQueue_RedirectsToUnvisited(t *testing.T) {
 	}
 }
 
-func TestExplorationQueue_ScoreAndPrune(t *testing.T) {
-	files := []string{
-		"internal/executor/auth.go",
-		"internal/tools/database.go",
-		"internal/executor/token_validator.go",
-		"internal/tools/web_browse.go",
-		"internal/executor/jwt.go",
-		"internal/tools/filesystem.go",
-	}
+func TestExplorationQueue_ReplaceFiles(t *testing.T) {
+	eq := NewExplorationQueue([]string{"a.go", "b.go", "c.go", "d.go"})
+	eq.MarkVisited("a.go")
+	eq.MarkVisited("c.go")
 
-	eq := NewExplorationQueue(files)
-	eq.ScoreAndPrune(context.Background(), "Authenticate JWT token and validation", 3)
+	// Replace with a subset — should keep visited entries for files still in the queue
+	eq.ReplaceFiles([]string{"a.go", "d.go"})
 
 	_, total := eq.Stats()
-	if total != 3 {
-		t.Fatalf("expected pruned queue of size 3, got %d", total)
+	if total != 2 {
+		t.Fatalf("expected 2 files, got %d", total)
 	}
 
-	// First unvisited should be a top relevance file
-	first, ok := eq.NextUnvisited()
-	if !ok {
-		t.Fatal("expected unvisited item")
+	visited, _ := eq.Stats()
+	if visited != 1 { // only a.go should remain visited (c.go was pruned)
+		t.Errorf("expected 1 visited, got %d", visited)
 	}
-	if !strings.Contains(first, "token") && !strings.Contains(first, "jwt") && !strings.Contains(first, "auth") {
-		t.Errorf("expected top relevant file, got %q", first)
+
+	// Next unvisited should be d.go (a.go is visited)
+	next, ok := eq.NextUnvisited()
+	if !ok || next != "d.go" {
+		t.Errorf("expected d.go, got %q", next)
 	}
 }
+
+// TestImportPathMatches verifies the import path suffix matching logic.
+func TestImportPathMatches(t *testing.T) {
+	tests := []struct {
+		importPath string
+		filePath   string
+		want       bool
+	}{
+		// Go: full module path
+		{"tzro/internal/memory", "/Users/jp/Repos/tzro/internal/memory/memory.go", true},
+		{"tzro/internal/config", "/Users/jp/Repos/tzro/internal/config/config.go", true},
+		{"tzro/internal/memory", "/Users/jp/Repos/tzro/internal/tools/tool.go", false},
+
+		// Standard library — should NOT match (single-segment, no slash or dot)
+		{"fmt", "/Users/jp/Repos/tzro/internal/fmt/fmt.go", false},
+		{"os", "/Users/jp/Repos/tzro/internal/os.go", false},
+
+		// JS relative imports
+		{"./utils", "/Users/jp/Repos/app/src/utils/index.ts", true},
+		{"./helpers", "/Users/jp/Repos/app/src/components/button.tsx", false},
+	}
+
+	for _, tt := range tests {
+		got := importPathMatches(tt.importPath, tt.filePath)
+		if got != tt.want {
+			t.Errorf("importPathMatches(%q, %q) = %v, want %v", tt.importPath, tt.filePath, got, tt.want)
+		}
+	}
+}
+
+// TestDeepReadK verifies goal-adaptive K values.
+func TestDeepReadK(t *testing.T) {
+	if k := deepReadK("focused"); k != 5 {
+		t.Errorf("focused: expected 5, got %d", k)
+	}
+	if k := deepReadK("overview"); k != 8 {
+		t.Errorf("overview: expected 8, got %d", k)
+	}
+	if k := deepReadK(""); k != 5 {
+		t.Errorf("unknown: expected 5, got %d", k)
+	}
+}
+
+// Prevent "strings imported and not used" if no test references it
+var _ = strings.Contains
+

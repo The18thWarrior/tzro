@@ -376,6 +376,14 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 			}
 
 			allResults = append(allResults, taskResults...)
+
+			// Incremental report: write after each task so results are
+			// visible mid-run instead of only after the entire suite finishes.
+			if opts.OutputDir != "" {
+				if err := GenerateReport(allResults, opts.OutputDir); err != nil {
+					fmt.Fprintf(os.Stderr, "[Comparison] Incremental report write failed: %v\n", err)
+				}
+			}
 		}
 	}
 

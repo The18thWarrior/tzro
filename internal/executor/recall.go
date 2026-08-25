@@ -265,9 +265,13 @@ Goal: %s
 ## Refined Discovery Context (Verified Facts):
 %s%s%s%s
 
-Review the gathered facts and produce a comprehensive, structured final answer.
+Produce the EXACT document described in the Goal above. Follow these rules:
+1. READ THE GOAL CAREFULLY. If it asks for a "function index", produce a function index. If it asks for a "decision log", produce a decision log. Match the requested format precisely.
+2. EXTRACT, then FORMAT. First identify all relevant data points from the context, then restructure them into the goal's requested format. Do NOT dump raw context.
+3. BE EXHAUSTIVE within the goal's scope. Include ALL items that match the goal's criteria from the discovery context. Do not skip or summarize away individual items.
+4. Use the exact structure the goal implies: tables for indexes, bullet lists for logs, sections for architecture docs.
 IMPORTANT: You MUST produce actual data values, counts, and results. Do NOT output placeholders like [X] or [Y]. Do NOT output control tokens. If the data is insufficient, explain what is missing.
-IMPORTANT: The output must be ONLY the final document requested by the user. Do NOT include sections describing the execution process, such as "Execution History", "Explore Node", "Discovered Facts Summary", "Probe Findings", or "Traversal Steps". Start directly with "# " followed by a descriptive title for the actual document itself (e.g. "# System Architecture Overview" or "# Project Overview"). Never include process commentary or node execution post-mortems.`, goal, synthesisInput, symbolRefBlock, factConstraint, researchConstraint)
+IMPORTANT: The output must be ONLY the final document requested by the user. Do NOT include sections describing the execution process, such as "Execution History", "Explore Node", "Discovered Facts Summary", "Probe Findings", or "Traversal Steps". Start directly with "# " followed by a descriptive title for the actual document itself (e.g. "# Function Index" or "# Decision Log"). Never include process commentary or node execution post-mortems.`, goal, synthesisInput, symbolRefBlock, factConstraint, researchConstraint)
 
 	// Synthesis escalation policy: if any upstream probe had its synthesis
 	// escalated to cloud (local model produced invalid/repetitive output),
@@ -492,10 +496,14 @@ func (e *ExecutionEngine) compactRefinedContext(ctx context.Context, refinedCtx,
 var controlTokens = []string{
 	"<SYNTHESIZE_READY>",
 	"SYNTHESIZE_READY",
-	"<ACTION>",
-	"</ACTION>",
-	"<TOOL_CALL>",
-	"</TOOL_CALL>",
+	"<ACTION>", "</ACTION>",
+	"<TOOL_CALL>", "</TOOL_CALL>",
+	// Reasoning trace tags leaked by the local model at higher temperatures.
+	// These come from the model's instruction-tuning and are internal artifacts.
+	"<thinking>", "</thinking>",
+	"<think>", "</think>",
+	"<tool_code>", "</tool_code>",
+	"<tool_output>", "</tool_output>",
 }
 
 // validationConfig holds options for validateSynthesisOutput.

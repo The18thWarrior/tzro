@@ -2303,3 +2303,20 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
   - [MODIFY] [index.md](index.md) (Indexed ADR-0083 and ADR-0084)
   - [MODIFY] [log.md](log.md) (Appended this entry)
 
+---
+
+## [2026-08-24T17:07:00-07:00] grill-with-docs | Rich Relevance Scoring for Exploration Queue Deep-Read (ADR-0082 Gap Closure)
+
+- **Activity**: Conducted a `/grill-with-docs` session stress-testing the proposed relevance-gated deep-read design for Probe Node codebase exploration. Identified that the current deep-read phase reads ALL remaining files after ScoreAndPrune with no cap, burning 94K-139K local tokens on probe-heavy tasks for mediocre quality (2.0-2.8).
+- **Terminology & Glossary Updates**:
+  - Updated **Exploration Queue** in `CONTEXT.md` to document multi-signal Rich Relevance Scoring (AST + semantic + path + import affinity), goal-adaptive K values, and per-file-type scoring formulas. Replaces the single-signal filepath-only embedding pruning description.
+- **Key Design Decisions**:
+  - **Not New Architecture**: Closing an ADR-0082 §1 gap, not introducing a new concept. No new ADR needed.
+  - **Per-Type Scoring**: Code files score via AST symbol similarity (tree-sitter, all supported languages, 0.65 weight) + path similarity (0.35 weight). Text/doc files score via semantic content embedding (first 20 lines, 0.65 weight) + path similarity (0.35 weight).
+  - **Import Affinity**: 1-hop, 1.25× multiplicative boost from the same tree-sitter parse. Files imported by high-scoring candidates get boosted. Transitive propagation rejected (risks pulling entire dependency tree).
+  - **Goal-Adaptive K**: focused=5, overview=8, default=5. Absolute floor=0.10. Inventory Extractor path (`"aggregate"` goals) bypasses scoring entirely.
+  - **Replaces ScoreAndPrune**: Unified rich scoring replaces the single-signal top-10 coarse filter. One pass selects both Discover (top-3) and Deep-Read (top-K) files.
+  - **Expanded Extension List**: `collectPreloadFiles` now collects `.go`, `.py`, `.ts`, `.tsx`, `.js`, `.jsx`, `.rs`, `.java`, `.md`, `.txt`, `.rst` — matching tree-sitter Symbol Extractor support.
+- **Key Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Updated Exploration Queue glossary entry)
+  - [MODIFY] [log.md](log.md) (Appended this entry)

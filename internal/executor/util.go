@@ -8,9 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
-	"tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/templates"
 	"tzro/internal/tools"
@@ -130,48 +128,11 @@ func evaluateDeterministicCondition(cond string) (bool, bool) {
 }
 
 
-func isTestingOrBenchmark(ctx context.Context) bool {
-	if ctx.Value("is_benchmark") != nil {
-		return true
-	}
-	for _, arg := range os.Args {
-		if strings.HasPrefix(arg, "-test.") || strings.Contains(arg, "test") {
-			return true
-		}
-	}
-	if os.Getenv("TZRO_HEADLESS") == "true" {
-		return true
-	}
-	return false
-}
-
 // isCompactionDisabled checks whether the 5-Layer Compaction Pipeline is disabled
 // for this execution context. Used by the cloud_dag_raw benchmark condition to
 // bypass cache.Process() and pass raw tool output through unmodified.
 func isCompactionDisabled(ctx context.Context) bool {
 	return ctx.Value("compaction_disabled") != nil
-}
-
-
-func getDelays(ctx context.Context) (time.Duration, time.Duration) {
-	cfg := config.Get()
-	nodeDelay := time.Duration(cfg.ExecutorNodeDelayMs) * time.Millisecond
-	levelDelay := time.Duration(cfg.ExecutorLevelDelayMs) * time.Millisecond
-
-	// Assign historical visual pacing defaults if unset (0)
-	if cfg.ExecutorNodeDelayMs == 0 {
-		nodeDelay = 800 * time.Millisecond
-	}
-	if cfg.ExecutorLevelDelayMs == 0 {
-		levelDelay = 500 * time.Millisecond
-	}
-
-	// Bypass delays for testing and benchmarking
-	if isTestingOrBenchmark(ctx) {
-		return 0, 0
-	}
-
-	return nodeDelay, levelDelay
 }
 
 // classifyToolName uses GBNF-constrained local inference to map a hallucinated

@@ -40,7 +40,6 @@ type executionParams struct {
 	executionTier      string
 	meta               inference.StreamMeta
 	interpolatedPrompt string
-	nodeDelay          time.Duration
 }
 
 // getExecutionParams extracts executionParams from context, returning zero-value
@@ -331,7 +330,7 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	_, levelDelay := getDelays(ctx)
+
 
 	// P2: Weighted circuit breaker budget
 	// Compute time budget from node composition and apply config multiplier.
@@ -562,10 +561,7 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 			}
 		}
 
-		// Brief delay between levels for visual representation in GUI (500ms default)
-		if levelDelay > 0 {
-			time.Sleep(levelDelay)
-		}
+
 	}
 
 	// Synthesis SOP skill on successful completion
@@ -617,7 +613,7 @@ func (e *ExecutionEngine) ExecuteGraph(ctx context.Context, graph *compiler.Exec
 
 func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler.ExecutionGraph, node *compiler.GraphNode, activeHooks []ExecutionHook) error {
 	taskID := graph.TaskID
-	nodeDelay, _ := getDelays(ctx)
+
 
 	// 0. Pre-flight Check: Is node already completed or skipped?
 	if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
@@ -677,7 +673,7 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 	// interpolation and tier detection for condition-only nodes.
 	if node.Condition != "" || node.Type == "branch" {
 		if s, ok := e.Registry.Get("branch"); ok {
-			return e.dispatchViaStrategy(ctx, graph, node, s, activeHooks, nodeDelay)
+			return e.dispatchViaStrategy(ctx, graph, node, s, activeHooks)
 		}
 		return fmt.Errorf("branch strategy not registered for node %s", node.ID)
 	}
@@ -713,12 +709,11 @@ func (e *ExecutionEngine) executeSingleNode(ctx context.Context, graph *compiler
 		executionTier:      executionTier,
 		meta:               meta,
 		interpolatedPrompt: interpolatedPrompt,
-		nodeDelay:          nodeDelay,
 	})
 
 	if e.Registry != nil {
 		if s, ok := e.Registry.Get(node.Type); ok {
-			return e.dispatchViaStrategy(ctx, graph, node, s, activeHooks, nodeDelay)
+			return e.dispatchViaStrategy(ctx, graph, node, s, activeHooks)
 		}
 	}
 

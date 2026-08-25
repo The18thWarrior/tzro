@@ -102,6 +102,34 @@ func buildCompactedRecallContext(
 		return "", nil
 	}
 
+	// Compaction bypass: when total raw content fits within the budget,
+	// skip CompactToolOutputs entirely and concatenate raw step outputs.
+	// This preserves fine-grained details (function signatures, type
+	// declarations, exact values) that per-step compaction would strip.
+	// The compaction pipeline applies per-step budgets that are much
+	// smaller than the global budget, causing data loss even when the
+	// total would fit. Only compact when we genuinely need to reduce size.
+	totalRawChars := 0
+	for _, s := range allSteps {
+		totalRawChars += len(s.ToolOutput)
+	}
+	if totalRawChars <= budget {
+		var sb strings.Builder
+		for _, s := range allSteps {
+			sb.WriteString(fmt.Sprintf("### Step %d: %s\n", s.StepIndex, s.ToolName))
+			if s.ToolArgs != "" {
+				sb.WriteString(fmt.Sprintf("Args: %s\n", s.ToolArgs))
+			}
+			sb.WriteString(s.ToolOutput)
+			sb.WriteString("\n\n")
+		}
+		rawResult := sb.String()
+		fmt.Fprintf(os.Stderr,
+			"[Recall] Skipping compaction — raw content (%d chars) fits within budget (%d)\n",
+			totalRawChars, budget)
+		return rawResult, nil
+	}
+
 	result, err := compactor.CompactToolOutputs(ctx, allSteps, budget, engine)
 	if err != nil {
 		return "", fmt.Errorf("recall compaction failed: %w", err)
@@ -109,7 +137,7 @@ func buildCompactedRecallContext(
 
 	fmt.Fprintf(
 		os.Stderr,
-		"[Recall] Compacted baseline context: %d\u2192%d chars (%d LLM calls)\n",
+		"[Recall] Compacted baseline context: %d→%d chars (%d LLM calls)\n",
 		result.InputChars, result.OutputChars, result.LLMCalls,
 	)
 

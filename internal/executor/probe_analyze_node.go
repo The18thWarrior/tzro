@@ -246,8 +246,16 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 				}
 			}
 
-			// ADR-0086: Check Repository Pre-Index for instant DirectSynthesis promotion
-			if !probeConfig.DirectSynthesis && probeConfig.SourceHint != "web" && probeConfig.SourceHint != "cache" {
+			// ADR-0086: Check Repository Pre-Index for instant DirectSynthesis promotion.
+			// Skip for inventory goals (e.g., "list EVERY exported function") —
+			// DirectSynthesis routes through the 4-phase explorer which applies
+			// ExtractSkeleton compaction, destroying the fine-grained symbols that
+			// exhaustive indexes need. The inventory extractor path processes every
+			// file individually with zero omissions.
+			isInventory := len(probeConfig.PreloadPaths) > 0 &&
+				len(collectPreloadFiles(probeConfig.PreloadPaths)) > 5 &&
+				IsInventoryGoal(ctx, probeConfig.Goal)
+			if !probeConfig.DirectSynthesis && probeConfig.SourceHint != "web" && probeConfig.SourceHint != "cache" && !isInventory {
 				if ApplyIndexPreflightToProbe(ctx, &probeConfig, taskID, node.ID) {
 					if probeConfig.ContextFile != "" {
 						defer os.Remove(probeConfig.ContextFile)
@@ -256,13 +264,28 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 			}
 		}
 
-		if node.Type == "probe" || probeConfig.SourceHint == "web" {
+		// Dispatch routing: DirectSynthesis probes use single-shot synthesis via ProbePhases.
+		// ReAct is for interactive exploration when context is unknown. When Pre-Index or
+		// preload has already packed all context into a ContextFile (DirectSynthesis=true),
+		// single-shot synthesis produces far higher quality output and avoids ReAct overhead.
+		if (node.Type == "probe" || probeConfig.SourceHint == "web") && !probeConfig.DirectSynthesis {
 			fmt.Fprintf(os.Stderr, "[Executor] Node %s (%s): dispatching to native ReAct loop (ADR-0089)\n", node.ID, node.Type)
+			
+			// For interactive ReAct loops, avoid injecting monolithic 16k-40k preloaded contexts
+			// into the user prompt turn 1 (which causes HTTP timeouts during prompt prefilling).
+			// Cap TaskContext to a lean orienting snippet (2000 chars) since ReAct can use
+			// read_file / list_dir / search_files interactively.
+			leanTaskContext := probeConfig.TaskContext
+			const maxReActTaskContextChars = 2000
+			if len(leanTaskContext) > maxReActTaskContextChars {
+				leanTaskContext = leanTaskContext[:maxReActTaskContextChars] + "\n... (context truncated for interactive ReAct exploration)"
+			}
+
 			reactCfg := ReActConfig{
 				Goal:            probeConfig.Goal,
 				AllowedTools:    probeConfig.AllowedTools,
 				StepBudget:      probeConfig.StepBudget,
-				TaskContext:     probeConfig.TaskContext,
+				TaskContext:     leanTaskContext,
 				UpstreamContext: probeConfig.UpstreamContext,
 			}
 			if reactCfg.StepBudget <= 0 {
@@ -280,7 +303,7 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to AnalyzePhases (SourceHint=cache)\n", node.ID)
 				synthesis, err = RunAnalyzePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
 			default:
-				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases\n", node.ID)
+				fmt.Fprintf(os.Stderr, "[Executor] Probe %s: dispatching to ProbePhases (DirectSynthesis=%v)\n", node.ID, probeConfig.DirectSynthesis)
 				synthesis, err = RunProbePhases(probeCtx, taskID, taskID+"_"+node.ID, probeConfig, probeEngine, synthesisEngine, downstreamBindingKeys)
 			}
 		} else {

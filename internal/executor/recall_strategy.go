@@ -75,7 +75,15 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 	findProbes(node.ID)
 
 	recallEngine := &ProbeInference{}
-	recallResult, err := s.runRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
+	// Use the workflow-level goal (task prompt) for recall synthesis, not the
+	// generic recall node instructions. The task prompt contains format-specific
+	// requirements (e.g., "exhaustive function index with full signatures")
+	// that the Reduce Phase needs to produce goal-aligned output.
+	recallGoal := graph.GoalPrompt
+	if recallGoal == "" {
+		recallGoal = node.Instructions
+	}
+	recallResult, err := s.runRecall(ctx, taskID, node.ID, upstreamNodeIDs, recallGoal, recallEngine)
 	if err != nil {
 		return &strategy.ExecutionResult{
 			Output:    fmt.Sprintf("recall node %s execution failed: %v", node.ID, err),

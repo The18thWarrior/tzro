@@ -74,10 +74,6 @@ type EngineConfig struct {
 	MaxFieldLength           int     `json:"maxFieldLength,omitempty"`           // default 256
 	InventoryIntentThreshold float64 `json:"inventoryIntentThreshold,omitempty"` // default 0.65
 
-	// Visual dashboard pacing delays in milliseconds
-	ExecutorNodeDelayMs  int `json:"executorNodeDelayMs,omitempty"`
-	ExecutorLevelDelayMs int `json:"executorLevelDelayMs,omitempty"`
-
 	// Circuit Breaker (P2): Multiplier for the weighted time budget.
 	// The budget is computed as sum(nodeCount[type] × weight[type]) where
 	// weights are: probe=10min, action=5min, deterministic/validator=90s.
@@ -266,8 +262,6 @@ var (
 		ModelsDir:            defaultModelsDir(),
 		ContextSize:          65536,
 		ConfidenceThreshold:  3,
-		ExecutorNodeDelayMs:  800,
-		ExecutorLevelDelayMs: 500,
 	}
 	configMutex sync.RWMutex
 	configPath  = "config.json"
@@ -326,8 +320,6 @@ func Save(cfg *EngineConfig) error {
 	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
 	GlobalConfig.MMProjModelPath = cfg.MMProjModelPath
 	GlobalConfig.PDFOcrBackend = cfg.PDFOcrBackend
-	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
-	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	GlobalConfig.GPULayers = cfg.GPULayers
 	GlobalConfig.ThreadCount = cfg.ThreadCount
@@ -378,8 +370,6 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.SensitiveKeywords = cfg.SensitiveKeywords
 	GlobalConfig.MMProjModelPath = cfg.MMProjModelPath
 	GlobalConfig.PDFOcrBackend = cfg.PDFOcrBackend
-	GlobalConfig.ExecutorNodeDelayMs = cfg.ExecutorNodeDelayMs
-	GlobalConfig.ExecutorLevelDelayMs = cfg.ExecutorLevelDelayMs
 	GlobalConfig.CircuitBreakerMultiplier = cfg.CircuitBreakerMultiplier
 	GlobalConfig.GPULayers = cfg.GPULayers
 	GlobalConfig.ThreadCount = cfg.ThreadCount

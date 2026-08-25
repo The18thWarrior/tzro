@@ -82,9 +82,13 @@ type ReActInference interface {
 }
 
 const defaultReActSystemPrompt = `You are an expert autonomous software engineering and research agent.
-You have access to a set of tools to explore the environment, search documentation, read files, and inspect data.
-Plan your actions carefully, call tools to gather facts, and synthesize a complete, comprehensive, and accurate final deliverable.
-When you have gathered all necessary information, provide your final response directly without calling any further tools.`
+You have access to structured tools to explore the workspace environment, search repositories, read source code, inspect data, or conduct research.
+
+GUIDELINES:
+1. Plan your actions carefully. Call tools incrementally to discover directory layouts, read files, or query information.
+2. When reading code or documents, inspect the essential files thoroughly to ensure factual completeness.
+3. If searching or reading files, use the provided tools rather than assuming or guessing file contents.
+4. When you have gathered sufficient information to address the user's objective, provide a comprehensive, well-structured final markdown response without calling any further tools.`
 
 // buildToolDefinitions converts allowed tool names into OpenAI-compatible tool definitions.
 func buildToolDefinitions(allowedTools []string) []ReActToolDef {
@@ -96,6 +100,14 @@ func buildToolDefinitions(allowedTools []string) []ReActToolDef {
 			schemaStr, err := t.GetSchema()
 			if err == nil && schemaStr != "" {
 				_ = json.Unmarshal([]byte(schemaStr), &params)
+			}
+			if params != nil {
+				// If wrapped in {"type": "object", "properties": {"tool_arguments": {...}}}, unwrap tool_arguments
+				if props, ok := params["properties"].(map[string]interface{}); ok {
+					if toolArgs, ok := props["tool_arguments"].(map[string]interface{}); ok {
+						params = toolArgs
+					}
+				}
 			}
 			if params == nil {
 				params = map[string]interface{}{

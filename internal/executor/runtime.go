@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
-
 
 	"tzro/internal/compiler"
 	"tzro/internal/config"
@@ -335,7 +333,6 @@ func (e *ExecutionEngine) dispatchViaStrategy(
 	node *compiler.GraphNode,
 	s strategy.NodeStrategy,
 	activeHooks []ExecutionHook,
-	nodeDelay time.Duration,
 ) error {
 	taskID := graph.TaskID
 	nr := e.buildNodeRuntime(ctx, graph, node)
@@ -402,10 +399,6 @@ func (e *ExecutionEngine) dispatchViaStrategy(
 		_ = memory.DB.SetNodeState(taskID, node.ID, "pending", "Paused by hook")
 		e.getPublisher().PublishEvent("node_paused", taskID, node.ID, "Execution paused by hook")
 		return ErrTaskPaused
-	}
-
-	if nodeDelay > 0 {
-		time.Sleep(nodeDelay)
 	}
 
 	// 3. Persist completed state with (possibly hook-modified) output

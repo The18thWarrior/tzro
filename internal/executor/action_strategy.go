@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"time"
 
 	"tzro/internal/cache"
 	"tzro/internal/compiler"
@@ -185,10 +184,6 @@ func (s *ActionStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 	}
 	_ = memory.DB.SetNodeRawOutput(taskID, node.ID, rawOutputToStore)
 
-	if p != nil && p.nodeDelay > 0 {
-		time.Sleep(p.nodeDelay)
-	}
-
 	// Persist completed state
 	nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
 	_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)
@@ -241,10 +236,6 @@ func (s *ActionStrategy) executeZeroArgTool(
 	_ = memory.DB.SetNodeRawOutput(taskID, node.ID, output)
 
 	compactedOutput, _ := s.compactAndCache(ctx, nr, output, interpolatedPrompt)
-
-	if p != nil && p.nodeDelay > 0 {
-		time.Sleep(p.nodeDelay)
-	}
 
 	nodeStatus := fmt.Sprintf("[%s] %s", executionTier, compactedOutput)
 	_ = memory.DB.SetNodeState(taskID, node.ID, "completed", nodeStatus)

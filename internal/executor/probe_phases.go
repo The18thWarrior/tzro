@@ -74,22 +74,35 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 	// ADR-0058 / ADR-0082 / ADR-0084: Initialize Exploration Queue from PreloadPaths.
 	// For multi-file documentation goals (ADR-0084), route directly to the Goal-Specific
 	// Inventory Extractor (Map-Reduce) to process all candidate files with zero omissions.
+	//
+	// EXCEPTION: When DirectSynthesis is true (Pre-Index has packed all context), skip
+	// the inventory extractor and fall through to the normal 4-phase exploration path
+	// with rich relevance scoring. The 4B model cannot synthesize from a massive system
+	// prompt injection; it needs context delivered through tool call responses in the
+	// chat history.
 	var explorationQueue *ExplorationQueue
 	if len(config.PreloadPaths) > 0 {
 		queueFiles := collectPreloadFiles(config.PreloadPaths)
-		if len(queueFiles) > 5 && IsInventoryGoal(context.Background(), config.Goal) {
+		if !config.DirectSynthesis && len(queueFiles) > 5 && IsInventoryGoal(context.Background(), config.Goal) {
 			fmt.Fprintf(os.Stderr, "[ProbePhases] Multi-file documentation goal detected (%d files) — routing to Goal-Specific Inventory Extractor\n", len(queueFiles))
 			return buildInventoryProbePhaseRunner(config, queueFiles)
 		}
 		if len(queueFiles) > 0 {
 			explorationQueue = NewExplorationQueue(queueFiles)
-			// ADR-0082: Prune broad candidate list to top-K relevance-scored items for localized probes
-			if len(queueFiles) > 10 && config.Goal != "" {
-				explorationQueue.ScoreAndPrune(context.Background(), config.Goal, 10)
-				fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue pruned from %d to %d files for goal\n", len(queueFiles), len(explorationQueue.files))
-			} else {
-				fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue initialized with %d files\n", len(queueFiles))
+			// ADR-0082 gap closure: Rich relevance scoring replaces single-signal ScoreAndPrune.
+			// Uses AST symbols (code) + semantic content (text) + path embedding + import affinity.
+			if config.Goal != "" {
+				goalType := classifyProbeGoal(config.Goal)
+				scored := RichScoreAndSelect(context.Background(), config.Goal, queueFiles, goalType)
+				if len(scored) > 0 {
+					selectedPaths := make([]string, len(scored))
+					for i, s := range scored {
+						selectedPaths[i] = s.Path
+					}
+					explorationQueue.ReplaceFiles(selectedPaths)
+				}
 			}
+			fmt.Fprintf(os.Stderr, "[ProbePhases] Exploration Queue: %d files after rich scoring\n", len(explorationQueue.files))
 		}
 	}
 
@@ -105,12 +118,14 @@ func buildProbePhaseRunner(config compiler.ProbeConfig) *PhaseRunner {
 				})
 			}
 		} else {
+			// Top-3 by relevance score → Discover phase
 			for _, f := range allFiles[:3] {
 				initialFiles = append(initialFiles, QueueItem{
 					Tool: "read_file",
 					Args: map[string]interface{}{"path": f},
 				})
 			}
+			// Remaining scored files → Deep-Read phase (already capped by RichScoreAndSelect)
 			for _, f := range allFiles[3:] {
 				deepReadFiles = append(deepReadFiles, QueueItem{
 					Tool: "read_file",

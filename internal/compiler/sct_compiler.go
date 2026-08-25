@@ -31,27 +31,37 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 	isBenchmark := strings.HasPrefix(graph.TaskID, "comparison_")
 
+	// Pre-normalize node type synonyms BEFORE computing discoveryNodesCount.
+	// The planner often uses synonym types (e.g., "synthesize" instead of "synthesis")
+	// that would be miscounted without normalization. This must happen before
+	// the discovery count to avoid inflating it with synthesis/validator nodes.
+	for i := range graph.Nodes {
+		switch strings.ToLower(strings.TrimSpace(graph.Nodes[i].Type)) {
+		case "synthesize", "summarize", "summarizer", "reducer", "reduce":
+			graph.Nodes[i].Type = "synthesis"
+		case "validator", "validation":
+			graph.Nodes[i].Type = "semantic_validator"
+		case "explore", "discover", "crawler", "scanner":
+			graph.Nodes[i].Type = "probe"
+		case "analyzer", "data_analysis", "sql":
+			graph.Nodes[i].Type = "analyze"
+		case "tool", "tool_call", "exec":
+			graph.Nodes[i].Type = "action"
+		}
+	}
+
 	discoveryNodesCount := 0
 	for _, n := range graph.Nodes {
-		if n.Type == "probe" || (n.Type == "action" && n.Action != "write_file") {
+		// Use isToolSinkNode (not isToolSinkAction) to correctly exclude write/save
+		// nodes even when the planner leaves Action empty. isToolSinkNode checks
+		// both the Action field and node ID/type prefixes (write_*, save_*, etc.).
+		if n.Type == "probe" || n.Type == "analyze" || (n.Type == "action" && !isToolSinkNode(n)) {
 			discoveryNodesCount++
 		}
 	}
 
 	for _, node := range graph.Nodes {
-		// Normalize node type synonyms from LLM mutation
-		switch strings.ToLower(strings.TrimSpace(node.Type)) {
-		case "synthesize", "summarize", "summarizer", "reducer", "reduce":
-			node.Type = "synthesis"
-		case "validator", "validation":
-			node.Type = "semantic_validator"
-		case "explore", "discover", "crawler", "scanner":
-			node.Type = "probe"
-		case "analyzer", "data_analysis", "sql":
-			node.Type = "analyze"
-		case "tool", "tool_call", "exec":
-			node.Type = "action"
-		}
+		// Types already normalized above — no need to re-normalize.
 
 		// ADR-0069: Custom strategy compilation rules take precedence over
 		// built-in type switching. If ActiveExpander handles a node type,
@@ -83,12 +93,16 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 		// Only expand "action" or "deterministic" steps that require execution
 		if node.Type == "action" || node.Type == "deterministic" {
+			if node.Action == "" && len(node.AllowedTools) > 0 {
+				node.Action = node.AllowedTools[0]
+			}
+
 			validatorID := node.ID + "_validator"
 			execID := node.ID + "_exec"
 
 			// Get the tool schema dynamically using the resolver
 			var schemaStr string
-			if schemaResolver != nil {
+			if schemaResolver != nil && node.Action != "" {
 				if sch, err := schemaResolver(node.Action); err == nil {
 					schemaStr = sch
 				}
@@ -110,10 +124,15 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 							for _, orig := range graph.Nodes {
 								if orig.ID == upstreamID {
 									if orig.Type == "probe" || orig.Type == "analyze" || orig.Type == "recall" || orig.Type == "synthesis" || isSynthesisGoal(orig.Instructions) {
-										// If the upstream is a probe/analyze that gets an auto-injected recall node, bind to the recall node output
+										// If the upstream is a probe/analyze, bind to recall only if recall will actually be injected
 										targetBindingNode := upstreamID
 										if orig.Type == "probe" || orig.Type == "analyze" {
-											targetBindingNode = upstreamID + "_recall"
+											isDirectSynth := orig.ProbeConfig != nil && orig.ProbeConfig.DirectSynthesis
+											isMultiProbeNoSink := discoveryNodesCount > 1 && !probeFeedsToolSinkInGraph(graph, orig.ID)
+											isTerminalAnalyze := orig.Type == "analyze" && orig.ProbeConfig != nil && orig.ProbeConfig.SourceHint == "cache"
+											if !isDirectSynth && !isMultiProbeNoSink && !isTerminalAnalyze {
+												targetBindingNode = upstreamID + "_recall"
+											}
 										}
 										node.DynamicBindings["content"] = fmt.Sprintf("%s.output", targetBindingNode)
 										fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-wired DynamicBinding content for %s -> %s.output\n", node.ID, targetBindingNode)
@@ -299,97 +318,77 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 				sctNodes = append(sctNodes, node)
 
-				// Planning Awareness: Check if this probe/analyze already has a planned synthesis-type child.
-				// If so, we skip automatic Recall injection to avoid redundant consolidation steps (Discovery -> Aligned Findings -> Terminal).
-				hasPlannedSynthesisChild := false
-				for _, edge := range graph.Edges {
-					if edge.SourceID == node.ID {
-						// Look up the target node in the original high-level graph
-						for _, originalNode := range graph.Nodes {
-							if originalNode.ID == edge.TargetID && (originalNode.Type == "synthesis" || isSynthesisGoal(originalNode.Instructions)) {
-								hasPlannedSynthesisChild = true
-								break
-							}
+				// Always proceed to recall injection evaluation.
+				// Previously, probes with a planned synthesis child skipped recall entirely.
+				// But recall compaction (100K→30K chars) is fundamentally different from
+				// a planner's synthesis node — recall produces coherent, compacted output
+				// from raw tool responses. The planned synthesis child benefits from
+				// recall's compacted output as input.
+				{
+				// Check if this is a terminal analyze node (v3 data passthrough).
+				// Analyze nodes with SourceHint="cache" that have NO outgoing edges
+				// are terminal — their data passthrough output IS the answer.
+				// Injecting a Recall node would re-synthesize structured data into
+				// bad prose (FM-21 regression). Skip Recall for these nodes.
+				isTerminalAnalyze := false
+				if node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "cache" {
+					hasOutgoingEdge := false
+					for _, edge := range graph.Edges {
+						if edge.SourceID == node.ID {
+							hasOutgoingEdge = true
+							break
 						}
 					}
-					if hasPlannedSynthesisChild {
-						break
+					if !hasOutgoingEdge {
+						isTerminalAnalyze = true
+						fmt.Fprintf(os.Stderr, "[Compiler] Analyze node %s is terminal (no outgoing edges). Skipping Recall injection — data passthrough is the final output.\n", node.ID)
 					}
 				}
 
-				if !hasPlannedSynthesisChild {
-					// Check if this is a terminal analyze node (v3 data passthrough).
-					// Analyze nodes with SourceHint="cache" that have NO outgoing edges
-					// are terminal — their data passthrough output IS the answer.
-					// Injecting a Recall node would re-synthesize structured data into
-					// bad prose (FM-21 regression). Skip Recall for these nodes.
-					isTerminalAnalyze := false
-					if node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "cache" {
-						hasOutgoingEdge := false
-						for _, edge := range graph.Edges {
-							if edge.SourceID == node.ID {
-								hasOutgoingEdge = true
-								break
-							}
-						}
-						if !hasOutgoingEdge {
-							isTerminalAnalyze = true
-							fmt.Fprintf(os.Stderr, "[Compiler] Analyze node %s is terminal (no outgoing edges). Skipping Recall injection — data passthrough is the final output.\n", node.ID)
-						}
-					}
-
-					shouldInjectRecall := true
-					if isTerminalAnalyze {
+				shouldInjectRecall := true
+				if isTerminalAnalyze {
+					shouldInjectRecall = false
+				} else if discoveryNodesCount > 1 {
+					// ADR-0079: Dependency-Gated Recall Injection for multi-probe graphs.
+					// In multi-probe exploration graphs, only inject intermediate Recall if
+					// this probe directly feeds an intermediate Tool Sink or dynamic branch.
+					feedsToolSink := probeFeedsToolSinkInGraph(graph, node.ID)
+					if !feedsToolSink {
 						shouldInjectRecall = false
-					} else if node.ProbeConfig != nil && node.ProbeConfig.DirectSynthesis {
-						shouldInjectRecall = false
-						fmt.Fprintf(os.Stderr, "[Compiler] Probe node %s is DirectSynthesis. Skipping Recall injection.\n", node.ID)
-					} else if discoveryNodesCount > 1 {
-						// ADR-0079: Dependency-Gated Recall Injection for multi-probe graphs.
-						// In multi-probe exploration graphs, only inject intermediate Recall if
-						// this probe directly feeds an intermediate Tool Sink or dynamic branch.
-						feedsToolSink := probeFeedsToolSinkInGraph(graph, node.ID)
-						if !feedsToolSink {
-							shouldInjectRecall = false
-							fmt.Fprintf(os.Stderr, "[Compiler] Multi-probe graph (%d discovery nodes): probe %s does not feed a tool sink. Skipping intermediate Recall injection.\n", discoveryNodesCount, node.ID)
-						}
+						fmt.Fprintf(os.Stderr, "[Compiler] Multi-probe graph (%d discovery nodes): probe %s does not feed a tool sink. Skipping intermediate Recall injection.\n", discoveryNodesCount, node.ID)
 					}
+				}
 
-					if !shouldInjectRecall {
-						// Terminal analyze or intermediate probe in multi-probe exploration fan-out — no Recall. Map directly.
-						execNodeMap[node.ID] = node.ID
-						bridgeNodeMap[node.ID] = node.ID
-					} else {
-						// Inject Recall Node to align discovery findings (ADR-0038, ADR-0079)
-						recallID := node.ID + "_recall"
-						recallThreshold := 0.9
-						if isBenchmark {
-							recallThreshold = 0.0
-						}
-						sctNodes = append(sctNodes, GraphNode{
-							ID:                  recallID,
-							Type:                "recall",
-							Action:              "synthesize",
-							Instructions:        fmt.Sprintf("Traverse the execution history of %s node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.Type, node.ID),
-							Status:              "pending",
-							ActivationThreshold: recallThreshold, // High skepticism for synthesis
-							DynamicBindings:     node.DynamicBindings,
-						})
-
-						// Probe/Analyze -> Recall edge
-						sctEdges = append(sctEdges, GraphEdge{
-							SourceID: node.ID,
-							TargetID: recallID,
-						})
-
-						execNodeMap[node.ID] = recallID
-						bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
-					}
-				} else {
-					// Probe has a planned synthesis child — skip Recall injection
-					fmt.Fprintf(os.Stderr, "[Compiler] Probe %s already has a planned synthesis child. Skipping automatic Recall injection.\n", node.ID)
+				if !shouldInjectRecall {
+					// Terminal analyze or intermediate probe in multi-probe exploration fan-out — no Recall. Map directly.
 					execNodeMap[node.ID] = node.ID
 					bridgeNodeMap[node.ID] = node.ID
+				} else {
+					// Inject Recall Node to align discovery findings (ADR-0038, ADR-0079)
+					recallID := node.ID + "_recall"
+					recallThreshold := 0.9
+					if isBenchmark {
+						recallThreshold = 0.0
+					}
+					sctNodes = append(sctNodes, GraphNode{
+						ID:                  recallID,
+						Type:                "recall",
+						Action:              "synthesize",
+						Instructions:        fmt.Sprintf("Traverse the execution history of %s node '%s', recall all discovered facts, and synthesize them into a cohesive aligned response.", node.Type, node.ID),
+						Status:              "pending",
+						ActivationThreshold: recallThreshold, // High skepticism for synthesis
+						DynamicBindings:     node.DynamicBindings,
+					})
+
+					// Probe/Analyze -> Recall edge
+					sctEdges = append(sctEdges, GraphEdge{
+						SourceID: node.ID,
+						TargetID: recallID,
+					})
+
+					execNodeMap[node.ID] = recallID
+					bridgeNodeMap[node.ID] = node.ID // Target high-level dependencies to the probe/analyze first, then the recall handles synthesis
+				}
 				}
 			} else {
 				sctNodes = append(sctNodes, node)
@@ -1106,7 +1105,13 @@ func isToolSinkNode(node GraphNode) bool {
 		return true
 	}
 	if node.Type == "deterministic" || node.Type == "action" {
+		// Check Action prefix for write/save/patch/edit patterns
 		if strings.HasPrefix(node.Action, "write_") || strings.HasPrefix(node.Action, "save_") || strings.HasPrefix(node.Action, "patch_") || strings.HasPrefix(node.Action, "edit_") {
+			return true
+		}
+		// Also check node ID when Action is empty — the planner often names
+		// write_file nodes as "write_output", "write_function_index", etc.
+		if node.Action == "" && (strings.HasPrefix(node.ID, "write_") || strings.HasPrefix(node.ID, "save_") || strings.HasPrefix(node.ID, "patch_")) {
 			return true
 		}
 	}
@@ -1139,11 +1144,13 @@ func probeFeedsToolSinkInGraph(graph *ExecutionGraph, probeNodeID string) bool {
 				if isToolSinkAction(n.Action) {
 					return true
 				}
-				if n.Type == "action" {
-					for _, edge := range graph.Edges {
-						if edge.SourceID == currID {
-							queue = append(queue, edge.TargetID)
-						}
+				// Traverse through ALL intermediate node types (action, semantic_validator,
+				// synthesis, etc.) to find transitive tool sink dependencies.
+				// Previously only traversed through "action" nodes, which missed
+				// probe → semantic_validator → write_file chains.
+				for _, edge := range graph.Edges {
+					if edge.SourceID == currID {
+						queue = append(queue, edge.TargetID)
 					}
 				}
 			}

@@ -39,7 +39,7 @@ func collectPreloadFiles(paths []string) []string {
 				return nil
 			}
 			switch ext {
-			case ".go", ".md", ".txt":
+			case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".md", ".txt", ".rst":
 				allFiles = append(allFiles, path)
 			}
 			return nil
@@ -94,7 +94,8 @@ func preloadDirectoryContext(paths []string, maxChars int) string {
 
 			// Only process supported extensions
 			switch ext {
-			case ".go", ".md", ".txt":
+			case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java",
+				".md", ".txt", ".rst":
 				files = append(files, path)
 			}
 			return nil

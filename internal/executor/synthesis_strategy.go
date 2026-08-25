@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	"tzro/internal/inference"
 	"tzro/internal/strategy"
@@ -62,8 +64,17 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 	}
 	req.TaskID = taskID
 
-	// Full context window for synthesis generation
+	// Full context window for synthesis generation.
+	// Select GenerationGuard content mode based on output format —
+	// code nodes use stricter compression-ratio thresholds (0.20)
+	// while prose/text synthesis uses lenient thresholds (0.50).
+	guardMode := inference.ContentModeProse
+	if node.OutputFormat == "source_code" || node.OutputFormat == "code_validation" {
+		guardMode = inference.ContentModeCode
+	}
 	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 65536)
+	synthCtx = context.WithValue(synthCtx, inference.GenerationGuardKey,
+		inference.NewRepetitionGuardWithMode(guardMode))
 	inferenceResult, err := inference.ExecuteWorkerStructured(synthCtx, req)
 	if err != nil {
 		return &strategy.ExecutionResult{
@@ -71,6 +82,11 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 			Directive: strategy.DirectiveHalt,
 		}, nil
 	}
+
+	// Strip thinking traces leaked by the local model (e.g. <thinking>, <tool_code> blocks).
+	// At higher temperatures (0.6+), the 4B model occasionally emits reasoning traces
+	// as output content. These are never valid in user-facing synthesis.
+	inferenceResult = stripThinkingTraces(inferenceResult)
 
 	// ADR-0067: Verified Task Execution for terminal synthesis nodes.
 	// Skip VTE for source_code and code_validation nodes — the CompilationGateHook
@@ -109,4 +125,45 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 
 // Compile-time interface check.
 var _ strategy.NodeStrategy = (*SynthesisStrategy)(nil)
+
+// thinkingTracePatterns matches reasoning trace blocks leaked by the local model.
+// These tags come from the model's instruction-tuning and should never appear
+// in user-facing synthesis output.
+var thinkingTracePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?s)<thinking>.*?</thinking>`),
+	regexp.MustCompile(`(?s)<think>.*?</think>`),
+	regexp.MustCompile(`(?s)<tool_code>.*?</tool_code>`),
+	regexp.MustCompile(`(?s)<tool_output>.*?</tool_output>`),
+}
+
+// thinkingTraceTags are individual opening/closing tags to strip when they
+// appear unpaired (e.g., opening tag without a closing tag, or vice versa).
+var thinkingTraceTags = []string{
+	"<thinking>", "</thinking>",
+	"<think>", "</think>",
+	"<tool_code>", "</tool_code>",
+	"<tool_output>", "</tool_output>",
+}
+
+// stripThinkingTraces removes reasoning trace blocks and stray tags from
+// synthesis output. The 4B local model occasionally emits <thinking>,
+// <think>, or <tool_code> blocks as part of its output, especially at
+// higher temperatures (0.6+). These are internal reasoning artifacts
+// that should never appear in user-facing responses.
+func stripThinkingTraces(s string) string {
+	original := s
+	for _, re := range thinkingTracePatterns {
+		s = re.ReplaceAllString(s, "")
+	}
+	// Strip unpaired tags that regex didn't catch (e.g., unclosed <thinking>)
+	for _, tag := range thinkingTraceTags {
+		s = strings.ReplaceAll(s, tag, "")
+	}
+	s = strings.TrimSpace(s)
+	if len(s) < len(original) {
+		fmt.Fprintf(os.Stderr, "[SynthesisStrategy] Stripped thinking traces: %d→%d chars\n",
+			len(original), len(s))
+	}
+	return s
+}
 
