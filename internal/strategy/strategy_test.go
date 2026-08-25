@@ -360,11 +360,12 @@ func TestRegisterBuiltins(t *testing.T) {
 		t.Fatalf("RegisterBuiltins failed: %v", err)
 	}
 
-	// All 10 built-in types should be registered
+	// All 11 built-in types should be registered
 	expectedTypes := []string{
 		"probe", "analyze", "recall", "synthesis",
 		"semantic_validator", "action", "branch",
 		"sub_dag", "scatter_assembly", "deterministic",
+		"list",
 	}
 
 	for _, nodeType := range expectedTypes {
@@ -480,6 +481,7 @@ func TestContextWeightParityWithLegacy(t *testing.T) {
 		"action":        6,
 		"probe":         2,
 		"deterministic": 1,
+		"list":          1, // ADR-0090: lightweight extraction output, no thought steps
 	}
 	legacyDefault := 4
 
@@ -530,6 +532,7 @@ func TestRegistryBuiltins_AllHaveType(t *testing.T) {
 		"probe", "analyze", "recall", "synthesis",
 		"semantic_validator", "action", "branch",
 		"deterministic", "sub_dag", "scatter_assembly",
+		"list",
 	}
 
 	for _, nodeType := range expectedTypes {

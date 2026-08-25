@@ -164,6 +164,11 @@ func main() {
 	// runs in a background goroutine to avoid exceeding the IDE's connection timeout.
 	serverOpts := getResourcesServerOptions()
 	serverOpts.InitializedHandler = func(ctx context.Context, req *mcp.InitializedRequest) {
+		// In tests, skip ListRoots to prevent unexpected roots/list requests on stdout
+		if os.Getenv("TZRO_TESTING") == "true" {
+			workspaceResolved <- workspaceInfo{}
+			return
+		}
 		// Called once after the IDE sends notifications/initialized
 		rootsResult, err := req.Session.ListRoots(ctx, nil)
 		if err != nil {

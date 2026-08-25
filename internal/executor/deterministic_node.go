@@ -43,7 +43,11 @@ func (e *ExecutionEngine) runDeterministicCore(
 	accumulatedCtx := buildAccumulatedContext(taskID, graph, node.Type)
 	var toolArguments map[string]interface{}
 
-	if accumulatedCtx != "" && schemaStr != "" {
+	// Fast path: extract tool arguments directly from the upstream validator or interpolated prompt
+	toolArguments = extractToolArguments(interpolatedPrompt)
+
+	// If no arguments could be extracted from interpolation and we have context + schema, run inference
+	if len(toolArguments) == 0 && accumulatedCtx != "" && schemaStr != "" {
 		// Use segmented 4-message structure for KV cache prefix sharing (ADR-0021)
 		staticBase := buildStaticBaseInstruction(false)
 		detInstruction := fmt.Sprintf("Extract structured tool parameters for '%s'.\n\n", node.Action) + node.Instructions + "\n\nResolved reference:\n" + interpolatedPrompt
@@ -66,8 +70,6 @@ func (e *ExecutionEngine) runDeterministicCore(
 			fmt.Fprintf(os.Stderr, "[Executor Warning] Deterministic inference failed, falling back to interpolation: %v\n", detErr)
 			toolArguments = extractToolArguments(interpolatedPrompt)
 		}
-	} else {
-		toolArguments = extractToolArguments(interpolatedPrompt)
 	}
 
 	// Safety net: apply coercion pipeline

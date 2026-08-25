@@ -2,6 +2,35 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-25T10:32:00-07:00] tdd | List Node Implementation (ADR-0090)
+
+- **Activity**: TDD implementation of the List Node — extraction-only node type where the model returns GBNF-constrained line-range integer arrays and the Go harness copies verbatim source snippets.
+- **Vertical Tracer-Bullet Slices Delivered**:
+  1. **Slice 1 (IsExtractionGoal)**: Embedding sidecar + bag-of-words fallback goal classifier with 6 extraction prototypes. Config accessor `GetExtractionIntentThreshold`. 12 tests.
+  2. **Slice 2 (Line-Range Extraction)**: `LineRange`, `MergeAndClampRanges`, `FormatExtractedSnippets`, `ChunkFile`, `ExtractLineRanges` in [`list_extract.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/list_extract.go). 10 tests.
+  3. **Slice 3 (ListStrategy)**: Full `NodeStrategy` implementation with Orient → Discover → Extract → Assemble pipeline in [`list_strategy.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/list_strategy.go). Registered as `"list"` in Strategy Registry. 5 tests.
+  4. **Slice 4 (Compiler Integration)**: Added `"list"` to discovery node count in Kahn Compiler. List Nodes bypass Recall/Validator injection by default (no type match in existing code). 2 tests.
+  5. **Slice 5 (Parent-Dedup Fix)**: `dedupParentPaths` in [`probe_preload.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_preload.go) fixes v5 bug where `internal` + `internal/cache` both appeared. 6 tests.
+  6. **Slice 6 (Coverage Check)**: `CheckListCoverage` with PascalCase identifier detection for Pre-Flight verification. 3 tests.
+- **Test Results**: All 38 new tests pass alongside full regression (executor, compiler, strategy).
+
+## [2026-08-25T10:08:00-07:00] grill-with-docs | List Node — Extraction Without Synthesis (ADR-0090)
+
+- **Activity**: Grill-with-docs session designing a new List Node type to address chronic low scoring on extraction/enumeration benchmark tasks (e.g. `cache_function_index`). Forensic analysis across 3 benchmark runs (v3/v4/v5) showed Probe Node synthesis corruption as the root cause — the 4B model reliably identifies relevant content but unreliably rewrites it.
+- **Key Design Decisions Resolved**:
+  1. **Name**: List Node — extraction-only node type, model points at line ranges, harness copies verbatim source.
+  2. **Discovery**: Orient → Discover phases built into the List Node, fully deterministic (list_dir + RichScoreAndSelect). No LLM-driven Phase Runner.
+  3. **Path Extraction**: Kahn Compiler extracts target paths at compilation time with parent-directory deduplication. Fixes the v5 bug where `internal` and `internal/cache` were both extracted.
+  4. **Routing**: Kahn Compiler uses `IsExtractionGoal()` (embedding sidecar, no keyword heuristics per Principle 1) to swap node type from `probe` to `list` within the existing `probe-and-write` template. No new topology archetype in the classifier.
+  5. **Per-File Inference**: GBNF-constrained `[[startLine, endLine], ...]` arrays. One call per file. Merge overlapping ranges, clamp out-of-bounds. Chunk files >800 lines with 50-line overlaps.
+  6. **Downstream Path**: Direct to Deterministic Write — no Recall Node, no Semantic Validator. Output flows directly to `write_file`.
+  7. **VTE**: Pre-Flight coverage check only (no cloud Verification Gate). Re-extraction pass on coverage miss targets files that returned empty arrays.
+  8. **Output Format**: Annotated dividers (`--- file: path lines: N-M ---`) for machine-parseability and human readability.
+  9. **Template Shape**: Reuse `probe-and-write` template. Kahn Compiler swaps node type and skips Recall/Validator injection for `type: "list"`.
+  10. **Composability**: When post-processing is needed, the frontier planner (T2) composes List → Probe/Recall → Write.
+- **Terms Updated**: Added **List Node** to CONTEXT.md glossary.
+- **ADR Created**: [ADR-0090](../adr/0090-list-node-extraction-without-synthesis.md)
+
 ## [2026-08-23T11:10:00-07:00] tdd | Native ReAct Loop within Probe & Research Nodes Implementation (ADR-0089)
 
 - **Activity**: Test-Driven Development (TDD) implementation of the native Go ReAct agent loop for exploratory Probe and Research nodes within the Durable DAG engine.

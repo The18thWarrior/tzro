@@ -326,6 +326,10 @@ func (pr *PhaseRunner) executePhase(
 	// For custom inventory drivers, preserve LastOutput directly as summary without redundant LLM pass
 	if phase.Name == "map_inventory" || phase.Name == "derive_schema" {
 		result.Summary = driverResult.LastOutput
+	} else if _, isDetDriver := phase.Driver.(*DeterministicQueueDriver); isDetDriver && phase.Name != "synthesize" && nextPhase != "" {
+		// Optimization: For intermediate deterministic queue phases (orient, discover, deep_read),
+		// record structured tool summaries directly without burning an LLM inference call per phase.
+		result.Summary = formatDeterministicPhaseSummary(phase.Name, result.ToolsCalled, driverResult.ToolOutputLog)
 	} else {
 		// Synthesize phase summary using 1-shot synthesis engine
 		result.Summary = pr.synthesizePhase(phaseCtx, phase, priorResults, result.ToolsCalled, driverResult.ToolOutputLog, synthesisEngine)
@@ -335,6 +339,18 @@ func (pr *PhaseRunner) executePhase(
 		phase.Name, result.StepsUsed, len(result.ToolsCalled))
 
 	return result, nextPhase, nil
+}
+
+func formatDeterministicPhaseSummary(phaseName string, toolsCalled []string, toolOutputLog []string) string {
+	if len(toolsCalled) == 0 {
+		return fmt.Sprintf("Phase %s completed with no tool executions.", phaseName)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Phase %s completed %d step(s) using tools: %s.\n", phaseName, len(toolsCalled), strings.Join(toolsCalled, ", ")))
+	if len(toolOutputLog) > 0 {
+		sb.WriteString("Discovered items recorded in source tracker.\n")
+	}
+	return sb.String()
 }
 
 // buildPhaseSystemPrompt constructs a fresh system prompt for a phase,

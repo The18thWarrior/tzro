@@ -414,9 +414,53 @@ func detectPreloadPaths(goal, taskContext string) []string {
 		}
 	}
 
+	// Deduplicate parent directories when more-specific children exist (v5 fix)
+	result = dedupParentPaths(result)
+
 	if len(result) > 0 {
 		fmt.Fprintf(os.Stderr, "[Probe] Auto-detected PreloadPaths from goal: %v\n", result)
 	}
 
+	return result
+}
+
+// dedupParentPaths filters out parent directories when a more-specific
+// child path is already in the set. If path A is an ancestor of path B
+// (A + "/" is a prefix of B), then A is dropped.
+//
+// This fixes the v5 bug where both "internal" and "internal/cache" were
+// detected from goal text, causing 576 candidate files instead of 6.
+func dedupParentPaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	// For each path, check if any other path is a child of it
+	keep := make([]bool, len(paths))
+	for i := range paths {
+		keep[i] = true
+	}
+
+	for i, candidate := range paths {
+		prefix := candidate + "/"
+		for j, other := range paths {
+			if i == j {
+				continue
+			}
+			// If another path starts with candidate + "/", then candidate
+			// is a parent directory and should be dropped.
+			if strings.HasPrefix(other, prefix) {
+				keep[i] = false
+				break
+			}
+		}
+	}
+
+	var result []string
+	for i, p := range paths {
+		if keep[i] {
+			result = append(result, p)
+		}
+	}
 	return result
 }

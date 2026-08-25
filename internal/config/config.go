@@ -72,7 +72,8 @@ type EngineConfig struct {
 	MinExtractionFields      int     `json:"minExtractionFields,omitempty"`      // default 3
 	MaxExtractionFields      int     `json:"maxExtractionFields,omitempty"`      // default 6
 	MaxFieldLength           int     `json:"maxFieldLength,omitempty"`           // default 256
-	InventoryIntentThreshold float64 `json:"inventoryIntentThreshold,omitempty"` // default 0.65
+	InventoryIntentThreshold  float64 `json:"inventoryIntentThreshold,omitempty"`  // default 0.65
+	ExtractionIntentThreshold float64 `json:"extractionIntentThreshold,omitempty"` // default 0.65 (ADR-0090 List Node)
 
 	// Circuit Breaker (P2): Multiplier for the weighted time budget.
 	// The budget is computed as sum(nodeCount[type] × weight[type]) where
@@ -393,6 +394,7 @@ func Override(cfg *EngineConfig) {
 	GlobalConfig.MaxExtractionFields = cfg.MaxExtractionFields
 	GlobalConfig.MaxFieldLength = cfg.MaxFieldLength
 	GlobalConfig.InventoryIntentThreshold = cfg.InventoryIntentThreshold
+	GlobalConfig.ExtractionIntentThreshold = cfg.ExtractionIntentThreshold
 	if cfg.ModelsDir != "" {
 		GlobalConfig.ModelsDir = cfg.ModelsDir
 	}
@@ -1178,4 +1180,12 @@ func GetInventoryIntentThreshold() float64 {
 	return 0.65
 }
 
-
+// GetExtractionIntentThreshold returns the cosine similarity threshold for List Node extraction routing (default: 0.65, ADR-0090).
+func GetExtractionIntentThreshold() float64 {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	if GlobalConfig.ExtractionIntentThreshold > 0 {
+		return GlobalConfig.ExtractionIntentThreshold
+	}
+	return 0.65
+}

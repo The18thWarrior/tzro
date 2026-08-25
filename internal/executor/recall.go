@@ -624,6 +624,9 @@ func validateSynthesisOutput(output string, opts ...ValidationOption) string {
 			ngramCounts := make(map[string]int)
 			for i := 0; i <= len(words)-ngramSize; i++ {
 				ngram := strings.Join(words[i:i+ngramSize], " ")
+				if isStructuralSyntaxNgram(ngram) {
+					continue
+				}
 				ngramCounts[ngram]++
 				if ngramCounts[ngram] >= threshold {
 					return fmt.Sprintf("repetitive content detected (phrase '%s' repeated %d times)", truncate(ngram, 50), ngramCounts[ngram])
@@ -736,5 +739,20 @@ func stripControlTokens(output string) string {
 
 // NOTE: stripTrailingRepetition has been removed (ADR-0060).
 // Character-level degeneration detection is now handled by the GenerationGuard
+
+func isStructuralSyntaxNgram(ngram string) bool {
+	lower := strings.ToLower(ngram)
+	return strings.Contains(lower, "signature") ||
+		strings.Contains(lower, "func ") ||
+		strings.Contains(lower, "func(") ||
+		strings.Contains(lower, "type ") ||
+		strings.Contains(lower, "struct") ||
+		strings.Contains(lower, "interface") ||
+		strings.Contains(lower, "parameters") ||
+		strings.Contains(lower, "returns") ||
+		strings.Contains(lower, "description") ||
+		strings.Contains(lower, "`") ||
+		strings.Contains(lower, "**")
+}
 // at the Inference Backend layer, which can abort streaming generation early
 // rather than stripping post-hoc. See internal/inference/generation_guard.go.

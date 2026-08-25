@@ -1152,10 +1152,10 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 
 	// Temperature cascade: hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
 	temperature := 1.0 // Q7: required for min_p to function; GBNF constrains output safety
-	if cfgTemp := config.GetDefaultTemperature(); cfgTemp > 0 && cfgTemp != 1.0 {
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp >= 0 && cfgTemp != 1.0 {
 		temperature = cfgTemp
 	}
-	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp > 0 {
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp >= 0 {
 		temperature = ctxTemp
 	}
 
@@ -1408,10 +1408,10 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 	// Temperature cascade (same logic as CallLocalModel):
 	// hardcoded 1.0 < config DefaultTemperature < context TemperatureKey
 	temperature := 1.0
-	if cfgTemp := config.GetDefaultTemperature(); cfgTemp > 0 && cfgTemp != 1.0 {
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp >= 0 && cfgTemp != 1.0 {
 		temperature = cfgTemp
 	}
-	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp > 0 {
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp >= 0 {
 		temperature = ctxTemp
 	}
 

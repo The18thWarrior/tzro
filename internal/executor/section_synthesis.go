@@ -181,7 +181,7 @@ Return ONLY a valid JSON object matching the schema.`
 
 	userPrompt := fmt.Sprintf("Research Goal: %s\n\nAvailable Evidence Sources:\n%s\nPlan the document outline in JSON now.", goal, sourceSummary.String())
 
-	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, outlineGBNFSchema, TargetWorker)
+	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
 	if err != nil || strings.TrimSpace(resp) == "" {
 		fmt.Fprintf(os.Stderr, "[SectionedSynthesis] Warning: Outline generation failed (%v), using default outline\n", err)
 		return buildDefaultOutline(goal, evidence), nil
@@ -247,7 +247,7 @@ Return ONLY a valid JSON object matching the schema.`
 	userPrompt := fmt.Sprintf("Documentation Goal: %s\n%s\n\nDiscovery Context Preview:\n%s\nPlan the document outline in JSON now.",
 		goal, symSummary.String(), truncateForPrompt(refinedCtx, 4000))
 
-	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, outlineGBNFSchema, TargetWorker)
+	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
 	if err != nil || strings.TrimSpace(resp) == "" {
 		fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Warning: Outline generation failed (%v), using safety floor\n", err)
 		return BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms), nil
@@ -961,7 +961,7 @@ func ExecuteDocGenSectionedSynthesis(ctx context.Context, goal, refinedCtx strin
 
 	completedSections := make([]string, numSections)
 
-	// Phase 1: Synthesize all Body Sections with partitioned 10K-token context
+	// Phase 1: Synthesize all Body Sections with partitioned context
 	for _, idx := range bodyIndices {
 		sec := outline.Sections[idx]
 		secCtx, secSymBlock := PartitionDocGenContext(refinedCtx, syms, sec, outline.Sections, 40000)
@@ -984,18 +984,20 @@ CRITICAL INSTRUCTIONS:
 			Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
 		})
 		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
-		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 1200)
 
 		secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
 		if err != nil || strings.TrimSpace(secText) == "" {
+			fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Body section %d (%s) inference retry: err=%v\n", idx, sec.Heading, err)
 			secText, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
 		}
-		secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
-		secText = strings.TrimSpace(secText)
-		if !strings.HasPrefix(secText, "#") {
-			secText = sec.Heading + "\n\n" + secText
+		if strings.TrimSpace(secText) != "" {
+			secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
+			secText = strings.TrimSpace(secText)
+			if !strings.HasPrefix(secText, "#") {
+				secText = sec.Heading + "\n\n" + secText
+			}
+			completedSections[idx] = secText
 		}
-		completedSections[idx] = secText
 	}
 
 	// Build Body Summary Context for Initial and Terminal passes
@@ -1137,7 +1139,7 @@ func checkAndRepairSectionTruncation(ctx context.Context, text, systemPrompt, us
 	isUnclosedFence := fenceCount%2 != 0
 
 	lastChar := trimmed[len(trimmed)-1:]
-	isFragment := !strings.ContainsAny(lastChar, ".!?:)]`\"'\n")
+	isFragment := !strings.ContainsAny(lastChar, ".!?:)]`\"'|*-_>\n")
 
 	if isUnclosedFence || isFragment {
 		fmt.Fprintf(os.Stderr, "[SectionedSynthesis] Notice: Detected truncated section ending (fence=%v, fragment=%v) — repairing\n", isUnclosedFence, isFragment)

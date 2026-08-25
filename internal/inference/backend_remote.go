@@ -80,14 +80,22 @@ func (b *RemoteOpenAIBackend) CallModel(ctx context.Context, messages []Inferenc
 		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
 	}
 
+	temperature := 1.0
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp >= 0 && cfgTemp != 1.0 {
+		temperature = cfgTemp
+	}
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp >= 0 {
+		temperature = ctxTemp
+	}
+
 	reqBody := CompletionRequest{
 		Model:       b.model,
 		Messages:    MessagesToMaps(messages),
-		Temperature: 1.0,
+		Temperature: temperature,
 	}
 
 	// NOTE: We intentionally do NOT send max_tokens to remote backends.
-	// See CallModelStream comment for rationale.
+	// Remote servers (especially thinking models) silently return empty when max_tokens is sent.
 
 	if jsonSchema != "" {
 		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)
@@ -201,10 +209,18 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 		ResponseFormat map[string]interface{}   `json:"response_format,omitempty"`
 	}
 
+	temperature := 1.0
+	if cfgTemp := config.GetDefaultTemperature(); cfgTemp >= 0 && cfgTemp != 1.0 {
+		temperature = cfgTemp
+	}
+	if ctxTemp, ok := ctx.Value(TemperatureKey).(float64); ok && ctxTemp >= 0 {
+		temperature = ctxTemp
+	}
+
 	reqBody := CompletionRequest{
 		Model:       b.model,
 		Messages:    MessagesToMaps(messages),
-		Temperature: 1.0,
+		Temperature: temperature,
 		Stream:      true,
 		StreamOptions: &StreamOptionsStruct{
 			IncludeUsage: true,
@@ -212,10 +228,7 @@ func (b *RemoteOpenAIBackend) CallModelStream(ctx context.Context, messages []In
 	}
 
 	// NOTE: We intentionally do NOT send max_tokens to remote backends.
-	// The local engine sets very high values (65536) assuming a local sidecar
-	// that self-limits at n_ctx. Remote servers (especially thinking models)
-	// silently return empty when max_tokens + prompt_tokens exceeds context.
-	// Omitting max_tokens lets the server auto-calculate available space.
+	// Remote servers (especially thinking models) silently return empty when max_tokens is sent.
 
 	if jsonSchema != "" {
 		reqBody.ResponseFormat = b.buildResponseFormat(jsonSchema)

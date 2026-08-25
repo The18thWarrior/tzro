@@ -55,7 +55,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		// Use isToolSinkNode (not isToolSinkAction) to correctly exclude write/save
 		// nodes even when the planner leaves Action empty. isToolSinkNode checks
 		// both the Action field and node ID/type prefixes (write_*, save_*, etc.).
-		if n.Type == "probe" || n.Type == "analyze" || (n.Type == "action" && !isToolSinkNode(n)) {
+		if n.Type == "probe" || n.Type == "analyze" || n.Type == "list" || (n.Type == "action" && !isToolSinkNode(n)) {
 			discoveryNodesCount++
 		}
 	}

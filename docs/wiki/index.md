@@ -135,6 +135,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0087: Orthogonal Plan Templates, Single-Decision Router Invariant, and Baseline Fallback](../adr/0087-orthogonal-plan-templates-and-single-decision-routing.md) - Refactors Plan Template Registry into Topology Archetypes and Source Modalities with 2-pass 1B router classification, source-aware plan repair, and deterministic baseline template fallback.
 - [ADR-0088: DAG Parity Optimization — Immutable Goal Injection, Domain-Aware Compaction, Terminal Sinks, and Fast-Path Short-Circuiting](../adr/0088-dag-parity-optimization-immutable-goals-and-fast-path.md) - Preserves verbatim user prompts, implements type-aware compaction skeletons, auto-injects terminal write sinks, and fast-paths T0 single-node tasks.
 - [ADR-0089: Native ReAct Loop within Probe and Research Nodes](../adr/0089-react-loop-in-probe-nodes.md) - Encapsulates an unconstrained, native Go ReAct agent loop inside exploratory DAG nodes, combining ReAct's dynamic discovery power with DAG durability, token efficiency, and clean context contracts.
+- [ADR-0090: List Node — Extraction Without Synthesis](../adr/0090-list-node-extraction-without-synthesis.md) - Introduces a List Node type for extraction tasks where the model points at line ranges via GBNF-constrained arrays and the Go harness copies verbatim source, eliminating synthesis corruption for enumeration/cataloging goals.
 
 ## Ingested Sources
 

@@ -427,12 +427,12 @@ func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) str
 		node := graph.Nodes[i]
 		if node.Type == "synthesis" || node.Type == "recall" || node.Type == "probe" || node.Type == "analyze" || node.ID == "terminal_synthesis" {
 			if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
-				if state.RawOutput != "" {
-					lastOutput = state.RawOutput
-					break
+				out := state.Output
+				if state.RawOutput != "" && (out == "" || len(state.RawOutput) > len(out)) {
+					out = state.RawOutput
 				}
-				if state.Output != "" {
-					lastOutput = state.Output
+				if strings.TrimSpace(out) != "" {
+					lastOutput = out
 					break
 				}
 			}

@@ -255,6 +255,31 @@ func NewDeterministicStrategy() *BaseStrategy {
 	}
 }
 
+// NewListStrategy creates the list strategy stub (ADR-0090).
+func NewListStrategy() *BaseStrategy {
+	return &BaseStrategy{
+		NodeType: "list",
+		Card: &PlannerCard{
+			Type:      "list",
+			WhenToUse: "Extraction and enumeration tasks: list symbols, catalog endpoints, index declarations. Produces verbatim source snippets without synthesis.",
+			KeyFields: []FieldDesc{
+				{Name: "probeConfig.goal", Description: "extraction objective — what to find", Required: true},
+				{Name: "probeConfig.preloadPaths", Description: "target directories to scan", Required: false},
+			},
+			CriticalRules: []string{
+				"Use 'list' for extraction tasks where source fidelity matters. Use 'probe' when understanding/synthesis is needed.",
+				"The model identifies relevant line ranges; the harness copies content verbatim.",
+			},
+		},
+		Role: &ContextRole{
+			IsPrimaryDataCarrier: true,
+			HasThoughtSteps:      false,
+			ContextWeight:        0.3,
+			ProducesPlainText:    true,
+		},
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Registration — bulk register all built-in strategies
 // ---------------------------------------------------------------------------
@@ -275,6 +300,7 @@ func RegisterBuiltins(r *StrategyRegistry) error {
 		NewSubDAGStrategy(),
 		NewScatterAssemblyStrategy(),
 		NewDeterministicStrategy(),
+		NewListStrategy(),
 	}
 
 	for _, s := range builtins {
