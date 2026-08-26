@@ -19,6 +19,11 @@ func (m *mockRecallInferenceEngine) Infer(ctx context.Context, systemPrompt, use
 }
 
 func (m *mockRecallInferenceEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, _ ModelTarget) (string, error) {
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			m.capturedPrompts = append(m.capturedPrompts, msg.Content)
+		}
+	}
 	return "<SYNTHESIZE_READY>", nil
 }
 
@@ -65,9 +70,9 @@ func TestRunRecall_ContextOverflowSafety(t *testing.T) {
 	t.Logf("Refinement prompt length: %d chars", len(refinementPrompt))
 
 	// Without PruneUpstreamOutput, refinementPrompt contains the full 90KB raw output (~91,000 chars).
-	// With PruneUpstreamOutput + 16K compaction budget, it should be safely bounded.
-	// The budget (16K) plus manifest headers/wrappers typically adds ~5-8K overhead.
-	if len(refinementPrompt) > 25000 {
-		t.Errorf("expected refinement prompt <= 25000 chars, got %d chars", len(refinementPrompt))
+	// With PruneUpstreamOutput + 32K compaction budget, it should be safely bounded.
+	// The budget (32K) plus manifest headers/wrappers typically adds ~5-8K overhead.
+	if len(refinementPrompt) > 45000 {
+		t.Errorf("expected refinement prompt <= 45000 chars, got %d chars", len(refinementPrompt))
 	}
 }

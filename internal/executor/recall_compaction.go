@@ -307,19 +307,29 @@ func fanReduceSynthesis(
 ) (string, error) {
 	chunks := splitListOutputIntoFileChunks(rawOutput)
 	if len(chunks) == 0 {
-		return rawOutput, nil
+		return "", fmt.Errorf("no file chunks found in raw output")
 	}
 
-	// If only one chunk but it's too large, split within the file at function boundaries.
-	if len(chunks) == 1 && len(chunks[0].Content) > 8000 {
+	// Split any chunk exceeding the threshold into sub-chunks at function
+	// boundaries (\n\n). This handles both single-file and multi-file cases.
+	// Without this, large files like local_model.go (1673 lines) get a 13K+
+	// token prompt that the 4B model fails to process (0 ranges → 150 chars).
+	const intraFileChunkThreshold = 8000
+	var expandedChunks []listFileChunk
+	for _, chunk := range chunks {
+		if len(chunk.Content) <= intraFileChunkThreshold {
+			expandedChunks = append(expandedChunks, chunk)
+			continue
+		}
 		// Split at double-newline boundaries (function/type boundaries in extracted code)
-		parts := strings.Split(chunks[0].Content, "\n\n")
-		var subChunks []listFileChunk
+		parts := strings.Split(chunk.Content, "\n\n")
+		partCount := 0
 		var current strings.Builder
 		for _, part := range parts {
-			if current.Len()+len(part) > 8000 && current.Len() > 0 {
-				subChunks = append(subChunks, listFileChunk{
-					FilePath: chunks[0].FilePath,
+			if current.Len()+len(part) > intraFileChunkThreshold && current.Len() > 0 {
+				partCount++
+				expandedChunks = append(expandedChunks, listFileChunk{
+					FilePath: chunk.FilePath,
 					Content:  current.String(),
 				})
 				current.Reset()
@@ -330,13 +340,15 @@ func fanReduceSynthesis(
 			current.WriteString(part)
 		}
 		if current.Len() > 0 {
-			subChunks = append(subChunks, listFileChunk{
-				FilePath: chunks[0].FilePath,
+			partCount++
+			expandedChunks = append(expandedChunks, listFileChunk{
+				FilePath: chunk.FilePath,
 				Content:  current.String(),
 			})
 		}
-		chunks = subChunks
+		fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Split oversized chunk %s (%d chars) into %d sub-chunks\n", chunk.FilePath, len(chunk.Content), partCount)
 	}
+	chunks = expandedChunks
 
 	fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Splitting into %d chunks for goal-directed synthesis\n", len(chunks))
 

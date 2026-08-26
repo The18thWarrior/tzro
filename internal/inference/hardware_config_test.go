@@ -144,9 +144,9 @@ func TestGetWorkerParallelSlots(t *testing.T) {
 		{"8GB system gets 1 slot", 8, 1},
 		{"16GB system gets 1 slot", 16, 1},
 		{"23GB system gets 1 slot", 23, 1},
-		{"24GB system gets 2 slots", 24, 2},
-		{"32GB system gets 2 slots", 32, 2},
-		{"64GB system gets 2 slots", 64, 2},
+		{"24GB system gets 1 slot", 24, 1},
+		{"32GB system gets 1 slot", 32, 1},
+		{"64GB system gets 1 slot", 64, 1},
 	}
 
 	for _, tt := range tests {
@@ -156,6 +156,28 @@ func TestGetWorkerParallelSlots(t *testing.T) {
 				t.Errorf("getWorkerParallelSlots(%d) = %d, want %d", tt.memoryGB, got, tt.expected)
 			}
 		})
+	}
+}
+
+// --- getKVCacheQuantType: role-differentiated KV cache quantization (ADR-0092) ---
+
+func TestGetKVCacheQuantType(t *testing.T) {
+	tests := []struct {
+		role      string
+		modelMode string
+		expected  string
+	}{
+		{"router", "local", "q4_0"},
+		{"router", "cooperative", "q4_0"},
+		{"worker", "local", "q8_0"},
+		{"worker", "cooperative", "q4_0"},
+	}
+
+	for _, tt := range tests {
+		got := getKVCacheQuantType(tt.role, tt.modelMode)
+		if got != tt.expected {
+			t.Errorf("getKVCacheQuantType(%q, %q) = %q, want %q", tt.role, tt.modelMode, got, tt.expected)
+		}
 	}
 }
 

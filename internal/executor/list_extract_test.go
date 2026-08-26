@@ -1,8 +1,11 @@
 package executor
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"tzro/internal/inference"
 )
 
 // ---------------------------------------------------------------------------
@@ -155,3 +158,59 @@ func TestChunkFile_LargeFile(t *testing.T) {
 		t.Errorf("ChunkFile: last chunk ends at %d, but file has 2000 lines", lastEnd)
 	}
 }
+
+type mockMessageCapturingEngine struct {
+	capturedMessages []inference.InferenceMessage
+	response         string
+}
+
+func (m *mockMessageCapturingEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, target ModelTarget) (string, error) {
+	return m.response, nil
+}
+
+func (m *mockMessageCapturingEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, target ModelTarget) (string, error) {
+	m.capturedMessages = messages
+	return m.response, nil
+}
+
+func TestExtractLineRanges_StaticPrefixSlotting(t *testing.T) {
+	mockEngine := &mockMessageCapturingEngine{
+		response: "[[1, 5]]",
+	}
+
+	goal := "Find all cache functions"
+	filePath := "internal/cache/cache.go"
+	content := "func NewCache() {}\nfunc Get() {}\nfunc Set() {}\nfunc Delete() {}\nfunc Close() {}"
+	lineCount := 5
+
+	ranges, err := ExtractLineRanges(context.Background(), mockEngine, goal, filePath, content, lineCount)
+	if err != nil {
+		t.Fatalf("ExtractLineRanges failed: %v", err)
+	}
+	if len(ranges) != 1 || ranges[0].StartLine != 1 || ranges[0].EndLine != 5 {
+		t.Fatalf("Unexpected ranges: %v", ranges)
+	}
+
+	// Verify 4-turn invariant structure (ADR-0092)
+	msgs := mockEngine.capturedMessages
+	if len(msgs) != 4 {
+		t.Fatalf("Expected 4 messages for prefix slotting, got %d: %v", len(msgs), msgs)
+	}
+
+	if msgs[0].Role != "system" || msgs[0].Content != lineRangeExtractionSystemPrompt {
+		t.Errorf("Turn 1 (system): expected %q, got %q", lineRangeExtractionSystemPrompt, msgs[0].Content)
+	}
+
+	if msgs[1].Role != "user" || !strings.Contains(msgs[1].Content, goal) {
+		t.Errorf("Turn 2 (user): expected goal %q, got %q", goal, msgs[1].Content)
+	}
+
+	if msgs[2].Role != "assistant" || !strings.Contains(msgs[2].Content, "Ready") {
+		t.Errorf("Turn 3 (assistant): expected synthetic ack, got %q", msgs[2].Content)
+	}
+
+	if msgs[3].Role != "user" || !strings.Contains(msgs[3].Content, filePath) || !strings.Contains(msgs[3].Content, content) {
+		t.Errorf("Turn 4 (user): expected file content tail, got %q", msgs[3].Content)
+	}
+}
+

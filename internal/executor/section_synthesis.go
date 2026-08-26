@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"tzro/internal/compactor"
 	"tzro/internal/config"
 	"tzro/internal/embeddings"
 	"tzro/internal/inference"
@@ -825,29 +826,45 @@ Do NOT truncate rows or columns. Include inline citation tags [N] in table cells
 `
 	}
 
-	systemPrompt := fmt.Sprintf(`You are an expert technical research writer synthesizing Section %d of a comprehensive report.
+	// --- Static Prefix Slotting (ADR-0092) ---
+	// Construct 4-turn invariant conversation structure to maximize KV cache reuse:
+	// Turn 1 (system): Invariant system prompt (cached across all sections)
+	// Turn 2 (user): Overall document goal (cached across all sections in this task)
+	// Turn 3 (assistant): Synthetic acknowledgment (extends the shared prefix)
+	// Turn 4 (user): Volatile section-specific objective, evidence, and leads
+	const staticSectionSynthesisSystemPrompt = `You are an expert technical research writer synthesizing sections of a comprehensive report from verified source evidence.
 
-Overall Document Goal: %s
-Current Section: %s
-Section Objective: %s
-
-%s
-%s
-%s
 IMPORTANT INSTRUCTIONS:
-1. Begin your response directly with the section heading "%s". Do NOT output preambles, greetings, or meta-commentary.
+1. Begin your response directly with the provided section heading. Do NOT output preambles, greetings, or meta-commentary.
 2. Every quantitative metric, version, throughput number, or factual claim MUST include an inline citation tag citing the provided source ID (e.g. [1], [2]).
-3. Do NOT cite URLs or source IDs not present in the assigned evidence.`,
-		sectionIdx+1, goal, spec.Heading, spec.Objective, evidenceBlock.String(), leadsBlock.String(), tableConstraint, spec.Heading)
+3. Do NOT cite URLs or source IDs not present in the assigned evidence.`
 
-	userPrompt := fmt.Sprintf("Synthesize Section %d (%s) now. Begin directly with %s", sectionIdx+1, spec.Heading, spec.Heading)
+	var userDynamicPrompt strings.Builder
+	userDynamicPrompt.WriteString(fmt.Sprintf("## Target Section: Section %d (%s)\nSection Objective: %s\n\n", sectionIdx+1, spec.Heading, spec.Objective))
+	userDynamicPrompt.WriteString(evidenceBlock.String())
+	userDynamicPrompt.WriteString(leadsBlock.String())
+	if tableConstraint != "" {
+		userDynamicPrompt.WriteString(tableConstraint)
+		userDynamicPrompt.WriteString("\n")
+	}
+	userDynamicPrompt.WriteString(fmt.Sprintf("Synthesize Section %d (%s) now. Begin directly with %s", sectionIdx+1, spec.Heading, spec.Heading))
 
-	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: staticSectionSynthesisSystemPrompt},
+		{Role: "user", Content: fmt.Sprintf("## Overall Document Goal\n%s", goal)},
+		{Role: "assistant", Content: "Understood. Provide the assigned section objective, source evidence, and preceding section context."},
+		{Role: "user", Content: userDynamicPrompt.String()},
+	}
+
+	resp, err := engine.InferMessages(ctx, messages, "", TargetWorker)
 	if err != nil {
 		return "", err
 	}
 
 	cleaned := strings.TrimSpace(resp)
+	if decoded, err := compactor.DecodeWithHeader(cleaned); err == nil {
+		cleaned = decoded
+	}
 	if !strings.HasPrefix(cleaned, "#") {
 		cleaned = fmt.Sprintf("%s\n\n%s", spec.Heading, cleaned)
 	}
@@ -1156,7 +1173,8 @@ CRITICAL INSTRUCTIONS:
 		// - 2048 inference tokens (zero model cost)
 		if IsFunctionIndexGoal(goal) && len(syms) > 0 {
 			var table strings.Builder
-			table.WriteString(sec.Heading + "\n\n")
+			table.WriteString(sec.Heading)
+			table.WriteString("\n\n")
 			table.WriteString("| Symbol | Kind | File | Signature |\n")
 			table.WriteString("|--------|------|------|-----------|\n")
 			for _, s := range syms {
@@ -1585,28 +1603,48 @@ Do NOT truncate rows or columns. Every cell must contain concrete corroborated d
 `
 		}
 
-		systemPrompt := fmt.Sprintf(`You are an expert technical writer synthesizing Section %d of a comprehensive research whitepaper.
-
-Main Whitepaper Goal: %s
-Section Objective: %s
-
-## Verified Discovery Context:
-%s
-
-%s
-IMPORTANT: Begin your response directly with "%s". Do not write meta-commentary or introduction.
+		const staticWhitepaperSectionSystemPrompt = `You are an expert technical writer synthesizing sections of a comprehensive research whitepaper.
+IMPORTANT: Begin your response directly with the section heading. Do not write meta-commentary or introduction.
 IMPORTANT: All concrete identifiers, versions, metrics, and claims must be corroborated by the discovery context.
-IMPORTANT: Cite sources inline using markdown links: [Descriptive Title](URL).`, i+1, goal, sec.FocusPrompt, refinedContext, tableConstraint, sec.Heading)
+IMPORTANT: Cite sources inline using markdown links: [Descriptive Title](URL).`
 
-		userPrompt := fmt.Sprintf("Synthesize Section %d (%s) now. Begin directly with %s", i+1, sec.SectionID, sec.Heading)
+		boundedContext := refinedContext
+		if len(boundedContext) > 16000 {
+			if pruned, pruneErr := PruneUpstreamOutput(ctx, boundedContext, sec.FocusPrompt, 16000); pruneErr == nil && len(pruned) > 0 {
+				boundedContext = pruned
+			} else {
+				boundedContext = truncate(boundedContext, 16000)
+			}
+		}
 
-		resp, err := engine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
+		var userDynamicPrompt strings.Builder
+		userDynamicPrompt.WriteString(fmt.Sprintf("## Target Section: Section %d (%s)\nSection Objective: %s\n\n", i+1, sec.SectionID, sec.FocusPrompt))
+		userDynamicPrompt.WriteString("## Verified Discovery Context:\n")
+		userDynamicPrompt.WriteString(boundedContext)
+		userDynamicPrompt.WriteString("\n\n")
+		if tableConstraint != "" {
+			userDynamicPrompt.WriteString(tableConstraint)
+			userDynamicPrompt.WriteString("\n")
+		}
+		userDynamicPrompt.WriteString(fmt.Sprintf("Synthesize Section %d (%s) now. Begin directly with %s", i+1, sec.SectionID, sec.Heading))
+
+		messages := []inference.InferenceMessage{
+			{Role: "system", Content: staticWhitepaperSectionSystemPrompt},
+			{Role: "user", Content: fmt.Sprintf("## Main Whitepaper Goal\n%s", goal)},
+			{Role: "assistant", Content: "Understood. Ready for section objective and discovery context."},
+			{Role: "user", Content: userDynamicPrompt.String()},
+		}
+
+		resp, err := engine.InferMessages(ctx, messages, "", TargetWorker)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[SectionedSynthesis] Warning: error generating section %s: %v\n", sec.SectionID, err)
 			continue
 		}
 
 		cleaned := strings.TrimSpace(resp)
+		if decoded, err := compactor.DecodeWithHeader(cleaned); err == nil {
+			cleaned = decoded
+		}
 		if len(cleaned) > 50 {
 			if !strings.HasPrefix(cleaned, "#") {
 				cleaned = fmt.Sprintf("%s\n\n%s", sec.Heading, cleaned)

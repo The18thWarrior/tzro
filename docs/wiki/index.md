@@ -136,6 +136,8 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0088: DAG Parity Optimization — Immutable Goal Injection, Domain-Aware Compaction, Terminal Sinks, and Fast-Path Short-Circuiting](../adr/0088-dag-parity-optimization-immutable-goals-and-fast-path.md) - Preserves verbatim user prompts, implements type-aware compaction skeletons, auto-injects terminal write sinks, and fast-paths T0 single-node tasks.
 - [ADR-0089: Native ReAct Loop within Probe and Research Nodes](../adr/0089-react-loop-in-probe-nodes.md) - Encapsulates an unconstrained, native Go ReAct agent loop inside exploratory DAG nodes, combining ReAct's dynamic discovery power with DAG durability, token efficiency, and clean context contracts.
 - [ADR-0090: List Node — Extraction Without Synthesis](../adr/0090-list-node-extraction-without-synthesis.md) - Introduces a List Node type for extraction tasks where the model points at line ranges via GBNF-constrained arrays and the Go harness copies verbatim source, eliminating synthesis corruption for enumeration/cataloging goals.
+- [ADR-0091: Probe Node Removal and list-and-write Topology](../adr/0091-probe-removal-list-and-write-topology.md) - Deletes the Probe Node, replaces with list-and-write topology archetype in the Plan Template Registry, and establishes Budget-Overflow Recall Injection.
+- [ADR-0092: Lossless Context Prefill Optimization and Prefix-Slot Architecture](../adr/0092-lossless-prefill-optimization-and-prefix-slotting.md) - Implements static 4-turn prefix slotting for KV cache reuse, symbolic in-context dictionary encoding, 2-tier AST stubbing, and role-differentiated KV quantization.
 
 ## Ingested Sources
 

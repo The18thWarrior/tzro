@@ -15,6 +15,7 @@ import (
 
 	"tzro/internal/compiler"
 	"tzro/internal/executor"
+	"tzro/internal/symbols"
 	"tzro/internal/tools"
 )
 
@@ -167,7 +168,7 @@ func GatherContext(targetPath string, validator *tools.PathValidator) (*CodeCont
 		candidates = candidates[:maxSiblings]
 	}
 
-	// Read each sibling with truncation
+	// Read each sibling with AST Body Stubbing (ADR-0092)
 	for _, c := range candidates {
 		sibPath := filepath.Join(parentDir, c.name)
 		data, err := os.ReadFile(sibPath)
@@ -177,7 +178,7 @@ func GatherContext(targetPath string, validator *tools.PathValidator) (*CodeCont
 		if !utf8.Valid(data) {
 			continue // skip binary siblings
 		}
-		content := string(data)
+		content := symbols.StubCodeBodies(c.name, data)
 		if len(content) > maxSiblingChars {
 			content = executor.TruncateToolOutput(content, maxSiblingChars)
 		}

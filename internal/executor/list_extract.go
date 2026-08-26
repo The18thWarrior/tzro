@@ -55,12 +55,7 @@ Rules:
 // file's content and the extraction goal. Returns line ranges identifying
 // relevant content. Returns nil for files with no relevant content.
 func ExtractLineRanges(ctx context.Context, engine ProbeInferenceEngine, goal string, filePath string, content string, lineCount int) ([]LineRange, error) {
-	userPrompt := fmt.Sprintf("## Goal\n%s\n\n## File: %s (%d lines)\n%s", goal, filePath, lineCount, content)
-
 	// --- Defense 1: Proportional generation cap ---
-	// Each range pair is ~8 tokens: [start, end],\n
-	// A file can have at most lineCount/2 meaningful ranges.
-	// Cap at lineCount * 3 tokens (generous) with floor 64 and ceiling 512.
 	maxTok := lineCount * 3
 	if maxTok < 64 {
 		maxTok = 64
@@ -71,8 +66,6 @@ func ExtractLineRanges(ctx context.Context, engine ProbeInferenceEngine, goal st
 	ctx = context.WithValue(ctx, inference.MaxTokensKey, maxTok)
 
 	// --- Defense 2: DRY sampling to break repetition loops ---
-	// The router model degenerates into [1,2],[1,4],[1,6]... patterns.
-	// DRY detects and penalizes repeated token sequences at sampling time.
 	ctx = context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
 		Multiplier:    0.8,
 		Base:          1.75,
@@ -80,10 +73,23 @@ func ExtractLineRanges(ctx context.Context, engine ProbeInferenceEngine, goal st
 		PenaltyLastN:  256,
 	})
 
+	// --- Static Prefix Slotting (ADR-0092) ---
+	// Construct 4-turn invariant conversation structure to maximize KV cache reuse:
+	// Turn 1 (system): Invariant extractor prompt (cached across all files)
+	// Turn 2 (user): Extraction goal (cached across all files in this task)
+	// Turn 3 (assistant): Synthetic acknowledgment (extends the shared prefix)
+	// Turn 4 (user): Volatile candidate file content (only segment requiring fresh prefill)
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: lineRangeExtractionSystemPrompt},
+		{Role: "user", Content: fmt.Sprintf("## Extraction Goal\n%s", goal)},
+		{Role: "assistant", Content: "Ready. Provide the candidate file to extract relevant line ranges."},
+		{Role: "user", Content: fmt.Sprintf("## Candidate File: %s (%d lines)\n%s", filePath, lineCount, content)},
+	}
+
 	// Use TargetWorker for line-range extraction — identifying which lines are
 	// relevant to a goal requires content comprehension, not just classification.
 	// The 1B router model lacks the capacity and degenerates into repetitive output.
-	result, err := engine.Infer(ctx, lineRangeExtractionSystemPrompt, userPrompt, LineRangeExtractionSchema, TargetWorker)
+	result, err := engine.InferMessages(ctx, messages, LineRangeExtractionSchema, TargetWorker)
 	if err != nil {
 		return nil, fmt.Errorf("line-range extraction failed for %s: %w", filePath, err)
 	}

@@ -2,6 +2,49 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-26T08:37:00-07:00] wayfinder | Resolved Ticket 02: Node Types and Subsystem Audit
+
+- **Activity**: Wayfinder research session auditing all registered node types, strategies, and execution branches in `internal/executor/`, `internal/compiler/`, and `internal/strategy/`.
+- **Key Findings & Asset Created**:
+  1. Authored research asset [Research Asset: Node Types, Execution Strategies, and Subsystem Audit](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/assets/node-strategy-audit.md).
+  2. Identified **7,077 LOC** of legacy Probe Node files and **748 LOC** of XML Semantic Validator code in `internal/executor/` ready for deletion.
+  3. Identified 3 true active execution workhorses: `ListStrategy` + Repository Pre-Index, `RecallStrategy` + Structural Compaction, and `SectionSynthesis` + Codegen Gate.
+- **Wayfinder Map Updated**: Closed ticket 02 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 03.
+
+## [2026-08-26T08:35:00-07:00] wayfinder | Resolved Ticket 01: Benchmark Harness Integrity
+
+- **Activity**: Wayfinder grilling session resolving [01-benchmark-harness-integrity](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/01-benchmark-harness-integrity.md).
+- **Key Decisions Resolved**:
+  1. **Judge Error Handling**: Implemented 3x exponential backoff retries (2s, 4s, 8s) for all cloud judge API calls in `internal/comparison/judge.go`. On terminal failure, tag task with `JudgeError: "ERR_JUDGE_UNAVAILABLE"`, record `QualityScore = -1`, render `ERR` in report, and exclude `ERR` tasks from quality denominator.
+  2. **Dedicated Re-Judge CLI Command**: Added a standalone `tzro compare --rejudge <results.json>` CLI command to re-score unjudged/failed tasks post-hoc without re-running model task execution.
+  3. **Purged Task-Specific Scaffolding**: Completely removed all `if t.ID == ...` pre-compilation blocks and prompt augmentations from `internal/comparison/conditions.go`, requiring all DocGen benchmarks to execute through the unassisted general runtime pipeline.
+  4. **Golden Baseline Savings Attribution**: Enforced 3-bucket savings attribution against `golden_baseline_react.json` and added a `CLOUD_LEAK_WARNING` badge for unexpected cloud token usage in cooperative/local modes.
+- **Wayfinder Map Updated**: Closed ticket 01 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 05.
+
+## [2026-08-26T08:24:00-07:00] wayfinder | Charting Map: Strategic Framework Pivots & Execution Simplification
+
+- **Activity**: Wayfinder session charting a strategic architectural roadmap to break out of the 4B-model micro-optimization loop, harden the evaluation harness against silent failure traps, and consolidate tzro's 92 ADR layers into 3 core primitives.
+- **Wayfinder Map Created**: [.scratch/framework-pivots-and-simplification/MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md)
+- **Tickets Charted**:
+  1. [01-benchmark-harness-integrity](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/01-benchmark-harness-integrity.md) (grilling, HITL) — Eliminate judge 0.00 silent failure traps, retry transient cloud errors, and purge task-specific hacks from `conditions.go`.
+  2. [02-audit-active-node-types-and-strategies](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/02-audit-active-node-types-and-strategies.md) (research, AFK) — Inventory all active vs legacy node types, strategies, and execution branches.
+  3. [03-execution-pipeline-pruning-and-core-primitives](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/03-execution-pipeline-pruning-and-core-primitives.md) (grilling, HITL) — Consolidate execution engine into 3 primitives (Deterministic Walker, Context Budgeting, Inside-Out Map-Reduce/Codegen Gate).
+  4. [04-small-model-cognitive-boundary-invariants](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/04-small-model-cognitive-boundary-invariants.md) (grilling, HITL) — Codify invariants preventing ad-hoc Go heuristic extractors and phrase splitters.
+  5. [05-holdout-suite-generalization-gate](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/05-holdout-suite-generalization-gate.md) (grilling, HITL) — Design independent holdout evaluation suites and automated quality floor gates.
+  6. [06-migration-roadmap-and-phased-rollout](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/06-migration-roadmap-and-phased-rollout.md) (grilling, HITL) — Phased rollout sequence.
+
+## [2026-08-26T07:30:00-07:00] grill-with-docs | Lossless Context Prefill Optimization and Prefix-Slot Architecture (ADR-0092)
+
+- **Activity**: Grill-with-docs session evaluating context prefill optimization strategies (inspired by research on bit-exact KV compression, symbolic meta-token dictionary encoding, LCM carrier streams, and RadixAttention prefix caching) for tzro's Go harness, `llama-server` sidecar, and Apple Silicon / Metal execution.
+- **Key Decisions Resolved**:
+  1. **Static Prefix Slotting (Invariant 3-Turn Base + Volatile Dynamic Tail)**: Standardized a 4-turn message structure (`system: Invariant Prompt` $\to$ `user: Immutable Goal` $\to$ `assistant: Ack` $\to$ `user: Dynamic Tail`) across List Node file extractions, Sectioned Synthesis passes, and Codegen Edit Loops. Guarantees that `llama-server`'s `--cache-reuse` reuses KV state through Turns 1–3, evaluating only the dynamic tail on passes 2 through $N$.
+  2. **Symbolic In-Context Dictionary Encoding (Meta-Tokens)**: Transparent harness-level pre-pass discovering long repetitive path prefixes (`/Users/.../internal/...`, `github.com/...`) and schema headers in contexts $>4\text{KB}$. Substitutes them with compact meta-tokens (`§0`, `§1`) and decodes them deterministically in Go before Section Assembly or Tool Sinks.
+  3. **Context-Role Aware 2-Tier AST Stubbing & Sparse Ceilings**: In Codegen, reference/sibling files have function/method bodies stubbed to `{ /* ... */ }` via tree-sitter AST parsing (`internal/symbols`), preserving all exported signatures while shrinking context files by ~85%. Active target file retains full content. In Sectioned Synthesis, enforced strict sparse context ceilings ($K=4$ embedding snippets, cosine similarity $\ge 0.55$).
+  4. **Role-Differentiated KV Cache Quantization**: Router sidecar (1B) always launches with `--cache-type-k q4_0 --cache-type-v q4_0` to conserve Metal memory bandwidth during 1-shot GBNF classifications; Worker sidecar (4B/7B) uses `q8_0` in local mode and `q4_0` in cooperative mode.
+- **CONTEXT.md Updated**: Added **Static Prefix Slotting**, **Symbolic In-Context Dictionary**, and **AST Body Stubbing** to glossary.
+- **ADR Created**: [ADR-0092](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0092-lossless-prefill-optimization-and-prefix-slotting.md)
+- **Wiki Updated**: Added ADR-0091 and ADR-0092 to `docs/wiki/index.md`.
+
 ## [2026-08-25T11:22:00-07:00] grill-with-docs | Probe Node Removal & list-and-write Topology (ADR-0091)
 
 - **Activity**: Grill-with-docs session analyzing 0.6v5 benchmark failures. Deep dive into cloud token routing leak (fixed: 1-line guard in `compilation_hook.go`) and documentation failure modes led to architectural decision to delete the Probe Node entirely.

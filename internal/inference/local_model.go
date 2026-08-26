@@ -306,12 +306,11 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 	gpuLayers := m.getGPULayerCount()
 	fmt.Fprintf(os.Stderr, "[Llama Sidecar] GPU offload layers: %d\n", gpuLayers)
 
-	// 5. KV cache quantization: mode-dependent (q4_0 cooperative, q8_0 local)
-	kvCacheType := "q4_0"
-	if cfg.ModelMode == "local" {
-		kvCacheType = "q8_0"
-	}
-	fmt.Fprintf(os.Stderr, "[Llama Sidecar] KV cache quantization: %s (mode: %s)\n", kvCacheType, cfg.ModelMode)
+	// 5. KV cache quantization: role-differentiated (ADR-0092)
+	// Router (1B model): q4_0 for max speed & minimal memory footprint.
+	// Worker (4B/7B model): q8_0 in local mode, q4_0 in cooperative mode.
+	kvCacheType := getKVCacheQuantType(m.Role, cfg.ModelMode)
+	fmt.Fprintf(os.Stderr, "[Llama Sidecar] KV cache quantization: %s (role: %s, mode: %s)\n", kvCacheType, m.Role, cfg.ModelMode)
 
 	// 6. Slot save path for KV cache preemption save/restore
 	slotSavePath := filepath.Join(config.GetModelsDir(), "kv-cache")
@@ -380,6 +379,10 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 
 	// Optimized launch args (12 resolved decisions from sidecar optimization session)
 	parallelSlots := getWorkerParallelSlots(getSystemMemoryGB())
+	ctxSize := config.GetContextSize()
+	if m.Role == "router" {
+		ctxSize = getRouterContextSize(getSystemMemoryGB())
+	}
 	args := []string{
 		"-m", m.GGUFModelPath,
 		"--port", strconv.Itoa(m.ActivePort),
@@ -387,9 +390,9 @@ func (m *LocalModelManager) Start(ctx context.Context) error {
 		"--parallel", strconv.Itoa(parallelSlots),
 		"--jinja",
 		"--n-gpu-layers", strconv.Itoa(gpuLayers), // Q1: platform-aware GPU offload
-		"--ctx-size", strconv.Itoa(config.GetContextSize()), // Configurable context window (default 64K)
-		"--cache-type-k", kvCacheType, // Q3: mode-dependent KV cache quantization
-		"--cache-type-v", kvCacheType, // Q3: mode-dependent KV cache quantization
+		"--ctx-size", strconv.Itoa(ctxSize), // Configurable context window (default 64K, router memory-gated)
+		"--cache-type-k", kvCacheType, // Q3: role/mode-dependent KV cache quantization
+		"--cache-type-v", kvCacheType, // Q3: role/mode-dependent KV cache quantization
 		"-fa", "auto", // Q4: flash attention (auto-detect)
 		"--cache-reuse", strconv.Itoa(config.GetCacheReuseTokens()), // ADR-0056: append-only probe context; 0 = unlimited prefix matching for full KV cache reuse
 		"--n-predict", "16384", // Q9: max tokens per generation
@@ -1006,6 +1009,20 @@ func getAbsoluteRSSThreshold(memoryGB int) int64 {
 // cost half the context window.
 func getWorkerParallelSlots(memoryGB int) int {
 	return 1
+}
+
+// getKVCacheQuantType returns the KV cache quantization format (ADR-0092).
+// Router (1B model) always uses q4_0 for max throughput and minimal memory footprint.
+// Worker (4B/7B model) uses q8_0 in local mode to protect high-precision reasoning,
+// and q4_0 in cooperative mode.
+func getKVCacheQuantType(role, modelMode string) string {
+	if role == "router" {
+		return "q4_0"
+	}
+	if modelMode == "local" {
+		return "q8_0"
+	}
+	return "q4_0"
 }
 
 // getRouterContextSize returns the context window size for the router sidecar,

@@ -7,6 +7,7 @@ import (
 
 	"tzro/internal/compiler"
 	"tzro/internal/inference"
+	"tzro/internal/memory"
 	"tzro/internal/strategy"
 	"tzro/internal/stream"
 )
@@ -56,6 +57,12 @@ func (s *DeterministicStrategy) Execute(ctx context.Context, nr *strategy.NodeRu
 	}
 
 	fmt.Fprintf(os.Stderr, "[DeterministicStrategy] %s completed (%d chars)\n", node.ID, len(result.compactedOutput))
+
+	// Persist raw output as StructuredOutput so comparison framework's Fix 7
+	// can extract write_file content even when the file escapes the sandbox.
+	if result.rawOutput != "" && len(result.rawOutput) > 100 {
+		_ = memory.DB.SetNodeStructuredOutput(taskID, node.ID, result.rawOutput)
+	}
 
 	executionTier := "Local"
 	if nr.ExecutionTier() != "" {

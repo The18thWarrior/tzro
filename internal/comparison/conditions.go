@@ -394,11 +394,12 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	} else if t.Category == CategoryDocgen || t.Category == CategoryResearch {
 		docContent := extractLastWriteContent(taskID, graph, testOutputDir)
 		termSynth := extractTerminalSynthesis(graph, taskID)
-		// Prefer the longer of (written file / Fix 7 extraction) vs terminal synthesis.
-		// Fix 7 can return AccumulatedContext-compacted content (~500 chars) when the
-		// validator-to-exec handoff compacts the full DocGen synthesis (26K+ chars).
-		// The recall node's Output stores the uncompacted synthesis.
-		if docContent != "" && len(docContent) >= len(termSynth) {
+		// Prefer write_file deliverable (docContent) when substantive: it went
+		// through the validator chain and represents the intended output. Terminal
+		// synthesis can introduce truncation and duplication for large modules.
+		// Only fall back to termSynth when docContent is missing or trivially short
+		// (e.g., AccumulatedContext compaction reduced it to ~500 chars).
+		if docContent != "" && len(docContent) >= 1000 {
 			outputText = sanitizeSynthesisOutput(docContent, 10)
 		} else if termSynth != "" {
 			outputText = termSynth

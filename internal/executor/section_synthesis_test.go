@@ -36,7 +36,8 @@ func (m *mockSectionInferenceEngine) Infer(ctx context.Context, systemPrompt, us
 		}
 	}
 
-	if strings.Contains(systemPrompt, "Comparison Matrix") {
+	combined := systemPrompt + "\n" + userPrompt
+	if strings.Contains(combined, "Comparison Matrix") {
 		return `## 2. Comparative Analysis Matrix & Benchmarks
 
 | System | Architecture | Language SDKs | Production Users |
@@ -46,13 +47,13 @@ func (m *mockSectionInferenceEngine) Infer(ctx context.Context, systemPrompt, us
 | Inngest | Event-Driven Functions | TypeScript, Python, Go | SoundCloud |`, nil
 	}
 
-	if strings.Contains(systemPrompt, "Core Architectural Patterns") {
+	if strings.Contains(combined, "Core Architectural Patterns") {
 		return `## 1. Core Architectural Patterns & Mechanics
 
 Temporal relies on event sourcing and deterministic replay through history events. Restate models execution as durable execution log RPCs. Inngest uses step-based event-driven execution.`, nil
 	}
 
-	if strings.Contains(systemPrompt, "Cost Arbitrage") {
+	if strings.Contains(combined, "Cost Arbitrage") {
 		return `## 3. Cost Arbitrage, Pricing & Economics
 
 Self-hosting Temporal requires Cassandra/PostgreSQL clusters ($200-$500/mo) vs Temporal Cloud starting with free credits and $0.000025 per action.`, nil
@@ -64,7 +65,15 @@ Choose Temporal for mission-critical complex financial workflows. Choose Restate
 }
 
 func (m *mockSectionInferenceEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, target ModelTarget) (string, error) {
-	return "", nil
+	var sys, user string
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			sys = msg.Content
+		} else if msg.Role == "user" {
+			user += "\n" + msg.Content
+		}
+	}
+	return m.Infer(ctx, sys, user, jsonSchema, target)
 }
 
 func TestShouldRunSectionedSynthesis(t *testing.T) {
@@ -417,10 +426,10 @@ func (m *mockPipelineInferenceEngine) Infer(ctx context.Context, systemPrompt, u
 	}
 
 	m.sectionCalls++
-	if strings.Contains(systemPrompt, "Current Section: ## 1.") || strings.Contains(userPrompt, "## 1.") {
+	if strings.Contains(systemPrompt, "Current Section: ## 1.") || strings.Contains(userPrompt, "Target Section: Section 1") || strings.Contains(userPrompt, "Synthesize Section 1") {
 		return "## 1. Engine Architectures\n\nOllama provides a simplified CLI interface on port 11434 [1]. Llama.cpp provides raw C++ performance bindings [1].", nil
 	}
-	if strings.Contains(systemPrompt, "Current Section: ## 2.") || strings.Contains(userPrompt, "## 2.") {
+	if strings.Contains(systemPrompt, "Current Section: ## 2.") || strings.Contains(userPrompt, "Target Section: Section 2") || strings.Contains(userPrompt, "Synthesize Section 2") {
 		return "## 2. Comparative Matrix\n\n| Engine | Throughput | API |\n| :--- | :--- | :--- |\n| Ollama | 85 tok/s [1] | REST 11434 [1] |\n| vLLM | 320 tok/s [2] | OpenAI API [2] |", nil
 	}
 
@@ -429,7 +438,15 @@ func (m *mockPipelineInferenceEngine) Infer(ctx context.Context, systemPrompt, u
 }
 
 func (m *mockPipelineInferenceEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, target ModelTarget) (string, error) {
-	return "", nil
+	var sys, user string
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			sys = msg.Content
+		} else if msg.Role == "user" {
+			user += "\n" + msg.Content
+		}
+	}
+	return m.Infer(ctx, sys, user, jsonSchema, target)
 }
 
 func TestRunSectionedSynthesisPipeline_AssemblesAllSections(t *testing.T) {
@@ -723,4 +740,72 @@ func (c *callTrackingEngine) Infer(ctx context.Context, systemPrompt, userPrompt
 func (c *callTrackingEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, target ModelTarget) (string, error) {
 	return "", nil
 }
+
+type prefixTrackingInferenceEngine struct {
+	capturedCalls [][]inference.InferenceMessage
+}
+
+func (p *prefixTrackingInferenceEngine) Infer(ctx context.Context, systemPrompt, userPrompt, jsonSchema string, target ModelTarget) (string, error) {
+	return "## Mock Section Output\nContent", nil
+}
+
+func (p *prefixTrackingInferenceEngine) InferMessages(ctx context.Context, messages []inference.InferenceMessage, jsonSchema string, target ModelTarget) (string, error) {
+	p.capturedCalls = append(p.capturedCalls, messages)
+	return "## Mock Section Output\nContent", nil
+}
+
+func TestSynthesizeSection_StaticPrefixSlotting(t *testing.T) {
+	mockEngine := &prefixTrackingInferenceEngine{}
+
+	goal := "Evaluate GPU context prefill performance"
+	evidence := []EvidenceTable{
+		{SourceIndex: 1, Title: "SplitZip Paper", URL: "https://example.com/splitzip"},
+	}
+	spec1 := SectionSpec{Heading: "## 1. Physical Codecs", Objective: "Explain SplitZip"}
+	spec2 := SectionSpec{Heading: "## 2. Symbolic Codecs", Objective: "Explain Meta-Tokens"}
+	outline := &SynthesisOutline{Title: "Prefix Study", Sections: []SectionSpec{spec1, spec2}}
+
+	// Synthesize Section 1
+	_, err := AssembleSection(context.Background(), mockEngine, goal, outline, 0, spec1, evidence, nil)
+	if err != nil {
+		t.Fatalf("AssembleSection 1 failed: %v", err)
+	}
+
+	// Synthesize Section 2
+	_, err = AssembleSection(context.Background(), mockEngine, goal, outline, 1, spec2, evidence, []string{"Lead 1"})
+	if err != nil {
+		t.Fatalf("AssembleSection 2 failed: %v", err)
+	}
+
+	if len(mockEngine.capturedCalls) != 2 {
+		t.Fatalf("Expected 2 calls to InferMessages, got %d", len(mockEngine.capturedCalls))
+	}
+
+	call1 := mockEngine.capturedCalls[0]
+	call2 := mockEngine.capturedCalls[1]
+
+	if len(call1) != 4 || len(call2) != 4 {
+		t.Fatalf("Expected 4 messages per call, got call1=%d, call2=%d", len(call1), len(call2))
+	}
+
+	// Verify Turns 1-3 are byte-for-byte identical between section 1 and section 2 (KV cache prefix reuse)
+	if call1[0].Content != call2[0].Content {
+		t.Errorf("Turn 1 (system) mismatch between sections!\nCall1: %s\nCall2: %s", call1[0].Content, call2[0].Content)
+	}
+	if call1[1].Content != call2[1].Content {
+		t.Errorf("Turn 2 (goal) mismatch between sections!\nCall1: %s\nCall2: %s", call1[1].Content, call2[1].Content)
+	}
+	if call1[2].Content != call2[2].Content {
+		t.Errorf("Turn 3 (ack) mismatch between sections!\nCall1: %s\nCall2: %s", call1[2].Content, call2[2].Content)
+	}
+
+	// Verify Turn 4 contains the dynamic section heading and content
+	if !strings.Contains(call1[3].Content, spec1.Heading) {
+		t.Errorf("Turn 4 for Section 1 missing heading %q", spec1.Heading)
+	}
+	if !strings.Contains(call2[3].Content, spec2.Heading) {
+		t.Errorf("Turn 4 for Section 2 missing heading %q", spec2.Heading)
+	}
+}
+
 

@@ -38,6 +38,7 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 
 	maxSteps := 8
 	step := 0
+	var refinedContext string
 
 	// ADR-0064 / ADR-0078: Build deterministic baseline context BEFORE the loop with 0 LLM calls.
 	// This uses Hybrid Extractive Compaction (BM25 + Cosine Similarity) against the goal in <5ms.
@@ -70,10 +71,11 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 		}
 		if rawUpstreamOutput != "" && len(rawUpstreamOutput) > budget {
 			fmt.Fprintf(os.Stderr, "[Recall] Raw upstream oversized (%d chars > %d budget). Routing to fan-reduce synthesis.\n", len(rawUpstreamOutput), budget)
-			fanResult, fanErr := fanReduceSynthesis(ctx, rawUpstreamOutput, goal, &ProbeInference{})
+			fanResult, fanErr := fanReduceSynthesis(ctx, rawUpstreamOutput, goal, engine)
 			if fanErr == nil && len(fanResult) > 0 {
 				fmt.Fprintf(os.Stderr, "[Recall] Fan-reduce produced %d chars. Bypassing refinement loop.\n", len(fanResult))
 				baselineContext = fanResult
+				refinedContext = fanResult
 				// Skip the refinement loop — fan-reduce already produced goal-directed output
 				step = maxSteps
 			} else {
@@ -123,7 +125,9 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 
 	// ADR-0064: Pre-populate refinedContext with the baseline (loop inversion).
 	// The agentic loop adds to this, never replaces it.
-	refinedContext := baselineContext
+	if refinedContext == "" {
+		refinedContext = baselineContext
+	}
 
 	// If the upstream node already provided complete synthesis output and there are no extra exploration steps in manifest, bypass the agentic refinement loop directly to synthesis pass.
 	if refinedContext != "" && manifest == "" {
@@ -504,8 +508,11 @@ postSynthesis:
 		}
 	}
 
-	// Strip any leaked control tokens from the output
+	// Strip any leaked control tokens from the output and decode any dictionary headers
 	synthesis = stripControlTokens(synthesis)
+	if decoded, err := compactor.DecodeWithHeader(synthesis); err == nil {
+		synthesis = decoded
+	}
 	return RecallResult{Synthesis: synthesis, RefinedContext: refinedContext}, nil
 }
 
