@@ -53,7 +53,7 @@ func findInvalidTools(graph *compiler.ExecutionGraph, toolExists func(string) bo
 	var invalid []InvalidTool
 	for _, node := range graph.Nodes {
 		switch node.Type {
-		case "probe", "analyze", "synthesis", "deterministic":
+		case "list", "analyze", "synthesis", "deterministic":
 			continue
 		}
 		if node.Action != "" && !toolExists(node.Action) {
@@ -129,7 +129,7 @@ func PlanWithEscalation(ctx context.Context, localPlan, cloudPlan PlanFunc, deci
 			fallbackGraph.CreatedAt = graph.CreatedAt
 			fallbackGraph.SourceModality = string(baseModality)
 			for i := range fallbackGraph.Nodes {
-				if fallbackGraph.Nodes[i].Type == "probe" {
+				if fallbackGraph.Nodes[i].Type == "list" {
 					fallbackGraph.Nodes[i].Instructions = graph.GoalPrompt
 					if fallbackGraph.Nodes[i].ProbeConfig != nil {
 						fallbackGraph.Nodes[i].ProbeConfig.Goal = graph.GoalPrompt
@@ -146,8 +146,8 @@ func PlanWithEscalation(ctx context.Context, localPlan, cloudPlan PlanFunc, deci
 	return cloudPlan(ctx)
 }
 
-// repairGraphWithProbe surgically patches a graph by replacing all nodes with
-// invalid tools with a single probe node. This preserves the graph structure
+// repairGraphWithList surgically patches a graph by replacing all nodes with
+// invalid tools with a single list node. This preserves the graph structure
 // while fixing the hallucinated-tools failure mode.
 func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []InvalidTool) *compiler.ExecutionGraph {
 	// Build set of node IDs to remove
@@ -155,7 +155,7 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 	var removedInstructions []string
 	for _, it := range invalidTools {
 		removeSet[it.NodeID] = true
-		// Collect instructions from removed nodes for the probe's goal
+		// Collect instructions from removed nodes for the list node's goal
 		for _, node := range graph.Nodes {
 			if node.ID == it.NodeID {
 				removedInstructions = append(removedInstructions, node.Instructions)
@@ -201,7 +201,7 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 		repairGoal += fmt.Sprintf("%d. %s\n", i+1, instr)
 	}
 
-	repairID := "repair_probe"
+	repairID := "repair_list"
 	var repairNode compiler.GraphNode
 
 	if isDataAnalysis {
@@ -213,17 +213,17 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 			Status:       "pending",
 		}
 	} else if isWeb {
-		probeTools := []string{"web_search", "web_browse"}
+		listTools := []string{"web_search", "web_browse"}
 		repairNode = compiler.GraphNode{
 			ID:           repairID,
-			Type:         "probe",
+			Type:         "list",
 			Action:       "",
 			Instructions: repairGoal,
-			AllowedTools: probeTools,
+			AllowedTools: listTools,
 			Status:       "pending",
 			ProbeConfig: &compiler.ProbeConfig{
 				Goal:            repairGoal,
-				AllowedTools:    probeTools,
+				AllowedTools:    listTools,
 				StepBudget:      20,
 				CompactEvery:    3,
 				CompactionLevel: compiler.CompactPreserve,
@@ -234,7 +234,7 @@ func repairGraphWithProbe(graph *compiler.ExecutionGraph, invalidTools []Invalid
 		probeTools := []string{"read_file", "list_dir", "search_files"}
 		repairNode = compiler.GraphNode{
 			ID:           repairID,
-			Type:         "probe",
+			Type:         "list",
 			Action:       "",
 			Instructions: repairGoal,
 			AllowedTools: probeTools,

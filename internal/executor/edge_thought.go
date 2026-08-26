@@ -60,7 +60,7 @@ func shouldGenerateEdgeThought(targetNode *compiler.GraphNode) bool {
 	// These node types must always execute regardless of edge thought result.
 	// The Deterministic Shield prevents halting them, so skip the inference call.
 	switch targetNode.Type {
-	case "recall", "synthesis", "semantic_validator", "analyze", "probe":
+	case "recall", "synthesis", "semantic_validator", "analyze", "list":
 		return false
 	}
 	return true
@@ -80,7 +80,7 @@ func evaluateActivationThreshold(et *memory.EdgeThought, targetNode *compiler.Gr
 		// These nodes are responsible for consolidation, presentation, and parameter alignment.
 		// They must execute to provide a return result or fulfill a planned side-effect,
 		// even if the model upstream believes the goal was "achieved".
-		if targetNode.Type == "recall" || targetNode.Type == "synthesis" || targetNode.Type == "semantic_validator" || targetNode.Type == "analyze" || targetNode.Type == "probe" {
+		if targetNode.Type == "recall" || targetNode.Type == "synthesis" || targetNode.Type == "semantic_validator" || targetNode.Type == "analyze" || targetNode.Type == "list" {
 			return ActivationContinue
 		}
 		return ActivationHalt

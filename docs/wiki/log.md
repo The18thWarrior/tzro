@@ -2,6 +2,20 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-25T11:22:00-07:00] grill-with-docs | Probe Node Removal & list-and-write Topology (ADR-0091)
+
+- **Activity**: Grill-with-docs session analyzing 0.6v5 benchmark failures. Deep dive into cloud token routing leak (fixed: 1-line guard in `compilation_hook.go`) and documentation failure modes led to architectural decision to delete the Probe Node entirely.
+- **Key Decisions Resolved**:
+  1. **Probe Node deleted**: ReAct loop consistently underperformed across 4B, 8B, and 35B model sizes. The multi-hop navigation niche is already handled by Repository Pre-Index (AST imports, dependency graphs) and Symbol Extractor at the discovery level.
+  2. **List Node becomes primary**: All code/documentation discovery tasks route through the List Node. Verbatim GBNF line-range extraction replaces lossy Probe synthesis.
+  3. **`list-and-write` topology**: New Plan Template Registry archetype replacing `probe-and-write` and `probe-synthesis`. Topology: `List → [conditional Recall] → Sectioned Synthesis → Tool Sink`.
+  4. **Budget-Overflow Recall Injection**: Recall injected only when List output exceeds downstream context budget. Uses deterministic structural compaction (Symbol Extractor for code, heading extraction for markdown) — no LLM compaction calls.
+  5. **Research Node unchanged**: Web tasks keep their own pipeline (Search → Browse → Evidence Card → Synthesis).
+  6. **Analyze Node unchanged**: Data/SQL tasks keep their pipeline.
+- **CONTEXT.md Updated**: Removed Probe Node definition. Updated Recall Node, List Node, Budget-Overflow Recall Injection, Verified Task Execution, Re-Explore, Strategic Planner, Response Resolver, Proactive Binding Splice, Phase Runner, Research Node, Analyze Node, Agent definitions.
+- **ADR Created**: [ADR-0091](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0091-probe-removal-list-and-write-topology.md)
+- **Bug Fixed**: Cloud semantic review (ADR-0070) missing `isCloudRepairBlocked()` guard in `compilation_hook.go:180`. T4+ codegen tasks leaked 12,954 cloud tokens in `local_only` mode. Test updated.
+
 ## [2026-08-25T10:32:00-07:00] tdd | List Node Implementation (ADR-0090)
 
 - **Activity**: TDD implementation of the List Node — extraction-only node type where the model returns GBNF-constrained line-range integer arrays and the Go harness copies verbatim source snippets.

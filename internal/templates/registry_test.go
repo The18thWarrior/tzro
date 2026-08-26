@@ -18,24 +18,14 @@ func TestGet_ExploreOnly_ReturnsValidGraph(t *testing.T) {
 	}
 
 	node := graph.Nodes[0]
-	if node.Type != "probe" {
-		t.Errorf("expected node type 'probe', got %q", node.Type)
+	if node.Type != "list" {
+		t.Errorf("expected node type 'list', got %q", node.Type)
 	}
 	if node.ProbeConfig == nil {
-		t.Fatal("expected ProbeConfig on probe node")
+		t.Fatal("expected ProbeConfig on list node")
 	}
 
-	// Verify probe has filesystem exploration tools
-	toolSet := make(map[string]bool)
-	for _, tool := range node.ProbeConfig.AllowedTools {
-		toolSet[tool] = true
-	}
-	for _, required := range []string{"read_file", "list_dir", "search_files"} {
-		if !toolSet[required] {
-			t.Errorf("expected ProbeConfig.AllowedTools to contain %q", required)
-		}
-	}
-
+	// List nodes don't need AllowedTools — discovery is deterministic (Orient → Discover)
 	if len(graph.Edges) != 0 {
 		t.Errorf("expected 0 edges for single-node template, got %d", len(graph.Edges))
 	}
@@ -98,7 +88,7 @@ func TestGet_ExploreOnly_PassesCompilation(t *testing.T) {
 	}
 }
 
-func TestGet_Docgen_HasProbeAndWriteAction(t *testing.T) {
+func TestGet_Docgen_HasListAndWriteAction(t *testing.T) {
 	graph := Get(Docgen)
 	if graph == nil {
 		t.Fatal("expected non-nil graph for Docgen")
@@ -107,18 +97,18 @@ func TestGet_Docgen_HasProbeAndWriteAction(t *testing.T) {
 		t.Fatalf("expected 2 nodes, got %d", len(graph.Nodes))
 	}
 
-	// Find probe and action nodes
-	var probe, action *compiler.GraphNode
+	// Find list and action nodes
+	var listNode, action *compiler.GraphNode
 	for i := range graph.Nodes {
 		switch graph.Nodes[i].Type {
-		case "probe":
-			probe = &graph.Nodes[i]
+		case "list":
+			listNode = &graph.Nodes[i]
 		case "action":
 			action = &graph.Nodes[i]
 		}
 	}
-	if probe == nil {
-		t.Fatal("expected a probe node")
+	if listNode == nil {
+		t.Fatal("expected a list node")
 	}
 	if action == nil {
 		t.Fatal("expected an action node")
@@ -127,24 +117,23 @@ func TestGet_Docgen_HasProbeAndWriteAction(t *testing.T) {
 		t.Errorf("expected action 'write_file', got %q", action.Action)
 	}
 
-	// Verify edge: probe → action
+	// Verify edge: list → action
 	if len(graph.Edges) != 1 {
 		t.Fatalf("expected 1 edge, got %d", len(graph.Edges))
 	}
-	if graph.Edges[0].SourceID != probe.ID || graph.Edges[0].TargetID != action.ID {
-		t.Errorf("expected edge %s→%s, got %s→%s", probe.ID, action.ID, graph.Edges[0].SourceID, graph.Edges[0].TargetID)
+	if graph.Edges[0].SourceID != listNode.ID || graph.Edges[0].TargetID != action.ID {
+		t.Errorf("expected edge %s→%s, got %s→%s", listNode.ID, action.ID, graph.Edges[0].SourceID, graph.Edges[0].TargetID)
 	}
 
-	// Verify NO dynamic bindings on action node — probe output flows via
-	// AccumulatedContext (edge-driven), not DynamicBindings (which assume
-	// structured JSON output the probe doesn't produce).
+	// Verify NO dynamic bindings on action node — list output flows via
+	// AccumulatedContext (edge-driven), not DynamicBindings.
 	if len(action.DynamicBindings) > 0 {
-		t.Errorf("expected no DynamicBindings on probe→action template, got %v", action.DynamicBindings)
+		t.Errorf("expected no DynamicBindings on list→action template, got %v", action.DynamicBindings)
 	}
 }
 
-func TestGet_Research_HasWebProbe(t *testing.T) {
-	graph := GetWithModality(ProbeSynthesis, SourceWeb)
+func TestGet_Research_HasWebList(t *testing.T) {
+	graph := GetWithModality(ListSynthesis, SourceWeb)
 	if graph == nil {
 		t.Fatal("expected non-nil graph for Research")
 	}
@@ -153,8 +142,9 @@ func TestGet_Research_HasWebProbe(t *testing.T) {
 	}
 
 	node := graph.Nodes[0]
-	if node.Type != "probe" {
-		t.Errorf("expected node type 'probe', got %q", node.Type)
+	// Research web tasks keep list type but with web source hint
+	if node.Type != "list" {
+		t.Errorf("expected node type 'list', got %q", node.Type)
 	}
 	if node.ProbeConfig == nil {
 		t.Fatal("expected ProbeConfig")
@@ -162,20 +152,7 @@ func TestGet_Research_HasWebProbe(t *testing.T) {
 	if node.ProbeConfig.SourceHint != "web" {
 		t.Errorf("expected SourceHint 'web', got %q", node.ProbeConfig.SourceHint)
 	}
-
-	toolSet := make(map[string]bool)
-	for _, tool := range node.ProbeConfig.AllowedTools {
-		toolSet[tool] = true
-	}
-	if !toolSet["web_search"] {
-		t.Error("expected AllowedTools to contain 'web_search'")
-	}
-	if !toolSet["web_browse"] {
-		t.Error("expected AllowedTools to contain 'web_browse'")
-	}
 }
-
-
 
 func TestGet_DataAnalysis_HasReadFileAndAnalyze(t *testing.T) {
 	graph := Get(DataAnalysis)
@@ -211,28 +188,28 @@ func TestGet_DataAnalysis_HasReadFileAndAnalyze(t *testing.T) {
 	}
 }
 
-func TestGet_MultiProbeSynthesis_HasParallelProbes(t *testing.T) {
-	graph := Get(MultiProbeSynthesis)
+func TestGet_MultiListSynthesis_HasParallelListNodes(t *testing.T) {
+	graph := Get(MultiListSynthesis)
 	if graph == nil {
-		t.Fatal("expected non-nil graph for MultiProbeSynthesis")
+		t.Fatal("expected non-nil graph for MultiListSynthesis")
 	}
 	if len(graph.Nodes) != 2 {
 		t.Fatalf("expected 2 nodes, got %d", len(graph.Nodes))
 	}
 
 	for _, n := range graph.Nodes {
-		if n.Type != "probe" {
-			t.Errorf("expected all nodes to be probe type, got %q", n.Type)
+		if n.Type != "list" {
+			t.Errorf("expected all nodes to be list type, got %q", n.Type)
 		}
 	}
 
-	// Parallel probes have no edges between them
+	// Parallel list nodes have no edges between them
 	if len(graph.Edges) != 0 {
-		t.Errorf("expected 0 edges (parallel probes), got %d", len(graph.Edges))
+		t.Errorf("expected 0 edges (parallel list nodes), got %d", len(graph.Edges))
 	}
 }
 
-func TestGet_Codegen_HasProbeAndTzroCode(t *testing.T) {
+func TestGet_Codegen_HasListAndTzroCode(t *testing.T) {
 	graph := Get(Codegen)
 	if graph == nil {
 		t.Fatal("expected non-nil graph for Codegen")
@@ -241,17 +218,17 @@ func TestGet_Codegen_HasProbeAndTzroCode(t *testing.T) {
 		t.Fatalf("expected 2 nodes, got %d", len(graph.Nodes))
 	}
 
-	var probe, codeAction *compiler.GraphNode
+	var listNode, codeAction *compiler.GraphNode
 	for i := range graph.Nodes {
-		if graph.Nodes[i].Type == "probe" {
-			probe = &graph.Nodes[i]
+		if graph.Nodes[i].Type == "list" {
+			listNode = &graph.Nodes[i]
 		}
 		if graph.Nodes[i].Type == "action" && graph.Nodes[i].Action == "tzro_code" {
 			codeAction = &graph.Nodes[i]
 		}
 	}
-	if probe == nil {
-		t.Fatal("expected a probe node")
+	if listNode == nil {
+		t.Fatal("expected a list node")
 	}
 	if codeAction == nil {
 		t.Fatal("expected a tzro_code action node")
@@ -260,8 +237,8 @@ func TestGet_Codegen_HasProbeAndTzroCode(t *testing.T) {
 	if len(graph.Edges) != 1 {
 		t.Fatalf("expected 1 edge, got %d", len(graph.Edges))
 	}
-	if graph.Edges[0].SourceID != probe.ID || graph.Edges[0].TargetID != codeAction.ID {
-		t.Errorf("expected edge %s→%s", probe.ID, codeAction.ID)
+	if graph.Edges[0].SourceID != listNode.ID || graph.Edges[0].TargetID != codeAction.ID {
+		t.Errorf("expected edge %s→%s", listNode.ID, codeAction.ID)
 	}
 }
 
@@ -315,7 +292,7 @@ func TestCategories_Returns6Categories(t *testing.T) {
 }
 
 func TestGetWithModality_WebHydration(t *testing.T) {
-	g := GetWithModality(ProbeSynthesis, SourceWeb)
+	g := GetWithModality(ListSynthesis, SourceWeb)
 	if g == nil {
 		t.Fatal("expected non-nil graph")
 	}
@@ -329,31 +306,25 @@ func TestGetWithModality_WebHydration(t *testing.T) {
 	if node.ProbeConfig == nil || node.ProbeConfig.SourceHint != "web" {
 		t.Errorf("expected SourceHint 'web', got %v", node.ProbeConfig)
 	}
-	if len(node.AllowedTools) != 2 || node.AllowedTools[0] != "web_search" {
-		t.Errorf("expected web tools, got %v", node.AllowedTools)
-	}
 }
 
 func TestGetWithModality_HybridHydration(t *testing.T) {
-	g := GetWithModality(ProbeAndWrite, SourceHybrid)
+	g := GetWithModality(ListAndWrite, SourceHybrid)
 	if g == nil {
 		t.Fatal("expected non-nil graph")
 	}
 	if g.SourceModality != string(SourceHybrid) {
 		t.Errorf("expected SourceModality %q, got %q", SourceHybrid, g.SourceModality)
 	}
-	probe := g.Nodes[0]
-	if probe.ProbeConfig == nil || probe.ProbeConfig.SourceHint != "hybrid" {
-		t.Errorf("expected SourceHint 'hybrid', got %v", probe.ProbeConfig)
-	}
-	if len(probe.AllowedTools) != 5 {
-		t.Errorf("expected 5 hybrid tools, got %d (%v)", len(probe.AllowedTools), probe.AllowedTools)
+	listNode := g.Nodes[0]
+	if listNode.ProbeConfig == nil || listNode.ProbeConfig.SourceHint != "hybrid" {
+		t.Errorf("expected SourceHint 'hybrid', got %v", listNode.ProbeConfig)
 	}
 }
 
 func TestNodeTypeReferenceCard_ContainsAllNodeTypes(t *testing.T) {
 	required := []string{
-		"probe", "analyze", "action", "conditional", "loop",
+		"list", "analyze", "action", "conditional", "loop",
 		"probeConfig", "dynamicBindings", "activationThreshold",
 		"tzro_code",
 	}
@@ -368,5 +339,20 @@ func TestNodeTypeReferenceCard_UnderLineLimit(t *testing.T) {
 	lines := strings.Count(NodeTypeReferenceCard, "\n") + 1
 	if lines > 60 {
 		t.Errorf("NodeTypeReferenceCard has %d lines, expected ≤60", lines)
+	}
+}
+
+// --- Legacy alias backward compatibility ---
+
+func TestLegacyAliases_ResolveToNewCategories(t *testing.T) {
+	// ProbeSynthesis, ProbeAndWrite, MultiProbeSynthesis should still work
+	if Get(ProbeSynthesis) == nil {
+		t.Error("ProbeSynthesis alias returned nil")
+	}
+	if Get(ProbeAndWrite) == nil {
+		t.Error("ProbeAndWrite alias returned nil")
+	}
+	if Get(MultiProbeSynthesis) == nil {
+		t.Error("MultiProbeSynthesis alias returned nil")
 	}
 }

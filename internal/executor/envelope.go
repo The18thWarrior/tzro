@@ -13,7 +13,7 @@ import (
 type dispatchRecorderKeyType struct{}
 
 // DispatchRecorderKey is the context key for injecting a tool dispatch recorder
-// into probe execution. The value must be a func(toolName string, args map[string]interface{}).
+// into list execution. The value must be a func(toolName string, args map[string]interface{}).
 var DispatchRecorderKey = dispatchRecorderKeyType{}
 
 // ToolDispatch records a single tool invocation during task execution.
@@ -96,7 +96,7 @@ func AssembleEnvelope(graph *compiler.ExecutionGraph, nodes []memory.NodeState, 
 	}
 
 	// Find effective terminal node for synthesis text.
-	// Priority: terminal_synthesis > last recall > last probe > last synthesis-type
+	// Priority: terminal_synthesis > last recall > last list > last synthesis-type
 	// Strip execution tier prefix from the consumer-facing synthesis.
 	env.Synthesis = stripExecutionTierPrefix(findSynthesisText(graph, nodes))
 
@@ -158,7 +158,7 @@ func stripExecutionTierPrefix(content string) string {
 }
 
 // findSynthesisText locates the effective terminal node and returns its RawOutput.
-// Search order: terminal_synthesis node, then last completed recall, probe, or synthesis node,
+// Search order: terminal_synthesis node, then last completed recall, list, or synthesis node,
 // falling back to the last completed execution/action node.
 func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState) string {
 	// Build a node type lookup from the graph
@@ -177,8 +177,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 		}
 	}
 
-	// Fallback: find the last completed node of type scatter_assembly > recall > probe > synthesis > last completed
-	var lastScatterAssembly, lastRecall, lastProbe, lastSynthesis, lastCompleted string
+	// Fallback: find the last completed node of type scatter_assembly > recall > list > synthesis > last completed
+	var lastScatterAssembly, lastRecall, lastList, lastSynthesis, lastCompleted string
 	for _, n := range nodes {
 		if n.Status != "completed" {
 			continue
@@ -194,8 +194,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 			lastScatterAssembly = raw
 		case "recall":
 			lastRecall = raw
-		case "probe":
-			lastProbe = raw
+		case "list":
+			lastList = raw
 		case "synthesis":
 			lastSynthesis = raw
 		}
@@ -207,8 +207,8 @@ func findSynthesisText(graph *compiler.ExecutionGraph, nodes []memory.NodeState)
 	if lastRecall != "" {
 		return lastRecall
 	}
-	if lastProbe != "" {
-		return lastProbe
+	if lastList != "" {
+		return lastList
 	}
 	if lastSynthesis != "" {
 		return lastSynthesis
@@ -243,7 +243,7 @@ func sortedKeys(m map[string]bool) []string {
 }
 
 // findTerminalNodeID identifies which node should receive the Execution Envelope.
-// Same priority as findSynthesisText: terminal_synthesis > last recall > last probe > last synthesis > last completed.
+// Same priority as findSynthesisText: terminal_synthesis > last recall > last list > last synthesis > last completed.
 func findTerminalNodeID(graph *compiler.ExecutionGraph, nodes []memory.NodeState) string {
 	nodeTypes := make(map[string]string)
 	for _, gn := range graph.Nodes {
@@ -257,8 +257,8 @@ func findTerminalNodeID(graph *compiler.ExecutionGraph, nodes []memory.NodeState
 		}
 	}
 
-	// Fallback: last completed recall > probe > synthesis > last completed
-	var lastRecall, lastProbe, lastSynthesis, lastCompleted string
+	// Fallback: last completed recall > list > synthesis > last completed
+	var lastRecall, lastList, lastSynthesis, lastCompleted string
 	for _, n := range nodes {
 		if n.Status != "completed" {
 			continue
@@ -267,8 +267,8 @@ func findTerminalNodeID(graph *compiler.ExecutionGraph, nodes []memory.NodeState
 		switch nodeTypes[n.NodeID] {
 		case "recall":
 			lastRecall = n.NodeID
-		case "probe":
-			lastProbe = n.NodeID
+		case "list":
+			lastList = n.NodeID
 		case "synthesis":
 			lastSynthesis = n.NodeID
 		}
@@ -277,8 +277,8 @@ func findTerminalNodeID(graph *compiler.ExecutionGraph, nodes []memory.NodeState
 	if lastRecall != "" {
 		return lastRecall
 	}
-	if lastProbe != "" {
-		return lastProbe
+	if lastList != "" {
+		return lastList
 	}
 	if lastSynthesis != "" {
 		return lastSynthesis

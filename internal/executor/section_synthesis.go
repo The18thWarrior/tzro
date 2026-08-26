@@ -247,7 +247,13 @@ Return ONLY a valid JSON object matching the schema.`
 	userPrompt := fmt.Sprintf("Documentation Goal: %s\n%s\n\nDiscovery Context Preview:\n%s\nPlan the document outline in JSON now.",
 		goal, symSummary.String(), truncateForPrompt(refinedCtx, 4000))
 
-	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
+	// Cap outline generation to prevent 16K degenerate fills.
+	// A valid outline (title + 2-6 sections with headings/objectives) fits in ~500 tokens.
+	outlineCtx := context.WithValue(ctx, inference.MaxTokensKey, 2048)
+	outlineCtx = context.WithValue(outlineCtx, inference.GenerationGuardKey,
+		inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
+
+	resp, err := engine.Infer(outlineCtx, systemPrompt, userPrompt, "", TargetWorker)
 	if err != nil || strings.TrimSpace(resp) == "" {
 		fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Warning: Outline generation failed (%v), using safety floor\n", err)
 		return BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms), nil
@@ -345,23 +351,23 @@ func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbo
 			Title: deriveCleanDocumentTitle(goal),
 			Sections: []SectionSpec{
 				{
-					Heading:    "## 1. Exported Types & Interfaces",
-					Objective:  "List all exported structs, types, and interfaces with exact fields, signatures, and descriptions.",
+					Heading:    "## 1. Exported Types, Interfaces & Structs",
+					Objective:  "List all exported struct types, interface types, and type aliases with their fields, signatures, and descriptions. Do NOT include functions or methods here.",
 					FormatHint: "bulleted_deep_dive",
 				},
 				{
-					Heading:    "## 2. Package Functions & Constructors",
-					Objective:  "List all exported standalone package functions with exact parameter types, return values, and behavior descriptions.",
+					Heading:    "## 2. Exported Functions & Methods",
+					Objective:  "List all exported package-level functions AND all exported methods on types. Group by source file. Include full signatures with parameter types and return values.",
 					FormatHint: "bulleted_deep_dive",
 				},
 				{
-					Heading:    "## 3. Exported Methods on Types",
-					Objective:  "List all exported methods defined on structs and interfaces with receiver signatures and behavior.",
+					Heading:    "## 3. Exported Constants, Variables & Configuration",
+					Objective:  "List all exported constants, package-level variables, and configuration values with their types and descriptions.",
 					FormatHint: "bulleted_deep_dive",
 				},
 				{
-					Heading:    "## 4. Comprehensive Symbol Reference Table",
-					Objective:  "Provide an exhaustive, structured table of all exported symbols, their defining files, signatures, and one-line summaries.",
+					Heading:    "## 4. Quick Reference Table",
+					Objective:  "Provide a compact summary table with columns: Symbol | Kind (func/type/const/var) | File | One-line Description. Do NOT include signatures — those are in the sections above.",
 					FormatHint: "table",
 					IsTerminal: true,
 				},
@@ -925,6 +931,15 @@ func ExecuteDocGenSectionedSynthesis(ctx context.Context, goal, refinedCtx strin
 		outline = BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms)
 	}
 
+	// On-the-fly symbol extraction when the symbol index is empty.
+	// This happens in comparison benchmarks that bypass probe nodes.
+	if len(syms) == 0 && IsFunctionIndexGoal(goal) {
+		syms = extractSymbolsFromContext(refinedCtx)
+		if len(syms) > 0 {
+			fmt.Fprintf(os.Stderr, "[DocGen] Extracted %d symbols on-the-fly from %d source files in context\n", len(syms), countUniqueFiles(syms))
+		}
+	}
+
 	numSections := len(outline.Sections)
 	if numSections == 0 {
 		return "", fmt.Errorf("empty outline")
@@ -966,17 +981,79 @@ func ExecuteDocGenSectionedSynthesis(ctx context.Context, goal, refinedCtx strin
 		sec := outline.Sections[idx]
 		secCtx, secSymBlock := PartitionDocGenContext(refinedCtx, syms, sec, outline.Sections, 40000)
 
+		// Detect function index archetype for exported-only filtering
+		exportedOnlyHint := ""
+		if IsFunctionIndexGoal(goal) {
+			exportedOnlyHint = `
+- IMPORTANT: Only document EXPORTED symbols (names starting with an uppercase letter in Go). Skip all unexported/private symbols (lowercase first letter like "compact", "stripBase64", "flattenMap").`
+		}
+
+		// AST-guided section boundary enforcement:
+		// Tell the model exactly which symbols belong in this section.
+		sectionBoundaryHint := ""
+		if IsFunctionIndexGoal(goal) && len(syms) > 0 {
+			headingLower := strings.ToLower(sec.Heading)
+			var allowed []string
+			for _, s := range syms {
+				if !s.Exported {
+					continue
+				}
+				switch {
+				case strings.Contains(headingLower, "type") || strings.Contains(headingLower, "interface") || strings.Contains(headingLower, "struct"):
+					if s.Kind == symbols.SymbolType || s.Kind == symbols.SymbolInterface || s.Kind == symbols.SymbolClass {
+						allowed = append(allowed, fmt.Sprintf("  - %s (%s)", s.Name, s.Kind))
+					}
+				case strings.Contains(headingLower, "function") || strings.Contains(headingLower, "method"):
+					if s.Kind == symbols.SymbolFunc || s.Kind == symbols.SymbolMethod {
+						allowed = append(allowed, fmt.Sprintf("  - %s (%s)", s.Name, s.Kind))
+					}
+				case strings.Contains(headingLower, "constant") || strings.Contains(headingLower, "variable") || strings.Contains(headingLower, "configuration"):
+					if s.Kind == symbols.SymbolVar || s.Kind == symbols.SymbolConst {
+						allowed = append(allowed, fmt.Sprintf("  - %s (%s)", s.Name, s.Kind))
+					}
+				}
+			}
+			if len(allowed) > 0 {
+				sectionBoundaryHint = fmt.Sprintf("\n- STRICT BOUNDARY: This section MUST ONLY document these symbols:\n%s\n- Do NOT include any symbol not in the list above.", strings.Join(allowed, "\n"))
+			}
+		}
+
+		// Build negative context from previously completed body sections:
+		// Extract H3 headings (symbol names) that were already documented to
+		// prevent the 4B model from repeating them in this section.
+		var previouslyDocumented string
+		{
+			var prev []string
+			for _, prevIdx := range bodyIndices {
+				if prevIdx >= idx {
+					break // only look at earlier sections
+				}
+				if completedSections[prevIdx] == "" {
+					continue
+				}
+				for _, line := range strings.Split(completedSections[prevIdx], "\n") {
+					if strings.HasPrefix(line, "### ") {
+						prev = append(prev, strings.TrimSpace(line))
+					}
+				}
+			}
+			if len(prev) > 0 {
+				previouslyDocumented = fmt.Sprintf("\n\n## Symbols Already Documented (DO NOT REPEAT):\n%s", strings.Join(prev, "\n"))
+			}
+		}
+
 		sysPrompt := fmt.Sprintf(`You are the Technical Documentation Synthesis Engine (Body Section Phase).
 Document Goal: %s
 
 ## Relevant Codebase Context (Assigned Files & Verified Symbols):
-%s%s
+%s%s%s
 
 CRITICAL INSTRUCTIONS:
 - You are generating the body section: "%s".
 - Begin your response directly with the section heading "%s".
 - Focus deeply on writing comprehensive, technical, concrete code signatures, parameters, types, and operational mechanics.
-- Conclude cleanly without trailing fragments.`, goal, secCtx, secSymBlock, sec.Heading, sec.Heading)
+- Do NOT repeat symbols already covered in other sections. Only document symbols that match THIS section's scope.%s%s
+- Conclude cleanly without trailing fragments.`, goal, secCtx, secSymBlock, previouslyDocumented, sec.Heading, sec.Heading, exportedOnlyHint, sectionBoundaryHint)
 
 		userPrompt := fmt.Sprintf("Synthesize Section: %s\nObjective: %s\nWrite the complete markdown section now:", sec.Heading, sec.Objective)
 
@@ -984,6 +1061,12 @@ CRITICAL INSTRUCTIONS:
 			Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
 		})
 		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
+		// Cap body sections at 2048 tokens. A function index body section
+		// with ~30 symbols needs ~1.5K tokens. 4096 caused degenerate fills.
+		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 2048)
+		// Wire GenerationGuard to abort early on repetitive degeneration.
+		callCtx = context.WithValue(callCtx, inference.GenerationGuardKey,
+			inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
 
 		secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
 		if err != nil || strings.TrimSpace(secText) == "" {
@@ -992,7 +1075,17 @@ CRITICAL INSTRUCTIONS:
 		}
 		if strings.TrimSpace(secText) != "" {
 			secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
+			secText = stripPromptLeakage(secText)
 			secText = strings.TrimSpace(secText)
+			// Post-filter: strip unexported Go symbols for function index goals.
+			// Guard: if filtering would gut the section (<200 chars), keep original.
+			// Imperfect content beats empty sections in quality scoring.
+			if IsFunctionIndexGoal(goal) {
+				filtered := stripUnexportedSymbolBlocks(secText)
+				if len(strings.TrimSpace(filtered)) >= 200 {
+					secText = filtered
+				}
+			}
 			if !strings.HasPrefix(secText, "#") {
 				secText = sec.Heading + "\n\n" + secText
 			}
@@ -1035,12 +1128,15 @@ CRITICAL INSTRUCTIONS:
 		})
 		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
 		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 1200)
+		callCtx = context.WithValue(callCtx, inference.GenerationGuardKey,
+			inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
 
 		secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
 		if err != nil || strings.TrimSpace(secText) == "" {
 			secText, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
 		}
 		secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
+		secText = stripPromptLeakage(secText)
 		secText = strings.TrimSpace(secText)
 		if !strings.HasPrefix(secText, "#") {
 			secText = sec.Heading + "\n\n" + secText
@@ -1051,29 +1147,66 @@ CRITICAL INSTRUCTIONS:
 	// Phase 3: Synthesize Terminal Section (Summary Table / Public API Index)
 	if terminalIdx >= 0 {
 		sec := outline.Sections[terminalIdx]
-		_, allSymBlock := PartitionDocGenContext(refinedCtx, syms, sec, outline.Sections, 40000)
-		if allSymBlock == "" && len(syms) > 0 {
-			var sb strings.Builder
-			sb.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
+
+		// For function index goals with AST symbols available, generate
+		// the reference table deterministically. This eliminates:
+		// - Hallucinated symbols (0 invented names)
+		// - Wrong file attributions (uses Symbol.File)
+		// - Unexported symbol leakage (filters by Symbol.Exported)
+		// - 2048 inference tokens (zero model cost)
+		if IsFunctionIndexGoal(goal) && len(syms) > 0 {
+			var table strings.Builder
+			table.WriteString(sec.Heading + "\n\n")
+			table.WriteString("| Symbol | Kind | File | Signature |\n")
+			table.WriteString("|--------|------|------|-----------|\n")
 			for _, s := range syms {
-				sb.WriteString(fmt.Sprintf("- %s (%s, %s): %s\n", s.Name, s.Kind, filepathBase(s.File), s.Signature))
+				if !s.Exported {
+					continue
+				}
+				kind := string(s.Kind)
+				sig := s.Signature
+				// Escape pipes in signatures for markdown table
+				sig = strings.ReplaceAll(sig, "|", "\\|")
+				// Truncate very long signatures
+				if len(sig) > 120 {
+					sig = sig[:117] + "..."
+				}
+				table.WriteString(fmt.Sprintf("| %s | %s | %s | `%s` |\n",
+					s.Name, kind, filepathBase(s.File), sig))
 			}
-			allSymBlock = sb.String()
-		}
-
-		terminalCtx := bodyContext
-		if len(refinedCtx) > 0 {
-			if len(terminalCtx) > 0 {
-				terminalCtx += "\n\n## Source Code & Exploration Context:\n" + refinedCtx
-			} else {
-				terminalCtx = refinedCtx
+			completedSections[terminalIdx] = table.String()
+			fmt.Fprintf(os.Stderr, "[DocGen/Terminal] Generated deterministic reference table from %d AST symbols\n", len(syms))
+		} else {
+			// Fallback: model-generated terminal section
+			_, allSymBlock := PartitionDocGenContext(refinedCtx, syms, sec, outline.Sections, 40000)
+			if allSymBlock == "" && len(syms) > 0 {
+				var sb strings.Builder
+				sb.WriteString("\n\n## Authoritative Symbol Reference (AST-extracted, verified):\n")
+				for _, s := range syms {
+					sb.WriteString(fmt.Sprintf("- %s (%s, %s): %s\n", s.Name, s.Kind, filepathBase(s.File), s.Signature))
+				}
+				allSymBlock = sb.String()
 			}
-		}
-		if len(terminalCtx) > 35000 {
-			terminalCtx = terminalCtx[:35000] + "\n... [truncated for reference context]"
-		}
 
-		sysPrompt := fmt.Sprintf(`You are the Technical Documentation Synthesis Engine (Terminal Reference Phase).
+			terminalCtx := bodyContext
+			if len(refinedCtx) > 0 {
+				if len(terminalCtx) > 0 {
+					terminalCtx += "\n\n## Source Code & Exploration Context:\n" + refinedCtx
+				} else {
+					terminalCtx = refinedCtx
+				}
+			}
+			if len(terminalCtx) > 35000 {
+				terminalCtx = terminalCtx[:35000] + "\n... [truncated for reference context]"
+			}
+
+			terminalExportHint := ""
+			if IsFunctionIndexGoal(goal) {
+				terminalExportHint = `
+- IMPORTANT: Only document EXPORTED symbols (names starting with an uppercase letter in Go). Skip all unexported/private symbols (lowercase first letter).`
+			}
+
+			sysPrompt := fmt.Sprintf(`You are the Technical Documentation Synthesis Engine (Terminal Reference Phase).
 Document Goal: %s
 
 ## Authoritative Codebase & Synthesized Context:
@@ -1084,26 +1217,37 @@ CRITICAL INSTRUCTIONS:
 - Begin your response directly with the section heading "%s".
 - Provide an exhaustive, well-structured reference listing every single exported function, method, and type with its full signature and description.
 - Do NOT omit any exported symbols present in the context.
-- Conclude cleanly without trailing fragments.`, goal, terminalCtx, allSymBlock, sec.Heading, sec.Heading)
+- Do NOT repeat symbols already fully documented in the body sections above.%s
+- Conclude cleanly without trailing fragments.`, goal, terminalCtx, allSymBlock, sec.Heading, sec.Heading, terminalExportHint)
 
-		userPrompt := fmt.Sprintf("Synthesize Section: %s\nObjective: %s\nWrite the complete markdown reference section now:", sec.Heading, sec.Objective)
+			userPrompt := fmt.Sprintf("Synthesize Section: %s\nObjective: %s\nWrite the complete markdown reference section now:", sec.Heading, sec.Objective)
 
-		callCtx := context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
-			Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
-		})
-		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
-		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 1200)
+			callCtx := context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+				Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
+			})
+			callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
+			callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 2048)
+			callCtx = context.WithValue(callCtx, inference.GenerationGuardKey,
+				inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
 
-		secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
-		if err != nil || strings.TrimSpace(secText) == "" {
-			secText, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+			secText, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+			if err != nil || strings.TrimSpace(secText) == "" {
+				secText, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+			}
+			secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
+			secText = stripPromptLeakage(secText)
+			secText = strings.TrimSpace(secText)
+			if IsFunctionIndexGoal(goal) {
+				filtered := stripUnexportedSymbolBlocks(secText)
+				if len(strings.TrimSpace(filtered)) >= 200 {
+					secText = filtered
+				}
+			}
+			if !strings.HasPrefix(secText, "#") {
+				secText = sec.Heading + "\n\n" + secText
+			}
+			completedSections[terminalIdx] = secText
 		}
-		secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
-		secText = strings.TrimSpace(secText)
-		if !strings.HasPrefix(secText, "#") {
-			secText = sec.Heading + "\n\n" + secText
-		}
-		completedSections[terminalIdx] = secText
 	}
 
 	// Phase 4: Assembly
@@ -1124,6 +1268,11 @@ CRITICAL INSTRUCTIONS:
 	}
 	doc.WriteString(docTitle)
 	doc.WriteString("\n\n")
+	// Deduplicate table rows in each section to prevent the 4B model's
+	// tendency to repeat symbols 2-3x in reference tables.
+	for i, sec := range validSections {
+		validSections[i] = deduplicateTableRows(sec)
+	}
 	doc.WriteString(strings.Join(validSections, "\n\n---\n\n"))
 	return doc.String(), nil
 }
@@ -1500,10 +1649,117 @@ func deriveCleanDocumentTitle(goal string) string {
 	if strings.Contains(lower, "cve") || strings.Contains(lower, "vulnerabilit") || strings.Contains(lower, "security") {
 		return "Go Standard Library Security Vulnerabilities and Advisory Analysis"
 	}
+	if strings.Contains(lower, "function index") || strings.Contains(lower, "symbol index") {
+		// Extract package path from goal for a clean title
+		if idx := strings.Index(lower, "internal/"); idx >= 0 {
+			end := strings.IndexAny(goal[idx:], " \n,")
+			if end < 0 {
+				end = len(goal[idx:])
+			}
+			pkgPath := strings.TrimRight(goal[idx:idx+end], "/")
+			return fmt.Sprintf("Exported Symbol Index: %s", pkgPath)
+		}
+		return "Exported Symbol Index"
+	}
 
 	// Fallback to first line of goal
 	firstLine := strings.Split(goal, "\n")[0]
 	firstLine = strings.TrimPrefix(firstLine, "Search the web and ")
 	firstLine = strings.TrimPrefix(firstLine, "Research ")
 	return strings.Title(strings.TrimSpace(firstLine))
+}
+
+// extractSymbolsFromContext scans the refinedCtx for absolute file paths
+// ending in .go, reads the source files, and extracts symbols using tree-sitter.
+// This is a fallback for when the symbol index was not populated by probe nodes.
+func extractSymbolsFromContext(refinedCtx string) []symbols.Symbol {
+	// Extract unique file paths from the context.
+	// Fan-reduce partials contain paths in:
+	// 1. HTML comments: "<!-- source: /path/to/file.go -->"
+	// 2. Token patterns: "(/path/to/file.go)", "/path/to/file.go (signature fallback)"
+	seen := make(map[string]bool)
+	var paths []string
+	for _, line := range strings.Split(refinedCtx, "\n") {
+		line = strings.TrimSpace(line)
+		// Pattern 1: HTML comment source markers
+		if strings.HasPrefix(line, "<!-- source: ") && strings.HasSuffix(line, " -->") {
+			p := strings.TrimPrefix(line, "<!-- source: ")
+			p = strings.TrimSuffix(p, " -->")
+			p = strings.TrimSpace(p)
+			if strings.HasSuffix(p, ".go") && !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+			continue
+		}
+		// Pattern 2: Token-based extraction
+		for _, token := range strings.Fields(line) {
+			token = strings.Trim(token, "()[]`\"'")
+			if strings.HasPrefix(token, "/") && strings.HasSuffix(token, ".go") {
+				if !seen[token] {
+					seen[token] = true
+					paths = append(paths, token)
+				}
+			}
+		}
+	}
+
+	if len(paths) == 0 {
+		return nil
+	}
+
+	var allSyms []symbols.Symbol
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		syms, err := symbols.ExtractSymbols(p, data)
+		if err != nil {
+			continue
+		}
+		allSyms = append(allSyms, syms...)
+	}
+	return allSyms
+}
+
+// countUniqueFiles counts the number of unique source files in a symbol slice.
+func countUniqueFiles(syms []symbols.Symbol) int {
+	seen := make(map[string]bool)
+	for _, s := range syms {
+		seen[s.File] = true
+	}
+	return len(seen)
+}
+
+// stripPromptLeakage removes lines where the 4B model echoes its system prompt
+// instructions instead of following them. Common leaked phrases include
+// "CRITICAL INSTRUCTIONS:", "Begin your response directly", etc.
+func stripPromptLeakage(text string) string {
+	leakPhrases := []string{
+		"CRITICAL INSTRUCTIONS:",
+		"Begin your response directly with the section heading",
+		"Do NOT repeat symbols already",
+		"Conclude cleanly without trailing fragments",
+		"Do NOT omit any exported symbols",
+		"Focus deeply on writing comprehensive",
+		"STRICT BOUNDARY: This section MUST ONLY",
+		"Do NOT include any symbol not in the list above",
+	}
+
+	lines := strings.Split(text, "\n")
+	var cleaned []string
+	for _, line := range lines {
+		leaked := false
+		for _, phrase := range leakPhrases {
+			if strings.Contains(line, phrase) {
+				leaked = true
+				break
+			}
+		}
+		if !leaked {
+			cleaned = append(cleaned, line)
+		}
+	}
+	return strings.Join(cleaned, "\n")
 }

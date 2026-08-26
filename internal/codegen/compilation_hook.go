@@ -177,7 +177,7 @@ func (h *CompilationGateHook) AfterNode(ctx context.Context, taskID string, node
 		// Fires after compilation and spec compliance both pass. The cloud model
 		// reviews semantic correctness — does the code actually DO what the spec asks?
 		// On rejection, triggers full cloud regeneration.
-		if h.TaskTier >= 4 && h.AllowCloudReview && h.Spec != "" && !h.cloudReviewAttempted {
+		if h.TaskTier >= 4 && h.AllowCloudReview && h.Spec != "" && !h.cloudReviewAttempted && !isCloudRepairBlocked() {
 			h.cloudReviewAttempted = true
 
 			reviewFunc := h.CloudReviewFunc

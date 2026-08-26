@@ -26,7 +26,7 @@ func (d *DataAnalyzer) BuildGraph(taskID string, inputs map[string]interface{}) 
 	nodes := []compiler.GraphNode{
 		{
 			ID:           "probe_data",
-			Type:         "probe",
+			Type:         "list",
 			Action:       "",
 			Instructions: fmt.Sprintf("Analyze the dataset at '%s'. Determine its schema, identify key fields, and produce a statistical summary.", datasetPath),
 			AllowedTools: []string{"read_file", "search_files"},

@@ -64,7 +64,7 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 			if edge.TargetID == currentID {
 				parentID := edge.SourceID
 				for _, n := range graph.Nodes {
-					if n.ID == parentID && (n.Type == "probe" || n.Type == "analyze") {
+					if n.ID == parentID && (n.Type == "list" || n.Type == "analyze") {
 						upstreamNodeIDs = append(upstreamNodeIDs, parentID)
 					}
 				}
@@ -131,7 +131,7 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		var lastRefinedContext string
 		for _, upstreamID := range upstreamNodeIDs {
 			for _, upstreamNode := range graph.Nodes {
-				if upstreamNode.ID == upstreamID && (upstreamNode.Type == "probe" || upstreamNode.Type == "research") {
+				if upstreamNode.ID == upstreamID && (upstreamNode.Type == "list" || upstreamNode.Type == "research") {
 					// Wipe invalidated upstream probe history so re-exploration starts fresh
 					_ = memory.DB.ClearProbeHistory(taskID, upstreamID)
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"tzro/internal/compiler"
+	"tzro/internal/config"
 	"tzro/internal/executor"
 	"tzro/internal/memory"
 )
@@ -254,6 +255,12 @@ func TestCompilationGateHook_CloudSemanticReview_RejectsBrokenLogic(t *testing.T
 		t.Fatal(err)
 	}
 
+	// Set ModelMode to cooperative so isCloudRepairBlocked() returns false,
+	// isolating the TaskTier >= 4 gate as the variable under test.
+	oldMode := config.GlobalConfig.ModelMode
+	config.GlobalConfig.ModelMode = "cooperative"
+	defer func() { config.GlobalConfig.ModelMode = oldMode }()
+
 	var reviewCalled bool
 
 	hook := &CompilationGateHook{
@@ -306,6 +313,12 @@ func TestCompilationGateHook_T3_SkipsCloudReview(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
 		t.Fatal(err)
 	}
+
+	// Set ModelMode to cooperative so the skip is due to TaskTier < 4,
+	// not due to isCloudRepairBlocked().
+	oldMode := config.GlobalConfig.ModelMode
+	config.GlobalConfig.ModelMode = "cooperative"
+	defer func() { config.GlobalConfig.ModelMode = oldMode }()
 
 	var reviewCalled bool
 

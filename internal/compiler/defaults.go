@@ -30,7 +30,7 @@ func DefaultNodeFields(node *GraphNode) {
 		// No multi-branch for synthesis — it's a deterministic compilation step
 		// MCTSBranches stays 0
 
-	case "deterministic", "semantic_validator", "recall", "probe":
+	case "deterministic", "semantic_validator", "recall", "list":
 		// These node types are single-shot — no multi-branch evaluation
 		// MCTSBranches stays 0
 	}

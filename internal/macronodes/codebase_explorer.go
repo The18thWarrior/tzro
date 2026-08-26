@@ -26,7 +26,7 @@ func (c *CodebaseExplorer) BuildGraph(taskID string, inputs map[string]interface
 	nodes := []compiler.GraphNode{
 		{
 			ID:           "probe_explorer",
-			Type:         "probe",
+			Type:         "list",
 			Action:       "",
 			Instructions: fmt.Sprintf("Explore the codebase at '%s'. Understand the top-level structure, identify key components, and produce a high-level architectural map.", targetDir),
 			AllowedTools: []string{"read_file", "list_dir", "search_files"},

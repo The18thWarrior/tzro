@@ -195,7 +195,7 @@ func TestAccumulatedContext_SupersededProbeSkipping(t *testing.T) {
 
 	graph := &compiler.ExecutionGraph{
 		Nodes: []compiler.GraphNode{
-			{ID: "probe_explore", Type: "probe", Action: "probe_agent"},
+			{ID: "probe_explore", Type: "list", Action: "probe_agent"},
 			{ID: "probe_explore_recall", Type: "recall", Action: "recall_agent"},
 		},
 		Edges: []compiler.GraphEdge{

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"tzro/internal/compiler"
 	"tzro/internal/strategy"
@@ -52,7 +53,7 @@ func (s *ListStrategy) PlannerCard() *strategy.PlannerCard {
 			{Name: "probeConfig.preloadPaths", Description: "target directories to scan", Required: false},
 		},
 		CriticalRules: []string{
-			"Use 'list' for extraction tasks where source fidelity matters. Use 'probe' when understanding and synthesis are needed.",
+			"Use 'list' for all code/doc extraction tasks where source fidelity matters.",
 			"The model identifies relevant line ranges; the harness copies content verbatim. No synthesis occurs.",
 		},
 	}
@@ -79,7 +80,7 @@ func (s *ListStrategy) ContextRole() *strategy.ContextRole {
 	return &strategy.ContextRole{
 		IsPrimaryDataCarrier: true,  // Output is the primary data
 		HasThoughtSteps:      false, // No Thought Chain
-		ContextWeight:        0.3,   // Lightweight — raw snippets don't need much budget
+		ContextWeight:        0.5, // Primary discovery node (ADR-0091, replaces probe)
 		ProducesPlainText:    true,
 	}
 }
@@ -111,11 +112,25 @@ func (s *ListStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) (*
 	}
 
 	if len(targetPaths) == 0 {
-		// Fallback: detect paths from goal text
+		// Fallback 1: detect paths from goal text
 		targetPaths = detectPreloadPaths(goal, "")
 	}
 
 	if len(targetPaths) == 0 {
+		// Fallback 2: detect paths from the original GoalPrompt (task-level prompt).
+		// The planner often rewrites instructions without directory paths,
+		// but the original prompt (e.g., "Generate an index for internal/cache/")
+		// contains the path reference. This bridges the gap (FM-1 fix).
+		if graph := nr.Graph(); graph != nil && graph.GoalPrompt != "" {
+			targetPaths = detectPreloadPaths(graph.GoalPrompt, "")
+			if len(targetPaths) > 0 {
+				fmt.Fprintf(os.Stderr, "[ListNode] Detected paths from GoalPrompt fallback: %v\n", targetPaths)
+			}
+		}
+	}
+
+	if len(targetPaths) == 0 {
+		fmt.Fprintf(os.Stderr, "[ListNode] No target paths found for extraction (goal: %.120s)\n", goal)
 		return &strategy.ExecutionResult{
 			Output:    "[List] No target paths found for extraction",
 			Directive: strategy.DirectiveContinue,
@@ -135,6 +150,12 @@ func (s *ListStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) (*
 				continue
 			}
 			name := entry.Name()
+			// Skip test files — they inflate extraction output with
+			// assertions and fixtures that are irrelevant for documentation
+			// indexes and cause downstream synthesis timeouts (FM-5).
+			if isTestFile(name) {
+				continue
+			}
 			// Include source code and documentation files
 			ext := strings.ToLower(filepath.Ext(name))
 			if isExtractableFile(ext) {
@@ -193,6 +214,65 @@ func (s *ListStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) (*
 		// Merge and clamp
 		merged := MergeAndClampRanges(fileRanges, lineCount)
 		if len(merged) == 0 {
+			// Fallback: for Go source files, extract exported symbol signatures
+			// when GBNF extraction returns 0 ranges. The 4B model consistently
+			// fails to identify line ranges in large files (800+ lines), causing
+			// complete coverage gaps in documentation tasks.
+			if strings.HasSuffix(filePath, ".go") && !isTestFile(filePath) {
+				var sigLines []string
+				for i, line := range lines {
+					trimmed := strings.TrimSpace(line)
+					// Match declarations: func/type/var/const
+					isDecl := strings.HasPrefix(trimmed, "func ") || strings.HasPrefix(trimmed, "func (") ||
+						strings.HasPrefix(trimmed, "type ") ||
+						strings.HasPrefix(trimmed, "var ") ||
+						strings.HasPrefix(trimmed, "const ")
+					if !isDecl {
+						continue
+					}
+					// Filter: only exported (uppercase) symbols.
+					// For methods "func (r *Recv) Name(...)", extract Name after ")".
+					// For functions "func Name(...)", extract Name after "func ".
+					// For type/var/const "type Name ...", extract Name after keyword.
+					symbolName := ""
+					if strings.HasPrefix(trimmed, "func (") {
+						// Method: find closing paren, then the name
+						if closeIdx := strings.Index(trimmed, ") "); closeIdx >= 0 {
+							rest := trimmed[closeIdx+2:]
+							parts := strings.Fields(rest)
+							if len(parts) > 0 {
+								symbolName = strings.TrimLeft(parts[0], "*")
+								symbolName = strings.SplitN(symbolName, "(", 2)[0]
+							}
+						}
+					} else {
+						// func/type/var/const Name
+						parts := strings.Fields(trimmed)
+						if len(parts) >= 2 {
+							symbolName = parts[1]
+							symbolName = strings.TrimLeft(symbolName, "*")
+							symbolName = strings.SplitN(symbolName, "(", 2)[0]
+						}
+					}
+					if symbolName == "" || !unicode.IsUpper(rune(symbolName[0])) {
+						continue
+					}
+					// Include the declaration line and up to 3 following lines for context
+					endIdx := i + 4
+					if endIdx > len(lines) {
+						endIdx = len(lines)
+					}
+					for j := i; j < endIdx; j++ {
+						sigLines = append(sigLines, fmt.Sprintf("%d: %s", j+1, lines[j]))
+					}
+					sigLines = append(sigLines, "") // blank separator
+				}
+				if len(sigLines) > 0 {
+					sigSnippet := fmt.Sprintf("--- file: %s (signature fallback) ---\n%s", filePath, strings.Join(sigLines, "\n"))
+					snippets = append(snippets, sigSnippet)
+					fmt.Fprintf(os.Stderr, "[ListNode] GBNF extraction returned 0 ranges for %s, using signature fallback (%d sig lines)\n", filePath, len(sigLines))
+				}
+			}
 			continue
 		}
 
@@ -209,12 +289,29 @@ func (s *ListStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) (*
 		output = "[List] No relevant content found in any files"
 	}
 
+
 	fmt.Fprintf(os.Stderr, "[ListNode] Extraction complete: %d files with matches, %d chars output\n", len(snippets), len(output))
 
 	return &strategy.ExecutionResult{
 		Output:    output,
 		Directive: strategy.DirectiveContinue,
 	}, nil
+}
+
+// isTestFile returns true for file names that are test files and should be
+// excluded from List Node extraction. Test files inflate output with
+// assertions and fixtures that are irrelevant for documentation tasks.
+func isTestFile(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, "_test.go") ||
+		strings.HasSuffix(lower, ".test.ts") ||
+		strings.HasSuffix(lower, ".test.tsx") ||
+		strings.HasSuffix(lower, ".test.js") ||
+		strings.HasSuffix(lower, ".test.jsx") ||
+		strings.HasSuffix(lower, "_test.py") ||
+		strings.HasSuffix(lower, "test_") ||
+		strings.HasSuffix(lower, ".spec.ts") ||
+		strings.HasSuffix(lower, ".spec.js")
 }
 
 // isExtractableFile returns true for file extensions that should be included

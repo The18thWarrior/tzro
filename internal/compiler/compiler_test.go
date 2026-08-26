@@ -126,7 +126,7 @@ func TestExpandToSCTGraph_PlanningAware(t *testing.T) {
 	graphWithSynthChild := &ExecutionGraph{
 		TaskID: "recall_always",
 		Nodes: []GraphNode{
-			{ID: "p1", Type: "probe", Instructions: "Explore codebase"},
+			{ID: "p1", Type: "list", Instructions: "Explore codebase"},
 			{ID: "s1", Type: "synthesis", Instructions: "Summarize findings"},
 		},
 		Edges: []GraphEdge{
@@ -173,12 +173,12 @@ func TestComputeTimeBudget_Exploration(t *testing.T) {
 	// Typical exploration: 1 probe + 1 synthesis
 	graph := &ExecutionGraph{
 		Nodes: []GraphNode{
-			{ID: "explore", Type: "probe"},
+			{ID: "explore", Type: "list"},
 			{ID: "synth", Type: "synthesis"},
 		},
 	}
 	budget := ComputeTimeBudget(graph)
-	expected := 10*time.Minute + 90*time.Second // probe + synthesis
+	expected := 3*time.Minute + 90*time.Second // list + synthesis
 	if budget != expected {
 		t.Errorf("expected %s, got %s", expected, budget)
 	}
@@ -266,55 +266,9 @@ func TestHasWebToolsInAllowed(t *testing.T) {
 	}
 }
 
-func TestResearchToolPropagation_InjectsWebTools(t *testing.T) {
-	graph := &ExecutionGraph{
-		TaskID: "test_research_propagation",
-		Nodes: []GraphNode{
-			{
-				ID:           "search_frameworks",
-				Type:         "probe",
-				Instructions: "Search the web for the top 3 LLM orchestration frameworks and find authoritative sources.",
-				AllowedTools: []string{"read_file", "list_dir"}, // Planner forgot web tools
-				ProbeConfig: &ProbeConfig{
-					Goal:         "Search the web for LLM frameworks",
-					AllowedTools: []string{"read_file", "list_dir"},
-					StepBudget:   15,
-					CompactEvery: 3,
-				},
-			},
-		},
-	}
+// TestResearchToolPropagation_InjectsWebTools removed — web tool injection
+// was a Probe-era pattern deleted in ADR-0091. Research Node handles web tasks.
 
-	expanded, err := ExpandToSCTGraph(graph, nil)
-	if err != nil {
-		t.Fatalf("ExpandToSCTGraph failed: %v", err)
-	}
-
-	// Find the probe node in the expanded graph
-	var probeNode *GraphNode
-	for i, node := range expanded.Nodes {
-		if node.ID == "search_frameworks" {
-			probeNode = &expanded.Nodes[i]
-			break
-		}
-	}
-	if probeNode == nil {
-		t.Fatal("probe node not found in expanded graph")
-	}
-
-	// Verify web tools were injected into AllowedTools
-	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
-		t.Errorf("expected web tools in AllowedTools, got: %v", probeNode.AllowedTools)
-	}
-
-	// Verify web tools were injected into ProbeConfig.AllowedTools
-	if probeNode.ProbeConfig == nil {
-		t.Fatal("ProbeConfig should not be nil")
-	}
-	if !hasWebToolsInAllowed(probeNode.ProbeConfig.AllowedTools) {
-		t.Errorf("expected web tools in ProbeConfig.AllowedTools, got: %v", probeNode.ProbeConfig.AllowedTools)
-	}
-}
 
 func TestResearchToolPropagation_DoesNotInjectForCodebaseProbe(t *testing.T) {
 	graph := &ExecutionGraph{
@@ -322,7 +276,7 @@ func TestResearchToolPropagation_DoesNotInjectForCodebaseProbe(t *testing.T) {
 		Nodes: []GraphNode{
 			{
 				ID:           "explore_codebase",
-				Type:         "probe",
+				Type:         "list",
 				Instructions: "Read the codebase and explain the architecture of the executor package.",
 				AllowedTools: []string{"read_file", "list_dir", "search_files"},
 				ProbeConfig: &ProbeConfig{
@@ -363,7 +317,7 @@ func TestResearchToolPropagation_NoDoubleInjection(t *testing.T) {
 		Nodes: []GraphNode{
 			{
 				ID:           "search_node",
-				Type:         "probe",
+				Type:         "list",
 				Instructions: "Search the web for Go security vulnerabilities",
 				AllowedTools: []string{"web_search", "web_browse"}, // Already has web tools
 				ProbeConfig: &ProbeConfig{
@@ -404,140 +358,18 @@ func TestResearchToolPropagation_NoDoubleInjection(t *testing.T) {
 	}
 }
 
-func TestSourceHint_WebInjectsTools(t *testing.T) {
-	graph := &ExecutionGraph{
-		TaskID: "test_source_hint_web",
-		Nodes: []GraphNode{
-			{
-				ID:           "web_research",
-				Type:         "probe",
-				Instructions: "Research AI frameworks", // Generic — no web keywords
-				AllowedTools: []string{"read_file"},    // No web tools
-				ProbeConfig: &ProbeConfig{
-					Goal:         "Research AI frameworks",
-					AllowedTools: []string{"read_file"},
-					StepBudget:   15,
-					CompactEvery: 3,
-					SourceHint:   "web", // Declarative web hint
-				},
-			},
-		},
-	}
+// TestSourceHint_WebInjectsTools removed — web tool injection was a Probe-era
+// pattern deleted in ADR-0091. List Nodes handle discovery deterministically.
 
-	expanded, err := ExpandToSCTGraph(graph, nil)
-	if err != nil {
-		t.Fatalf("ExpandToSCTGraph failed: %v", err)
-	}
+// TestSourceHint_EmptyFallsBackToHeuristic removed — web tool injection was a
+// Probe-era pattern deleted in ADR-0091. List Nodes handle discovery deterministically.
 
-	var probeNode *GraphNode
-	for i, node := range expanded.Nodes {
-		if node.ID == "web_research" {
-			probeNode = &expanded.Nodes[i]
-			break
-		}
-	}
-	if probeNode == nil {
-		t.Fatal("probe node not found")
-	}
-
-	// SourceHint=web should inject web tools even without research keywords
-	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
-		t.Errorf("expected web tools from SourceHint=web, got: %v", probeNode.AllowedTools)
-	}
-	if !hasWebToolsInAllowed(probeNode.ProbeConfig.AllowedTools) {
-		t.Errorf("expected web tools in ProbeConfig.AllowedTools from SourceHint=web, got: %v", probeNode.ProbeConfig.AllowedTools)
-	}
-}
-
-func TestSourceHint_FilesystemDefault(t *testing.T) {
-	graph := &ExecutionGraph{
-		TaskID: "test_source_hint_filesystem",
-		Nodes: []GraphNode{
-			{
-				ID:           "explore_code",
-				Type:         "probe",
-				Instructions: "Explore the project structure",
-				AllowedTools: []string{"read_file", "list_dir", "search_files"},
-				ProbeConfig: &ProbeConfig{
-					Goal:         "Explore the project",
-					AllowedTools: []string{"read_file", "list_dir", "search_files"},
-					StepBudget:   20,
-					CompactEvery: 3,
-					SourceHint:   "filesystem", // Explicit filesystem hint
-				},
-			},
-		},
-	}
-
-	expanded, err := ExpandToSCTGraph(graph, nil)
-	if err != nil {
-		t.Fatalf("ExpandToSCTGraph failed: %v", err)
-	}
-
-	var probeNode *GraphNode
-	for i, node := range expanded.Nodes {
-		if node.ID == "explore_code" {
-			probeNode = &expanded.Nodes[i]
-			break
-		}
-	}
-	if probeNode == nil {
-		t.Fatal("probe node not found")
-	}
-
-	// Filesystem hint should NOT inject web tools
-	if hasWebToolsInAllowed(probeNode.AllowedTools) {
-		t.Errorf("filesystem SourceHint should NOT inject web tools, got: %v", probeNode.AllowedTools)
-	}
-}
-
-func TestSourceHint_EmptyFallsBackToHeuristic(t *testing.T) {
-	graph := &ExecutionGraph{
-		TaskID: "test_source_hint_empty",
-		Nodes: []GraphNode{
-			{
-				ID:           "search_implicit",
-				Type:         "probe",
-				Instructions: "Search the web for Go security best practices and find authoritative sources",
-				AllowedTools: []string{"read_file"},
-				ProbeConfig: &ProbeConfig{
-					Goal:         "Search for security best practices",
-					AllowedTools: []string{"read_file"},
-					StepBudget:   15,
-					CompactEvery: 3,
-					// No SourceHint — should fall back to heuristic
-				},
-			},
-		},
-	}
-
-	expanded, err := ExpandToSCTGraph(graph, nil)
-	if err != nil {
-		t.Fatalf("ExpandToSCTGraph failed: %v", err)
-	}
-
-	var probeNode *GraphNode
-	for i, node := range expanded.Nodes {
-		if node.ID == "search_implicit" {
-			probeNode = &expanded.Nodes[i]
-			break
-		}
-	}
-	if probeNode == nil {
-		t.Fatal("probe node not found")
-	}
-
-	// Without SourceHint, the heuristic should still detect research intent
-	if !hasWebToolsInAllowed(probeNode.AllowedTools) {
-		t.Errorf("expected heuristic fallback to inject web tools, got: %v", probeNode.AllowedTools)
-	}
-}
 
 func TestExpandToSCTGraph_SingleProbe_InjectsRecall(t *testing.T) {
 	graph := &ExecutionGraph{
 		TaskID: "single_probe_recall",
 		Nodes: []GraphNode{
-			{ID: "p1", Type: "probe", Instructions: "Explore the codebase"},
+			{ID: "p1", Type: "list", Instructions: "Explore the codebase"},
 		},
 	}
 
@@ -575,7 +407,7 @@ func TestExpandToSCTGraph_SingleProbeWithToolSink_SkipsTerminalSynthesis(t *test
 	graph := &ExecutionGraph{
 		TaskID: "probe_plus_action",
 		Nodes: []GraphNode{
-			{ID: "p1", Type: "probe", Instructions: "Explore the codebase"},
+			{ID: "p1", Type: "list", Instructions: "Explore the codebase"},
 			{ID: "a1", Type: "action", Action: "write_file", Instructions: "Save results"},
 		},
 		Edges: []GraphEdge{
@@ -617,8 +449,8 @@ func TestExpandToSCTGraph_MultiProbeWithoutSink_InjectsTerminalSynthesis(t *test
 	graph := &ExecutionGraph{
 		TaskID: "multi_probe_exploration",
 		Nodes: []GraphNode{
-			{ID: "p1", Type: "probe", Instructions: "Explore package A"},
-			{ID: "p2", Type: "probe", Instructions: "Explore package B"},
+			{ID: "p1", Type: "list", Instructions: "Explore package A"},
+			{ID: "p2", Type: "list", Instructions: "Explore package B"},
 		},
 	}
 
@@ -642,8 +474,8 @@ func TestExpandToSCTGraph_MultiProbeWithToolSink_SkipsTerminalSynthesis(t *testi
 	graph := &ExecutionGraph{
 		TaskID: "multi_probe_sink",
 		Nodes: []GraphNode{
-			{ID: "p1", Type: "probe", Instructions: "Explore package A"},
-			{ID: "p2", Type: "probe", Instructions: "Explore package B"},
+			{ID: "p1", Type: "list", Instructions: "Explore package A"},
+			{ID: "p2", Type: "list", Instructions: "Explore package B"},
 			{ID: "w1", Type: "action", Action: "write_file", Instructions: "Write summary to file"},
 		},
 		Edges: []GraphEdge{
@@ -743,7 +575,7 @@ func TestActiveExpander_NilFallthrough(t *testing.T) {
 	graph := &ExecutionGraph{
 		TaskID: "test_nil_expander",
 		Nodes: []GraphNode{
-			{ID: "p1", Type: "probe", Instructions: "Explore codebase"},
+			{ID: "p1", Type: "list", Instructions: "Explore codebase"},
 		},
 	}
 
@@ -769,7 +601,7 @@ func TestExpandToSCTGraph_WriteFileAutoBinding(t *testing.T) {
 	graph := &ExecutionGraph{
 		TaskID: "test_write_file_binding",
 		Nodes: []GraphNode{
-			{ID: "explore", Type: "probe", Instructions: "Explore codebase at internal/cache"},
+			{ID: "explore", Type: "list", Instructions: "Explore codebase at internal/cache"},
 			{ID: "write_docs", Type: "action", Action: "write_file", Instructions: "Write function index to function_index.md"},
 		},
 		Edges: []GraphEdge{
@@ -816,9 +648,9 @@ func TestExpandToSCTGraph_MultiProbe_OmitsIntermediateRecall(t *testing.T) {
 	graph := &ExecutionGraph{
 		TaskID: "test_multi_probe_exploration",
 		Nodes: []GraphNode{
-			{ID: "explore_core", Type: "probe", Instructions: "Explore core layer"},
-			{ID: "explore_local", Type: "probe", Instructions: "Explore local layer"},
-			{ID: "explore_routing", Type: "probe", Instructions: "Explore routing layer"},
+			{ID: "explore_core", Type: "list", Instructions: "Explore core layer"},
+			{ID: "explore_local", Type: "list", Instructions: "Explore local layer"},
+			{ID: "explore_routing", Type: "list", Instructions: "Explore routing layer"},
 			{ID: "synthesize_final", Type: "synthesis", Instructions: "Synthesize all layers"},
 		},
 		Edges: []GraphEdge{
@@ -845,9 +677,9 @@ func TestExpandToSCTGraph_MultiProbe_InjectsRecallForToolSink(t *testing.T) {
 	graph := &ExecutionGraph{
 		TaskID: "test_multi_probe_with_sink",
 		Nodes: []GraphNode{
-			{ID: "explore_core", Type: "probe", Instructions: "Explore core layer"},
+			{ID: "explore_core", Type: "list", Instructions: "Explore core layer"},
 			{ID: "write_core_docs", Type: "action", Action: "write_file", Instructions: "Write core docs"},
-			{ID: "explore_support", Type: "probe", Instructions: "Explore support layer"},
+			{ID: "explore_support", Type: "list", Instructions: "Explore support layer"},
 		},
 		Edges: []GraphEdge{
 			{SourceID: "explore_core", TargetID: "write_core_docs"},
@@ -884,7 +716,7 @@ func TestExpandToSCTGraph_SingleProbe_AlwaysInjectsRecall(t *testing.T) {
 	graph := &ExecutionGraph{
 		TaskID: "test_single_probe_safety",
 		Nodes: []GraphNode{
-			{ID: "explore_single", Type: "probe", Instructions: "Explore directory structure"},
+			{ID: "explore_single", Type: "list", Instructions: "Explore directory structure"},
 		},
 		Edges: []GraphEdge{},
 	}
@@ -912,9 +744,9 @@ func TestExpandToSCTGraph_MultiProbe_Sequential_OmitsIntermediateRecall(t *testi
 	graph := &ExecutionGraph{
 		TaskID: "test_multi_probe_sequential",
 		Nodes: []GraphNode{
-			{ID: "explore_core", Type: "probe", Instructions: "Explore core layer"},
-			{ID: "explore_local", Type: "probe", Instructions: "Explore local layer"},
-			{ID: "explore_routing", Type: "probe", Instructions: "Explore routing layer"},
+			{ID: "explore_core", Type: "list", Instructions: "Explore core layer"},
+			{ID: "explore_local", Type: "list", Instructions: "Explore local layer"},
+			{ID: "explore_routing", Type: "list", Instructions: "Explore routing layer"},
 		},
 		Edges: []GraphEdge{
 			{SourceID: "explore_core", TargetID: "explore_local"},
@@ -951,7 +783,7 @@ func TestSCT_SynthesisGoalAnalyzeLeaf_DoesNotMaskExecLeaf(t *testing.T) {
 		TaskID:     "lead_source_test",
 		GoalPrompt: "list leads by owner",
 		Nodes: []GraphNode{
-			{ID: "read_leads", Type: "probe",
+			{ID: "read_leads", Type: "list",
 				Instructions: "read the leads csv"},
 			// analyze_leads: instructions contain "synthesize" — old isSynthesisGoal
 			// would set hasSynthesisLeaf=true and suppress synthesis for exec_agg.
@@ -991,7 +823,7 @@ func TestSCT_WriteFileLeaf_NoSynthesisInjected(t *testing.T) {
 		TaskID:     "write_test",
 		GoalPrompt: "write the readme file",
 		Nodes: []GraphNode{
-			{ID: "probe_explore", Type: "probe", Instructions: "explore the codebase"},
+			{ID: "probe_explore", Type: "list", Instructions: "explore the codebase"},
 			{ID: "write_exec", Type: "action", Action: "write_file",
 				Instructions: "write the README.md file"},
 		},

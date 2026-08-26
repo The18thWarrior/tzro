@@ -169,7 +169,7 @@ func TestSCT_ProbeAllowedToolsExpansion(t *testing.T) {
 		Nodes: []GraphNode{
 			{
 				ID:           "explore_data",
-				Type:         "probe",
+				Type:         "list",
 				Instructions: "Explore the sales_data.csv and analyze patterns",
 				ProbeConfig: &ProbeConfig{
 					Goal:         "Analyze sales data patterns",
@@ -189,7 +189,7 @@ func TestSCT_ProbeAllowedToolsExpansion(t *testing.T) {
 
 	// Find the probe node and check if cache tools were added
 	for _, node := range expanded.Nodes {
-		if node.ID == "explore_data" && node.Type == "probe" {
+		if node.ID == "explore_data" && node.Type == "list" {
 			if node.ProbeConfig == nil {
 				t.Fatal("probe node should have ProbeConfig")
 			}
@@ -215,7 +215,7 @@ func TestSCT_ProbeWithReadFileGetsExpansion(t *testing.T) {
 		Nodes: []GraphNode{
 			{
 				ID:           "explore_project",
-				Type:         "probe",
+				Type:         "list",
 				Instructions: "Explore the project and understand its data model",
 				ProbeConfig: &ProbeConfig{
 					Goal:         "Understand data model",
@@ -234,7 +234,7 @@ func TestSCT_ProbeWithReadFileGetsExpansion(t *testing.T) {
 	}
 
 	for _, node := range expanded.Nodes {
-		if node.ID == "explore_project" && node.Type == "probe" {
+		if node.ID == "explore_project" && node.Type == "list" {
 			hasCacheTool := false
 			for _, tool := range node.ProbeConfig.AllowedTools {
 				if tool == "sql_cached_data" {

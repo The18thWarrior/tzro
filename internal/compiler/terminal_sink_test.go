@@ -11,7 +11,7 @@ func TestCompiler_InjectsTerminalWriteFileSink(t *testing.T) {
 		Nodes: []GraphNode{
 			{
 				ID:           "probe_node",
-				Type:         "probe",
+				Type:         "list",
 				Instructions: "Explore the codebase modules",
 				AllowedTools: []string{"read_file", "list_dir"},
 			},

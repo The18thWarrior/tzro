@@ -1,7 +1,7 @@
 # ADR-0089: Native ReAct Loop within Probe and Research Nodes
 
 ## Status
-Accepted
+Superseded by ADR-0091 (Probe Node removal and list-and-write topology)
 
 ## Context
 In full-suite benchmarking across 25 tasks (`results-full-local-dag-3` vs `results-full-local-react-2`), empirical results showed:

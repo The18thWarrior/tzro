@@ -48,9 +48,9 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 	r := NewStrategyRegistry()
 
 	s := &testStrategy{
-		nodeType: "probe",
+		nodeType: "list",
 		plannerCard: &PlannerCard{
-			Type:      "probe",
+			Type:      "list",
 			WhenToUse: "Open-ended exploration.",
 		},
 	}
@@ -59,12 +59,12 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 		t.Fatalf("Register failed: %v", err)
 	}
 
-	got, ok := r.Get("probe")
+	got, ok := r.Get("list")
 	if !ok {
 		t.Fatal("Get returned false for registered strategy")
 	}
-	if got.Type() != "probe" {
-		t.Errorf("got type %q, want %q", got.Type(), "probe")
+	if got.Type() != "list" {
+		t.Errorf("got type %q, want %q", got.Type(), "list")
 	}
 }
 
@@ -72,12 +72,12 @@ func TestRegistry_DuplicateRegistration(t *testing.T) {
 	r := NewStrategyRegistry()
 
 	s1 := &testStrategy{
-		nodeType:    "probe",
-		plannerCard: &PlannerCard{Type: "probe", WhenToUse: "test"},
+		nodeType:    "list",
+		plannerCard: &PlannerCard{Type: "list", WhenToUse: "test"},
 	}
 	s2 := &testStrategy{
-		nodeType:    "probe",
-		plannerCard: &PlannerCard{Type: "probe", WhenToUse: "test"},
+		nodeType:    "list",
+		plannerCard: &PlannerCard{Type: "list", WhenToUse: "test"},
 	}
 
 	if err := r.Register(s1); err != nil {
@@ -124,7 +124,7 @@ func TestRegistry_List(t *testing.T) {
 	r := NewStrategyRegistry()
 
 	strategies := []NodeStrategy{
-		&testStrategy{nodeType: "probe", plannerCard: &PlannerCard{Type: "probe", WhenToUse: "explore"}},
+		&testStrategy{nodeType: "list", plannerCard: &PlannerCard{Type: "list", WhenToUse: "explore"}},
 		&testStrategy{nodeType: "analyze", plannerCard: &PlannerCard{Type: "analyze", WhenToUse: "query"}},
 		&testStrategy{nodeType: "synthesis", plannerCard: &PlannerCard{Type: "synthesis", WhenToUse: "synthesize"}},
 	}
@@ -141,7 +141,7 @@ func TestRegistry_List(t *testing.T) {
 	}
 
 	// Verify registration order is preserved
-	expectedOrder := []string{"probe", "analyze", "synthesis"}
+	expectedOrder := []string{"list", "analyze", "synthesis"}
 	for i, s := range listed {
 		if s.Type() != expectedOrder[i] {
 			t.Errorf("List()[%d].Type() = %q, want %q", i, s.Type(), expectedOrder[i])
@@ -153,15 +153,15 @@ func TestRegistry_BuildReferenceCard(t *testing.T) {
 	r := NewStrategyRegistry()
 
 	r.Register(&testStrategy{
-		nodeType: "probe",
+		nodeType: "list",
 		plannerCard: &PlannerCard{
-			Type:      "probe",
-			WhenToUse: "Open-ended exploration.",
+			Type:      "list",
+			WhenToUse: "Extraction and enumeration tasks.",
 			KeyFields: []FieldDesc{
-				{Name: "probeConfig", Description: "goal, allowedTools, stepBudget", Required: true},
+				{Name: "probeConfig", Description: "goal, preloadPaths", Required: true},
 			},
 			CriticalRules: []string{
-				"For exploration tasks, ALWAYS use a probe node.",
+				"Use 'list' for all code/doc extraction tasks.",
 			},
 		},
 	})
@@ -187,9 +187,9 @@ func TestRegistry_BuildReferenceCard(t *testing.T) {
 		t.Error("Missing table header")
 	}
 
-	// Check probe row
-	if !contains(card, "| probe | Open-ended exploration. |") {
-		t.Error("Missing probe row")
+	// Check list row
+	if !contains(card, "| list | Extraction and enumeration tasks.") {
+		t.Error("Missing list row")
 	}
 
 	// Check action row
@@ -198,7 +198,7 @@ func TestRegistry_BuildReferenceCard(t *testing.T) {
 	}
 
 	// Check critical rules section
-	if !contains(card, "For exploration tasks, ALWAYS use a probe node.") {
+	if !contains(card, "Use 'list' for all code/doc extraction tasks.") {
 		t.Error("Missing critical rule")
 	}
 }
@@ -360,9 +360,9 @@ func TestRegisterBuiltins(t *testing.T) {
 		t.Fatalf("RegisterBuiltins failed: %v", err)
 	}
 
-	// All 11 built-in types should be registered
+	// All 10 built-in types should be registered (ADR-0091: probe removed)
 	expectedTypes := []string{
-		"probe", "analyze", "recall", "synthesis",
+		"analyze", "recall", "synthesis",
 		"semantic_validator", "action", "branch",
 		"sub_dag", "scatter_assembly", "deterministic",
 		"list",
@@ -394,7 +394,7 @@ func TestBuiltinContextRoles(t *testing.T) {
 		hasThoughtSteps   bool
 		weightGreaterThan float64
 	}{
-		{"probe", true, false, true, 0.0},
+		{"list", true, true, false, 0.0},
 		{"analyze", true, false, true, 0.5},
 		{"recall", true, true, false, 1.5},
 		{"synthesis", true, false, false, 0.5},
@@ -458,7 +458,7 @@ func TestBuiltinReferenceCard(t *testing.T) {
 	}
 
 	// Check that planner-visible types appear in the card
-	for _, nodeType := range []string{"probe", "analyze", "recall", "synthesis", "action", "branch", "sub_dag"} {
+	for _, nodeType := range []string{"list", "analyze", "recall", "synthesis", "action", "branch", "sub_dag"} {
 		if !contains(card, nodeType) {
 			t.Errorf("reference card missing type %q", nodeType)
 		}
@@ -479,9 +479,8 @@ func TestContextWeightParityWithLegacy(t *testing.T) {
 	legacyWeights := map[string]int{
 		"recall":        8,
 		"action":        6,
-		"probe":         2,
+		"list":          2,
 		"deterministic": 1,
-		"list":          1, // ADR-0090: lightweight extraction output, no thought steps
 	}
 	legacyDefault := 4
 
@@ -529,7 +528,7 @@ func TestRegistryBuiltins_AllHaveType(t *testing.T) {
 	RegisterBuiltins(reg)
 
 	expectedTypes := []string{
-		"probe", "analyze", "recall", "synthesis",
+		"list", "analyze", "recall", "synthesis",
 		"semantic_validator", "action", "branch",
 		"deterministic", "sub_dag", "scatter_assembly",
 		"list",
@@ -636,7 +635,7 @@ func TestRegistry_NormalizeNodeType_SemanticSimilarity(t *testing.T) {
 	reg := NewStrategyRegistry()
 	reg.Register(&testStrategy{nodeType: "synthesis", plannerCard: &PlannerCard{Type: "synthesis", WhenToUse: "synthesize findings"}})
 	reg.Register(&testStrategy{nodeType: "semantic_validator", plannerCard: &PlannerCard{Type: "semantic_validator", WhenToUse: "validate outputs"}})
-	reg.Register(&testStrategy{nodeType: "probe", plannerCard: &PlannerCard{Type: "probe", WhenToUse: "explore directories"}})
+	reg.Register(&testStrategy{nodeType: "list", plannerCard: &PlannerCard{Type: "list", WhenToUse: "extract from directories"}})
 
 	// 1. Exact matches
 	if norm := reg.NormalizeNodeType("synthesis"); norm != "synthesis" {
@@ -656,7 +655,7 @@ func TestRegistry_BuildPlanJSONSchema(t *testing.T) {
 	reg := NewStrategyRegistry()
 	reg.Register(&testStrategy{nodeType: "action", plannerCard: &PlannerCard{Type: "action", WhenToUse: "tool calls"}})
 	reg.Register(&testStrategy{nodeType: "synthesis", plannerCard: &PlannerCard{Type: "synthesis", WhenToUse: "synthesize"}})
-	reg.Register(&testStrategy{nodeType: "probe", plannerCard: &PlannerCard{Type: "probe", WhenToUse: "explore"}})
+	reg.Register(&testStrategy{nodeType: "list", plannerCard: &PlannerCard{Type: "list", WhenToUse: "explore"}})
 
 	schemaJSON := reg.BuildPlanJSONSchema()
 	var parsed struct {
@@ -681,7 +680,7 @@ func TestRegistry_BuildPlanJSONSchema(t *testing.T) {
 	if len(enums) != 3 {
 		t.Fatalf("expected 3 enums, got %d: %v", len(enums), enums)
 	}
-	if enums[0] != "action" || enums[1] != "synthesis" || enums[2] != "probe" {
+	if enums[0] != "action" || enums[1] != "synthesis" || enums[2] != "list" {
 		t.Errorf("unexpected enums order: %v", enums)
 	}
 }

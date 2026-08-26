@@ -17,7 +17,7 @@ func TestAssembleEnvelope_SynthesisNode(t *testing.T) {
 		TaskID:     "task-env-1",
 		GoalPrompt: "Research AI orchestration trends",
 		Nodes: []compiler.GraphNode{
-			{ID: "explore", Type: "probe"},
+			{ID: "explore", Type: "list"},
 			{ID: "terminal_synthesis", Type: "synthesis"},
 		},
 		Edges: []compiler.GraphEdge{
@@ -139,7 +139,7 @@ func TestAssembleEnvelope_ProbeOnlyGraph(t *testing.T) {
 		TaskID:     "task-probe-only",
 		GoalPrompt: "Explore codebase architecture",
 		Nodes: []compiler.GraphNode{
-			{ID: "explore_code", Type: "probe"},
+			{ID: "explore_code", Type: "list"},
 		},
 		CreatedAt: time.Now().Unix(),
 	}
@@ -252,7 +252,7 @@ func TestExecutionEnvelope_PhasesSection(t *testing.T) {
 		TaskID:     "task-phase-1",
 		GoalPrompt: "Explore project",
 		Nodes: []compiler.GraphNode{
-			{ID: "explore", Type: "probe"},
+			{ID: "explore", Type: "list"},
 			{ID: "terminal_synthesis", Type: "synthesis"},
 		},
 		Edges: []compiler.GraphEdge{
@@ -317,7 +317,7 @@ func TestFindSynthesisText_PrefersScatterAssembly_OverRecall(t *testing.T) {
 	graph := &compiler.ExecutionGraph{
 		TaskID: "task-scatter-1",
 		Nodes: []compiler.GraphNode{
-			{ID: "probe_1", Type: "probe"},
+			{ID: "probe_1", Type: "list"},
 			{ID: "recall_1", Type: "recall"},
 			{ID: "scatter_assembly_recall_1", Type: "scatter_assembly"},
 		},
@@ -338,7 +338,7 @@ func TestFindSynthesisText_FallsBackToRecall_WhenNoScatterAssembly(t *testing.T)
 	graph := &compiler.ExecutionGraph{
 		TaskID: "task-no-scatter",
 		Nodes: []compiler.GraphNode{
-			{ID: "probe_1", Type: "probe"},
+			{ID: "probe_1", Type: "list"},
 			{ID: "recall_1", Type: "recall"},
 		},
 	}

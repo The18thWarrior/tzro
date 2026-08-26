@@ -392,10 +392,18 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			outputText = extractTerminalSynthesis(graph, taskID)
 		}
 	} else if t.Category == CategoryDocgen || t.Category == CategoryResearch {
-		if docContent := extractLastWriteContent(taskID, graph, testOutputDir); docContent != "" {
+		docContent := extractLastWriteContent(taskID, graph, testOutputDir)
+		termSynth := extractTerminalSynthesis(graph, taskID)
+		// Prefer the longer of (written file / Fix 7 extraction) vs terminal synthesis.
+		// Fix 7 can return AccumulatedContext-compacted content (~500 chars) when the
+		// validator-to-exec handoff compacts the full DocGen synthesis (26K+ chars).
+		// The recall node's Output stores the uncompacted synthesis.
+		if docContent != "" && len(docContent) >= len(termSynth) {
 			outputText = sanitizeSynthesisOutput(docContent, 10)
-		} else {
-			outputText = extractTerminalSynthesis(graph, taskID)
+		} else if termSynth != "" {
+			outputText = termSynth
+		} else if docContent != "" {
+			outputText = sanitizeSynthesisOutput(docContent, 10)
 		}
 	} else {
 		outputText = extractTerminalSynthesis(graph, taskID)
@@ -425,7 +433,7 @@ func extractTerminalSynthesis(graph *compiler.ExecutionGraph, taskID string) str
 	var lastOutput string
 	for i := len(graph.Nodes) - 1; i >= 0; i-- {
 		node := graph.Nodes[i]
-		if node.Type == "synthesis" || node.Type == "recall" || node.Type == "probe" || node.Type == "analyze" || node.ID == "terminal_synthesis" {
+		if node.Type == "synthesis" || node.Type == "recall" || node.Type == "list" || node.Type == "analyze" || node.ID == "terminal_synthesis" {
 			if state, ok := memory.DB.GetNodeState(taskID, node.ID); ok {
 				out := state.Output
 				if state.RawOutput != "" && (out == "" || len(state.RawOutput) > len(out)) {

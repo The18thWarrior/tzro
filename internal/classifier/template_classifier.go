@@ -15,20 +15,21 @@ const TopologyArchetypeSystemPrompt = `You are a plan topology classifier for th
 
 ## Archetypes
 
-- probe-synthesis: Exploration, research, discovery, or analysis tasks that produce an answer or synthesis in memory/terminal without writing an output file to disk.
-- probe-and-write: Exploration, research, documentation generation, or report writing tasks that MUST save/write output content to a file on disk (e.g. .md, .txt, README).
-- multi-probe-synthesis: Tasks requiring exploration of multiple independent sources, directories, or targets that must be synthesized together.
+- list-synthesis: Exploration, research, discovery, or analysis tasks that produce an answer or synthesis in memory/terminal without writing an output file to disk.
+- list-and-write: Exploration, research, documentation generation, or report writing tasks that MUST save/write output content to a file on disk (e.g. .md, .txt, README).
+- multi-list-synthesis: Tasks requiring exploration of multiple independent sources, directories, or targets that must be synthesized together.
 - codegen: Code generation or modification tasks — writing or editing source code files (.go, .ts, .py, etc.). Context exploration followed by code generation.
 - data-analysis: Analyzing structured or tabular data from CSV files, databases, or cache tables using counting, grouping, filtering, or SQL operations.
 - action-chain: Multi-step tool workflows — sequential tool dispatch where each step uses a distinct action tool.
 
 ## Rules
 - Respond with ONLY valid JSON matching the schema. No markdown fences.
-- If the task asks to generate, update, or write a documentation file, report, README, index, or summary to a file path, choose "probe-and-write".
-- If the task asks to analyze, explore, summarize, or research without writing to a file, choose "probe-synthesis".
+- If the task asks to generate, update, or write a documentation file, report, README, index, or summary to a file path, choose "list-and-write".
+- If the task produces a documentation artifact (function index, symbol index, API reference, changelog, architecture document), choose "list-and-write" — these are always written to disk.
+- If the task asks to analyze, explore, summarize, or research without producing a persistent document, choose "list-synthesis".
 - If the task involves writing or modifying executable source code files (.go, .ts, .py, etc.), choose "codegen".
-- If the task involves multiple independent explorations, choose "multi-probe-synthesis".
-- If ambiguous, default to "probe-synthesis".
+- If the task involves multiple independent explorations, choose "multi-list-synthesis".
+- If ambiguous between "list-synthesis" and "list-and-write", prefer "list-and-write" when the task produces structured output that should persist.
 
 ## Response Schema
 {
@@ -41,7 +42,7 @@ const TopologyArchetypeSchema = `{
   "properties": {
     "topology": {
       "type": "string",
-      "enum": ["probe-synthesis", "probe-and-write", "multi-probe-synthesis", "codegen", "data-analysis", "action-chain"]
+      "enum": ["list-synthesis", "list-and-write", "multi-list-synthesis", "codegen", "data-analysis", "action-chain"]
     }
   },
   "required": ["topology"]

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"tzro/internal/compactor"
+	cfgpkg "tzro/internal/config"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
 	"tzro/internal/stream"
@@ -43,6 +44,42 @@ func (e *ExecutionEngine) RunRecall(ctx context.Context, taskID, recallNodeID st
 	baselineContext, err := buildCompactedRecallContext(ctx, taskID, upstreamNodeIDs, nil, goal)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[Recall] Warning: baseline compaction failed: %v\n", err)
+	}
+
+	// Fan-Reduce shortcut: when raw upstream output is oversized, split into
+	// file-level chunks and run goal-directed synthesis on each chunk instead
+	// of blindly compacting. This produces higher-quality context because
+	// each fan call operates within the 4B model's reliable window.
+	// We check the RAW upstream output size, not the compacted baseline,
+	// because compaction is lossy and we want to preserve all file information.
+	budget := cfgpkg.GetRecallCompactionBudgetChars()
+	if goal != "" {
+		// Get the raw upstream output to check its size
+		var rawUpstreamOutput string
+		for _, nodeID := range upstreamNodeIDs {
+			if state, ok := memory.DB.GetNodeState(taskID, nodeID); ok {
+				out := state.RawOutput
+				if out == "" {
+					out = state.Output
+				}
+				if out != "" {
+					rawUpstreamOutput = out
+					break
+				}
+			}
+		}
+		if rawUpstreamOutput != "" && len(rawUpstreamOutput) > budget {
+			fmt.Fprintf(os.Stderr, "[Recall] Raw upstream oversized (%d chars > %d budget). Routing to fan-reduce synthesis.\n", len(rawUpstreamOutput), budget)
+			fanResult, fanErr := fanReduceSynthesis(ctx, rawUpstreamOutput, goal, &ProbeInference{})
+			if fanErr == nil && len(fanResult) > 0 {
+				fmt.Fprintf(os.Stderr, "[Recall] Fan-reduce produced %d chars. Bypassing refinement loop.\n", len(fanResult))
+				baselineContext = fanResult
+				// Skip the refinement loop — fan-reduce already produced goal-directed output
+				step = maxSteps
+			} else {
+				fmt.Fprintf(os.Stderr, "[Recall] Fan-reduce failed (%v), falling back to normal compaction\n", fanErr)
+			}
+		}
 	}
 
 	// 1. Build initial manifest of discoveries (metadata + synthesis outputs)

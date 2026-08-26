@@ -11,21 +11,24 @@ import (
 	"tzro/internal/compiler"
 )
 
-// TemplateCategory identifies a structural graph shape (Topology Archetype) in the registry (ADR-0087).
+// TemplateCategory identifies a structural graph shape (Topology Archetype) in the registry (ADR-0087, ADR-0091).
 type TemplateCategory string
 
 const (
-	ProbeSynthesis      TemplateCategory = "probe-synthesis"
-	ProbeAndWrite       TemplateCategory = "probe-and-write"
-	MultiProbeSynthesis TemplateCategory = "multi-probe-synthesis"
-	Codegen             TemplateCategory = "codegen"
-	DataAnalysis        TemplateCategory = "data-analysis"
-	ActionChain         TemplateCategory = "action-chain"
+	ListSynthesis      TemplateCategory = "list-synthesis"
+	ListAndWrite       TemplateCategory = "list-and-write"
+	MultiListSynthesis TemplateCategory = "multi-list-synthesis"
+	Codegen            TemplateCategory = "codegen"
+	DataAnalysis       TemplateCategory = "data-analysis"
+	ActionChain        TemplateCategory = "action-chain"
 
-	// Legacy category aliases for backward compatibility with ADR-0048
-	ExploreOnly TemplateCategory = "probe-synthesis"
-	Docgen      TemplateCategory = "probe-and-write"
-	Research    TemplateCategory = "probe-synthesis"
+	// Legacy category aliases for backward compatibility (ADR-0048, ADR-0091)
+	ProbeSynthesis      = ListSynthesis
+	ProbeAndWrite       = ListAndWrite
+	MultiProbeSynthesis = MultiListSynthesis
+	ExploreOnly         = ListSynthesis
+	Docgen              = ListAndWrite
+	Research            = ListSynthesis
 )
 
 // SourceModality identifies the tool inventory and data context domain for exploration (ADR-0087).
@@ -39,42 +42,34 @@ const (
 
 // registry holds the canonical template for each Topology Archetype.
 // Templates are Abstract Graphs (pre-compilation) — the Kahn Compiler
-// auto-injects Recall Nodes, semantic validators, and synthesis nodes.
+// auto-injects Recall Nodes (on budget overflow) and synthesis nodes.
 var registry = map[TemplateCategory]*compiler.ExecutionGraph{
-	ProbeSynthesis: {
+	ListSynthesis: {
 		MaxCycles: 5,
 		Nodes: []compiler.GraphNode{
 			{
 				ID:           "explore",
-				Type:         "probe",
-				Instructions: "Explore the target and produce a comprehensive analysis.",
-				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				Type:         "list",
+				Instructions: "Extract relevant content from the target for comprehensive analysis.",
 				Status:       "pending",
 				ProbeConfig: &compiler.ProbeConfig{
-					Goal:         "Explore the target and produce a comprehensive analysis.",
-					AllowedTools: []string{"read_file", "list_dir", "search_files"},
-					StepBudget:   20,
-					CompactEvery: 3,
+					Goal: "Extract relevant content from the target for comprehensive analysis.",
 				},
 			},
 		},
 		Edges: []compiler.GraphEdge{},
 	},
 
-	ProbeAndWrite: {
+	ListAndWrite: {
 		MaxCycles: 5,
 		Nodes: []compiler.GraphNode{
 			{
 				ID:           "explore",
-				Type:         "probe",
-				Instructions: "Explore the target and produce content for documentation or output.",
-				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				Type:         "list",
+				Instructions: "Extract relevant content from the target for documentation or output.",
 				Status:       "pending",
 				ProbeConfig: &compiler.ProbeConfig{
-					Goal:         "Explore the target and produce content for documentation or output.",
-					AllowedTools: []string{"read_file", "list_dir", "search_files"},
-					StepBudget:   20,
-					CompactEvery: 3,
+					Goal: "Extract relevant content from the target for documentation or output.",
 				},
 			},
 			{
@@ -116,33 +111,25 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 		},
 	},
 
-	MultiProbeSynthesis: {
+	MultiListSynthesis: {
 		MaxCycles: 5,
 		Nodes: []compiler.GraphNode{
 			{
-				ID:           "probe_1",
-				Type:         "probe",
-				Instructions: "Explore the first source.",
-				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				ID:           "list_1",
+				Type:         "list",
+				Instructions: "Extract relevant content from the first source.",
 				Status:       "pending",
 				ProbeConfig: &compiler.ProbeConfig{
-					Goal:         "Explore the first source.",
-					AllowedTools: []string{"read_file", "list_dir", "search_files"},
-					StepBudget:   15,
-					CompactEvery: 3,
+					Goal: "Extract relevant content from the first source.",
 				},
 			},
 			{
-				ID:           "probe_2",
-				Type:         "probe",
-				Instructions: "Explore the second source.",
-				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				ID:           "list_2",
+				Type:         "list",
+				Instructions: "Extract relevant content from the second source.",
 				Status:       "pending",
 				ProbeConfig: &compiler.ProbeConfig{
-					Goal:         "Explore the second source.",
-					AllowedTools: []string{"read_file", "list_dir", "search_files"},
-					StepBudget:   15,
-					CompactEvery: 3,
+					Goal: "Extract relevant content from the second source.",
 				},
 			},
 		},
@@ -154,15 +141,11 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 		Nodes: []compiler.GraphNode{
 			{
 				ID:           "explore_context",
-				Type:         "probe",
-				Instructions: "Explore the codebase to gather context for code generation.",
-				AllowedTools: []string{"read_file", "list_dir", "search_files"},
+				Type:         "list",
+				Instructions: "Extract codebase context for code generation.",
 				Status:       "pending",
 				ProbeConfig: &compiler.ProbeConfig{
-					Goal:         "Explore the codebase to gather context for code generation.",
-					AllowedTools: []string{"read_file", "list_dir", "search_files"},
-					StepBudget:   15,
-					CompactEvery: 3,
+					Goal: "Extract codebase context for code generation.",
 				},
 			},
 			{
@@ -217,23 +200,23 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 }
 
 
-// GetWithModality returns a deep copy of the template hydrated with tools and source hint
-// appropriate for the given SourceModality (ADR-0087).
+// GetWithModality returns a deep copy of the template hydrated with source hint
+// appropriate for the given SourceModality (ADR-0087, ADR-0091).
 func GetWithModality(category TemplateCategory, modality SourceModality) *compiler.ExecutionGraph {
 	// Normalize legacy category strings
 	switch string(category) {
 	case "explore-only":
-		category = ProbeSynthesis
+		category = ListSynthesis
 		if modality == "" {
 			modality = SourceLocal
 		}
 	case "docgen":
-		category = ProbeAndWrite
+		category = ListAndWrite
 		if modality == "" {
 			modality = SourceLocal
 		}
 	case "research":
-		category = ProbeSynthesis
+		category = ListSynthesis
 		if modality == "" {
 			modality = SourceWeb
 		}
@@ -253,29 +236,22 @@ func GetWithModality(category TemplateCategory, modality SourceModality) *compil
 	}
 	g.SourceModality = string(modality)
 
-	// Hydrate probe nodes with modality-appropriate tools and source hints
-	var probeTools []string
+	// Hydrate list nodes with modality-appropriate source hints
 	var hint string
 	switch modality {
 	case SourceWeb:
-		probeTools = []string{"web_search", "web_browse"}
 		hint = "web"
 	case SourceHybrid:
-		probeTools = []string{"read_file", "list_dir", "search_files", "web_search", "web_browse"}
 		hint = "hybrid"
 	case SourceLocal:
-		probeTools = []string{"read_file", "list_dir", "search_files"}
 		hint = "filesystem"
 	default:
-		probeTools = []string{"read_file", "list_dir", "search_files"}
 		hint = "filesystem"
 	}
 
 	for i := range g.Nodes {
-		if g.Nodes[i].Type == "probe" {
-			g.Nodes[i].AllowedTools = probeTools
+		if g.Nodes[i].Type == "list" {
 			if g.Nodes[i].ProbeConfig != nil {
-				g.Nodes[i].ProbeConfig.AllowedTools = probeTools
 				g.Nodes[i].ProbeConfig.SourceHint = hint
 			}
 		}

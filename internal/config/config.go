@@ -806,7 +806,7 @@ func GetRecallCompactionBudgetChars() int {
 	configMutex.RUnlock()
 
 	if v <= 0 {
-		return 32000
+		return 16000
 	}
 	return v
 }

@@ -26,7 +26,7 @@ func (w *WebResearcher) BuildGraph(taskID string, inputs map[string]interface{})
 	nodes := []compiler.GraphNode{
 		{
 			ID:           "probe_web",
-			Type:         "probe",
+			Type:         "list",
 			Action:       "",
 			Instructions: fmt.Sprintf("Search the web for '%s'. Read the top results and extract key information.", topic),
 			AllowedTools: []string{"web_search"},

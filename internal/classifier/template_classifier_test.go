@@ -18,7 +18,7 @@ func TestClassifyTopologyArchetype_LLM(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"choices": [{
 				"message": {
-					"content": "{\"topology\":\"probe-synthesis\"}"
+					"content": "{\"topology\":\"list-synthesis\"}"
 				}
 			}]
 		}`))
@@ -90,7 +90,7 @@ func TestClassifyPlanTemplate_Gating_NoWebTools(t *testing.T) {
 		_, _ = w.Write([]byte(`{
 			"choices": [{
 				"message": {
-					"content": "{\"topology\":\"probe-and-write\"}"
+					"content": "{\"topology\":\"list-and-write\"}"
 				}
 			}]
 		}`))

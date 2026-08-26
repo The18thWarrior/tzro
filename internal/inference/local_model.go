@@ -999,13 +999,12 @@ func getAbsoluteRSSThreshold(memoryGB int) int64 {
 }
 
 // getWorkerParallelSlots returns the number of parallel inference slots
-// for the worker sidecar, based on system memory.
-// ≥24GB → 2 slots (enables DAG-level concurrency)
-// <24GB → 1 slot (baseline, avoids memory pressure)
+// for the worker sidecar.
+// Always 1: llama-server splits --ctx-size across slots, so 2 slots halves
+// the per-request context (e.g. 65K → 32K). Since nodes execute sequentially
+// in both benchmark and most DAG execution, the second slot was unused but
+// cost half the context window.
 func getWorkerParallelSlots(memoryGB int) int {
-	if memoryGB >= 24 {
-		return 2
-	}
 	return 1
 }
 
@@ -1102,13 +1101,51 @@ func (m *LocalModelManager) TokenizeContent(content string) (int, error) {
 	return len(result.Tokens), nil
 }
 
-// GetActiveContextSize returns the n_ctx the sidecar was launched with.
-// Used by the probe pre-flight check to compare against tokenized prompt size.
+// GetActiveContextSize returns the per-slot n_ctx the sidecar was launched with.
+// llama-server splits --ctx-size across --parallel slots, so the effective
+// context per request is contextSize / parallelSlots.
+// Used by the probe pre-flight check and generation budget calculation.
 func (m *LocalModelManager) GetActiveContextSize() int {
 	if m.Role == "router" {
 		return getRouterContextSize(getSystemMemoryGB())
 	}
-	return config.GetContextSize()
+	ctxSize := config.GetContextSize()
+	slots := getWorkerParallelSlots(getSystemMemoryGB())
+	if slots > 1 {
+		ctxSize = ctxSize / slots
+	}
+	return ctxSize
+}
+
+// computeGenerationBudget estimates the available generation tokens by subtracting
+// estimated prompt tokens from the context window size. Returns at least 2048 to
+// prevent degenerate zero-budget requests. Capped at 16384 to match the sidecar's
+// --n-predict limit and prevent excessively long non-streaming blocking calls.
+// Applies a 10% safety margin for tokenizer mismatch and template overhead.
+func computeGenerationBudget(messages []InferenceMessage, contextSize int) int {
+	// Estimate prompt tokens: sum all message content lengths / 4 (standard approximation)
+	totalChars := 0
+	for _, m := range messages {
+		totalChars += len(m.Content)
+	}
+	estimatedPromptTokens := totalChars / 4
+
+	// 10% safety margin for tokenizer differences and chat template overhead
+	safetyMargin := contextSize / 10
+	available := contextSize - estimatedPromptTokens - safetyMargin
+
+	// Floor: never go below 2048 (the old default) to prevent degenerate requests
+	if available < 2048 {
+		available = 2048
+	}
+
+	// Ceiling: cap at 16384 to match the sidecar --n-predict limit and avoid
+	// excessively long non-streaming blocking calls (35K tokens at 35 t/s = 17 min silent)
+	if available > 16384 {
+		available = 16384
+	}
+
+	return available
 }
 
 // CallLocalModel handles the local structured JSON inference call.
@@ -1167,8 +1204,10 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 		ChatTemplateKwargs: templateKwargs,
 	}
 
-	// ADR-0043 Mechanism A: Generation cap via context key (default to 2048 to prevent runaway loops)
-	maxTok := 2048
+	// ADR-0043 Mechanism A: Generation cap via context key.
+	// Default: compute available generation budget from context window minus estimated prompt tokens.
+	// This prevents the old 2048 hardcap from truncating legitimate long-form synthesis.
+	maxTok := computeGenerationBudget(messages, m.GetActiveContextSize())
 	if overrideTok, ok := ctx.Value(MaxTokensKey).(int); ok && overrideTok > 0 {
 		maxTok = overrideTok
 	}
@@ -1212,7 +1251,13 @@ func (m *LocalModelManager) CallLocalModel(ctx context.Context, messages []Infer
 	bodyBytes, _ := json.Marshal(reqBody)
 	mcpURL := fmt.Sprintf("http://localhost:%d/v1/chat/completions", m.ActivePort)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", mcpURL, bytes.NewReader(bodyBytes))
+	// Apply a timeout for non-streaming calls to prevent indefinite blocking
+	// when the sidecar hangs (e.g., prefills but produces 0 generation tokens).
+	// 10 minutes is generous enough for 16384 tokens at ~10 t/s worst case.
+	callCtx, callCancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer callCancel()
+
+	req, err := http.NewRequestWithContext(callCtx, "POST", mcpURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -1427,8 +1472,9 @@ func (m *LocalModelManager) CallLocalModelStream(ctx context.Context, messages [
 		ChatTemplateKwargs: templateKwargs,
 	}
 
-	// ADR-0043 Mechanism A: Generation cap via context key (default to 2048 to prevent runaway loops)
-	maxTok := 2048
+	// ADR-0043 Mechanism A: Generation cap via context key.
+	// Default: compute available generation budget from context window minus estimated prompt tokens.
+	maxTok := computeGenerationBudget(messages, m.GetActiveContextSize())
 	if overrideTok, ok := ctx.Value(MaxTokensKey).(int); ok && overrideTok > 0 {
 		maxTok = overrideTok
 	}

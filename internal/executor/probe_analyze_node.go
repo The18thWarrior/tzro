@@ -50,7 +50,7 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 		//     meaning tabular data was already read and cached — the analyze node
 		//     needs SQL tools to query it.
 		// (c) The node's instructions contain a cacheId pattern directly.
-		if (node.Type == "probe" || node.Type == "analyze") && !isAnalyzeConfig(probeConfig.AllowedTools) {
+		if (node.Type == "list" || node.Type == "analyze") && !isAnalyzeConfig(probeConfig.AllowedTools) {
 			shouldExpand := false
 
 			// (a) Probe has read_file — may encounter tabular data at runtime
@@ -268,7 +268,7 @@ func (e *ExecutionEngine) runProbeAnalyzeCore(
 		// ReAct is for interactive exploration when context is unknown. When Pre-Index or
 		// preload has already packed all context into a ContextFile (DirectSynthesis=true),
 		// single-shot synthesis produces far higher quality output and avoids ReAct overhead.
-		if (node.Type == "probe" || probeConfig.SourceHint == "web") && !probeConfig.DirectSynthesis {
+		if (node.Type == "list" || probeConfig.SourceHint == "web") && !probeConfig.DirectSynthesis {
 			fmt.Fprintf(os.Stderr, "[Executor] Node %s (%s): dispatching to native ReAct loop (ADR-0089)\n", node.ID, node.Type)
 			
 			// For interactive ReAct loops, avoid injecting monolithic 16k-40k preloaded contexts

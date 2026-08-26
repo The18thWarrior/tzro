@@ -210,7 +210,7 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 				}
 			}
 			// Legacy fallback
-			if ntype == "recall" || ntype == "probe" || ntype == "analyze" {
+			if ntype == "recall" || ntype == "list" || ntype == "analyze" {
 				hasDataCarrier = true
 				break
 			}
@@ -326,7 +326,7 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		typeWeights := map[string]int{
 			"recall":        8,
 			"action":        6, // covers validators (action type with _validator suffix)
-			"probe":         2,
+			"list":          2,
 			"deterministic": 1,
 		}
 		defaultWeight := 4 // for unknown types (synthesis, sub_dag, etc.)
@@ -483,7 +483,7 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 				continue
 			}
 			ntype := nodeTypeMap[state.NodeID]
-			if ntype != "probe" && ntype != "analyze" {
+			if ntype != "list" && ntype != "analyze" {
 				continue
 			}
 			probeID := taskID + "_" + state.NodeID

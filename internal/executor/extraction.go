@@ -146,11 +146,24 @@ func extractToolArguments(raw string) map[string]interface{} {
 		var parsed map[string]interface{}
 		if json.Unmarshal([]byte(raw[startIdx:endIdx+1]), &parsed) == nil {
 			// Recursively unwrap tool_arguments nesting to handle double/triple wrapping
-			// caused by bridge GBNF schema + exec node interpolation
+			// caused by bridge GBNF schema + exec node interpolation.
+			// Merge outer-level keys into the inner map before descending so
+			// that keys present only at the outer level (e.g. "path" added by
+			// the validator while "content" was spliced into both levels by
+			// ADR-0030) are not discarded.
 			for {
 				args, ok := parsed["tool_arguments"].(map[string]interface{})
 				if !ok {
 					break
+				}
+				// Merge outer keys into inner; inner values take precedence
+				for k, v := range parsed {
+					if k == "tool_arguments" {
+						continue
+					}
+					if _, exists := args[k]; !exists {
+						args[k] = v
+					}
 				}
 				parsed = args
 			}

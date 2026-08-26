@@ -3,7 +3,7 @@
     "id": "cache_function_index",
     "category": "docgen",
     "tier": 1,
-    "prompt": "Generate an exhaustive function index for internal/cache/ listing EVERY exported function, every exported method on types, and every exported type with its full signature and a one-line description. IMPORTANT: Only document symbols that actually exist in the source files you read. Do NOT invent, guess, or hallucinate additional files or symbols. The package contains exactly three source files: cache.go, metrics.go, and query.go. You MUST use write_file to save your complete index to 'function_index.md' inside the target directory.",
+    "prompt": "Generate an exhaustive function index for internal/cache/ listing EVERY exported function, every exported method on types, and every exported type with its full signature and a one-line description. IMPORTANT: Only document symbols that actually exist in the source files you read. Do NOT invent, guess, or hallucinate additional files or symbols. The package contains five source files: cache.go, metrics.go, query.go, query_db.go, and schema_enrichment.go. You MUST use write_file to save your complete index to 'function_index.md' inside the target directory.",
     "targetPaths": ["internal/cache/"],
     "qualityRubric": {
       "criteria": [

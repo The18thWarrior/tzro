@@ -84,7 +84,7 @@ func TestValidateGraph_ProbeNodeSkipped(t *testing.T) {
 	graph := &compiler.ExecutionGraph{
 		TaskID: "test_probe",
 		Nodes: []compiler.GraphNode{
-			{ID: "probe_1", Type: "probe", Action: ""},
+			{ID: "probe_1", Type: "list", Action: ""},
 		},
 	}
 	// toolExists would reject empty action, but probe nodes should be exempt
@@ -219,13 +219,13 @@ func TestPlanWithEscalation_ValidationFailsRepairSucceeds(t *testing.T) {
 	// Verify the invalid action node was replaced with a probe
 	foundProbe := false
 	for _, node := range result.Nodes {
-		if node.Type == "probe" {
+		if node.Type == "list" {
 			foundProbe = true
 			break
 		}
 	}
 	if !foundProbe {
-		t.Errorf("expected repair to insert a probe node, but none found")
+		t.Errorf("expected repair to insert a list node, but none found")
 	}
 }
 
@@ -286,8 +286,8 @@ func TestRepairGraphWithProbe_WebModality(t *testing.T) {
 		t.Fatalf("expected 1 repair node, got %d", len(repaired.Nodes))
 	}
 	repairNode := repaired.Nodes[0]
-	if repairNode.Type != "probe" {
-		t.Errorf("expected probe node, got %s", repairNode.Type)
+	if repairNode.Type != "list" {
+		t.Errorf("expected list node, got %s", repairNode.Type)
 	}
 	if repairNode.ProbeConfig == nil || repairNode.ProbeConfig.SourceHint != "web" {
 		t.Errorf("expected SourceHint 'web', got %v", repairNode.ProbeConfig)

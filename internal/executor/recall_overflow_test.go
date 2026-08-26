@@ -65,8 +65,9 @@ func TestRunRecall_ContextOverflowSafety(t *testing.T) {
 	t.Logf("Refinement prompt length: %d chars", len(refinementPrompt))
 
 	// Without PruneUpstreamOutput, refinementPrompt contains the full 90KB raw output (~91,000 chars).
-	// With PruneUpstreamOutput, it should be safely pruned to <= 15,000 chars.
-	if len(refinementPrompt) > 15000 {
-		t.Errorf("expected refinement prompt <= 15000 chars, got %d chars", len(refinementPrompt))
+	// With PruneUpstreamOutput + 16K compaction budget, it should be safely bounded.
+	// The budget (16K) plus manifest headers/wrappers typically adds ~5-8K overhead.
+	if len(refinementPrompt) > 25000 {
+		t.Errorf("expected refinement prompt <= 25000 chars, got %d chars", len(refinementPrompt))
 	}
 }

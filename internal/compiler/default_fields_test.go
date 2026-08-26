@@ -60,7 +60,7 @@ func TestDefaultNodeFieldsPreserveExplicitMCTSBranches(t *testing.T) {
 // TestDefaultNodeFieldsProbeNodeNoMCTS verifies that probe nodes
 // get MCTSBranches=0 — they use Thought Chain, not multi-branch.
 func TestDefaultNodeFieldsProbeNodeNoMCTS(t *testing.T) {
-	node := &GraphNode{ID: "probe_1", Type: "probe"}
+	node := &GraphNode{ID: "probe_1", Type: "list"}
 	DefaultNodeFields(node)
 	if node.MCTSBranches != 0 {
 		t.Errorf("expected MCTSBranches=0 for probe node, got %d", node.MCTSBranches)

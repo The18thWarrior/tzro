@@ -458,7 +458,7 @@ func isPlainTextNodeType(graph *compiler.ExecutionGraph, nodeID string) bool {
 			}
 			// Fallback: legacy hardcoded check
 			switch node.Type {
-			case "probe", "synthesis", "recall":
+			case "list", "synthesis", "recall":
 				return true
 			}
 		}

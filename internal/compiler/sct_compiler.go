@@ -42,7 +42,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		case "validator", "validation":
 			graph.Nodes[i].Type = "semantic_validator"
 		case "explore", "discover", "crawler", "scanner":
-			graph.Nodes[i].Type = "probe"
+			graph.Nodes[i].Type = "list"
 		case "analyzer", "data_analysis", "sql":
 			graph.Nodes[i].Type = "analyze"
 		case "tool", "tool_call", "exec":
@@ -55,7 +55,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 		// Use isToolSinkNode (not isToolSinkAction) to correctly exclude write/save
 		// nodes even when the planner leaves Action empty. isToolSinkNode checks
 		// both the Action field and node ID/type prefixes (write_*, save_*, etc.).
-		if n.Type == "probe" || n.Type == "analyze" || n.Type == "list" || (n.Type == "action" && !isToolSinkNode(n)) {
+		if n.Type == "analyze" || n.Type == "list" || (n.Type == "action" && !isToolSinkNode(n)) {
 			discoveryNodesCount++
 		}
 	}
@@ -123,10 +123,10 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 							upstreamID := edge.SourceID
 							for _, orig := range graph.Nodes {
 								if orig.ID == upstreamID {
-									if orig.Type == "probe" || orig.Type == "analyze" || orig.Type == "recall" || orig.Type == "synthesis" || isSynthesisGoal(orig.Instructions) {
-										// If the upstream is a probe/analyze, bind to recall only if recall will actually be injected
+									if orig.Type == "list" || orig.Type == "analyze" || orig.Type == "recall" || orig.Type == "synthesis" || isSynthesisGoal(orig.Instructions) {
+										// If the upstream is a list/analyze, bind to recall only if recall will actually be injected
 										targetBindingNode := upstreamID
-										if orig.Type == "probe" || orig.Type == "analyze" {
+										if orig.Type == "list" || orig.Type == "analyze" {
 											isDirectSynth := orig.ProbeConfig != nil && orig.ProbeConfig.DirectSynthesis
 											isMultiProbeNoSink := discoveryNodesCount > 1 && !probeFeedsToolSinkInGraph(graph, orig.ID)
 											isTerminalAnalyze := orig.Type == "analyze" && orig.ProbeConfig != nil && orig.ProbeConfig.SourceHint == "cache"
@@ -188,7 +188,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 			execNodeMap[node.ID] = execID
 			bridgeNodeMap[node.ID] = validatorID
 		} else {
-			if node.Type == "probe" || node.Type == "analyze" {
+			if node.Type == "list" || node.Type == "analyze" {
 				// Analyze nodes: auto-provision cache tools and ProbeConfig if not already set.
 				// The planner emits analyze nodes without knowing about cache internals —
 				// the compiler deterministically injects the right tool set.
@@ -221,68 +221,8 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 					}
 				}
 
-				// SourceHint-driven tool provisioning (primary): the planner sets
-				// sourceHint on probe nodes to declaratively control tool injection.
-				if node.Type == "probe" && node.ProbeConfig != nil && node.ProbeConfig.SourceHint == "web" {
-					webTools := []string{"web_search", "web_browse"}
-					if !hasWebToolsInAllowed(node.AllowedTools) {
-						node.AllowedTools = append(node.AllowedTools, webTools...)
-						fmt.Fprintf(os.Stderr, "[KahnCompiler] SourceHint=web: injected web tools into %s\n", node.ID)
-					}
-					if !hasWebToolsInAllowed(node.ProbeConfig.AllowedTools) {
-						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, webTools...)
-					}
-				}
-
-				// Research tool propagation (fallback heuristic): ensure web tools reach
-				// probe nodes whose instructions indicate web research intent, even when
-				// the planner omitted sourceHint. Mirrors the cache tool auto-injection
-				// pattern above.
-				if node.Type == "probe" && looksLikeResearchNode(node.Instructions) {
-					webTools := []string{"web_search", "web_browse"}
-					if !hasWebToolsInAllowed(node.AllowedTools) {
-						node.AllowedTools = append(node.AllowedTools, webTools...)
-						fmt.Fprintf(os.Stderr, "[KahnCompiler] Research heuristic fallback: injected web tools into %s\n", node.ID)
-					}
-					if node.ProbeConfig != nil && !hasWebToolsInAllowed(node.ProbeConfig.AllowedTools) {
-						node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, webTools...)
-					}
-				}
-
-				// F2 guardrail: web_browse without web_search causes FUTILITY aborts.
-				// You can't browse URLs you haven't searched for. Ensure web_search
-				// is always present when web_browse is in allowedTools.
-				if node.Type == "probe" {
-					hasBrowse := false
-					hasSearch := false
-					for _, t := range node.AllowedTools {
-						if t == "web_browse" {
-							hasBrowse = true
-						}
-						if t == "web_search" {
-							hasSearch = true
-						}
-					}
-					if hasBrowse && !hasSearch {
-						node.AllowedTools = append(node.AllowedTools, "web_search")
-						fmt.Fprintf(os.Stderr, "[KahnCompiler] PlanGuardrail: injected web_search (web_browse requires web_search) into %s\n", node.ID)
-					}
-					// Mirror into ProbeConfig
-					if node.ProbeConfig != nil {
-						hasBrowse, hasSearch = false, false
-						for _, t := range node.ProbeConfig.AllowedTools {
-							if t == "web_browse" {
-								hasBrowse = true
-							}
-							if t == "web_search" {
-								hasSearch = true
-							}
-						}
-						if hasBrowse && !hasSearch {
-							node.ProbeConfig.AllowedTools = append(node.ProbeConfig.AllowedTools, "web_search")
-						}
-					}
-				}
+				// List Nodes handle discovery deterministically via Orient → Discover;
+				// no AllowedTools or SourceHint-driven web tool injection needed (ADR-0091).
 
 				if node.ProbeConfig != nil && node.ProbeConfig.CompactionLevel == "" {
 					node.ProbeConfig.CompactionLevel = CompactPreserve
@@ -378,6 +318,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 						Status:              "pending",
 						ActivationThreshold: recallThreshold, // High skepticism for synthesis
 						DynamicBindings:     node.DynamicBindings,
+						StaticArgs:          fmt.Sprintf(`{"downstreamGoal": %q}`, graph.GoalPrompt),
 					})
 
 					// Probe/Analyze -> Recall edge
@@ -492,7 +433,7 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 
 		// Link all execution endpoints (leaves in the original graph) to the terminal synthesis node
 		for _, node := range sctNodes {
-			if (node.Type == "deterministic" || node.Type == "action" || node.Type == "probe" || node.Type == "analyze" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
+			if (node.Type == "deterministic" || node.Type == "action" || node.Type == "list" || node.Type == "analyze" || node.Type == "sub_dag" || node.Type == "recall") && !isSourceMap[node.ID] {
 				sctEdges = append(sctEdges, GraphEdge{
 					SourceID: node.ID,
 					TargetID: synthID,
@@ -657,7 +598,7 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 	// Trigger: probe has read_file in allowedTools (may encounter tabular at runtime)
 	// OR probe instructions explicitly reference tabular file extensions
 	for i, node := range sctNodes {
-		if node.Type == "probe" && node.ProbeConfig != nil {
+		if (node.Type == "list" || node.Type == "analyze") && node.ProbeConfig != nil {
 			hasReadFile := false
 			for _, tool := range node.ProbeConfig.AllowedTools {
 				if tool == "read_file" {
@@ -676,8 +617,8 @@ func injectCacheBridgeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sct
 		if !referencesTabularFile(origNode.Instructions) {
 			continue
 		}
-		if origNode.Type == "probe" || origNode.Type == "synthesis" || origNode.Type == "analyze" {
-			continue // Probes handle cache tools via expansion; synthesis doesn't produce profiles;
+		if origNode.Type == "list" || origNode.Type == "synthesis" || origNode.Type == "analyze" {
+			continue // List nodes handle discovery deterministically; synthesis doesn't produce profiles;
 			// analyze nodes query SQL directly
 		}
 
@@ -922,7 +863,7 @@ func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdge
 			if edge.SourceID == execID {
 				for _, node := range sctNodes {
 					if node.ID == edge.TargetID {
-						if node.Type == "analyze" || node.Type == "probe" {
+						if node.Type == "analyze" || node.Type == "list" {
 							hasDownstreamAnalyze = true
 							break
 						}
@@ -934,7 +875,7 @@ func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdge
 				for _, edge2 := range sctEdges {
 					if strings.HasPrefix(edge2.SourceID, "cache_bridge_") && edge.SourceID == execID && edge.TargetID == edge2.SourceID {
 						for _, node := range sctNodes {
-							if node.ID == edge2.TargetID && (node.Type == "analyze" || node.Type == "probe") {
+							if node.ID == edge2.TargetID && (node.Type == "analyze" || node.Type == "list") {
 								hasDownstreamAnalyze = true
 								break
 							}
@@ -1018,13 +959,13 @@ func injectAnalyzeNodes(originalNodes []GraphNode, sctNodes []GraphNode, sctEdge
 		fmt.Fprintf(os.Stderr, "[KahnCompiler] Auto-injected analyze node %s for tabular read_file %s\n", analyzeID, origNode.ID)
 	}
 
-	// Red-team FM-10 fix: Convert probe nodes that reference tabular files
-	// directly into analyze nodes. When the planner emits a probe (type: "probe")
+	// Red-team FM-10 fix: Convert list nodes that reference tabular files
+	// directly into analyze nodes. When the planner emits a list node
 	// instead of an action node for CSV analysis, the task bypasses the structured
-	// query pipeline and falls into generic file exploration where the 4B model fails.
+	// query pipeline and falls into generic file extraction where the 4B model fails.
 	// This conversion ensures tabular data always goes through AnalyzePhases.
 	for i, node := range sctNodes {
-		if node.Type != "probe" || node.ProbeConfig == nil {
+		if node.Type != "list" || node.ProbeConfig == nil {
 			continue
 		}
 		// Check if probe instructions reference a tabular file

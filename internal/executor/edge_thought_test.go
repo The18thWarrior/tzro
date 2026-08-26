@@ -92,7 +92,7 @@ func TestShouldGenerateEdgeThought(t *testing.T) {
 	if shouldGenerateEdgeThought(&compiler.GraphNode{Type: "analyze", ActivationThreshold: 0.7}) {
 		t.Error("should not generate edge thought for analyze nodes")
 	}
-	if shouldGenerateEdgeThought(&compiler.GraphNode{Type: "probe", ActivationThreshold: 0.7}) {
+	if shouldGenerateEdgeThought(&compiler.GraphNode{Type: "list", ActivationThreshold: 0.7}) {
 		t.Error("should not generate edge thought for probe nodes")
 	}
 }
@@ -115,21 +115,21 @@ func TestEvaluateActivationThresholdAnalyzeProtected(t *testing.T) {
 	}
 }
 
-// TestEvaluateActivationThresholdProbeProtected verifies that probe nodes
+// TestEvaluateActivationThresholdListProtected verifies that list nodes
 // are protected by the Deterministic Shield — goalAchieved=true should NOT halt them.
-func TestEvaluateActivationThresholdProbeProtected(t *testing.T) {
+func TestEvaluateActivationThresholdListProtected(t *testing.T) {
 	et := &memory.EdgeThought{
 		GoalConfidence: 0.95,
 		GoalAchieved:   true,
 	}
 	targetNode := &compiler.GraphNode{
-		Type:                "probe",
+		Type:                "list",
 		ActivationThreshold: 0.7,
 	}
 
 	action := evaluateActivationThreshold(et, targetNode)
 	if action != ActivationContinue {
-		t.Errorf("expected ActivationContinue for probe node with goalAchieved=true, got %v", action)
+		t.Errorf("expected ActivationContinue for list node with goalAchieved=true, got %v", action)
 	}
 }
 

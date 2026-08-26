@@ -419,7 +419,7 @@ func TestCompiler_AcceptsProbeNodes(t *testing.T) {
 	graph := &compiler.ExecutionGraph{
 		TaskID: "test_probe_compile",
 		Nodes: []compiler.GraphNode{
-			{ID: "explore", Type: "probe", Instructions: "Explore the codebase", ProbeConfig: &compiler.ProbeConfig{
+			{ID: "explore", Type: "list", Instructions: "Explore the codebase", ProbeConfig: &compiler.ProbeConfig{
 				Goal:         "Understand the architecture",
 				AllowedTools: []string{"read_file", "list_dir"},
 				StepBudget:   10,
@@ -450,7 +450,7 @@ func TestSCT_PassesProbeNodeThrough(t *testing.T) {
 	graph := &compiler.ExecutionGraph{
 		TaskID: "test_probe_sct",
 		Nodes: []compiler.GraphNode{
-			{ID: "probe1", Type: "probe", Instructions: "Explore", ProbeConfig: &compiler.ProbeConfig{
+			{ID: "probe1", Type: "list", Instructions: "Explore", ProbeConfig: &compiler.ProbeConfig{
 				Goal:       "Find main.go",
 				StepBudget: 5,
 			}},
@@ -478,7 +478,7 @@ func TestSCT_PassesProbeNodeThrough(t *testing.T) {
 	if !ok {
 		t.Fatal("probe node 'probe1' not found in expanded graph")
 	}
-	if probeNode.Type != "probe" {
+	if probeNode.Type != "list" {
 		t.Errorf("expected probe node type to be 'probe', got '%s'", probeNode.Type)
 	}
 	if probeNode.ProbeConfig == nil {

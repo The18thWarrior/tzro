@@ -659,7 +659,7 @@ func TestNodeTypeAwarePlainTextFallback(t *testing.T) {
 		graph := &compiler.ExecutionGraph{
 			TaskID: taskID,
 			Nodes: []compiler.GraphNode{
-				{ID: "explore_project", Type: "probe"},
+				{ID: "explore_project", Type: "list"},
 				{ID: "write_docs", Type: "action", Action: "write_file"},
 			},
 		}
@@ -687,7 +687,7 @@ func TestNodeTypeAwarePlainTextFallback(t *testing.T) {
 		graph := &compiler.ExecutionGraph{
 			TaskID: taskID,
 			Nodes: []compiler.GraphNode{
-				{ID: "explore_funcs", Type: "probe"},
+				{ID: "explore_funcs", Type: "list"},
 			},
 		}
 

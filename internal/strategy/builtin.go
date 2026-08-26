@@ -52,33 +52,9 @@ func (s *BaseStrategy) ContextRole() *ContextRole {
 // Built-in strategy stubs — PlannerCard + ContextRole metadata only
 // ---------------------------------------------------------------------------
 
-// NewProbeStrategy creates the probe strategy stub.
-func NewProbeStrategy() *BaseStrategy {
-	return &BaseStrategy{
-		NodeType: "probe",
-		Card: &PlannerCard{
-			Type:      "probe",
-			WhenToUse: "Open-ended exploration of codebases, logs, or docs. Autonomous Thought Chain.",
-			KeyFields: []FieldDesc{
-				{Name: "probeConfig.goal", Description: "exploration objective", Required: true},
-				{Name: "probeConfig.allowedTools", Description: "tool whitelist", Required: true},
-				{Name: "probeConfig.stepBudget", Description: "max steps (default 20)", Required: false},
-				{Name: "probeConfig.sourceHint", Description: "web|filesystem|cache", Required: false},
-			},
-			CriticalRules: []string{
-				"For open-ended exploration, ALWAYS use probe. Never chain multiple action nodes for what a probe can explore autonomously.",
-				"Set probeConfig.sourceHint='web' for internet research. Default is 'filesystem'.",
-				"Add git_log, git_diff, git_show to allowedTools when the goal involves commit history, code changes, regressions, or evolution.",
-			},
-		},
-		Role: &ContextRole{
-			IsPrimaryDataCarrier: false,
-			HasThoughtSteps:      true,
-			ContextWeight:        0.5, // int(0.5*4)=2, matches hardcoded typeWeights["probe"]=2
-			ProducesPlainText:    true,
-		},
-	}
-}
+// NewProbeStrategy removed — ADR-0091 deleted the Probe Node.
+// All code/doc discovery routes through List Node.
+
 
 // NewAnalyzeStrategy creates the analyze strategy stub.
 func NewAnalyzeStrategy() *BaseStrategy {
@@ -108,7 +84,7 @@ func NewRecallStrategy() *BaseStrategy {
 		NodeType: "recall",
 		Card: &PlannerCard{
 			Type:      "recall",
-			WhenToUse: "Align upstream probe findings with the original task requirements.",
+			WhenToUse: "Align upstream list/analyze findings with the original task requirements.",
 			KeyFields: []FieldDesc{
 				{Name: "instructions", Description: "alignment objective", Required: true},
 			},
@@ -267,14 +243,14 @@ func NewListStrategy() *BaseStrategy {
 				{Name: "probeConfig.preloadPaths", Description: "target directories to scan", Required: false},
 			},
 			CriticalRules: []string{
-				"Use 'list' for extraction tasks where source fidelity matters. Use 'probe' when understanding/synthesis is needed.",
+				"Use 'list' for all code/doc extraction and discovery tasks (ADR-0091). Source fidelity via GBNF line-ranges.",
 				"The model identifies relevant line ranges; the harness copies content verbatim.",
 			},
 		},
 		Role: &ContextRole{
 			IsPrimaryDataCarrier: true,
 			HasThoughtSteps:      false,
-			ContextWeight:        0.3,
+			ContextWeight:        0.5, // int(0.5*4)=2, matches legacy probe weight (list is now primary discovery)
 			ProducesPlainText:    true,
 		},
 	}
@@ -290,7 +266,6 @@ func NewListStrategy() *BaseStrategy {
 // by the executor's wireStrategies method.
 func RegisterBuiltins(r *StrategyRegistry) error {
 	builtins := []NodeStrategy{
-		NewProbeStrategy(),
 		NewAnalyzeStrategy(),
 		NewRecallStrategy(),
 		NewSynthesisStrategy(),

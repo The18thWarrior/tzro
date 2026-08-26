@@ -51,7 +51,7 @@ func TestSpawnScatterProbes_CreatesNodesAndEdges(t *testing.T) {
 		for _, n := range graph.Nodes {
 			if n.ID == id {
 				found = true
-				if n.Type != "probe" {
+				if n.Type != "list" {
 					t.Errorf("scatter node %s should be type 'probe', got %q", id, n.Type)
 				}
 				if n.ProbeConfig == nil {

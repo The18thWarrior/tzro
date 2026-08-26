@@ -311,7 +311,7 @@ func buildSelfContainedGraph(taskID, prompt string) *compiler.ExecutionGraph {
 		Nodes: []compiler.GraphNode{
 			{
 				ID:           "synthesis",
-				Type:         "probe",
+				Type:         "list",
 				Instructions: prompt,
 				AllowedTools: []string{"save_memory"},
 				Status:       "pending",
@@ -336,7 +336,7 @@ func BuildFastPathGraph(taskID, prompt, complexityTier string) (*compiler.Execut
 
 	node := compiler.GraphNode{
 		ID:           "direct_exec",
-		Type:         "probe",
+		Type:         "list",
 		Instructions: prompt,
 		AllowedTools: []string{"read_file", "list_dir", "introspect_cache", "sql_cached_data", "save_memory"},
 		Status:       "pending",
@@ -579,7 +579,7 @@ To satisfy evaluation matching:
 			fmt.Sprintf("Failed to unmarshal backend plan: %v. Using base hydrated template.", err))
 		graph = *tmpl
 		for i := range graph.Nodes {
-			if graph.Nodes[i].Type == "probe" {
+			if graph.Nodes[i].Type == "list" {
 				graph.Nodes[i].Instructions = prompt
 				if graph.Nodes[i].ProbeConfig != nil {
 					graph.Nodes[i].ProbeConfig.Goal = prompt
@@ -595,6 +595,13 @@ To satisfy evaluation matching:
 		graph.MaxCycles = 5
 	}
 	graph.SourceModality = string(sourceModality)
+
+	// Fix 3: Structural invariant — templates that include list nodes (list-synthesis,
+	// list-and-write, multi-list-synthesis, codegen) MUST retain at least one list node
+	// after mutation. The 4B planner sometimes "optimizes" by replacing list nodes with
+	// action nodes calling peek_file or read_file, which breaks the extraction pipeline
+	// (peek_file caps at 20 lines, and rigid action nodes can't paginate).
+	enforceListNodeInvariant(&graph, tmpl, templateCategory, prompt)
 
 	// Fix 2: Post-mutation binding validation — repair any DynamicBindings
 	// that reference node IDs the local model hallucinated or renamed.
@@ -691,14 +698,14 @@ Target JSON Structure:
       "activationThreshold": 0.7
     },
     {
-      "id": "probe_unique_id",
-      "type": "probe",
+      "id": "list_unique_id",
+      "type": "list",
       "action": "",
-      "instructions": "Detailed exploration objective describing what to discover and what output to produce",
+      "instructions": "Detailed extraction objective describing what to discover and what output to produce",
       "allowedTools": ["read_file", "list_dir", "search_files"],
       "status": "pending",
       "probeConfig": {
-        "goal": "Detailed exploration objective describing what to discover and what output to produce",
+        "goal": "Detailed extraction objective describing what to discover and what output to produce",
         "allowedTools": ["read_file", "list_dir", "search_files"],
         "stepBudget": 20,
         "compactEvery": 3
@@ -711,30 +718,30 @@ Target JSON Structure:
 }
 
 ### Schema Details:
-1. "type": Must be one of "action", "conditional", "loop", or "probe".
-2. "action": The target tool name from inventory. For a probe node (type "probe"), set this field to an empty string "".
-3. "probeConfig": Include this object ONLY if the node "type" is "probe". For "action" or other type nodes, omit this field entirely.
+1. "type": Must be one of "action", "conditional", "loop", or "list".
+2. "action": The target tool name from inventory. For a list node (type "list"), set this field to an empty string "".
+3. "probeConfig": Include this object ONLY if the node "type" is "list". For "action" or other type nodes, omit this field entirely.
 4. "instructions": Provide natural language goals or variables to read/write.
 5. "activationThreshold": Sufficiency gate threshold (0.0 - 1.0) to enable Edge Thoughts and neural traversal for incoming edges. Defaults to 0.7 for action nodes in codegen tasks, 0.0 (disabled) otherwise.
 
-### Probe Node Guidance:
-When the request involves open-ended exploration where each step depends on what was just discovered (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "probe" instead of multiple action nodes. Probe nodes run an internal autonomous Thought Chain loop and do NOT get decomposed into bridge/exec pairs. The probe's allowedTools must only include tools relevant to the exploration (e.g. read_file, list_dir, search_files for codebase exploration; web_search for research). The probe internally decides which files/paths to explore reactively based on what it discovers at each step.
+### List Node Guidance:
+When the request involves extraction, enumeration, or discovery of code/doc content (codebase analysis, directory traversal, log investigation, data profiling), you MUST emit a SINGLE node of type "list" instead of multiple action nodes. List nodes use deterministic Orient→Discover phases to extract verbatim source content. The list node's probeConfig.goal should describe the extraction objective. List nodes do NOT get decomposed into bridge/exec pairs.
 
 ## Design Rules:
 1. Strategy only: You NEVER execute tools yourself. Plan the steps logically.
 2. Data flow: For parameters whose values come from an upstream tool's response, declare them in 'dynamicBindings' as {"param_name": "upstream_node_id.output.property_name"}. These are resolved at execution time. Do NOT write upstream output values into the 'instructions' field — they are not available at planning time.
 3. allowedTools limit: Restrict the local worker's action space at each node. Only include the 1-2 tools absolutely necessary.
 4. Keep the graph concise (typically 2-4 nodes). Ensure there are no cycles (edges must form a true DAG).
-5. Probe vs. Action routing: If the task requires reactive exploration (navigating unknown directory structures, reading files to decide what to read next, searching to discover patterns), you MUST use a single probe node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
+5. List vs. Action routing: If the task requires extracting content from unknown directory structures, reading files to discover patterns, or enumerating code symbols, you MUST use a single list node. Do NOT use rigid multi-step action DAGs for exploration — action bridge nodes cannot see intermediate results and will guess paths incorrectly. Use action nodes only when the exact tool parameters are known upfront or can be derived from dynamicBindings.
 6. Procedural ordering: Edges represent BOTH data flow AND logical ordering. When the user's request describes a sequential workflow (e.g., 'first check payment, then create the profile, then send the email'), you MUST emit edges that enforce that procedural order even when there is no dynamicBinding between the steps. If a step logically must complete before another begins (e.g., bank verification before receipt generation, supplier lookup before purchase order creation), express that ordering constraint as an edge.
-7. Multi-Deliverable Decomposition: When the user's request contains 3 or more distinct technical deliverables (e.g., Architecture Overview + CLI Quickstart + Package Index + API Reference), do NOT collapse everything into a single monolithic Probe node. Instead, plan separate, focused probe/action sub-nodes or stages for the distinct technical components, feeding into the terminal action/synthesis node. This avoids small-model attention fatigue during synthesis.
+7. Multi-Deliverable Decomposition: When the user's request contains 3 or more distinct technical deliverables (e.g., Architecture Overview + CLI Quickstart + Package Index + API Reference), do NOT collapse everything into a single monolithic list node. Instead, plan separate, focused list/action sub-nodes or stages for the distinct technical components, feeding into the terminal action/synthesis node. This avoids small-model attention fatigue during synthesis.
 
 ### Code Generation Rules (ADR-0035, ADR-0057):
 When the task involves generating or modifying source code files:
 1. You MUST emit an action node that calls the "tzro_code" tool with the "spec" (what to generate) and "filepath" (absolute path to the target file). The tzro_code tool handles compilation gates, repair loops, context gathering, and file writing automatically.
 2. Do NOT set "outputFormat": "source_code" on raw action nodes. Do NOT try to generate code directly through action nodes with write_file. Always delegate code generation to tzro_code.
-3. If the codegen task requires reading existing files for context first, plan an upstream probe node with allowedTools ["read_file", "list_dir", "search_files"], then a downstream action node calling tzro_code with dynamicBindings to pass discovered context into the spec.
-4. Do NOT emit type "probe" for code generation tasks. Use action nodes calling tzro_code.
+3. If the codegen task requires reading existing files for context first, plan an upstream list node with probeConfig.goal describing what to extract, then a downstream action node calling tzro_code with dynamicBindings to pass discovered context into the spec.
+4. Do NOT emit type "list" for code generation tasks. Use action nodes calling tzro_code.
 5. For tasks that modify an existing file, set "mode": "diff" in the tzro_code arguments. For new files, omit mode or set "mode": "full".
 `, toolsListStr, skillsListStr, repoMap, taskID)
 
@@ -825,6 +832,152 @@ func cleanJSONString(s string) string {
 }
 
 // repairDynamicBindings validates that every DynamicBindings reference in the
+// enforceListNodeInvariant ensures templates that structurally require list
+// nodes (list-synthesis, list-and-write, multi-list-synthesis, codegen) retain
+// at least one after local planner mutation. The 4B model sometimes replaces
+// list nodes with action nodes calling peek_file or read_file, which breaks
+// the extraction pipeline — peek_file caps output at 20 lines, and rigid
+// action nodes cannot paginate. When all list nodes are lost, this function
+// restores them from the template with the mutated goal/instructions and
+// rewires edges to preserve DAG topology.
+func enforceListNodeInvariant(graph *compiler.ExecutionGraph, tmpl *compiler.ExecutionGraph, category templates.TemplateCategory, prompt string) {
+	// Only enforce for template categories that structurally require list nodes.
+	switch category {
+	case templates.ListSynthesis, templates.ListAndWrite, templates.MultiListSynthesis, templates.Codegen:
+		// These categories require at least one list node.
+	default:
+		return
+	}
+
+	// Count list nodes in the template and the mutated graph.
+	var tmplListNodes []compiler.GraphNode
+	for _, n := range tmpl.Nodes {
+		if n.Type == "list" {
+			tmplListNodes = append(tmplListNodes, n)
+		}
+	}
+	if len(tmplListNodes) == 0 {
+		return // Template has no list nodes — nothing to enforce.
+	}
+
+	mutatedListCount := 0
+	for _, n := range graph.Nodes {
+		if n.Type == "list" {
+			mutatedListCount++
+		}
+	}
+	if mutatedListCount > 0 {
+		return // Invariant satisfied — at least one list node survived.
+	}
+
+	// Invariant violated: all list nodes were removed by the planner.
+	// Restore them from the template with updated instructions.
+	fmt.Fprintf(os.Stderr, "[Plan Template] Structural invariant violated: %s template requires list nodes but planner removed all %d. Restoring from template.\n",
+		category, len(tmplListNodes))
+
+	// Build a set of existing node IDs in the mutated graph to avoid collisions.
+	existingIDs := make(map[string]bool, len(graph.Nodes))
+	for _, n := range graph.Nodes {
+		existingIDs[n.ID] = true
+	}
+
+	// Identify which mutated nodes are "read" nodes that the planner likely
+	// substituted for the original list node. These typically have actions like
+	// peek_file or read_file and sit at the head of the graph (no inbound edges).
+	readActions := map[string]bool{"peek_file": true, "read_file": true}
+	inboundCount := make(map[string]int, len(graph.Nodes))
+	for _, e := range graph.Edges {
+		if e.TargetID != "" {
+			inboundCount[e.TargetID]++
+		}
+	}
+
+	// Remove substituted read-action nodes and collect their downstream targets
+	// so we can rewire edges from the restored list node.
+	var removedIDs []string
+	var keptNodes []compiler.GraphNode
+	for _, n := range graph.Nodes {
+		if readActions[n.Action] && inboundCount[n.ID] == 0 {
+			removedIDs = append(removedIDs, n.ID)
+		} else {
+			keptNodes = append(keptNodes, n)
+		}
+	}
+
+	removedSet := make(map[string]bool, len(removedIDs))
+	for _, id := range removedIDs {
+		removedSet[id] = true
+	}
+
+	// Collect downstream targets of removed nodes and filter out removed edges.
+	downstreamTargets := make(map[string]bool)
+	var keptEdges []compiler.GraphEdge
+	for _, e := range graph.Edges {
+		if removedSet[e.SourceID] {
+			if e.TargetID != "" && !removedSet[e.TargetID] {
+				downstreamTargets[e.TargetID] = true
+			}
+			continue // Drop edges from removed nodes
+		}
+		if removedSet[e.TargetID] {
+			continue // Drop edges to removed nodes
+		}
+		keptEdges = append(keptEdges, e)
+	}
+
+	// Restore list nodes from the template.
+	var restoredNodes []compiler.GraphNode
+	for _, tmplNode := range tmplListNodes {
+		restored := tmplNode
+		restored.Status = "pending"
+		restored.Instructions = prompt
+		if restored.ProbeConfig != nil {
+			restored.ProbeConfig.Goal = prompt
+		}
+
+		// Avoid ID collision with existing mutated nodes.
+		if existingIDs[restored.ID] {
+			restored.ID = restored.ID + "_restored"
+		}
+
+		restoredNodes = append(restoredNodes, restored)
+		fmt.Fprintf(os.Stderr, "[Plan Template] Restored list node %q from template (goal: %.80s...)\n",
+			restored.ID, prompt)
+	}
+
+	// Rebuild: restored list nodes first, then kept mutated nodes.
+	graph.Nodes = append(restoredNodes, keptNodes...)
+
+	// Wire edges: each restored list node → each downstream target of removed nodes.
+	// If no downstream targets were found (e.g. planner also rewired edges), wire
+	// to any existing action/write nodes that look like sinks.
+	if len(downstreamTargets) == 0 {
+		for _, n := range keptNodes {
+			if n.Type == "action" {
+				downstreamTargets[n.ID] = true
+			}
+		}
+	}
+
+	var newEdges []compiler.GraphEdge
+	for _, restored := range restoredNodes {
+		for tgt := range downstreamTargets {
+			newEdges = append(newEdges, compiler.GraphEdge{
+				SourceID: restored.ID,
+				TargetID: tgt,
+			})
+		}
+	}
+
+	graph.Edges = append(keptEdges, newEdges...)
+
+	if len(removedIDs) > 0 {
+		fmt.Fprintf(os.Stderr, "[Plan Template] Removed %d substituted read-action nodes: %v\n",
+			len(removedIDs), removedIDs)
+	}
+}
+
+// repairDynamicBindings ensures every DynamicBinding reference in the
 // mutated graph points to an actual node ID. When the local model renames
 // template nodes (e.g. "explore" → "explore_cache_source") the bindings
 // silently break because they still reference the old or hallucinated IDs.

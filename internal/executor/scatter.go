@@ -44,13 +44,13 @@ func SpawnScatterProbes(graph *compiler.ExecutionGraph, recallNodeID string, spe
 		probeCount = maxProbes
 	}
 
-	// Create scatter probe nodes
+	// Create scatter list nodes (ADR-0091: probe → list)
 	for i := 0; i < probeCount; i++ {
 		spec := specs[i]
-		nodeID := fmt.Sprintf("scatter_probe_%s_%d", recallNodeID, i)
-		probeNode := compiler.GraphNode{
+		nodeID := fmt.Sprintf("scatter_list_%s_%d", recallNodeID, i)
+		listNode := compiler.GraphNode{
 			ID:   nodeID,
-			Type: "probe",
+			Type: "list",
 			ProbeConfig: &compiler.ProbeConfig{
 				Goal:            spec.GoalItem,
 				DirectSynthesis: true,
@@ -60,11 +60,11 @@ func SpawnScatterProbes(graph *compiler.ExecutionGraph, recallNodeID string, spe
 			},
 			Instructions:        fmt.Sprintf("Generate a focused, concise answer for: %s", spec.GoalItem),
 			Status:              "pending",
-			ActivationThreshold: 0.0, // No edge thoughts for scatter probes
+			ActivationThreshold: 0.0, // No edge thoughts for scatter list nodes
 		}
 
 		// Add node to graph
-		graph.Nodes = append(graph.Nodes, probeNode)
+		graph.Nodes = append(graph.Nodes, listNode)
 
 		// Wire: recall → scatter_probe
 		graph.Edges = append(graph.Edges, compiler.GraphEdge{

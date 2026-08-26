@@ -417,7 +417,8 @@ func TestMaxTokensKey_PropagatesThroughCallLocalModel(t *testing.T) {
 		t.Errorf("expected max_tokens=2048, got %d", int(maxTokensVal))
 	}
 
-	// Test 2: WITHOUT MaxTokensKey — max_tokens should default to 2048
+	// Test 2: WITHOUT MaxTokensKey — max_tokens should be dynamically computed
+	// from context size minus estimated prompt tokens (no longer hardcoded 2048)
 	capturedBody = nil
 	ctx2 := context.Background()
 	_, err = mgr.CallLocalModel(ctx2, msgs, "")
@@ -433,8 +434,10 @@ func TestMaxTokensKey_PropagatesThroughCallLocalModel(t *testing.T) {
 	if !ok {
 		t.Fatalf("default max_tokens is not a number: %T", maxTokensRaw)
 	}
-	if int(maxTokensVal) != 2048 {
-		t.Errorf("expected default max_tokens=2048, got %d", int(maxTokensVal))
+	// With a tiny prompt ("sys" + "usr" = 6 chars) and default 65536 context,
+	// the dynamic budget should be much larger than the old 2048 hardcap.
+	if int(maxTokensVal) < 2048 {
+		t.Errorf("expected default max_tokens >= 2048, got %d", int(maxTokensVal))
 	}
 }
 

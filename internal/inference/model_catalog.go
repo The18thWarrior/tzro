@@ -241,6 +241,17 @@ var modelCatalog = []ModelEntry{
 		Description:  "Meta Llama 3.2 3B with limited tool calling",
 		ToolCallTier: "limited",
 	},
+	{
+		ID:           "granite-4.2-3b",
+		DisplayName:  "Granite 4.2 3B",
+		Params:       "3B",
+		SizeBytes:    2244012160,
+		SizeLabel:    "~2.1 GB",
+		DownloadURL:  "https://huggingface.co/ibm-granite/granite-4.2-3b-GGUF/resolve/main/granite-4.2-3b-Q4_K_M.gguf",
+		Filename:     "granite-4.2-3b-Q4_K_M.gguf",
+		Description:  "IBM Granite 4.2 3B instruction-tuned model with function calling and reasoning support",
+		ToolCallTier: "good",
+	},
 	// Router models — small, fast models for classification, routing, and probe navigation
 	{
 		ID:              "minicpm5-1b-opus-fable5",

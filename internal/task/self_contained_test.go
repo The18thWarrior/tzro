@@ -23,9 +23,9 @@ func TestPlan_SelfContained_BypassesPlanner(t *testing.T) {
 
 	node := graph.Nodes[0]
 
-	// Node type should be "probe"
-	if node.Type != "probe" {
-		t.Errorf("Node type = %q, want %q", node.Type, "probe")
+	// Node type should be "list" (canonical name per ADR-0090/0091)
+	if node.Type != "list" {
+		t.Errorf("Node type = %q, want %q", node.Type, "list")
 	}
 
 	// Node should have DirectSynthesis enabled

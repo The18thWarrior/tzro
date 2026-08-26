@@ -172,14 +172,14 @@ func (e *ExecutionEngine) wireStrategies(reg *strategy.StrategyRegistry) {
 		_ = reg.Replace(NewDeterministicStrategy(e, base))
 	}
 
-	// Probe
-	if base := findBaseStrategy(reg, "probe"); base != nil {
-		_ = reg.Replace(NewProbeAnalyzeStrategy(e, base, "probe"))
+	// List (ADR-0091: replaces probe as primary discovery node)
+	if base := findBaseStrategy(reg, "list"); base != nil {
+		_ = reg.Replace(NewListStrategy(e, base))
 	}
 
-	// Analyze (shares ProbeAnalyzeStrategy with probe)
+	// Analyze (standalone AnalyzeOnlyStrategy — ADR-0091)
 	if base := findBaseStrategy(reg, "analyze"); base != nil {
-		_ = reg.Replace(NewProbeAnalyzeStrategy(e, base, "analyze"))
+		_ = reg.Replace(NewAnalyzeOnlyStrategy(e, base))
 	}
 
 	// Recall

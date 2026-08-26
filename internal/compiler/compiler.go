@@ -9,7 +9,7 @@ import (
 
 type GraphNode struct {
 	ID              string                 `json:"id"`
-	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "probe" | "analyze" | "sub_dag"
+	Type            string                 `json:"type"`                // "action" | "deterministic" | "branch" | "merge" | "semantic_validator" | "synthesis" | "hypothesis" | "list" | "analyze" | "sub_dag"
 	Action          string                 `json:"action"`              // Target tool name or Sub-DAG template name
 	Instructions    string                 `json:"instructions"`        // Core step instruction
 	AllowedTools    []string               `json:"allowedTools"`        // Whitelist of permitted tools
@@ -349,11 +349,11 @@ func IncrementalSort(graph *ExecutionGraph, completedNodes map[string]bool) ([][
 
 // NodeTimeBudgets defines the time budget allocation per node type for the
 // weighted circuit breaker (P2). Values are based on empirical benchmark
-// observations: probe nodes need ~10min for 20-step exploration, action nodes
+// observations: list nodes need ~3min for extraction, action nodes
 // need ~5min for cloud escalation + retries, deterministic/validator nodes
 // are fast local inference.
 var NodeTimeBudgets = map[string]time.Duration{
-	"probe":              10 * time.Minute,
+	"list":                3 * time.Minute,
 	"action":             5 * time.Minute,
 	"deterministic":      90 * time.Second,
 	"semantic_validator": 90 * time.Second,

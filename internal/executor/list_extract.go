@@ -7,6 +7,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"tzro/internal/inference"
 )
 
 // ---------------------------------------------------------------------------
@@ -55,8 +57,33 @@ Rules:
 func ExtractLineRanges(ctx context.Context, engine ProbeInferenceEngine, goal string, filePath string, content string, lineCount int) ([]LineRange, error) {
 	userPrompt := fmt.Sprintf("## Goal\n%s\n\n## File: %s (%d lines)\n%s", goal, filePath, lineCount, content)
 
-	// Use TargetRouter for GBNF-constrained extraction (fast, structured)
-	result, err := engine.Infer(ctx, lineRangeExtractionSystemPrompt, userPrompt, LineRangeExtractionSchema, TargetRouter)
+	// --- Defense 1: Proportional generation cap ---
+	// Each range pair is ~8 tokens: [start, end],\n
+	// A file can have at most lineCount/2 meaningful ranges.
+	// Cap at lineCount * 3 tokens (generous) with floor 64 and ceiling 512.
+	maxTok := lineCount * 3
+	if maxTok < 64 {
+		maxTok = 64
+	}
+	if maxTok > 512 {
+		maxTok = 512
+	}
+	ctx = context.WithValue(ctx, inference.MaxTokensKey, maxTok)
+
+	// --- Defense 2: DRY sampling to break repetition loops ---
+	// The router model degenerates into [1,2],[1,4],[1,6]... patterns.
+	// DRY detects and penalizes repeated token sequences at sampling time.
+	ctx = context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+		Multiplier:    0.8,
+		Base:          1.75,
+		AllowedLength: 2,
+		PenaltyLastN:  256,
+	})
+
+	// Use TargetWorker for line-range extraction — identifying which lines are
+	// relevant to a goal requires content comprehension, not just classification.
+	// The 1B router model lacks the capacity and degenerates into repetitive output.
+	result, err := engine.Infer(ctx, lineRangeExtractionSystemPrompt, userPrompt, LineRangeExtractionSchema, TargetWorker)
 	if err != nil {
 		return nil, fmt.Errorf("line-range extraction failed for %s: %w", filePath, err)
 	}
@@ -64,8 +91,17 @@ func ExtractLineRanges(ctx context.Context, engine ProbeInferenceEngine, goal st
 	// Parse the GBNF-constrained output: [[int, int], ...]
 	var rawRanges [][]int
 	if err := json.Unmarshal([]byte(result), &rawRanges); err != nil {
-		fmt.Fprintf(os.Stderr, "[ListNode] Failed to parse line ranges for %s: %v (raw: %s)\n", filePath, err, result)
-		return nil, nil // Graceful degradation — no ranges extracted
+		// --- Defense 3: Truncation recovery ---
+		// When generation hits the token cap, JSON is cut mid-array (e.g., "[[1,2],[1,4],[1,").
+		// Try to salvage valid prefix data by finding the last complete "]" and closing the array.
+		recovered := recoverTruncatedRanges(result)
+		if recovered != nil {
+			fmt.Fprintf(os.Stderr, "[ListNode] Recovered %d ranges from truncated output for %s\n", len(recovered), filePath)
+			rawRanges = recovered
+		} else {
+			fmt.Fprintf(os.Stderr, "[ListNode] Failed to parse line ranges for %s: %v (raw len: %d)\n", filePath, err, len(result))
+			return nil, nil // Graceful degradation — no ranges extracted
+		}
 	}
 
 	var ranges []LineRange
@@ -74,6 +110,25 @@ func ExtractLineRanges(ctx context.Context, engine ProbeInferenceEngine, goal st
 			continue
 		}
 		ranges = append(ranges, LineRange{StartLine: pair[0], EndLine: pair[1]})
+	}
+
+	// --- Defense 4: Degeneration detector ---
+	// The router model sometimes degenerates into patterns like [1,2],[1,4],[1,6]...
+	// where every range starts at line 1. If >50% of ranges share the same start
+	// line, the output is not meaningful extraction — collapse to the full file.
+	if len(ranges) > 3 {
+		startCounts := make(map[int]int)
+		for _, r := range ranges {
+			startCounts[r.StartLine]++
+		}
+		for startLine, count := range startCounts {
+			if count > len(ranges)/2 {
+				fmt.Fprintf(os.Stderr, "[ListNode] Degenerate output detected for %s: %d/%d ranges start at line %d, collapsing to full file\n",
+					filePath, count, len(ranges), startLine)
+				ranges = []LineRange{{StartLine: 1, EndLine: lineCount}}
+				break
+			}
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "[ListNode] Extracted %d ranges from %s\n", len(ranges), filePath)
@@ -192,6 +247,39 @@ func ChunkFile(lines []string, chunkSize, overlap int) []FileChunk {
 	}
 
 	return chunks
+}
+
+// recoverTruncatedRanges attempts to salvage valid line-range pairs from
+// truncated JSON output. When the model hits the token limit mid-array,
+// the JSON ends like "[[1,2],[1,4],[1," — find the last complete pair
+// boundary and parse the valid prefix.
+func recoverTruncatedRanges(raw string) [][]int {
+	// Find the last complete inner array close: ]
+	lastBracket := strings.LastIndex(raw, "]")
+	if lastBracket < 2 {
+		return nil
+	}
+
+	// Close the outer array after the last complete inner bracket
+	candidate := raw[:lastBracket+1] + "]"
+
+	var ranges [][]int
+	if err := json.Unmarshal([]byte(candidate), &ranges); err != nil {
+		return nil
+	}
+
+	// Filter to valid pairs only
+	var valid [][]int
+	for _, pair := range ranges {
+		if len(pair) == 2 && pair[0] > 0 && pair[1] > 0 {
+			valid = append(valid, pair)
+		}
+	}
+
+	if len(valid) == 0 {
+		return nil
+	}
+	return valid
 }
 
 // NumberFileContent prepends 1-indexed line numbers to file content for
