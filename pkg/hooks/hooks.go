@@ -57,7 +57,8 @@ func HandlePreToolUse(r io.Reader, w io.Writer, s *store.Store) error {
 }
 
 // HandlePostToolUse compresses raw command/tool outputs before they are written to history.
-func HandlePostToolUse(r io.Reader, w io.Writer) error {
+// Now also intercepts tabular data for SQLite import.
+func HandlePostToolUse(r io.Reader, w io.Writer, s *store.Store) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -69,6 +70,45 @@ func HandlePostToolUse(r io.Reader, w io.Writer) error {
 	// Return empty response per Antigravity contract
 	_, err = w.Write([]byte("{}\n"))
 	return err
+}
+
+// CompactOrIntercept is the shared helper for all post-tool handlers.
+// It detects tabular data and imports it into SQLite (returning an envelope),
+// or falls through to the existing CompactLog path.
+// For file reads, tabular data is always intercepted.
+// For external tools, tabular data is only intercepted above the threshold.
+func CompactOrIntercept(output string, toolName string, s *store.Store) string {
+	isFileRead := compactor.IsFileReadTool(toolName)
+	threshold := compactor.GetThreshold()
+
+	td, ok := compactor.DetectTabular(output)
+	if ok && compactor.ShouldIntercept(td, isFileRead, threshold) && s != nil {
+		// Generate table name from content hash of first 3 rows
+		tableName := generateTableName(td)
+
+		if err := s.ImportTabular(tableName, td.Columns, td.Rows); err == nil {
+			return compactor.FormatEnvelope(tableName, td, 5)
+		}
+		// Fall through to compact on import error
+	}
+
+	return compactor.CompactLog(output)
+}
+
+// generateTableName creates a deterministic table name from the first few rows of tabular data.
+func generateTableName(td *compactor.TabularData) string {
+	// Hash the columns + first 3 rows for deduplication
+	sampleSize := 3
+	if len(td.Rows) < sampleSize {
+		sampleSize = len(td.Rows)
+	}
+	var parts []string
+	parts = append(parts, strings.Join(td.Columns, "|"))
+	for i := 0; i < sampleSize; i++ {
+		parts = append(parts, strings.Join(td.Rows[i], "|"))
+	}
+	hash := store.ComputeHash(strings.Join(parts, "\n"))
+	return "tbl_" + hash
 }
 
 // HandleCompactOutput CLI pipe helper: reads raw log/test output on stdin, writes compacted text to stdout.

@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 
-	"tzro/pkg/compactor"
 	"tzro/pkg/store"
 )
 
@@ -64,7 +63,7 @@ func HandleHermesPreTool(r io.Reader, w io.Writer, s *store.Store) error {
 }
 
 // HandleHermesPostTool processes Hermes post-tool outputs and compacts verbose output.
-func HandleHermesPostTool(r io.Reader, w io.Writer) error {
+func HandleHermesPostTool(r io.Reader, w io.Writer, s *store.Store) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -73,15 +72,16 @@ func HandleHermesPostTool(r io.Reader, w io.Writer) error {
 	var input HermesPostToolInput
 	if err := json.Unmarshal(data, &input); err != nil {
 		// If raw string on stdin, compact directly
-		compacted := compactor.CompactLog(string(data))
+		compacted := CompactOrIntercept(string(data), "", s)
 		_, err := w.Write([]byte(compacted))
 		return err
 	}
 
+	toolName := input.Tool
 	switch v := input.Output.(type) {
 	case string:
-		compacted := compactor.CompactLog(v)
-		return json.NewEncoder(w).Encode(HermesPostToolOutput{Output: compacted})
+		processed := CompactOrIntercept(v, toolName, s)
+		return json.NewEncoder(w).Encode(HermesPostToolOutput{Output: processed})
 	default:
 		return json.NewEncoder(w).Encode(HermesPostToolOutput{Output: input.Output})
 	}

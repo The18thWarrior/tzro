@@ -118,3 +118,88 @@ func TestSkeletonize_TypeScript(t *testing.T) {
 		t.Errorf("expected TS body elided")
 	}
 }
+
+func TestSkeletonize_Markdown(t *testing.T) {
+	s, err := store.OpenStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenStore failed: %v", err)
+	}
+	defer s.Close()
+
+	// Build a markdown file with:
+	// - Headings (should be preserved)
+	// - A short paragraph (should be preserved)
+	// - A long fenced code block (should be elided)
+	// - A long paragraph (should be elided)
+	longCode := strings.Repeat("    fmt.Println(\"line of code\")\n", 20)
+	longParagraph := strings.Repeat("This is a sentence that goes on and on with many words. ", 15)
+
+	src := []byte("# Project Title\n\nShort intro paragraph.\n\n## Installation\n\n```go\npackage main\n\n" + longCode + "```\n\n## Description\n\n" + longParagraph + "\n\n## License\n\nMIT\n")
+
+	res, err := Skeletonize("README.md", src, s)
+	if err != nil {
+		t.Fatalf("Skeletonize failed: %v", err)
+	}
+
+	// Headings must be preserved
+	if !strings.Contains(res.SkeletonCode, "# Project Title") {
+		t.Errorf("expected h1 heading preserved")
+	}
+	if !strings.Contains(res.SkeletonCode, "## Installation") {
+		t.Errorf("expected h2 heading preserved")
+	}
+	if !strings.Contains(res.SkeletonCode, "## Description") {
+		t.Errorf("expected h2 Description heading preserved")
+	}
+	if !strings.Contains(res.SkeletonCode, "## License") {
+		t.Errorf("expected h2 License heading preserved")
+	}
+
+	// Short paragraph preserved
+	if !strings.Contains(res.SkeletonCode, "Short intro paragraph.") {
+		t.Errorf("expected short paragraph preserved")
+	}
+
+	// MIT paragraph preserved (short)
+	if !strings.Contains(res.SkeletonCode, "MIT") {
+		t.Errorf("expected MIT preserved")
+	}
+
+	// Fenced code block body should be elided
+	if strings.Contains(res.SkeletonCode, "fmt.Println") {
+		t.Errorf("expected fenced code block body to be elided")
+	}
+	if !strings.Contains(res.SkeletonCode, "[body elided: #") {
+		t.Errorf("expected code block elision marker")
+	}
+
+	// Long paragraph should be elided
+	if strings.Count(res.SkeletonCode, "goes on and on") > 2 {
+		t.Errorf("expected long paragraph to be elided, but most content remains")
+	}
+	if !strings.Contains(res.SkeletonCode, "[paragraph elided: #") {
+		t.Errorf("expected paragraph elision marker")
+	}
+
+	// Should have at least 2 elided blocks (code + paragraph)
+	if res.ElidedBlocks < 2 {
+		t.Errorf("expected at least 2 elided blocks, got %d", res.ElidedBlocks)
+	}
+
+	// Savings should be significant
+	if res.SavingsRatio < 0.3 {
+		t.Errorf("expected >30%% savings, got %.1f%%", res.SavingsRatio*100)
+	}
+
+	// Verify expand round-trip via store
+	if len(res.Hashes) > 0 {
+		blob, err := s.GetBlob(res.Hashes[0])
+		if err != nil {
+			t.Fatalf("GetBlob failed for hash %s: %v", res.Hashes[0], err)
+		}
+		if len(blob.Body) == 0 {
+			t.Errorf("expected non-empty blob body from expand")
+		}
+	}
+}
+

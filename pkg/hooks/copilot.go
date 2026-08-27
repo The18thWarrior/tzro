@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 
-	"tzro/pkg/compactor"
 	"tzro/pkg/store"
 )
 
@@ -62,7 +61,7 @@ func HandleCopilotPreTool(r io.Reader, w io.Writer, s *store.Store) error {
 }
 
 // HandleCopilotPostTool processes Copilot post-tool execution outputs and compacts logs.
-func HandleCopilotPostTool(r io.Reader, w io.Writer) error {
+func HandleCopilotPostTool(r io.Reader, w io.Writer, s *store.Store) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -71,15 +70,16 @@ func HandleCopilotPostTool(r io.Reader, w io.Writer) error {
 	var input CopilotPostToolInput
 	if err := json.Unmarshal(data, &input); err != nil {
 		// If raw string, compact directly
-		compacted := compactor.CompactLog(string(data))
+		compacted := CompactOrIntercept(string(data), "", s)
 		_, err := w.Write([]byte(compacted))
 		return err
 	}
 
+	toolName := input.Tool
 	switch v := input.Output.(type) {
 	case string:
-		compacted := compactor.CompactLog(v)
-		return json.NewEncoder(w).Encode(CopilotPostToolOutput{Output: compacted})
+		processed := CompactOrIntercept(v, toolName, s)
+		return json.NewEncoder(w).Encode(CopilotPostToolOutput{Output: processed})
 	default:
 		return json.NewEncoder(w).Encode(CopilotPostToolOutput{Output: input.Output})
 	}

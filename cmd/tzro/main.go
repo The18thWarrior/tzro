@@ -171,10 +171,10 @@ func main() {
 		},
 	}
 
-	// 6. HOOK COMMAND (Antigravity, Claude, Hermes, Copilot Bridge)
+	// 6. HOOK COMMAND (Antigravity, Claude, Hermes, Copilot, Pi-Coder Bridge)
 	hookCmd := &cobra.Command{
 		Use:   "hook [harness] [event]",
-		Short: "Agent lifecycle hook bridge for Antigravity, Claude Code, Hermes, and Copilot",
+		Short: "Agent lifecycle hook bridge for Antigravity, Claude Code, Hermes, Copilot, and Pi-Coder",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			harness := "antigravity"
@@ -197,7 +197,7 @@ func main() {
 				case "pre-tool", "pre_tool", "PreToolUse":
 					return hooks.HandleClaudePreToolUse(os.Stdin, os.Stdout, s)
 				case "post-tool", "post_tool", "PostToolUse":
-					return hooks.HandleClaudePostToolUse(os.Stdin, os.Stdout)
+					return hooks.HandleClaudePostToolUse(os.Stdin, os.Stdout, s)
 				default:
 					return fmt.Errorf("unknown claude hook event: %s", event)
 				}
@@ -207,7 +207,7 @@ func main() {
 				case "pre-tool", "pre_tool", "pre_tool_call":
 					return hooks.HandleHermesPreTool(os.Stdin, os.Stdout, s)
 				case "post-tool", "post_tool", "post_tool_call":
-					return hooks.HandleHermesPostTool(os.Stdin, os.Stdout)
+					return hooks.HandleHermesPostTool(os.Stdin, os.Stdout, s)
 				default:
 					return fmt.Errorf("unknown hermes hook event: %s", event)
 				}
@@ -217,9 +217,19 @@ func main() {
 				case "pre-tool", "pre_tool":
 					return hooks.HandleCopilotPreTool(os.Stdin, os.Stdout, s)
 				case "post-tool", "post_tool":
-					return hooks.HandleCopilotPostTool(os.Stdin, os.Stdout)
+					return hooks.HandleCopilotPostTool(os.Stdin, os.Stdout, s)
 				default:
 					return fmt.Errorf("unknown copilot hook event: %s", event)
+				}
+
+			case "pi-coder", "picoder":
+				switch event {
+				case "pre-tool", "pre_tool":
+					return hooks.HandlePiCoderPreTool(os.Stdin, os.Stdout, s)
+				case "post-tool", "post_tool":
+					return hooks.HandlePiCoderPostTool(os.Stdin, os.Stdout, s)
+				default:
+					return fmt.Errorf("unknown pi-coder hook event: %s", event)
 				}
 
 			case "antigravity", "default":
@@ -227,7 +237,7 @@ func main() {
 				case "pre-tool", "pre_tool", "PreToolUse":
 					return hooks.HandlePreToolUse(os.Stdin, os.Stdout, s)
 				case "post-tool", "post_tool", "PostToolUse":
-					return hooks.HandlePostToolUse(os.Stdin, os.Stdout)
+					return hooks.HandlePostToolUse(os.Stdin, os.Stdout, s)
 				case "compact":
 					return hooks.HandleCompactOutput(os.Stdin, os.Stdout)
 				default:
@@ -235,7 +245,7 @@ func main() {
 				}
 
 			default:
-				return fmt.Errorf("unknown harness: %s (expected antigravity, claude, hermes, or copilot)", harness)
+				return fmt.Errorf("unknown harness: %s (expected antigravity, claude, hermes, copilot, or pi-coder)", harness)
 			}
 		},
 	}
@@ -270,7 +280,7 @@ func main() {
 			return nil
 		},
 	}
-	initCmd.Flags().StringSliceVar(&hookTargets, "hooks", []string{"auto"}, "Agent hook targets to configure: auto, all, antigravity, claude, hermes, copilot")
+	initCmd.Flags().StringSliceVar(&hookTargets, "hooks", []string{"auto"}, "Agent hook targets to configure: auto, all, antigravity, claude, hermes, copilot, pi-coder")
 	initCmd.Flags().BoolVarP(&isWorkspace, "workspace", "w", false, "Configure hooks in current workspace instead of user home directory")
 
 	// 8. STATUS COMMAND
@@ -305,7 +315,121 @@ func main() {
 	}
 	statusCmd.Flags().IntVarP(&port, "port", "p", 7878, "Port to query")
 
-	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd)
+	// 10. INGEST COMMAND
+	var ingestTableName string
+	ingestCmd := &cobra.Command{
+		Use:   "ingest [file]",
+		Short: "Import tabular data (CSV/TSV/JSON) into SQLite for agent queries",
+		Long: `Read tabular data from a file or stdin, detect the format (CSV, TSV, or JSON array),
+import it into the local SQLite store, and print a data envelope with sample rows
+and a table pointer the agent can use with 'tzro query'.
+
+Examples:
+  tzro ingest data.csv
+  tzro ingest results.json --name my_results
+  cat report.tsv | tzro ingest -
+  curl -s https://api.example.com/data | tzro ingest -`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var data []byte
+			var err error
+
+			if len(args) == 0 || args[0] == "-" {
+				// Read from stdin
+				data, err = io.ReadAll(os.Stdin)
+				if err != nil {
+					return fmt.Errorf("failed to read stdin: %w", err)
+				}
+			} else {
+				// Read from file
+				data, err = os.ReadFile(args[0])
+				if err != nil {
+					return fmt.Errorf("failed to read file %s: %w", args[0], err)
+				}
+			}
+
+			if len(data) == 0 {
+				return fmt.Errorf("no input data provided")
+			}
+
+			td, ok := compactor.DetectTabular(string(data))
+			if !ok {
+				return fmt.Errorf("input does not appear to be tabular data (CSV, TSV, or JSON array)")
+			}
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			// Determine table name
+			tableName := ingestTableName
+			if tableName == "" {
+				// Auto-generate from content hash
+				sampleSize := 3
+				if len(td.Rows) < sampleSize {
+					sampleSize = len(td.Rows)
+				}
+				var parts []string
+				parts = append(parts, strings.Join(td.Columns, "|"))
+				for i := 0; i < sampleSize; i++ {
+					parts = append(parts, strings.Join(td.Rows[i], "|"))
+				}
+				tableName = "tbl_" + store.ComputeHash(strings.Join(parts, "\n"))
+			}
+
+			if err := s.ImportTabular(tableName, td.Columns, td.Rows); err != nil {
+				return fmt.Errorf("import failed: %w", err)
+			}
+
+			fmt.Print(compactor.FormatEnvelope(tableName, td, 5))
+			return nil
+		},
+	}
+	ingestCmd.Flags().StringVarP(&ingestTableName, "name", "n", "", "Custom table name (default: auto-generated from content hash)")
+
+	// 11. QUERY COMMAND
+	queryCmd := &cobra.Command{
+		Use:   "query [table] [sql]",
+		Short: "Execute a read-only SQL query against an imported tabular data table",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tableName := args[0]
+			sqlQuery := args[1]
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			results, cols, err := s.QuerySQL(sqlQuery)
+			if err != nil {
+				return err
+			}
+
+			if len(results) == 0 {
+				fmt.Printf("No results from table %s.\n", tableName)
+				return nil
+			}
+
+			// Format results as compact markdown table
+			fmt.Printf("# Query Results (%d rows)\n", len(results))
+			fmt.Printf("| %s |\n", strings.Join(cols, " | "))
+			fmt.Printf("|%s\n", strings.Repeat(" --- |", len(cols)))
+			for _, row := range results {
+				var vals []string
+				for _, col := range cols {
+					vals = append(vals, row[col])
+				}
+				fmt.Printf("| %s |\n", strings.Join(vals, " | "))
+			}
+			return nil
+		},
+	}
+
+	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, queryCmd, ingestCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

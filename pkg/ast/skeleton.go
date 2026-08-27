@@ -131,6 +131,96 @@ func Skeletonize(filePath string, source []byte, s *store.Store) (*SkeletonResul
 				bodyNode = bt.ChildByField(node, "body")
 				nameNode = bt.ChildByField(node, "name")
 			}
+		case "markdown":
+			// Markdown skeletonization: elide heavy content blocks, preserve document spine
+			switch nodeType {
+			case "fenced_code_block":
+				// Elide the entire fenced code block, preserving the info string hint
+				startByte := node.StartByte()
+				endByte := node.EndByte()
+				origContent := string(source[startByte:endByte])
+				if len(origContent) > 80 { // Only elide non-trivial blocks
+					startLine := int(node.StartPoint().Row) + 1
+					endLine := int(node.EndPoint().Row) + 1
+					hash := store.ComputeHash(fmt.Sprintf("%s:%d:%d:%s", filePath, startLine, endLine, origContent))
+
+					// Extract info string (language hint) from first line
+					firstLine := origContent
+					if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
+						firstLine = firstLine[:idx]
+					}
+
+					repStr := fmt.Sprintf("%s\n<!-- [body elided: #%s] -->\n```", firstLine, hash)
+					replacements = append(replacements, bodyReplacement{
+						startByte:   startByte,
+						endByte:     endByte,
+						startLine:   startLine,
+						endLine:     endLine,
+						original:    origContent,
+						replacement: repStr,
+						hash:        hash,
+						symbolName:  "code_block",
+						kind:        "fenced_code_block",
+					})
+					return
+				}
+			case "html_block":
+				startByte := node.StartByte()
+				endByte := node.EndByte()
+				origContent := string(source[startByte:endByte])
+				if len(origContent) > 80 {
+					startLine := int(node.StartPoint().Row) + 1
+					endLine := int(node.EndPoint().Row) + 1
+					hash := store.ComputeHash(fmt.Sprintf("%s:%d:%d:%s", filePath, startLine, endLine, origContent))
+					repStr := fmt.Sprintf("<!-- [html block elided: #%s] -->", hash)
+					replacements = append(replacements, bodyReplacement{
+						startByte:   startByte,
+						endByte:     endByte,
+						startLine:   startLine,
+						endLine:     endLine,
+						original:    origContent,
+						replacement: repStr,
+						hash:        hash,
+						symbolName:  "html_block",
+						kind:        "html_block",
+					})
+					return
+				}
+			case "paragraph":
+				startByte := node.StartByte()
+				endByte := node.EndByte()
+				origContent := string(source[startByte:endByte])
+				if len(origContent) > 500 {
+					startLine := int(node.StartPoint().Row) + 1
+					endLine := int(node.EndPoint().Row) + 1
+					hash := store.ComputeHash(fmt.Sprintf("%s:%d:%d:%s", filePath, startLine, endLine, origContent))
+					// Preserve the first sentence as a preview
+					preview := origContent
+					if idx := strings.Index(preview, ". "); idx >= 0 && idx < 120 {
+						preview = preview[:idx+1]
+					} else if len(preview) > 120 {
+						preview = preview[:120]
+					}
+					repStr := fmt.Sprintf("%s… <!-- [paragraph elided: #%s] -->", preview, hash)
+					replacements = append(replacements, bodyReplacement{
+						startByte:   startByte,
+						endByte:     endByte,
+						startLine:   startLine,
+						endLine:     endLine,
+						original:    origContent,
+						replacement: repStr,
+						hash:        hash,
+						symbolName:  "paragraph",
+						kind:        "paragraph",
+					})
+					return
+				}
+			}
+			// For all other markdown nodes (headings, lists, etc.), descend into children
+			for i := 0; i < node.ChildCount(); i++ {
+				walk(node.Child(i))
+			}
+			return
 		}
 
 		if bodyNode != nil && bodyNode.EndByte() > bodyNode.StartByte() {

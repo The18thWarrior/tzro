@@ -31,7 +31,7 @@ func TestHandleClaudeHooks(t *testing.T) {
 	// PostTool: compact output
 	postInput := `{"tool_name":"Bash","tool_output":"panic: runtime error\nmain.go:10 +0x12\nruntime/panic.go:800 +0x23\n"}`
 	var postOut bytes.Buffer
-	if err := HandleClaudePostToolUse(strings.NewReader(postInput), &postOut); err != nil {
+	if err := HandleClaudePostToolUse(strings.NewReader(postInput), &postOut, nil); err != nil {
 		t.Fatalf("HandleClaudePostToolUse failed: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestHandleHermesHooks(t *testing.T) {
 	// PostTool
 	postInput := `{"tool":"execute_command","output":"panic: test err\nmain.go:5\nruntime/proc.go:10\n"}`
 	var postOut bytes.Buffer
-	if err := HandleHermesPostTool(strings.NewReader(postInput), &postOut); err != nil {
+	if err := HandleHermesPostTool(strings.NewReader(postInput), &postOut, nil); err != nil {
 		t.Fatalf("HandleHermesPostTool failed: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestHandleCopilotHooks(t *testing.T) {
 
 	postInput := `{"tool":"runInTerminal","output":"panic: copilot err\napp.go:12\nruntime/panic.go:10\n"}`
 	var postOut bytes.Buffer
-	if err := HandleCopilotPostTool(strings.NewReader(postInput), &postOut); err != nil {
+	if err := HandleCopilotPostTool(strings.NewReader(postInput), &postOut, nil); err != nil {
 		t.Fatalf("HandleCopilotPostTool failed: %v", err)
 	}
 
@@ -109,6 +109,42 @@ func TestHandleCopilotHooks(t *testing.T) {
 	outStr, ok := postResp.Output.(string)
 	if !ok || !strings.Contains(outStr, "app.go:12") {
 		t.Errorf("expected compacted output, got %v", postResp.Output)
+	}
+}
+
+func TestHandlePiCoderHooks(t *testing.T) {
+	// PreTool: grep command
+	preInput := `{"tool_name":"bash","tool_input":{"command":"grep -rn 'func main' ."}}`
+	var preOut bytes.Buffer
+	if err := HandlePiCoderPreTool(strings.NewReader(preInput), &preOut, nil); err != nil {
+		t.Fatalf("HandlePiCoderPreTool failed: %v", err)
+	}
+
+	var preResp PiCoderPreToolOutput
+	if err := json.Unmarshal(preOut.Bytes(), &preResp); err != nil {
+		t.Fatalf("Unmarshal pre-tool failed: %v", err)
+	}
+	if !preResp.Allow {
+		t.Errorf("expected allow true")
+	}
+	if !strings.Contains(preResp.Reason, "tzro probe") {
+		t.Errorf("expected probe suggestion, got %s", preResp.Reason)
+	}
+
+	// PostTool: compact output
+	postInput := `{"tool_name":"bash","tool_output":"panic: runtime error\nmain.go:10 +0x12\nruntime/panic.go:800 +0x23\n"}`
+	var postOut bytes.Buffer
+	if err := HandlePiCoderPostTool(strings.NewReader(postInput), &postOut, nil); err != nil {
+		t.Fatalf("HandlePiCoderPostTool failed: %v", err)
+	}
+
+	var postResp PiCoderPostToolOutput
+	if err := json.Unmarshal(postOut.Bytes(), &postResp); err != nil {
+		t.Fatalf("Unmarshal post-tool failed: %v", err)
+	}
+	outStr, ok := postResp.ToolOutput.(string)
+	if !ok || !strings.Contains(outStr, "main.go:10") {
+		t.Errorf("expected compacted output with user frame preserved, got %v", postResp.ToolOutput)
 	}
 }
 
@@ -128,8 +164,8 @@ func TestDetectAndInstallHooksWorkspace(t *testing.T) {
 		t.Fatalf("DetectAndInstallHooks failed: %v", err)
 	}
 
-	if len(results) != 4 {
-		t.Errorf("expected 4 configured harnesses for 'all', got %d", len(results))
+	if len(results) != 5 {
+		t.Errorf("expected 5 configured harnesses for 'all', got %d", len(results))
 	}
 
 	// Verify Claude settings.json exists
@@ -154,5 +190,30 @@ func TestDetectAndInstallHooksWorkspace(t *testing.T) {
 	copilotPre := filepath.Join(tempDir, ".github", "hooks", "pre-tool.sh")
 	if _, err := os.Stat(copilotPre); err != nil {
 		t.Errorf("expected .github/hooks/pre-tool.sh created: %v", err)
+	}
+
+	// Verify Pi-Coder extension exists
+	piCoderExt := filepath.Join(tempDir, ".pi", "extensions", "tzro-hook.ts")
+	if _, err := os.Stat(piCoderExt); err != nil {
+		t.Errorf("expected .pi/extensions/tzro-hook.ts created: %v", err)
+	}
+
+	// Verify tzro SKILL.md was created for each harness
+	skillFiles := map[string]string{
+		"Antigravity": filepath.Join(tempDir, ".agents", "skills", "tzro", "SKILL.md"),
+		"Claude":      filepath.Join(tempDir, ".claude", "skills", "tzro", "SKILL.md"),
+		"Copilot":     filepath.Join(tempDir, ".github", "skills", "tzro", "SKILL.md"),
+		"Hermes":      filepath.Join(tempDir, ".agents", "skills", "tzro", "SKILL.md"),
+		"Pi-Coder":    filepath.Join(tempDir, ".pi", "skills", "tzro", "SKILL.md"),
+	}
+	for harness, skillPath := range skillFiles {
+		data, err := os.ReadFile(skillPath)
+		if err != nil {
+			t.Errorf("%s: expected SKILL.md at %s: %v", harness, skillPath, err)
+			continue
+		}
+		if !strings.Contains(string(data), "name: tzro") {
+			t.Errorf("%s: SKILL.md missing frontmatter", harness)
+		}
 	}
 }

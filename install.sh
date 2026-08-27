@@ -70,7 +70,7 @@ if [ "${OS}" = "Darwin" ]; then
 fi
 
 # 4. Configure Agent Lifecycle Hooks
-echo -e "\n${BLUE}[4/5] Configuring Agent Lifecycle Hooks (Antigravity, Claude, Hermes, Copilot)...${NC}"
+echo -e "\n${BLUE}[4/5] Configuring Agent Lifecycle Hooks (Antigravity, Claude, Hermes, Copilot, Pi-Coder)...${NC}"
 if [ -x "${INSTALL_DIR}/bin/tzro" ]; then
     "${INSTALL_DIR}/bin/tzro" init --hooks auto 2>/dev/null || true
 fi
@@ -88,7 +88,7 @@ echo -e "=========================================================="
 echo -e "  ${BOLD}Binary Location:${NC}     ${INSTALL_DIR}/bin/tzro"
 echo -e "  ${BOLD}Memory Footprint:${NC}    < 50 MB RAM (Zero GPU/ML Bloat)"
 echo -e "  ${BOLD}Proxy Target:${NC}        http://127.0.0.1:7878"
-echo -e "  ${BOLD}Supported Hooks:${NC}     Antigravity, Claude Code, Hermes, GitHub Copilot"
+echo -e "  ${BOLD}Supported Hooks:${NC}     Antigravity, Claude Code, Hermes, GitHub Copilot, Pi-Coder"
 echo -e "=========================================================="
 
 if [ "$PATH_OK" = "true" ]; then

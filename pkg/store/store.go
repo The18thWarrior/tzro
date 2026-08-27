@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -194,7 +195,173 @@ func (s *Store) SearchSymbols(queryStr string, limit int) ([]SymbolEntry, error)
 	return results, nil
 }
 
+// systemTables are protected from QuerySQL access.
+var systemTables = map[string]bool{
+	"content_blobs":  true,
+	"symbol_index":   true,
+	"cache_sessions": true,
+	"sqlite_master":  true,
+	"sqlite_schema":  true,
+}
+
+// ImportTabular creates a dynamic table and bulk-inserts rows from tabular data.
+// Column names are sanitized to prevent SQL injection. Uses a transaction for performance.
+func (s *Store) ImportTabular(tableName string, columns []string, rows [][]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Validate table name: alphanumeric + underscores only
+	for _, c := range tableName {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			return fmt.Errorf("invalid table name: %q", tableName)
+		}
+	}
+
+	// Reject system table names
+	if systemTables[tableName] {
+		return fmt.Errorf("cannot import into system table: %s", tableName)
+	}
+
+	// Sanitize column names
+	safeCols := make([]string, len(columns))
+	for i, col := range columns {
+		safe := sanitizeIdentifier(col)
+		if safe == "" {
+			safe = fmt.Sprintf("col_%d", i)
+		}
+		safeCols[i] = safe
+	}
+
+	// Build CREATE TABLE
+	var colDefs []string
+	for _, col := range safeCols {
+		colDefs = append(colDefs, fmt.Sprintf("\"%s\" TEXT", col))
+	}
+	createSQL := fmt.Sprintf("CREATE TABLE IF NOT EXISTS \"%s\" (%s)", tableName, strings.Join(colDefs, ", "))
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(createSQL); err != nil {
+		return fmt.Errorf("create table: %w", err)
+	}
+
+	// Clear existing data (idempotent reimport)
+	if _, err := tx.Exec(fmt.Sprintf("DELETE FROM \"%s\"", tableName)); err != nil {
+		return fmt.Errorf("clear table: %w", err)
+	}
+
+	// Prepare bulk insert
+	placeholders := make([]string, len(safeCols))
+	for i := range placeholders {
+		placeholders[i] = "?"
+	}
+	insertSQL := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s)",
+		tableName,
+		strings.Join(func() []string {
+			quoted := make([]string, len(safeCols))
+			for i, c := range safeCols {
+				quoted[i] = fmt.Sprintf("\"%s\"", c)
+			}
+			return quoted
+		}(), ", "),
+		strings.Join(placeholders, ", "))
+
+	stmt, err := tx.Prepare(insertSQL)
+	if err != nil {
+		return fmt.Errorf("prepare insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, row := range rows {
+		args := make([]any, len(safeCols))
+		for i := 0; i < len(safeCols); i++ {
+			if i < len(row) {
+				args[i] = row[i]
+			} else {
+				args[i] = ""
+			}
+		}
+		if _, err := stmt.Exec(args...); err != nil {
+			return fmt.Errorf("insert row: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// QuerySQL executes a read-only SQL query against an imported tabular table.
+// Only SELECT statements are allowed, and only against non-system tables.
+func (s *Store) QuerySQL(sql string) ([]map[string]string, []string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Validate: must be SELECT
+	trimmed := strings.TrimSpace(sql)
+	upper := strings.ToUpper(trimmed)
+	if !strings.HasPrefix(upper, "SELECT") {
+		return nil, nil, fmt.Errorf("only SELECT queries are allowed, got: %s", trimmed[:min(len(trimmed), 20)])
+	}
+
+	// Reject queries that reference system tables
+	lowerSQL := strings.ToLower(trimmed)
+	for tbl := range systemTables {
+		if strings.Contains(lowerSQL, strings.ToLower(tbl)) {
+			return nil, nil, fmt.Errorf("access to system table %q is not allowed", tbl)
+		}
+	}
+
+	rows, err := s.db.Query(trimmed)
+	if err != nil {
+		return nil, nil, fmt.Errorf("query execution: %w", err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var results []map[string]string
+	for rows.Next() {
+		ptrs := make([]any, len(cols))
+		values := make([]any, len(cols))
+		for i := range ptrs {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, nil, err
+		}
+		row := make(map[string]string, len(cols))
+		for i, col := range cols {
+			if values[i] != nil {
+				row[col] = fmt.Sprintf("%v", values[i])
+			} else {
+				row[col] = ""
+			}
+		}
+		results = append(results, row)
+	}
+
+	return results, cols, rows.Err()
+}
+
+// sanitizeIdentifier strips non-alphanumeric chars (except underscore) from a SQL identifier.
+func sanitizeIdentifier(name string) string {
+	var sb strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			sb.WriteRune(c)
+		}
+	}
+	return sb.String()
+}
+
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
 }
+

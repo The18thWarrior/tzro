@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 
-	"tzro/pkg/compactor"
 	"tzro/pkg/store"
 )
 
@@ -65,7 +64,7 @@ func HandleClaudePreToolUse(r io.Reader, w io.Writer, s *store.Store) error {
 }
 
 // HandleClaudePostToolUse processes Claude Code post-tool outputs and compacts verbose output.
-func HandleClaudePostToolUse(r io.Reader, w io.Writer) error {
+func HandleClaudePostToolUse(r io.Reader, w io.Writer, s *store.Store) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -74,15 +73,16 @@ func HandleClaudePostToolUse(r io.Reader, w io.Writer) error {
 	var input ClaudePostToolUseInput
 	if err := json.Unmarshal(data, &input); err != nil {
 		// If raw string instead of JSON, compact directly
-		compacted := compactor.CompactLog(string(data))
+		compacted := CompactOrIntercept(string(data), "", s)
 		_, err := w.Write([]byte(compacted))
 		return err
 	}
 
+	toolName := input.ToolName
 	switch v := input.ToolOutput.(type) {
 	case string:
-		compacted := compactor.CompactLog(v)
-		return json.NewEncoder(w).Encode(ClaudePostToolUseOutput{ToolOutput: compacted})
+		processed := CompactOrIntercept(v, toolName, s)
+		return json.NewEncoder(w).Encode(ClaudePostToolUseOutput{ToolOutput: processed})
 	default:
 		return json.NewEncoder(w).Encode(ClaudePostToolUseOutput{ToolOutput: input.ToolOutput})
 	}
