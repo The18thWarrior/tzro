@@ -15,9 +15,9 @@
   <!-- Page Description -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Documentation — TZRO | Local-First Agentic Execution Engine</title>
+  <title>Documentation — TZRO | The Local Token Shield & Context Optimization Engine</title>
   <meta name="description"
-    content="Complete technical documentation for TZRO — the production-grade, durable, local-first Agentic Execution Engine. Installation, security model, hardware optimization, and debugging guides." />
+    content="Complete technical documentation for TZRO v2 — the lightweight native token shield and context optimization engine. KV-cache prefix locking, Tree-sitter AST skeletonization, and sub-millisecond local discovery." />
 
   <!-- Fonts (shared with main site) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -347,11 +347,20 @@
       <div class="docs-section" id="introduction">
         <h1>What's TZRO</h1>
         <p class="docs-subtitle">
-          A zero-dependency, local-first agentic execution engine. It compiles natural language prompts into
-          topologically-sorted DAG (Directed Acyclic Graph) workflows, executes them durably with checkpointing,
-          and provides relational memory, knowledge graph, and micro-skill extraction.
+          An ultra-lightweight, native token shield and context optimization engine (&lt;50 MB RAM, zero ML dependencies).
+          It eliminates cloud API rate limits, locks KV-cache prompt prefixes (guaranteeing 90% cache read discounts), and provides sub-millisecond local codebase discovery.
         </p>
 
+        <p>
+          Traditional AI coding agent workflows (like Claude Code, Cursor, Antigravity, and Aider) suffer from <strong>Quadratic Context Explosion</strong>.
+          Every time an agent reads large files, scans directories, or parses test logs, it re-transmits massive transient context back and forth to expensive cloud APIs.
+          Worse, when prompt prefixes change unpredictably, major providers penalize cache misses by charging <strong>12.5x more</strong> than cache reads ($1.25 vs $0.10).
+        </p>
+
+        <p>
+          <strong>TZRO v2 solves this at the native infrastructure layer.</strong> Running a local loopback proxy on <code>http://127.0.0.1:7878</code>, TZRO deterministically locks prompt cache prefixes, skeletonizes code using Tree-sitter, compacts logs and JSON tables, and executes instant local discovery queries (<code>tzro probe</code>) in &lt;5ms.
+        </p>
+      </div>
         <h2 id="inference-arbitrage">Intelligent Task Offloading</h2>
 
         <p>

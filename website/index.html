@@ -15,9 +15,9 @@
   <!-- Page Description -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TZRO — Local Task Offloader for Coding Agents | Stop Hitting Rate Limits</title>
+  <title>TZRO — The Local Token Shield for AI Coding Agents | Stop Hitting Rate Limits</title>
   <meta name="description"
-    content="TZRO intercepts heavy local file-reading commands and runs them locally so you don't burn your Claude Code, Cursor, or Codex API keys. Slash token usage by 72% and keep your momentum." />
+    content="TZRO is an ultra-lightweight native token shield and context optimization engine. Lock prompt cache prefixes, skeletonize code via Tree-sitter, and run sub-millisecond local discovery to avoid rate limits." />
 
   <!-- Modern Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -38,27 +38,12 @@
         <img src="./logo.png" alt="TZRO" class="tzro-logo" />
         <span class="logo-text">TZRO</span>
       </a>
-      <!-- Mode Toggle (hidden for GTM 2026 — user-only view) -->
-      <div class="mode-toggle" id="mode-toggle-desktop" style="display:none">
-        <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
-        <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
-      </div>
       <nav class="header-nav">
         <a href="docs.html" class="nav-link">Docs</a>
         <a href="#architecture" class="nav-link">Architecture</a>
         <a href="#benchmarks" class="nav-link">Benchmarks</a>
         <a href="#execution-surfaces" class="nav-link">Surfaces</a>
         <a href="https://github.com/The18thWarrior/tzro" class="nav-link" target="_blank" rel="noopener">GitHub</a>
-        <!-- GitHub Star CTA -->
-        <a href="https://github.com/The18thWarrior/tzro" class="github-star-btn" target="_blank" rel="noopener"
-          id="github-star-btn">
-          <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
-            <path
-              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-          </svg>
-          <span>Star</span>
-          <span class="github-star-count" id="github-star-count">—</span>
-        </a>
       </nav>
       <button class="hamburger-btn" id="mobile-menu-toggle" aria-label="Toggle Navigation" aria-expanded="false">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"
@@ -70,17 +55,6 @@
       </button>
     </div>
   </header>
-
-  <!-- Mobile Navigation Drawer -->
-  <div class="mobile-nav-drawer" id="mobile-nav-drawer">
-    <nav class="mobile-nav-content">
-      <a href="docs.html" class="mobile-nav-link">Docs</a>
-      <a href="#architecture" class="mobile-nav-link">Architecture</a>
-      <a href="#benchmarks" class="mobile-nav-link">Benchmarks</a>
-      <a href="#execution-surfaces" class="mobile-nav-link">Surfaces</a>
-      <a href="https://github.com/The18thWarrior/tzro" class="mobile-nav-link" target="_blank" rel="noopener">GitHub</a>
-    </nav>
-  </div>
 
   <!-- Grounded Bio-Synthetic Backdrops -->
   <div class="cyber-grid"></div>
@@ -96,17 +70,16 @@
         <div class="hero-split">
           <!-- Left Column: Headline & Copy -->
           <div class="hero-left">
-            <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR & ANY MCP HOST</div>
+            <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR, ANTIGRAVITY & AIDER</div>
             <h1 class="hero-title text-balance">
-              Stop hitting the 4-hour Claude limit. <span class="glow-text">Keep your momentum.</span>
+              Stop hitting API rate limits. <span class="glow-text">Shield your token budget.</span>
             </h1>
-            <p class="hero-subtitle">A local task offloader for coding agents.</p>
+            <p class="hero-subtitle">The Local Token Shield & Context Optimization Engine</p>
             <p class="hero-desc text-pretty">
-              TZRO intercepts heavy local file-reading commands and runs them
-              locally so you don't burn your Claude Code/Cursor/Codex API keys.
+              TZRO runs a transparent &lt;50MB native loopback proxy that locks KV-cache prefixes (saving 90% via cache reads), skeletonizes source code via Tree-sitter, and provides sub-millisecond local discovery.
             </p>
             <div class="hero-ctas">
-              <a href="#install" class="hero-cta-primary">Download Free</a>
+              <a href="#install" class="hero-cta-primary">Install Free</a>
               <a href="docs.html" class="hero-cta-secondary">Read Docs</a>
             </div>
           </div>
@@ -151,98 +124,93 @@
     </section>
 
     <!-- ============================================================ -->
-    <!-- ARCHITECTURE SECTION (formerly "How It Works") -->
+    <!-- ARCHITECTURE SECTION -->
     <!-- ============================================================ -->
     <section class="architecture-flow-section" id="architecture">
       <div class="hero-container">
-        <span class="section-eyebrow">Zero-Overhead Local Agent Execution</span>
-        <h2 class="section-title text-balance">Architecture</h2>
+        <span class="section-eyebrow">Zero-Overhead Local Token Shield</span>
+        <h2 class="section-title text-balance">How Tzro v2 Works</h2>
         <p class="section-desc text-pretty">
-          Claude Code delegates token-heavy, non-cognitive tasks to TZRO via
-          standard MCP tool calls (like <code>tzro_code</code> or <code>tzro_run</code>).
+          Tzro sits transparently between your AI coding agent and cloud providers, intercepting heavy context and locking prompt cache prefixes.
         </p>
 
         <!-- 3-Column Phase Layout -->
         <div class="phase-grid">
-          <!-- Phase 1: The Offload -->
+          <!-- Phase 1: Ingress Interception -->
           <div class="phase-card group" data-phase="0" id="phase-card-0">
             <div class="phase-card-header">
-              <span class="phase-label">PHASE 1: THE OFFLOAD</span>
-              <span class="phase-badge phase-badge-amber">Delegated</span>
+              <span class="phase-label">PHASE 1: INGRESS & KV-LOCK</span>
+              <span class="phase-badge phase-badge-amber">Intercepted</span>
             </div>
-            <h3 class="phase-title">Claude Code</h3>
-            <p class="phase-subtitle">Active CLI Workspace</p>
+            <h3 class="phase-title">Transparent Proxy</h3>
+            <p class="phase-subtitle">Loopback Port 7878</p>
             <ul class="phase-points">
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Claude needs to read large local files, index context, or traverse deeply nested
-                  directories.</span>
+                <span>Agents send requests to localhost:7878. System instructions and tool schemas are pinned in deterministic byte order.</span>
               </li>
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Instead of wasting cloud resources, the task is immediately handed over to TZRO as an MCP
-                  tool.</span>
+                <span>Guarantees >90% prompt cache hit rates on Anthropic and OpenAI, avoiding the 12.5x cache miss penalty.</span>
               </li>
             </ul>
             <div class="phase-footer">
-              <span class="phase-footer-action">[ Claude delegates task ]</span>
-              <span class="phase-footer-impact">(No cloud tokens spent yet)</span>
+              <span class="phase-footer-action">[ Normalizes Prompt Prefix ]</span>
+              <span class="phase-footer-impact">(90% Cache Read Discount)</span>
             </div>
           </div>
 
           <!-- Phase connector -->
           <div class="phase-connector" aria-hidden="true">➔</div>
 
-          <!-- Phase 2: Local Work -->
+          <!-- Phase 2: Local Pruning -->
           <div class="phase-card group active" data-phase="1" id="phase-card-1">
             <div class="phase-card-header">
-              <span class="phase-label">PHASE 2: LOCAL WORK</span>
-              <span class="phase-badge phase-badge-cyan">On-Device</span>
+              <span class="phase-label">PHASE 2: AST PRUNING & PROBING</span>
+              <span class="phase-badge phase-badge-cyan">&lt; 50MB RAM</span>
             </div>
-            <h3 class="phase-title">TZRO Daemon</h3>
-            <p class="phase-subtitle">Local Go-Native Core</p>
+            <h3 class="phase-title">Tree-Sitter Engine</h3>
+            <p class="phase-subtitle">On-Device Indexing</p>
             <ul class="phase-points">
               <li>
                 <span class="phase-bullet">›</span>
-                <span>TZRO takes the execution instructions locally.</span>
+                <span>Code reads are skeletonized: method bodies are elided into SHA-256 hashes (#hash) and stored in local SQLite.</span>
               </li>
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Scans workspace folders, reads local file structures, and formats raw data directly on your
-                  computer for free.</span>
+                <span><code>tzro probe</code> scans codebases via ripgrep in &lt;5ms, turning 10-turn discovery loops into single 500-token queries.</span>
               </li>
             </ul>
             <div class="phase-footer">
-              <span class="phase-footer-action">[ Processes 100% locally ]</span>
-              <span class="phase-footer-impact">(No delay, no cloud limits)</span>
+              <span class="phase-footer-action">[ 70%–90% Code Token Savings ]</span>
+              <span class="phase-footer-impact">(Full Bodies Stored in SQLite)</span>
             </div>
           </div>
 
           <!-- Phase connector -->
           <div class="phase-connector" aria-hidden="true">➔</div>
 
-          <!-- Phase 3: Clean Injection -->
+          <!-- Phase 3: Egress -->
           <div class="phase-card group" data-phase="2" id="phase-card-2">
             <div class="phase-card-header">
-              <span class="phase-label">PHASE 3: CLEAN INJECTION</span>
-              <span class="phase-badge phase-badge-emerald">Injected</span>
+              <span class="phase-label">PHASE 3: STREAMING EGRESS</span>
+              <span class="phase-badge phase-badge-emerald">Zero Limits</span>
             </div>
-            <h3 class="phase-title">Claude Code</h3>
-            <p class="phase-subtitle">Resumes Instantly</p>
+            <h3 class="phase-title">Cloud LLM</h3>
+            <p class="phase-subtitle">Claude 3.5 / GPT-4o</p>
             <ul class="phase-points">
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Claude receives a highly condensed, pre-digested summary of the heavy local work.</span>
+                <span>The model receives dense, high-signal, cache-locked context without transient log bloat or secret leakage.</span>
               </li>
               <li>
                 <span class="phase-bullet">›</span>
-                <span>The LLM continues its generation with 0% token waste and absolute zero rate limit
-                  penalty.</span>
+                <span>SSE tokens stream straight back to your editor with sub-millisecond latency.</span>
               </li>
             </ul>
             <div class="phase-footer">
-              <span class="phase-footer-action">[ 90%+ Token Bill Savings ]</span>
-              <span class="phase-footer-impact">(Continuity is preserved)</span>
+              <span class="phase-footer-action">[ Zero Rate Limits ]</span>
+              <span class="phase-footer-impact">(Momentum Uninterrupted)</span>
             </div>
           </div>
         </div>

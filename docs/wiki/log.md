@@ -2,6 +2,23 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-26T21:18:00-07:00] to-prd | Tzro v2: The Local Token Shield PRD & Strategic Refactor Plan
+
+- **Activity**: Formulated and published the comprehensive PRD and implementation plan for the complete ground-up rewrite of Tzro into **Tzro v2: The Local Token Shield**.
+- **Key Architectural Deliverables**:
+  1. **Scorched Earth Strategy on Branch `V2`**: Dropped legacy MCP orchestration, static Kahn DAG compilation, relational memory/KG graphs, and heavy GGUF sidecar managers.
+  2. **8 Core Subsystems Designed**:
+     - `pkg/proxy`: Transparent HTTP/HTTPS reverse proxy (`localhost:7878`) with direct SSE token streaming pass-through for OpenAI, Anthropic, and Gemini/Vertex.
+     - `pkg/kvlock`: KV-Cache Prefix Lock Guard guaranteeing >90% prompt cache read hits to avoid the 12.5x cache miss penalty.
+     - `pkg/ast`: Native Tree-sitter AST Skeletonizer for 10 languages (70%–90% token reduction via SHA-256 body hash markers).
+     - `pkg/store`: Embedded SQLite WAL mode + FTS5 full-text content-addressed storage engine.
+     - `pkg/probe`: Sub-millisecond local discovery engine (`tzro probe`) pairing ripgrep with Tree-sitter scope isolation.
+     - `pkg/compactor`: Deterministic Smart JSON Crusher (tabular schemas) and Stack Trace Elider (removes runtime internals).
+     - `pkg/dlp`: Zero-Cloud Data Loss Prevention and secret redaction engine.
+     - `pkg/hooks`: Antigravity lifecycle hook adapters (`PreToolUse`, `PostToolUse`, `PreInvocation`, `Stop`).
+- **PRD Published**: [PRD_TZRO_V2.md](../../PRD_TZRO_V2.md) and [.scratch/tzro-v2-token-shield/PRD.md](../../../.scratch/tzro-v2-token-shield/PRD.md)
+- **Feature Summary Created**: [Tzro v2 Feature Summary](features/tzro-v2-token-shield.md)
+
 ## [2026-08-26T13:37:00-07:00] grill-with-docs | ADR-0094: RecallPolicy and Embedding-Based Chunk Dedup
 
 - **Activity**: 9-question grill-with-docs session stress-testing fan-reduce optimization plan against domain model, glossary, and ADRs.

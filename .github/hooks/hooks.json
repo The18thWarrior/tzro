@@ -1,0 +1,4 @@
+{
+  "postTool": "/Users/jp/Desktop/Repos/tzro/.github/hooks/post-tool.sh",
+  "preTool": "/Users/jp/Desktop/Repos/tzro/.github/hooks/pre-tool.sh"
+}

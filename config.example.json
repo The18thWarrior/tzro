@@ -1,23 +1,10 @@
 {
-  "modelMode": "cooperative",
-  "cloudProvider": "google",
-  "cloudApiKey": "",
-  "cloudModel": "gemini-flash-latest",
-  "speedFloor": 5,
-  "sidecarEnabled": true,
-  "ggufModelPath": "",
-  "routerModelPath": "",
-  "modelsDir": "",
-  "contextSize": 65536,
-  "inferenceBackend": {
-    "type": "",
-    "url": "",
-    "model": "",
-    "apiKey": "",
-    "schemaFormat": ""
-  },
-  "confidenceThreshold": 3,
-  "executorNodeDelayMs": 800,
-  "executorLevelDelayMs": 500,
-  "codeModelPath": ""
+  "listenAddr": "127.0.0.1:7878",
+  "upstreamAnthropic": "https://api.anthropic.com",
+  "upstreamOpenAI": "https://api.openai.com",
+  "dbPath": "~/.tzro/token_shield.db",
+  "enableDLP": true,
+  "enableKVLock": true,
+  "enableASTSkeleton": true,
+  "maxProbeResults": 20
 }

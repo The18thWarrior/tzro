@@ -10,6 +10,7 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 
 _Map of system features, product requirements, and specs._
 
+- [Tzro v2 — The Local Token Shield](features/tzro-v2-token-shield.md) - Ground-up rewrite into an ultra-lean native token shield, transparent proxy, Tree-sitter AST skeletonizer, and deterministic probe engine. (Sources: 1 | Last Updated: 2026-08-26)
 - [Durable DAG Benchmarking Suite](features/benchmarking-suite.md) - Evaluate model planning and parameter execution against BFCL and ComplexFuncBench datasets. (Sources: 2 | Last Updated: 2026-05-24)
 - [Code Quality & Architectural Refactoring](features/code-quality-refactors.md) - Decompose monolithic runner.go and memory.go files into highly cohesive sub-modules and clean up hardcoded edge cases. (Sources: 1 | Last Updated: 2026-05-28)
 - [Synchronous DAG Execution Hooks](features/dag-execution-hooks.md) - Middleware layer for synchronous task intercepting, validation, output mutation, and durable pausing. (Sources: 1 | Last Updated: 2026-05-31)

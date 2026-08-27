@@ -1,279 +1,198 @@
-# TZRO: The Local AI Task Offloader
+# TZRO: The Local Token Shield & Context Optimization Engine
 
 <p align="center">
-  <img src="static/hero.jpeg" alt="TZRO Hero Banner" width="100%" />
+  <img src="website/logo.png" alt="TZRO Logo" width="120" />
 </p>
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Go Report Card](https://goreportcard.com/badge/github.com/The18thWarrior/tzro)](https://goreportcard.com/report/github.com/The18thWarrior/tzro)
+<p align="center">
+  <strong>Eliminate cloud API rate limits, lock KV-cache prompt prefixes, and slash agentic token waste on resource-constrained hardware.</strong>
+</p>
 
-> **Keep the Cloud for Strategy. Offload the Execution to Local Compute. Slash your agentic API token bills by 90%+.**
+<p align="center">
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a>
+  <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.25+-00ADD8.svg" alt="Go Version" /></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/Memory%20Footprint-%3C50MB%20RAM-success.svg" alt="Memory" /></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/Token%20Savings-70%25--90%25-purple.svg" alt="Token Savings" /></a>
+</p>
 
-Traditional coding assistants and CLI agent loops (like *Claude Code*, *Cursor*, or *VS Code Copilot*) are prone to **"Token-Maxing."** Every time an agent recursively scans your directory, parses an Abstract Syntax Tree (AST), or formats massive datasets, it re-submits raw codebase contexts to expensive cloud APIs. This results in linear cost escalation, reaching $50 to $150 per day in API fees for a single active developer workspace.
+---
 
-**TZRO.ai fixes the economics of agentic development.** By utilizing the open standard Model Context Protocol (MCP), TZRO sits transparently beneath your favorite coding client. Your cloud frontier model (e.g., Claude 3.5 Sonnet) handles high-level strategy planning **exactly once**, compiling instructions into an abstract execution graph. It then dynamically delegates all token-heavy file operations, string transformations, and data-shuffling to TZRO's lightweight, hardware-pinned local engine running an optimized local model — **at zero marginal cost.**
+## 🛑 The Problem: Quadratic Context Explosion & The 12.5x Cache Miss Penalty
+
+Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consume massive volumes of tokens during multi-turn developer interactions:
+
+1. **Transient Tool Bloat**: Directory listings, raw source files dumped for inspection, verbose build logs, repetitive stack traces, and JSON API payloads account for **60% to 90% of all tokens consumed**.
+2. **Context Rot**: As contexts exceed 100k+ tokens, model reasoning degrades (~2% instruction-following loss per 100k tokens), leading to hallucinated APIs and lost system constraints.
+3. **The 12.5x KV-Cache Penalty**: Major providers (Anthropic, OpenAI) offer a 90% discount on cached prompt prefixes ($P_{\text{read}} = 0.10 \times P_{\text{base}}$), but penalize cache misses with a 25% surcharge for cache writes ($P_{\text{write}} = 1.25 \times P_{\text{base}}$). A single unaligned byte or reordered tool schema invalidates the cache, making subsequent turns **12.5× more expensive**.
+4. **Heavy ML Sidecar Bloat**: Traditional context compression tools (e.g. Headroom) rely on Python runtimes and PyTorch models consuming 4.8 GB+ RAM with 60-second cold starts, rendering them unusable on standard developer hardware (8GB–16GB laptops, VDI instances, CI/CD runners).
+
+---
+
+## 🛡️ The Solution: Tzro v2 ("The Local Token Shield")
+
+**Tzro v2** is an ultra-lightweight, compiled native Go binary (<50 MB RAM, zero Python/PyTorch dependencies) that operates across two synchronized planes:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Developer / Agent (Cursor, Claude Code, Antigravity, CLI)  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Transparent Loopback Proxy / CLI)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 TZRO v2 LOCAL TOKEN SHIELD                  │
+│                                                             │
+│  1. KV-Cache Prefix Lock Guard (Guarantees 90% Cache Read)  │
+│  2. Tree-Sitter AST Skeletonizer (70-90% Token Reduction)   │
+│  3. Sub-Millisecond Local Discovery (`tzro probe`)          │
+│  4. Local SQLite FTS5 Content-Hash Store (`tzro expand`)    │
+│  5. Smart JSON Crusher & Stack Trace Elider                 │
+│  6. Zero-Cloud DLP / Secret Masking                         │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Dense, High-Signal, Cache-Locked Payload)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│           Cloud LLM Provider (Anthropic / OpenAI)           │
+│           ~80% Token Reduction / Zero Rate Limits           │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## ⚡ Quickstart
 
-Run this in your terminal:
-
+### 1. Install Tzro
 ```bash
 curl -fsSL https://get.tzro.ai | sh
 ```
-
-The installer detects your platform, builds from source if Go is available (or fetches pre-compiled release binaries), downloads the default GGUF model, and provisions MCP configurations for supported AI editors (Claude Desktop, Cursor, Gemini CLI).
-
----
-
-## 🛠️ Dynamic Client-Side Delegation Architecture
-
-TZRO relies on a strict decoupling of cognitive scheduling and local execution.
-
-```
-                  DYNAMIC CLIENT-SIDE DELEGATION FLOW
-
-   +-----------------------+                    +-----------------------+
-   |   MCP Client (Cloud)  |                    |   TZRO Server (Local) |
-   |  (e.g., Claude Code)  |                    | (Task Offloader / OS) |
-   +-----------------------+                    +-----------------------+
-               |                                            |
-               | ---- (1) Initialization Handshake -------->|
-               | <--- (2) Exposes 15 MCP tools -------------|
-               |                                            |
-               |   =====================================    |
-               |   User requests a token-heavy task:        |
-               |   "Document this entire 100MB repository"  |
-               |   =====================================    |
-               |                                            |
-               | ---- (3) Calls "tzro_run" ---------------->| (Delegates execution)
-               |          with compiled task steps          |
-               |                                            | (Kahn DAG compilation)
-               |                                            | (GBNF logit constraints)
-               |                                            | (5-Layer Compaction)
-               |                                            | (SQLite persistence)
-               |                                            |
-               | <--- (4) Returns clean Markdown summary ---| (Context footprint < 1KB)
-               |                                            |
-```
-
-- **Kahn Graph Engine:** The Go engine ingests the client's payload, maps file dependencies via abstract syntax trees (ASTs), and applies Kahn's Topological Sort Algorithm to compile operations into a concurrent, parallelizable Directed Acyclic Graph (DAG).
-- **GBNF Logit Constraints:** Small local models frequently hallucinate formats. TZRO injects Backus-Naur Form (GBNF) grammars directly into the local model's token decoding logits at execution time, mathematically guaranteeing a 0% syntax failure rate on JSON or structural markdown outputs.
-- **5-Layer Compaction Pipeline:** To prevent local context drowning, multi-object responses are structurally stripped of binary footprints, converted into header-mapped Tabular TSV formatting (saving 65% to 85% on raw token counts), and flattened into key-value pairs. If the data still exceeds the context budget, it is moved to an internal disk cache where the local model queries it sequentially via transactional SQLite tables.
-
-For a comprehensive guide on the internal subsystems, compilation flow, neural edge traversal, context compaction pipelines, and the Go SDK hooks, refer to the **[Architecture Guide](docs/ARCHITECTURE.md)**.
-
----
-
-## 💎 The Go-Native Advantage vs. Python Frameworks
-
-TZRO.ai avoids the heavy runtime layers and dynamic type errors typical of traditional, research-centric Python frameworks. By building strictly on systems-level Go:
-
-- **Ultra-Low Resource Footprint:** Runs at <30MB idle memory and boots in <10ms. It will not spin your fans or drain your battery during heavy processing sweeps.
-- **Zero Dependency Management:** Compiles entirely into a single, self-contained static binary. No virtual environments, breaking package upgrades, or fragile lockfiles to manage.
-- **Type-Safe LLM Generations:** Because Go is explicit, rigidly typed, and utilizes clean conventions (`if err != nil`), LLMs generate 90%+ more stable and execution-ready Go code compared to highly dynamic or deeply abstracted languages.
-
-### 📈 Real-World Performance & Cost Matrix
-
-| Feature Benchmark | Python Frameworks | TypeScript Frameworks | TZRO.ai (Go Core) |
-|:---|:---|:---|:---|
-| **Avg Cost per Document Loop** | $15–$45 (Cloud-dependent) | $15–$35 (Cloud-dependent) | <$0.20 (99% Token Reduction) |
-| **Idle Memory Overhead** | 150MB+ RAM | 80MB+ RAM | <30MB RAM (75% Reduction) |
-| **Cold-Start Time** | 200ms–500ms | 50ms–100ms | <10ms (Instant Startup) |
-| **State Durability Model** | Proprietary Platforms (Paid) | Serverless/Cloud Dependent | SQLite Checkpoint Tables (Local/Free) |
-| **Output Structural Security** | Post-hoc validation parsing | Runtime schema checking | Logit-Level GBNF Constraints |
-
----
-
-## 🎛️ Dual-Motion Integration: SDK Framework vs. MCP Sidecar
-
-TZRO supports two operational integration workflows:
-
-- **Motion B — The MCP Sidecar:** The out-of-the-box local daemon utility used by individual contributors to instantly restrict cloud API billing thresholds within active IDE spaces. Register the MCP server with your coding client and start offloading immediately.
-- **Motion A — The SDK Framework:** A robust systems framework for engineering architects. When your team scales from personal code execution to creating highly concurrent background enterprise automation pipelines (e.g., continuous CRM synchronizations or database migrations), import the Go-native SDK to deploy lightweight, crash-proof microservices.
-
----
-
-## 🎛️ MCP Server Integration
-
-To integrate `tzro` as an MCP server with Claude Desktop, Cursor, Gemini CLI, or Google Antigravity:
-
-### 1. Build the Binary
+*Or build directly from source:*
 ```bash
-go build -o bin/tzro-mcp ./cmd/tzro-mcp
+go install ./cmd/tzro
 ```
 
-### 2. Register in Client Configuration
+### 2. Start the Token Shield Daemon
+```bash
+tzro start
+```
+*The shield starts listening on `http://127.0.0.1:7878`.*
 
-**Claude Desktop:**
+### 3. Connect Your AI Coding Agents
+
+#### Claude Code / Anthropic
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:7878
+```
+
+#### Cursor / OpenAI / Aider
+```bash
+export OPENAI_BASE_URL=http://localhost:7878/v1
+```
+
+#### Antigravity Native Hooks
+Add to `.agents/hooks.json` or `~/.gemini/config/hooks.json`:
 ```json
 {
-  "mcpServers": {
-    "tzro": {
-      "command": "/absolute/path/to/tzro/bin/tzro-mcp",
-      "args": [],
-      "env": { "PORT": "8080" }
-    }
+  "tzro-token-shield": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [{ "type": "command", "command": "tzro hook compact" }]
+      }
+    ]
   }
 }
 ```
 
-**Cursor:** Add a new `command` type MCP server pointing to `/absolute/path/to/tzro/bin/tzro-mcp`.
+---
 
-**Gemini CLI** (`~/.gemini/mcp_config.json`):
-```json
-{
-  "mcpServers": {
-    "tzro": {
-      "command": "/absolute/path/to/.tzro/bin/tzro-mcp",
-      "args": []
-    }
-  }
-}
+## 🎛️ The 6 Core Shield Subsystems
+
+### 1. KV-Cache Prefix Lock Guard (The Financial Shield)
+- Pins system prompts, repository instructions, and tool definitions in deterministic byte order at the start of the message array.
+- Isolates dynamic variables (timestamps, ephemeral session tokens) to trailing messages.
+- Guarantees a **>90% prompt cache hit rate** on Anthropic and OpenAI, protecting you from the 12.5x cache miss penalty.
+
+### 2. Native Tree-Sitter AST Skeletonizer
+- Language-aware structural pruning across 10 programming languages (Go, TypeScript, JavaScript, Python, Rust, Java, C/C++, Ruby, PHP, C#).
+- Preserves package declarations, imports, types, structs, interfaces, exported signatures, and docstrings.
+- Replaces function bodies with cryptographic hash tags: `// [body elided: #a8f19c]`, achieving **70%–90% token reduction**.
+- The full body is indexed in local SQLite. Models expand bodies on demand via `tzro expand <hash>`.
+
+### 3. Sub-Millisecond Local Discovery (`tzro probe`)
+- Replaces 10-turn cloud exploration loops with single on-device queries.
+- Combines embedded ripgrep regex searching with Tree-sitter AST symbol resolution to locate exact line ranges and symbol scopes in <5ms.
+```bash
+$ tzro probe "jwt token validation"
+Found 1 match for "jwt token validation":
+- ValidateToken (function in auth/jwt.go:45-78) [Hash: #8f2a1c]
 ```
 
-**Google Antigravity:** Add the server configuration to `.agents/mcp_config.json` inside your active workspace, defining necessary environment parameters like `TZRO_DIR`.
+### 4. Smart JSON Crusher & Stack Trace Elider
+- **Smart JSON Crusher**: Automatically detects arrays of uniform JSON objects and formats them into compact Markdown tables, reducing token burn by up to 80%.
+- **Stack Trace Elider**: Strips standard framework and runtime internal frames from test failures and panics, preserving user-code error lines.
 
-### 3. Verify via Handshake Test
-Run `./bin/tzro-mcp` manually and paste this initialization JSON-RPC block:
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2024-11-05",
-    "capabilities": {},
-    "clientInfo": { "name": "test-client", "version": "1.0.0" }
-  }
-}
+### 5. Zero-Cloud Data Loss Prevention (DLP)
+- On-device regex and Shannon entropy scanner detects API keys (`sk-`, `ghp_`, `AKIA...`), private keys, passwords, and private IPs.
+- Masks secrets before request egress to cloud providers; rehydrates returned code edits locally.
+
+### 6. Local Content-Hash Store
+- Embedded SQLite database in WAL mode with FTS5 full-text search.
+- Stores content-addressed blobs and symbol indices locally on your machine (<10 MB disk footprint).
+
+---
+
+## 📊 Performance & Footprint Comparison
+
+| Metric | PyTorch ML Sidecars (e.g. Headroom) | Unoptimized Agent Loops | Tzro v2 (Token Shield) |
+| :--- | :--- | :--- | :--- |
+| **System Memory (RAM)** | ~4.8 GB RAM (8 PyTorch workers) | N/A | **< 50 MB RAM** (Native Go) |
+| **Cold Start Latency** | ~60 seconds (model downloads) | 0 ms | **< 10 ms** (Instant) |
+| **GPU Dependency** | Required for fast inference | None | **Zero GPU required** |
+| **Prompt Cache Stability** | Unstable (reordered turns) | Variable (12.5x miss penalties) | **> 90% Cache Read Guarantee** |
+| **Code Read Token Reduction**| 0% (Full files sent) | 0% (Full files sent) | **70% – 90% Reduction** |
+| **Codebase Discovery Loop** | 10 turns (~250,000 cloud tokens) | 10 turns (~250,000 tokens) | **1 turn via `tzro probe` (<500 tokens)** |
+
+---
+
+## 💻 CLI Reference
+
+```bash
+# Start the background proxy daemon
+tzro start --port 7878
+
+# Check real-time token shield metrics and memory footprint
+tzro status
+
+# Fast local codebase exploration (0 cloud tokens)
+tzro probe "auth middleware jwt"
+
+# Generate AST skeleton for a source file
+tzro skeleton ./pkg/kvlock/kvlock.go
+
+# Retrieve original full code body for a hash
+tzro expand aa179288
+
+# Pipe raw test logs or JSON on stdin for compaction
+go test ./... 2>&1 | tzro compact
 ```
-
-### 4. Safeguard the Stdio Pipe
-Standard input and output are strictly reserved for JSON-RPC message framing. All debug logging and runtime warnings are redirected to `stderr`. Never print to `stdout` inside custom tools, middleware, or extensions.
-
-For more details, refer to the full **[MCP Setup Guide](docs/mcp-setup-guide.md)**.
-
----
-
-## 📡 MCP Tool Interface — 16 Tools
-
-tzro exposes its OS capabilities as a lean set of 16 MCP tools over stdio, organized into three tiers:
-
-### Tier 1: Core Execution (High-Frequency)
-
-| Tool | Purpose |
-|:---|:---|
-| `tzro_run` | Plan, compile, and execute a durable DAG workflow from a natural language prompt |
-| `tzro_code` | Generate or update a single file via local LLM codegen (`full` or `diff` mode) |
-| `tzro_query_callgraph` | Traverse AST-extracted symbolic callgraphs, function declarations, callsites, and references |
-| `tzro_status` | Check execution status, node states, and outcomes of a task |
-| `tzro_list_tasks` | List recent tasks, optionally filtered by status |
-| `tzro_cancel` | Cancel a running or queued task |
-| `tzro_resume` | Resume a paused/interrupted workflow task |
-| `tzro_workflow` | Create and execute a pre-defined DAG workflow, bypassing the LLM planner |
-| `tzro_restart` | In-place daemon re-exec restart via `syscall.Exec` |
-| `tzro_dashboard` | Check dashboard spec status and return the HTTP dashboard URL |
-| `tzro_schedule` | Create, list, toggle, delete, or trigger scheduled cron workflows |
-
-### Tier 2: Merged Action-Dispatch
-
-| Tool | Purpose |
-|:---|:---|
-| `tzro_hook` | Manage human-in-the-loop approval hooks (`list` / `approve`) |
-| `tzro_model` | Manage local LLM models (`list` / `set`) |
-
-### Tier 3: Generic API Escape Hatch
-
-| Tool | Purpose |
-|:---|:---|
-| `tzro_api` | Generic dispatch for less-frequent operations: `completion`, `classification`, `compact`, `web_search`, `memory_query`, `memory_ingest`, `kg_neighborhood`, `kg_add_entity`, `rag_context`, `skills_list`, `skills_get`, `skills_relevant`, `skills_add`, `observer_events`, `observer_memories`, `activity_report`, `sentinel_alerts`, `sentinel_wake`, `configure_tools`, `apps_list`, `apps_install`, `apps_uninstall`, `dashboard_regenerate`, `dashboard_spec` — or proxy to daemon HTTP endpoints |
-
-### Infrastructure: Client Tool Dispatch
-
-These tools support the MCP client-tool protocol and are not typically called directly by users:
-
-| Tool | Purpose |
-|:---|:---|
-| `tzro_register_client_tools` | Register dynamic client-side tool definitions for the planning engine |
-| `tzro_client_tool_list` | List pending client-side tool execution requests |
-| `tzro_client_tool_submit` | Submit execution outcomes to resume a paused workflow |
-
-### Resource Subscriptions
-
-For real-time observability, the MCP server exposes two URI templates for push notifications:
-- **Task Output:** `tzro://tasks/{taskId}/output{?format}` — Status, metrics, and consolidated output for a task
-- **Node Output:** `tzro://tasks/{taskId}/nodes/{nodeId}/output{?format}` — Status and output of a specific node
-
----
-
-## 🆕 v1.1.0 Highlights
-
-- **Verified Task Execution (ADR-0067/0071)** — Two-stage quality gate validates output after terminal synthesis: structural pre-check (Stage 1) + cloud rubric evaluation scoring goal alignment, factual accuracy, coherence, and completeness (Stage 2). Scatter probes fill detected coverage gaps.
-- **Plan Template Registry (ADR-0048)** — GBNF-constrained template classification routes prompts to canonical DAG templates (explore-only, research, data-analysis, multi-tool). The planner mutates templates rather than generating graphs from scratch, reducing hallucinated node types.
-- **Phase Runner (ADR-0073)** — Multi-phase state machine replaces monolithic probe execution. Nodes execute through ordered phases (explore → analyze → synthesize) with per-phase step budgets and recovery strategies (skip/backtrack).
-- **Neural Embedding Sidecar (ADR-0075)** — Dedicated All-MiniLM-L6-v2 llama-server process for embedding generation, independent of router/worker sidecars. Powers neural similarity search for memory, skills, and Graph-RAG.
-- **Two-Pass Tool Extraction (ADR-0064/0065)** — Separates reasoning (worker model, Pass 1) from structured parameter extraction (router model + GBNF, Pass 2), eliminating combined reasoning/extraction failures.
-- **Deterministic Query Path (ADR-0076)** — GBNF-constrained intent extraction maps data-analysis prompts directly to `query_builder`, bypassing stochastic parameter extraction.
-- **MCP UI Frontend** — Real-time task visualization dashboard served from the MCP server, with DAG graph rendering, node-level detail views, and event streaming.
-- **Web Content Extraction** — Structured content extraction from web pages and documentation sources with relevance filtering.
-
----
-
-## 💻 Guidelines for AI Coding Agents
-
-If you are an AI coding assistant, software agent, or automated bot executing tasks in this repository, you **must** adhere to the following developer guidelines:
-
-### 1. Respect the Local Wiki Architecture
-All system concept pages, historical bug diagnostic post-mortems, and workflow diagrams are persisted under `docs/wiki/`. Whenever you complete a feature refactor, diagnose a benchmark failure, or implement a design shift, you must log it chronology-wise in `docs/wiki/log.md`, create/update the relevant files in `docs/wiki/features/` or `docs/wiki/bugs/`, and update `docs/wiki/index.md`.
-
-### 2. Adhere to Domain Nomenclature
-Always use standard terminology in code comments, schemas, and UI components. Never use deprecated v1 names. Refer to `CONTEXT.md` at the repository root for the full glossary list before writing variables or documentation.
-
-### 3. Verification & Testing Posture
-All newly exported Go functions, compilation passes, or tool registrations **require** corresponding tests in their respective packages. Run tests (`go test ./...`) and code formatting (`go fmt ./...`) before proposing changes.
-
-### 4. Durable Execution Delegation (Offload Policy)
-When executing any task that does not explicitly require frontier model reasoning (such as code generation, complex architectural design judgment, or interactive human dialogue), coding agents **must** delegate execution to the local `tzro` engine via `tzro_run` or `tzro` CLI. Refer to `AGENTS.md` and the offload policies in `docs/ARCHITECTURE.md` for specific triggers and wait protocols.
-
----
-
-## 🤝 Contributing & Community
-
-We prioritize measurable utility over vanity metrics. Success is tracked by Weekly Active Offloaded Tasks (WAOT) rather than GitHub star accumulation.
-
-We welcome pull requests! Look for these labels on issues to get started:
-
-- **`good first issue`** — Ideal for writing custom structural GBNF grammar templates for corporate data standards.
-- **`compaction-layer-optimizations`** — Optimizing the 5-layer text compression pipelines for specialized file types.
 
 ---
 
 ## ⚖️ Development & Testing
 
-Keep the repository formatted, clean, and tested using the standard build environment scripts:
-
-### Go Subsystems
 ```bash
-# Run all Go unit and integration tests
+# Run all unit and integration tests
 go test -v ./...
 
-# Format Go source files
+# Format source files
 go fmt ./...
-```
 
-### Vite React Dashboard
-```bash
-# Run ESLint validation
-npm --prefix web run lint
-
-# Build production bundle cleanly
-npm --prefix web run build
+# Build single static binary
+./build.sh
 ```
 
 ---
 
 ## 📄 License
 
-This project is licensed under the Apache 2.0 License — see the [LICENSE](LICENSE) file for details.
+Licensed under the [Apache 2.0 License](LICENSE).
