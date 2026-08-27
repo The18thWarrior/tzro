@@ -9,7 +9,7 @@ func TestSourceTracker_WebAndFileInjection(t *testing.T) {
 	st := NewSourceTracker()
 	st.AddWebSource("https://docs.restate.dev/docs", "Restate Docs", "", []string{"Durable RPC"})
 	st.AddWebSource("https://docs.temporal.io", "Temporal", "", []string{"Event Sourcing"})
-	st.AddFileSource("internal/executor/probe.go", []string{"RunProbe"}, 120, "")
+	st.AddFileSource("internal/executor/executor.go", []string{"Execute"}, 120, "")
 
 	if !st.HasSources() {
 		t.Fatal("expected HasSources to be true")
@@ -24,8 +24,8 @@ func TestSourceTracker_WebAndFileInjection(t *testing.T) {
 	if !strings.Contains(injected, "[https://docs.restate.dev/docs](https://docs.restate.dev/docs)") && !strings.Contains(injected, "https://docs.restate.dev/docs") {
 		t.Errorf("expected restate URL in output, got %q", injected)
 	}
-	if !strings.Contains(injected, "internal/executor/probe.go") {
-		t.Errorf("expected probe.go in output, got %q", injected)
+	if !strings.Contains(injected, "internal/executor/executor.go") {
+		t.Errorf("expected executor.go in output, got %q", injected)
 	}
 }
 

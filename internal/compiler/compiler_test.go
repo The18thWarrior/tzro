@@ -841,3 +841,103 @@ func TestSCT_WriteFileLeaf_NoSynthesisInjected(t *testing.T) {
 		}
 	}
 }
+
+// TestRecallPolicy_SkipPreventsRecallInjection verifies that RecallPolicy="skip"
+// on a list node prevents the compiler from injecting a Recall node (ADR-0094).
+func TestRecallPolicy_SkipPreventsRecallInjection(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "recall_policy_skip",
+		Nodes: []GraphNode{
+			{
+				ID:           "explore",
+				Type:         "list",
+				Instructions: "Extract docs",
+				RecallPolicy: "skip",
+			},
+			{
+				ID:           "write_output",
+				Type:         "action",
+				Action:       "write_file",
+				Instructions: "Write output",
+				AllowedTools: []string{"write_file"},
+			},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "explore", TargetID: "write_output"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// No recall node should be injected
+	for _, n := range expanded.Nodes {
+		if n.ID == "explore_recall" {
+			t.Error("RecallPolicy=skip should prevent recall injection, but explore_recall was found")
+		}
+	}
+
+	// Verify explore feeds write_output_exec without a recall intermediary
+	hasRecallEdge := false
+	for _, e := range expanded.Edges {
+		if e.SourceID == "explore_recall" || e.TargetID == "explore_recall" {
+			hasRecallEdge = true
+		}
+	}
+	if hasRecallEdge {
+		t.Error("expected no edges involving explore_recall when RecallPolicy=skip")
+	}
+}
+
+// TestRecallPolicy_SkipBindsWriteFileDirectly verifies that when RecallPolicy="skip",
+// the write_file node's DynamicBindings resolve to the list node's output directly,
+// not to a non-existent explore_recall.output (ADR-0094).
+func TestRecallPolicy_SkipBindsWriteFileDirectly(t *testing.T) {
+	graph := &ExecutionGraph{
+		TaskID: "recall_policy_binding",
+		Nodes: []GraphNode{
+			{
+				ID:           "explore",
+				Type:         "list",
+				Instructions: "Extract docs",
+				RecallPolicy: "skip",
+			},
+			{
+				ID:           "write_output",
+				Type:         "action",
+				Action:       "write_file",
+				Instructions: "Write output",
+				AllowedTools: []string{"write_file"},
+			},
+		},
+		Edges: []GraphEdge{
+			{SourceID: "explore", TargetID: "write_output"},
+		},
+	}
+
+	expanded, err := ExpandToSCTGraph(graph, nil)
+	if err != nil {
+		t.Fatalf("ExpandToSCTGraph failed: %v", err)
+	}
+
+	// Find the write_output_exec node and check its binding
+	for _, n := range expanded.Nodes {
+		if n.ID == "write_output_exec" {
+			if n.DynamicBindings == nil {
+				t.Fatal("write_output_exec should have DynamicBindings")
+			}
+			contentBinding, ok := n.DynamicBindings["content"]
+			if !ok {
+				t.Fatal("write_output_exec should have content DynamicBinding")
+			}
+			expected := "explore.output"
+			if contentBinding != expected {
+				t.Errorf("expected content binding %q, got %q", expected, contentBinding)
+			}
+			return
+		}
+	}
+	t.Error("write_output_exec node not found in expanded graph")
+}

@@ -5,6 +5,9 @@
     "tier": 1,
     "prompt": "Generate an API reference document for the tzro tools package. List every exported tool constructor function (NewReadFileTool, NewWriteFileTool, etc.), its parameters, return type, and a one-sentence description. Format as a markdown table. Write the output to 'docs/api_reference.md'.",
     "targetPaths": ["internal/tools"],
+    "expectedTools": ["list_dir", "read_file", "write_file"],
+    "expectedFiles": ["internal/tools"],
+    "expectedSymbols": ["NewReadFileTool", "NewWriteFileTool", "NewListDirTool", "NewGrepTool", "Tool"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Tool names, parameter types, and return types match the actual code"},
@@ -21,6 +24,9 @@
     "tier": 2,
     "prompt": "Read the ADR files in docs/adr/ and generate a migration guide for developers upgrading through the major architectural changes. Group ADRs chronologically, identify breaking changes, and provide before/after code patterns where applicable. Write the output to 'docs/migration_guide.md'.",
     "targetPaths": ["docs/adr"],
+    "expectedTools": ["list_dir", "read_file", "write_file"],
+    "expectedFiles": ["docs/adr"],
+    "expectedSymbols": ["ADR", "Migration", "Breaking Changes", "Architecture"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "ADR references are accurate — IDs, titles, and decisions match the actual files"},
@@ -38,6 +44,9 @@
     "tags": ["novel"],
     "prompt": "Use git_log to retrieve the last 50 commits on the main branch. Analyze the commit messages and generate a structured changelog grouped by category (features, fixes, refactors, docs). Each entry should have the commit hash (short), a cleaned-up description, and the affected component. Write the output to 'docs/changelog.md'.",
     "targetPaths": ["."],
+    "expectedTools": ["git_log", "write_file"],
+    "expectedFiles": ["."],
+    "expectedSymbols": ["Changelog", "Features", "Fixes", "Refactors", "Docs"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Commit hashes and messages match actual git history"},
@@ -54,6 +63,9 @@
     "tier": 4,
     "prompt": "Generate an operational runbook for running and troubleshooting tzro. Cover: initial setup, starting/stopping sidecars, common error scenarios and their fixes, performance tuning (context sizes, step budgets), and health check procedures. Base it on the actual configuration options in internal/config/ and the sidecar management code in internal/inference/. Write the output to 'docs/runbook.md'.",
     "targetPaths": ["internal/config", "internal/inference"],
+    "expectedTools": ["list_dir", "read_file", "write_file"],
+    "expectedFiles": ["internal/config", "internal/inference"],
+    "expectedSymbols": ["Sidecar", "Configuration", "Health Check", "Troubleshooting", "Llama", "Port"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Configuration field names, default values, and sidecar commands match the actual code"},
@@ -71,6 +83,9 @@
     "tags": ["novel"],
     "prompt": "Analyze the error handling patterns across the tzro codebase (internal/executor, internal/inference, internal/compiler, internal/task). Identify every distinct error type, where it originates, what triggers it, and how it propagates. Generate an error triage guide that maps symptoms to root causes with suggested fixes. Write the output to 'docs/error_triage.md'.",
     "targetPaths": ["internal/executor", "internal/inference", "internal/compiler", "internal/task"],
+    "expectedTools": ["list_dir", "read_file", "write_file"],
+    "expectedFiles": ["internal/executor", "internal/inference", "internal/compiler", "internal/task"],
+    "expectedSymbols": ["executor", "inference", "compiler", "task", "Error", "Triage", "Root Cause"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Error types, originating files, and propagation paths match the actual code"},

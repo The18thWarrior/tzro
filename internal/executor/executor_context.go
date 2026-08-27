@@ -249,37 +249,20 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 				}
 			}
 		} else {
-			// Standard synthesis: recall/probe nodes carry the data;
-			// exec nodes are passthrough and can be aggressively compacted.
-			// ADR-0044: Apply a global synthesis ceiling to prevent 4B model
-			// degeneration. Without this, multiple untruncated recall nodes
-			// can accumulate 17K+ chars, consistently triggering GenerationGuard.
-			const synthesisCeiling = 16000
-			totalUntruncated := 0
+			// Synthesis path (ADR-0044 Mechanism A & ADR-0094):
+			// Primary data carriers (recall, list, probe, action, validator) are delivered
+			// untruncated (budget: -1) to preserve ground-truth symbol definitions and full
+			// extracted documents. Sectioned Map-Reduce (ADR-0084) and Neural Embedding
+			// Chunk Pruning (ADR-0094) handle per-section context partitioning downstream.
+			// Deterministic exec confirmation nodes are capped at 4096 chars.
 			for i, cn := range completed {
 				ntype := nodeTypeMap[cn.nodeID]
 				switch ntype {
-				case "recall":
-					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1} // mark for now
-					totalUntruncated += len(cn.output)
 				case "deterministic":
 					budgeted[i] = budgetEntry{cn.nodeID, cn.output, 4096} // 4096 preserves filter_where results (FM-13: 1024 was over-compacting lookup answers)
 				default:
-					// action, probe, synthesis, etc.
+					// action, probe, list, recall, validator, synthesis — untruncated
 					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
-					totalUntruncated += len(cn.output)
-				}
-			}
-			// If total untruncated content exceeds ceiling, proportionally cap each
-			if totalUntruncated > synthesisCeiling {
-				for i := range budgeted {
-					if budgeted[i].budget == -1 && len(budgeted[i].output) > 0 {
-						proportional := (len(budgeted[i].output) * synthesisCeiling) / totalUntruncated
-						if proportional < 512 {
-							proportional = 512
-						}
-						budgeted[i].budget = proportional
-					}
 				}
 			}
 		}
@@ -363,12 +346,12 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 		}
 
 		for i, cn := range completed {
-			// Recall nodes carry the primary data for downstream consumers.
-			// Never compact them — same treatment as the synthesis path (line 245).
-			// Without this, CompactContent can misclassify recall output as code
-			// and strip it to 0 chars via ExtractSkeleton.
+			// Recall/List/Analyze nodes carry the primary data for downstream consumers.
+			// In non-synthesis path (validators and action parameter extraction), cap
+			// primary carriers to a safe preview budget (4096 chars). Full output remains
+			// in SQLite/NodeState for dynamic bindings and deterministic execution.
 			ntype := nodeTypeMap[cn.nodeID]
-			// ADR-0069: IsPrimaryDataCarrier nodes get unlimited budget
+			// ADR-0069: IsPrimaryDataCarrier nodes get bounded budget in standard path
 			isPrimary := false
 			if activeRegistry != nil {
 				if s, ok := activeRegistry.Get(ntype); ok {
@@ -378,7 +361,13 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 				isPrimary = true // legacy fallback
 			}
 			if isPrimary {
-				budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				const maxPrimaryExtractionChars = 4096
+				if len(cn.output) <= maxPrimaryExtractionChars {
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
+				} else {
+					budgeted[i] = budgetEntry{cn.nodeID, cn.output, maxPrimaryExtractionChars}
+					fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Capping primary carrier node %s at %d chars (output: %d chars)\n", cn.nodeID, maxPrimaryExtractionChars, len(cn.output))
+				}
 				continue
 			}
 			// Exempt data-profile exec nodes from compaction — the cacheId
@@ -391,12 +380,10 @@ func buildAccumulatedContext(taskID string, graph *compiler.ExecutionGraph, call
 			// Exempt nodes explicitly referenced by downstream DynamicBindings.
 			// Their output is the data source for a downstream node's parameter
 			// extraction — compacting it destroys the data pipeline.
-			// Red-team FM-11 fix: Cap exemption at 16KB. Outputs larger than
-			// this (e.g., filter_where returning 139 rows × 22 columns = 95KB)
-			// overflow the 32K token context window. The response resolver can
-			// use derived cache IDs for very large outputs.
+			// Red-team FM-11 fix: Cap exemption at 4KB. Outputs larger than
+			// this overflow the context window during parameter extraction.
 			if bindingExempt[cn.nodeID] {
-				const maxExemptChars = 16384
+				const maxExemptChars = 4096
 				if len(cn.output) <= maxExemptChars {
 					budgeted[i] = budgetEntry{cn.nodeID, cn.output, -1}
 					fmt.Fprintf(os.Stderr, "[Executor AccumulatedContext] Exempting node %s from compaction — referenced by downstream DynamicBinding\n", cn.nodeID)

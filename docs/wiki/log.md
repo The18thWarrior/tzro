@@ -2,6 +2,74 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-26T13:37:00-07:00] grill-with-docs | ADR-0094: RecallPolicy and Embedding-Based Chunk Dedup
+
+- **Activity**: 9-question grill-with-docs session stress-testing fan-reduce optimization plan against domain model, glossary, and ADRs.
+- **Decisions Resolved**:
+  1. `fanReduceSynthesis` violates Recall Node glossary ("No LLM compaction calls") — belongs in synthesis pipeline.
+  2. Skip Recall injection entirely for docgen via new `RecallPolicy: "skip"` on `ListAndWrite` template.
+  3. `RecallPolicy` field on `GraphNode` — universal, declarative, no compiler special-cases.
+  4. Embedding-based chunk dedup lives inside Sectioned Synthesis as deterministic scaffolding (Principle 3).
+  5. Extract `splitListOutputIntoFileChunks` to shared `chunk_utils.go`.
+  6. Delete `fanReduceSynthesis` entirely — dead code.
+  7. Parameters configurable: redundancy threshold 0.85, relevance floor 0.20, budget 80K chars.
+- **New ADR**: [ADR-0094](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0094-recall-policy-and-embedding-prune.md)
+- **CONTEXT.md Updates**: Added `RecallPolicy` glossary term. Updated `Recall Node`, `Budget-Overflow Recall Injection`, `Sectioned Map-Reduce Synthesis`.
+
+## [2026-08-26T10:45:00-07:00] diagnose | Phase 3: Dead Code Deletion & Probe Utility Extraction Completed
+
+- **Activity**: Executed Phase 3 of the Strategic Framework Pivots roadmap using the `/diagnose` skill to systematically decouple, extract, and delete legacy probe code.
+- **Key Accomplishments**:
+  1. **Decoupled & Extracted Shared Utilities**:
+     - `internal/executor/inference_engine.go`: Extracted `ModelTarget`, `ProbeInferenceEngine`, `ProbeInference`, `ThoughtChainStep`, and synthesis validation schemas.
+     - `internal/executor/util_strings.go`: Extracted `truncate`, `parseActionFromResponse`, and `hybridSynthesisThreshold`.
+     - `internal/executor/util_cache.go`: Extracted `cacheIdRe`, `extractCache*`, `extractSQL*`, `defaultSQL*`, `isAnalyzeConfig`, `containsTool`, `shouldPhaseGateApply`, and `requiredToolsBlocked`.
+     - `internal/executor/preload.go`: Extracted `detectPreloadPaths`, `dedupParentPaths`, `collectPreloadFiles`, `preloadDirectoryContext`, etc.
+     - `internal/executor/analyze_core.go`: Extracted and renamed `runAnalyzeCore` to power `AnalyzeOnlyStrategy`.
+     - `internal/executor/inventory_phases.go`: Extracted inventory extraction phase runner.
+     - `internal/executor/research_phases.go`: Co-located research query generation, clause segmentation, and URL extractors.
+     - `internal/executor/recall_compaction.go`: Added `isToolError` helper.
+  2. **Deleted ~7,077 LOC Across 25 Legacy Probe Source & Test Files**:
+     - Deleted `probe.go`, `probe_analyze_node.go`, `probe_callgraph.go`, `probe_compaction.go`, `probe_index.go`, `probe_mapreduce.go`, `probe_phases.go`, `probe_preload.go`, `probe_prompts.go`, `probe_research_grammar.go`, `probe_sql_extract.go`, `probe_synthesis.go`, `probe_tools.go`, and all corresponding `probe_*_test.go` files.
+  3. **Architecture Invariant Enforced**:
+     - Extended `TestArchitectureInvariants` with `NoProbeSourceFiles` subtest, ensuring no `probe*.go` files can be reintroduced into `internal/executor/`.
+  4. **Verification**: Full test suite across all `internal/...` and `cmd/...` packages passes cleanly.
+
+
+
+## [2026-08-26T10:04:00-07:00] wayfinder | Resolved Ticket 06: Migration Roadmap and Phased Rollout (Wayfinding Complete)
+
+- **Activity**: Wayfinder grilling session resolving [06-migration-roadmap-and-phased-rollout](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/06-migration-roadmap-and-phased-rollout.md), completing the [Strategic Framework Pivots & Execution Simplification](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md) effort.
+- **Key Decisions Resolved**:
+  1. **5-Phase Migration Sequence Approved**: Phase 1 (Harness Hardening & Re-Judge CLI) $\to$ Phase 2 (Architecture AST Linter Gate) $\to$ Phase 3 (Dead Code Deletion of ~7,800 LOC & 3-Primitive Consolidation) $\to$ Phase 4 (Holdout Suite Verification & Baseline Lock) $\to$ Phase 5 (Documentation & ADR-0093).
+- **Wayfinder Map Status**: All 6 decision tickets closed. Map Destination fully charted and clear. Ready for execution via `/plan` or direct implementation.
+
+## [2026-08-26T10:00:00-07:00] wayfinder | Resolved Ticket 05: Holdout Suite and Generalization Gate
+
+- **Activity**: Wayfinder grilling session resolving [05-holdout-suite-generalization-gate](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/05-holdout-suite-generalization-gate.md).
+- **Key Decisions Resolved**:
+  1. **Strict Train/Holdout Separation**: Standardized development suites (`*_tasks.json`) for local TDD/diagnosis and blind holdout suites (`holdout_*.json`) for unbiased verification.
+  2. **Automated Quality Floor Gate (`tzro compare --holdout`)**: Enforced a composite quality floor of $\ge 3.80 / 5.0$, zero unhandled runtime crashes, zero regression delta ($\Delta \ge 0.00$), and $<\$0.01$ unexpected cloud token spend as a mandatory release blocker.
+- **Wayfinder Map Updated**: Closed ticket 05 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 06.
+
+## [2026-08-26T09:58:00-07:00] wayfinder | Resolved Ticket 04: Cognitive Boundary Invariants
+
+- **Activity**: Wayfinder grilling session resolving [04-small-model-cognitive-boundary-invariants](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/04-small-model-cognitive-boundary-invariants.md).
+- **Key Decisions Resolved**:
+  1. **Cognitive Boundary Matrix Codified**: Enforced strict separation where 4B models never perform step routing loops, in-context arithmetic, or binary formatting, reserving LLM inference for GBNF macro classification, search expansion, verbatim line extraction, sectioned markdown synthesis, and spec-driven AST coding.
+  2. **Linear Custom Tool Planning**: Custom tools (e.g. MCP charting tools, S3 uploads) are planned 1-shot by the Strategic Planner and wired into linear Kahn DAG layers with dynamic JSONPath data bindings (`{{nodes.step1.output}}`).
+  3. **Automated Architecture Linter Test**: Mandated an AST-level CI validation test (`TestArchitectureInvariants`) preventing regex entity extractors, naive string slicing, or hardcoded task ID branches from creeping into the codebase.
+- **Wayfinder Map Updated**: Closed ticket 04 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md).
+
+## [2026-08-26T08:49:00-07:00] wayfinder | Resolved Ticket 03: Core Primitives and Pipeline Pruning
+
+- **Activity**: Wayfinder grilling session resolving [03-execution-pipeline-pruning-and-core-primitives](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/03-execution-pipeline-pruning-and-core-primitives.md).
+- **Key Decisions Resolved**:
+  1. **The 3 Universal Engine Primitives**: Consolidated all workloads (DocGen, Web Research, Data Analysis, Codegen) into: Primitive 1 (Deterministic Ingest/Discovery Walkers), Primitive 2 (Context Budgeting & Compaction via ADR-0092 Prefix Slotting and embedding ranking), and Primitive 3 (Inside-Out Sectioned Map-Reduce Synthesis & Codegen Gate).
+  2. **Dual-Planner Model Split**: Local 4B models are constrained to the **4 Canonical Archetypes** (`docgen`, `research`, `analyze`, `codegen`) + T0 Direct Fast-Path to prevent cyclic graph hallucinations; Cloud frontier models retain full compositional freedom to dynamically plan arbitrary DAG topologies from the 3 primitives.
+  3. **Codebase Pruning**: Approved immediate deletion of ~7,077 LOC of legacy Probe code and ~748 LOC of XML Semantic Validator code.
+- **Wayfinder Map Updated**: Closed ticket 03 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 04.
+
 ## [2026-08-26T08:37:00-07:00] wayfinder | Resolved Ticket 02: Node Types and Subsystem Audit
 
 - **Activity**: Wayfinder research session auditing all registered node types, strategies, and execution branches in `internal/executor/`, `internal/compiler/`, and `internal/strategy/`.

@@ -658,7 +658,7 @@ func TestRegistry_BuildPlanJSONSchema(t *testing.T) {
 	reg.Register(&testStrategy{nodeType: "list", plannerCard: &PlannerCard{Type: "list", WhenToUse: "explore"}})
 
 	schemaJSON := reg.BuildPlanJSONSchema()
-	var parsed struct {
+	var fullParsed struct {
 		Properties struct {
 			Nodes struct {
 				Items struct {
@@ -666,22 +666,32 @@ func TestRegistry_BuildPlanJSONSchema(t *testing.T) {
 						Type struct {
 							Enum []string `json:"enum"`
 						} `json:"type"`
+						RecallPolicy struct {
+							Type string   `json:"type"`
+							Enum []string `json:"enum"`
+						} `json:"recallPolicy"`
 					} `json:"properties"`
 				} `json:"items"`
 			} `json:"nodes"`
 		} `json:"properties"`
 	}
-
-	if err := json.Unmarshal([]byte(schemaJSON), &parsed); err != nil {
-		t.Fatalf("failed to parse generated schema: %v", err)
+	if err := json.Unmarshal([]byte(schemaJSON), &fullParsed); err != nil {
+		t.Fatalf("failed to parse generated schema for recallPolicy check: %v", err)
 	}
 
-	enums := parsed.Properties.Nodes.Items.Properties.Type.Enum
+	enums := fullParsed.Properties.Nodes.Items.Properties.Type.Enum
 	if len(enums) != 3 {
 		t.Fatalf("expected 3 enums, got %d: %v", len(enums), enums)
 	}
 	if enums[0] != "action" || enums[1] != "synthesis" || enums[2] != "list" {
 		t.Errorf("unexpected enums order: %v", enums)
+	}
+	rp := fullParsed.Properties.Nodes.Items.Properties.RecallPolicy
+	if rp.Type != "string" {
+		t.Errorf("expected recallPolicy type 'string', got %q", rp.Type)
+	}
+	if len(rp.Enum) != 4 {
+		t.Errorf("expected 4 recallPolicy enum values, got %d: %v", len(rp.Enum), rp.Enum)
 	}
 }
 

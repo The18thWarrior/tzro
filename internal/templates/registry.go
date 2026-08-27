@@ -17,6 +17,7 @@ type TemplateCategory string
 const (
 	ListSynthesis      TemplateCategory = "list-synthesis"
 	ListAndWrite       TemplateCategory = "list-and-write"
+	ListAndAction      TemplateCategory = "list-and-action"
 	MultiListSynthesis TemplateCategory = "multi-list-synthesis"
 	Codegen            TemplateCategory = "codegen"
 	DataAnalysis       TemplateCategory = "data-analysis"
@@ -68,9 +69,16 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 				Type:         "list",
 				Instructions: "Extract relevant content from the target for documentation or output.",
 				Status:       "pending",
+				RecallPolicy: "skip", // ADR-0094: Sectioned Synthesis handles decomposition natively
 				ProbeConfig: &compiler.ProbeConfig{
 					Goal: "Extract relevant content from the target for documentation or output.",
 				},
+			},
+			{
+				ID:           "synthesize",
+				Type:         "synthesis",
+				Instructions: "Synthesize the extracted content into a structured, comprehensive document.",
+				Status:       "pending",
 			},
 			{
 				ID:           "write_output",
@@ -79,10 +87,40 @@ var registry = map[TemplateCategory]*compiler.ExecutionGraph{
 				Instructions: "Write the output to the target file.",
 				AllowedTools: []string{"write_file"},
 				Status:       "pending",
+				DynamicBindings: map[string]interface{}{
+					"content": "synthesize.output",
+				},
 			},
 		},
 		Edges: []compiler.GraphEdge{
-			{SourceID: "explore", TargetID: "write_output"},
+			{SourceID: "explore", TargetID: "synthesize"},
+			{SourceID: "synthesize", TargetID: "write_output"},
+		},
+	},
+
+	ListAndAction: {
+		MaxCycles: 5,
+		Nodes: []compiler.GraphNode{
+			{
+				ID:           "gather_context",
+				Type:         "list",
+				Instructions: "Extract relevant context from the target for tool execution.",
+				Status:       "pending",
+				ProbeConfig: &compiler.ProbeConfig{
+					Goal: "Extract relevant context from the target for tool execution.",
+				},
+			},
+			{
+				ID:           "execute_action",
+				Type:         "action",
+				Action:       "",
+				Instructions: "Execute the action using the gathered context.",
+				AllowedTools: []string{},
+				Status:       "pending",
+			},
+		},
+		Edges: []compiler.GraphEdge{
+			{SourceID: "gather_context", TargetID: "execute_action"},
 		},
 	},
 

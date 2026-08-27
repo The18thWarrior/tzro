@@ -901,3 +901,403 @@ func buildCitationPreamble(sources []ScrapedSource, cards []EvidenceCard) string
 
 	return b.String()
 }
+
+// buildResearchMarkdownGrammar constructs a raw GBNF grammar that enforces
+// structural Markdown output containing a Title/Overview, Detailed Analysis,
+// a structured Markdown Comparison Table, and a bulleted Sources & Citations list.
+func buildResearchMarkdownGrammar(goal string) string {
+	return `root ::= overview-section analysis-section table-section sources-section
+
+overview-section ::= "# " [^\n]+ "\n\n" paragraph "\n\n"
+
+analysis-section ::= ("## " [^\n]+ "\n\n" (paragraph | list-item)+ "\n\n")+
+
+table-section ::= "## Comparative Overview\n\n" table-header table-divider table-row+ "\n"
+table-header  ::= "| " ([^|\n]+ " | ")+ "\n"
+table-divider ::= "| " ("--- | ")+ "\n"
+table-row     ::= "| " ([^|\n]+ " | ")+ "\n"
+
+sources-section ::= "## Sources & Citations\n\n" source-item+
+source-item     ::= "- " [^\n]+ "\n"
+
+paragraph ::= [^\n]+ ("\n" [^\n]+)*
+list-item ::= "- " [^\n]+ "\n"
+`
+}
+
+// SearchQueriesSchema constrains token generation to a JSON array of search query strings.
+const SearchQueriesSchema = `{
+	"type": "array",
+	"items": { "type": "string" }
+}`
+
+// GenerateSearchQueries uses a single 1-shot Worker call with GBNF array grammar
+// to decompose a research goal into 2 to 4 distinct search queries.
+// Falls back to deterministic clause extraction if inference fails or yields < 2 queries.
+func GenerateSearchQueries(ctx context.Context, engine ProbeInferenceEngine, goal string) ([]string, error) {
+	if strings.TrimSpace(goal) == "" {
+		return nil, nil
+	}
+
+	systemPrompt := `You are a search query optimizer for a technical research agent.
+Given the user's research goal and context, generate 2 to 4 distinct, high-precision search query strings designed to find authoritative, factual information from different angles.
+
+Follow these decomposition rules:
+1. ENTITY TARGETING: If specific named entities, tools, products, or standards are mentioned (e.g. llama.cpp, Ollama, MLX, vLLM, Go CVE, Temporal, Restate), generate targeted queries pinning each entity + its required comparison dimensions.
+2. THEMATIC DECOMPOSITION: If the goal is conceptual or thematic without specific entities (e.g. common business practices for remote teams), extract the core subject noun-phrase and decompose into distinct sub-aspect queries (e.g. communication standards, performance metrics, workflow guidelines).
+3. NO GENERIC QUERIES: Never emit broad 1-2 word queries (e.g. "market analysis" or "security"). Always include concrete technical qualifiers.
+
+Output ONLY a JSON array of query strings with no other text, e.g. ["query 1", "query 2", "query 3"].`
+
+	userPrompt := fmt.Sprintf("Research Goal: %s\n\nGenerate 2-4 distinct web search queries:", goal)
+
+	messages := []inference.InferenceMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	if engine != nil {
+		res, err := engine.InferMessages(ctx, messages, SearchQueriesSchema, TargetWorker)
+		if err == nil {
+			var parsed []string
+			if json.Unmarshal([]byte(strings.TrimSpace(res)), &parsed) == nil && len(parsed) >= 2 {
+				var valid []string
+				for _, q := range parsed {
+					qTrim := strings.TrimSpace(q)
+					if qTrim != "" {
+						valid = append(valid, qTrim)
+					}
+				}
+				if len(valid) >= 2 {
+					return valid, nil
+				}
+			}
+		}
+	}
+
+	// Fallback to deterministic query decomposition
+	return extractSearchQueryVariantsFromGoal(goal), nil
+}
+
+// extractSearchQueryVariantsFromGoal decomposes a research goal into 2-4 diverse search queries
+// using neural embedding cosine similarity and semantic clause segmentation.
+func extractSearchQueryVariantsFromGoal(goal string) []string {
+	clauses := segmentGoalIntoClauses(goal)
+	if len(clauses) == 0 {
+		clauses = []string{goal}
+	}
+
+	metaPrototypes := []string{
+		"Search the web and browse at least 3 distinct source pages",
+		"Use web_search to find authoritative sources and web_browse to inspect",
+		"Synthesize a structured comparative analysis tailored for a CTO",
+		"Cite specific URLs and visited sources",
+		"Format citations inline using markdown links",
+		"Produce a comprehensive well-sourced answer",
+	}
+
+	type scoredClause struct {
+		text   string
+		sim    float32
+		isMeta bool
+	}
+	var scored []scoredClause
+
+	if inference.GlobalEmbeddingSidecar != nil && inference.GlobalEmbeddingSidecar.IsAvailable() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		goalVec, err := inference.GlobalEmbeddingSidecar.Embed(ctx, goal)
+		if err == nil && len(goalVec) > 0 {
+			allTexts := append([]string{}, clauses...)
+			allTexts = append(allTexts, metaPrototypes...)
+			vecs, err := inference.GlobalEmbeddingSidecar.EmbedBatch(ctx, allTexts)
+			if err == nil && len(vecs) == len(allTexts) {
+				clauseVecs := vecs[:len(clauses)]
+				metaVecs := vecs[len(clauses):]
+
+				for i, cv := range clauseVecs {
+					simToGoal := inference.GlobalEmbeddingSidecar.CosineSimilarity(goalVec, cv)
+					var maxMetaSim float32
+					for _, mv := range metaVecs {
+						ms := inference.GlobalEmbeddingSidecar.CosineSimilarity(cv, mv)
+						if ms > maxMetaSim {
+							maxMetaSim = ms
+						}
+					}
+					isMeta := maxMetaSim > 0.70 && maxMetaSim > simToGoal
+					scored = append(scored, scoredClause{
+						text:   clauses[i],
+						sim:    simToGoal,
+						isMeta: isMeta,
+					})
+				}
+			}
+		}
+	}
+
+	if len(scored) == 0 {
+		for _, cl := range clauses {
+			sim := float32(embeddings.CosineSimilarity(goal, cl))
+			scored = append(scored, scoredClause{text: cl, sim: sim, isMeta: false})
+		}
+	}
+
+	var candidates []scoredClause
+	for _, sc := range scored {
+		if !sc.isMeta && len(sc.text) >= 5 {
+			candidates = append(candidates, sc)
+		}
+	}
+	if len(candidates) == 0 {
+		candidates = scored
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].sim > candidates[j].sim
+	})
+
+	var queries []string
+	seen := make(map[string]bool)
+	for _, c := range candidates {
+		q := strings.TrimSpace(c.text)
+		q = strings.Trim(q, ".,;:-_\"'")
+		lower := strings.ToLower(q)
+		if len(q) >= 5 && !seen[lower] {
+			seen[lower] = true
+			queries = append(queries, q)
+			if len(queries) >= 3 {
+				break
+			}
+		}
+	}
+
+	if len(queries) == 0 {
+		queries = []string{goal}
+	}
+	return appendDomainAnchorsIfRelevant(goal, queries)
+}
+
+// appendDomainAnchorsIfRelevant appends targeted domain filters for recognized technical ecosystems.
+func appendDomainAnchorsIfRelevant(goal string, queries []string) []string {
+	lower := strings.ToLower(goal)
+	var anchors []string
+	if strings.Contains(lower, "go ") || strings.Contains(lower, "golang") || strings.Contains(lower, "cve") {
+		if strings.Contains(lower, "cve") || strings.Contains(lower, "vulnerabilit") || strings.Contains(lower, "security") {
+			anchors = append(anchors, "site:pkg.go.dev/vuln OR site:go.dev/doc/security")
+		}
+	}
+	if strings.Contains(lower, "temporal") {
+		anchors = append(anchors, "site:docs.temporal.io")
+	}
+	if strings.Contains(lower, "restate") {
+		anchors = append(anchors, "site:docs.restate.dev")
+	}
+	if strings.Contains(lower, "inngest") {
+		anchors = append(anchors, "site:inngest.com")
+	}
+	if strings.Contains(lower, "gguf") || strings.Contains(lower, "llama.cpp") {
+		anchors = append(anchors, "site:github.com/ggerganov/llama.cpp")
+	}
+
+	if len(anchors) == 0 {
+		return queries
+	}
+
+	result := append([]string{}, queries...)
+	if len(queries) > 0 {
+		cleanBase := queries[0]
+		for _, p := range []string{"site:pkg.go.dev/vuln", "site:go.dev", "site:docs.temporal.io", "site:docs.restate.dev", "site:inngest.com", "site:github.com"} {
+			cleanBase = strings.ReplaceAll(cleanBase, p, "")
+		}
+		cleanBase = strings.TrimSpace(cleanBase)
+		if cleanBase != "" {
+			for _, a := range anchors {
+				result = append(result, fmt.Sprintf("%s %s", cleanBase, a))
+			}
+		}
+	}
+	return result
+}
+
+func stripToolMetaPhrases(s string) string {
+	toolPhrases := []string{
+		"using web_search and web_browse",
+		"using web_search",
+		"using web_browse",
+		"use web_search and web_browse",
+		"use web_search",
+		"use web_browse",
+		"via web_search and web_browse",
+		"via web_search",
+		"via web_browse",
+		"with web_search and web_browse",
+		"with web_search",
+		"with web_browse",
+		"web_search and web_browse",
+		"web_search",
+		"web_browse",
+		"on at least 3 authoritative sources",
+		"on at least 3 distinct source URLs",
+		"on at least 3 source URLs",
+		"on at least 3 sources",
+		"on at least 3 URLs",
+		"across at least 3 distinct source URLs",
+		"across at least 3 source URLs",
+		"across at least 3 URLs",
+		"citing all consulted source URLs",
+		"citing all visited URLs",
+		"citing all source URLs",
+		"citing all URLs",
+		"citing visited URLs",
+		"citing source URLs",
+		"citing consulted source URLs",
+		"with cited URLs",
+		"with cited source URLs",
+		"with exact URL citations",
+		"with verified source URLs",
+	}
+	result := s
+	for _, p := range toolPhrases {
+		re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(p))
+		result = re.ReplaceAllString(result, " ")
+	}
+	return strings.TrimSpace(result)
+}
+
+func segmentGoalIntoClauses(goal string) []string {
+	var clauses []string
+	cleanGoal := strings.TrimSpace(stripToolMetaPhrases(goal))
+	if cleanGoal == "" {
+		return nil
+	}
+
+	// 1. Split by newlines and structural sentence delimiters
+	rawSegments := strings.FieldsFunc(cleanGoal, func(r rune) bool {
+		return r == '\n' || r == ';' || r == ':'
+	})
+	if len(rawSegments) == 0 {
+		rawSegments = []string{cleanGoal}
+	}
+
+	// 2. Further split compound segments by comparative conjunctions
+	conjunctions := []string{
+		" and compare it to ", " and compare to ", " and compare with ",
+		" compared to ", " versus ", " vs. ", " vs ",
+		" as well as ", ", ", " and ",
+	}
+
+	for _, seg := range rawSegments {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		splitDone := false
+		for _, conj := range conjunctions {
+			if idx := strings.Index(strings.ToLower(seg), conj); idx > 0 {
+				p1 := strings.TrimSpace(seg[:idx])
+				p2 := strings.TrimSpace(seg[idx+len(conj):])
+				if len(p1) >= 4 && len(p2) >= 4 {
+					clauses = append(clauses, p1, p2)
+					splitDone = true
+					break
+				}
+			}
+		}
+		if !splitDone {
+			clauses = append(clauses, seg)
+		}
+	}
+
+	// Strip common leading action prefixes from candidate clauses
+	var cleanedClauses []string
+	prefixes := []string{
+		"Search the web and browse at least ",
+		"Search the web for ", "search the web for ",
+		"Search for ", "search for ",
+		"Find ", "find ",
+		"Research ", "research ",
+		"Look up ", "look up ",
+		"Investigate ", "investigate ",
+		"Explore ", "explore ",
+	}
+
+	for _, cl := range clauses {
+		cl = strings.TrimSpace(cl)
+		for _, p := range prefixes {
+			if strings.HasPrefix(cl, p) {
+				cl = strings.TrimSpace(cl[len(p):])
+				break
+			}
+		}
+		if len(cl) >= 4 {
+			cleanedClauses = append(cleanedClauses, cl)
+		}
+	}
+
+	return cleanedClauses
+}
+
+// extractSearchQueryFromGoal derives a web search query from the goal text.
+func extractSearchQueryFromGoal(goal string) string {
+	variants := extractSearchQueryVariantsFromGoal(goal)
+	if len(variants) > 0 {
+		return variants[0]
+	}
+	return strings.TrimSpace(goal)
+}
+
+func extractURLsFromWebSearch(toolOutput string) []string {
+	// Primary: parse the ToolSuccess JSON envelope
+	// Format: {"success":true,"data":{"results":[{"title":"...","url":"...","snippet":"..."}],...}}
+	var envelope struct {
+		Data struct {
+			Results []struct {
+				URL string `json:"url"`
+			} `json:"results"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(toolOutput), &envelope) == nil && len(envelope.Data.Results) > 0 {
+		var urls []string
+		for _, r := range envelope.Data.Results {
+			if r.URL != "" {
+				urls = append(urls, r.URL)
+			}
+		}
+		if len(urls) > 0 {
+			return urls
+		}
+	}
+
+	// Secondary: try flat results array (raw SearchResult format)
+	var flat struct {
+		Results []struct {
+			URL string `json:"url"`
+		} `json:"results"`
+	}
+	if json.Unmarshal([]byte(toolOutput), &flat) == nil && len(flat.Results) > 0 {
+		var urls []string
+		for _, r := range flat.Results {
+			if r.URL != "" {
+				urls = append(urls, r.URL)
+			}
+		}
+		if len(urls) > 0 {
+			return urls
+		}
+	}
+
+	// Fallback: regex extraction for non-standard formats
+	urlRe := regexp.MustCompile(`https?://[^\s"',\]}>]+`)
+	matches := urlRe.FindAllString(toolOutput, 20)
+	seen := make(map[string]bool)
+	var unique []string
+	for _, u := range matches {
+		if !seen[u] {
+			seen[u] = true
+			unique = append(unique, u)
+		}
+	}
+	return unique
+}
+

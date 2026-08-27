@@ -17,6 +17,8 @@ type EngineConfig struct {
 	CloudProvider               string  `json:"cloudProvider"` // "google" | "openai"
 	CloudAPIKey                 string  `json:"cloudApiKey"`
 	CloudModel                  string  `json:"cloudModel"`                            // the cloud model name to use (e.g. gemini-flash-latest)
+	OpenRouterAPIKey            string  `json:"openRouterApiKey,omitempty"`             // OpenRouter API key for judge and external model routing
+	JudgeModel                  string  `json:"judgeModel,omitempty"`                  // OpenRouter model ID for benchmark judging (e.g. "openai/gpt-5.6-luna")
 	SpeedFloor                  float64 `json:"speedFloor"`                            // default 5.0 t/s
 	SidecarEnabled              bool    `json:"sidecarEnabled"`                        // default true
 	ThermalCooldownSeconds      int     `json:"thermalCooldownSeconds,omitempty"`      // default 30
@@ -134,6 +136,18 @@ type EngineConfig struct {
 	// The Recall baseline context is compacted to fit within this budget.
 	// Default 32000. Set to 0 to use the default.
 	RecallCompactionBudgetChars int `json:"recallCompactionBudgetChars,omitempty"`
+
+	// Embedding Prune (ADR-0094): Deterministic chunk dedup before Sectioned Synthesis.
+	// EmbeddingPruneRedundancyThreshold is the cosine similarity above which two
+	// chunks are considered redundant (the lower-relevance one is dropped).
+	// Range [0.0, 1.0]. Default 0.85.
+	EmbeddingPruneRedundancyThreshold float32 `json:"embeddingPruneRedundancyThreshold,omitempty"`
+	// EmbeddingPruneRelevanceFloor is the minimum cosine similarity to the goal
+	// below which a chunk is dropped regardless. Range [0.0, 1.0]. Default 0.20.
+	EmbeddingPruneRelevanceFloor float32 `json:"embeddingPruneRelevanceFloor,omitempty"`
+	// EmbeddingPruneBudgetChars caps the total characters of pruned chunks
+	// passed to Sectioned Synthesis. Default 80000.
+	EmbeddingPruneBudgetChars int `json:"embeddingPruneBudgetChars,omitempty"`
 
 	// HybridSynthesisThresholdChars is the context size (in chars) above which
 	// synthesis uses a two-phase approach: local outline + cloud polish.
@@ -557,6 +571,31 @@ func GetCloudAPIKey() string {
 	return key
 }
 
+// GetOpenRouterAPIKey returns the OpenRouter API key from config, falling back
+// to the OPENROUTER_API_KEY environment variable.
+func GetOpenRouterAPIKey() string {
+	configMutex.RLock()
+	key := GlobalConfig.OpenRouterAPIKey
+	configMutex.RUnlock()
+
+	if strings.HasPrefix(key, "$") {
+		return os.Getenv(strings.TrimPrefix(key, "$"))
+	}
+	if key == "" {
+		return os.Getenv("OPENROUTER_API_KEY")
+	}
+	return key
+}
+
+// GetJudgeModel returns the configured OpenRouter model ID for benchmark judging.
+// Empty string means use the default cloud model (Gemini).
+func GetJudgeModel() string {
+	configMutex.RLock()
+	model := GlobalConfig.JudgeModel
+	configMutex.RUnlock()
+	return model
+}
+
 // GetCloudModel resolves the CloudModel dynamically, defaulting to "gemini-flash-latest"
 // for google or "gpt-4o-mini" for openai if not configured.
 func GetCloudModel() string {
@@ -821,6 +860,42 @@ func GetHybridSynthesisThresholdChars() int {
 
 	if v <= 0 {
 		return 50000
+	}
+	return v
+}
+
+// GetEmbeddingPruneRedundancyThreshold returns the cosine similarity threshold
+// above which two chunks are considered redundant (ADR-0094). Default 0.85.
+func GetEmbeddingPruneRedundancyThreshold() float32 {
+	configMutex.RLock()
+	v := GlobalConfig.EmbeddingPruneRedundancyThreshold
+	configMutex.RUnlock()
+	if v <= 0 {
+		return 0.85
+	}
+	return v
+}
+
+// GetEmbeddingPruneRelevanceFloor returns the minimum cosine similarity to goal
+// below which a chunk is dropped (ADR-0094). Default 0.20.
+func GetEmbeddingPruneRelevanceFloor() float32 {
+	configMutex.RLock()
+	v := GlobalConfig.EmbeddingPruneRelevanceFloor
+	configMutex.RUnlock()
+	if v <= 0 {
+		return 0.20
+	}
+	return v
+}
+
+// GetEmbeddingPruneBudgetChars returns the max chars for pruned context
+// passed to Sectioned Synthesis (ADR-0094). Default 80000.
+func GetEmbeddingPruneBudgetChars() int {
+	configMutex.RLock()
+	v := GlobalConfig.EmbeddingPruneBudgetChars
+	configMutex.RUnlock()
+	if v <= 0 {
+		return 80000
 	}
 	return v
 }

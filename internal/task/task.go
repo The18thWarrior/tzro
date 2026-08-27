@@ -607,6 +607,9 @@ To satisfy evaluation matching:
 	// that reference node IDs the local model hallucinated or renamed.
 	repairDynamicBindings(&graph, tmpl)
 
+	// Fix 4: Inherit template-level properties (e.g. RecallPolicy) if omitted during mutation (ADR-0094).
+	inheritTemplateProperties(&graph, tmpl)
+
 	// Telemetry: track mutation delta (ADR-0048)
 	templateNodeCount := len(tmpl.Nodes)
 	mutatedNodeCount := len(graph.Nodes)
@@ -843,7 +846,7 @@ func cleanJSONString(s string) string {
 func enforceListNodeInvariant(graph *compiler.ExecutionGraph, tmpl *compiler.ExecutionGraph, category templates.TemplateCategory, prompt string) {
 	// Only enforce for template categories that structurally require list nodes.
 	switch category {
-	case templates.ListSynthesis, templates.ListAndWrite, templates.MultiListSynthesis, templates.Codegen:
+	case templates.ListSynthesis, templates.ListAndWrite, templates.ListAndAction, templates.MultiListSynthesis, templates.Codegen:
 		// These categories require at least one list node.
 	default:
 		return
@@ -1079,3 +1082,39 @@ func repairDynamicBindings(graph *compiler.ExecutionGraph, tmpl *compiler.Execut
 		}
 	}
 }
+
+// inheritTemplateProperties copies template-level declarations (such as RecallPolicy)
+// from the base template onto matching nodes in the mutated graph when the local planner
+// omitted them during JSON generation (ADR-0094).
+func inheritTemplateProperties(graph *compiler.ExecutionGraph, tmpl *compiler.ExecutionGraph) {
+	if graph == nil || tmpl == nil {
+		return
+	}
+
+	tmplNodeByID := make(map[string]compiler.GraphNode, len(tmpl.Nodes))
+	for _, n := range tmpl.Nodes {
+		tmplNodeByID[n.ID] = n
+	}
+
+	for i := range graph.Nodes {
+		node := &graph.Nodes[i]
+		if tmplNode, ok := tmplNodeByID[node.ID]; ok {
+			if node.RecallPolicy == "" && tmplNode.RecallPolicy != "" {
+				node.RecallPolicy = tmplNode.RecallPolicy
+				fmt.Fprintf(os.Stderr, "[Plan Template] Inherited RecallPolicy=%s for node %s from template\n",
+					node.RecallPolicy, node.ID)
+			}
+		} else {
+			// Fallback by node type if ID was mutated/renamed (e.g. single list node in template)
+			for _, tmplNode := range tmpl.Nodes {
+				if tmplNode.Type == node.Type && node.RecallPolicy == "" && tmplNode.RecallPolicy != "" {
+					node.RecallPolicy = tmplNode.RecallPolicy
+					fmt.Fprintf(os.Stderr, "[Plan Template] Inherited RecallPolicy=%s for node %s (type %s) from template\n",
+						node.RecallPolicy, node.ID, node.Type)
+					break
+				}
+			}
+		}
+	}
+}
+

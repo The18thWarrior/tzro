@@ -190,6 +190,7 @@ flowchart TD
 | **Web Research** | Free-form uncited text; hardcoded domain authority boosts. | Numbered citation preamble, DOM table extraction, and post-flight semantic citation remapping ([ADR-0083](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0083-dynamic-sectioned-map-reduce-and-semantic-citation-remapping.md)). |
 | **Codegen Repairs** | Regenerating entire multi-hundred line files on syntax errors. | AST tree-sitter import validation + targeted 1-turn reflection repair ([ADR-0082](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0082-deterministic-harness-scaffolding-for-small-model-parity.md)). |
 | **Quality Safety** | Returning rejected, hallucinated local synthesis. | Verified Task Execution (VTE) with bounded re-exploration and cloud re-synthesis floor ([ADR-0067](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0067-verified-task-execution.md)). |
+| **Benchmark Integrity** | Silent 0.00 scores on judge API failures; bespoke `if t.ID == "..."` pre-compilation hacks in `conditions.go`. | Judge retry with exponential backoff + ERR sentinel (`QualityScore = -1`); `TestArchitectureInvariants` AST linter ([ADR-0093](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0093-benchmark-harness-hardening-and-invariant-enforcement.md)). |
 
 ---
 
@@ -203,6 +204,7 @@ flowchart TD
   - [`docs/adr/0083-dynamic-sectioned-map-reduce-and-semantic-citation-remapping.md`](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0083-dynamic-sectioned-map-reduce-and-semantic-citation-remapping.md)
   - [`docs/adr/0084-generalized-sectioned-map-reduce-synthesis.md`](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0084-generalized-sectioned-map-reduce-synthesis.md)
   - [`docs/adr/0085-inside-out-sandwich-section-synthesis.md`](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0085-inside-out-sandwich-section-synthesis.md)
+  - [`docs/adr/0093-benchmark-harness-hardening-and-invariant-enforcement.md`](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0093-benchmark-harness-hardening-and-invariant-enforcement.md)
 - **Core Packages**:
   - `internal/embeddings`: Embedding sidecar client and pure Go cosine vector engine.
   - `internal/executor`: Deterministic queue drivers, sectioned map-reduce synthesis, and VTE verification gates.

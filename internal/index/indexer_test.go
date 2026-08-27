@@ -71,3 +71,44 @@ Explains ` + "`Add`" + ` function operation.
 		t.Fatalf("expected search hits for 'Add', got 0")
 	}
 }
+
+func TestScanAndIndexWorkspace_Filters(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tzro-filter-test-*")
+	if err != nil {
+		t.Fatalf("temp dir failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Valid Go file
+	_ = os.WriteFile(filepath.Join(tmpDir, "valid.go"), []byte("package main\nfunc Hello() {}\n"), 0644)
+
+	// Ignored folder (static)
+	staticDir := filepath.Join(tmpDir, "static")
+	_ = os.MkdirAll(staticDir, 0755)
+	_ = os.WriteFile(filepath.Join(staticDir, "bundle.js"), []byte("console.log('static');"), 0644)
+
+	// Minified file
+	_ = os.WriteFile(filepath.Join(tmpDir, "app.min.js"), []byte("console.log('min');"), 0644)
+
+	// Huge file (>512KB)
+	hugeFile := filepath.Join(tmpDir, "huge.go")
+	hugeContent := make([]byte, 600*1024)
+	_ = os.WriteFile(hugeFile, hugeContent, 0644)
+
+	dbPath := filepath.Join(tmpDir, ".tzro", "index.db")
+	store, err := NewIndexStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewIndexStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	count, err := ScanAndIndexWorkspace(ctx, tmpDir, store, nil)
+	if err != nil {
+		t.Fatalf("ScanAndIndexWorkspace failed: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected exactly 1 indexed file (valid.go), got %d", count)
+	}
+}

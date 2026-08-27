@@ -16,7 +16,6 @@ import (
 
 	"tzro/internal/compactor"
 	cfgpkg "tzro/internal/config"
-	"tzro/internal/inference"
 	"tzro/internal/memory"
 )
 
@@ -108,7 +107,7 @@ func buildCompactedRecallContext(
 				// node's output uses "--- file:" dividers between per-file
 				// extractions. Splitting on these boundaries produces chunks that
 				// each fit within the 4B model's context window.
-				chunks := splitListOutputIntoFileChunks(out)
+				chunks := SplitListOutputIntoFileChunks(out)
 				if len(chunks) <= 1 {
 					// No file dividers found — truncate to budget as last resort.
 					fmt.Fprintf(os.Stderr, "[Recall] Oversized upstream output (%d chars) with no file dividers — truncating to budget %d\n", len(out), budget)
@@ -223,252 +222,59 @@ func windowThoughtSteps(steps []memory.ThoughtStep, max int) []memory.ThoughtSte
 	return result
 }
 
-// listFileChunk represents a single file's extracted content from List node output.
-type listFileChunk struct {
-	FilePath string
-	Content  string
-}
-
-// splitListOutputIntoFileChunks splits List node output into per-file chunks
-// by detecting "--- file:" boundary markers. Each chunk contains the content
-// for a single source file, enabling per-file compaction that fits within the
-// 4B model's context window.
-func splitListOutputIntoFileChunks(output string) []listFileChunk {
-	const divider = "--- file: "
-	lines := strings.Split(output, "\n")
-
-	var chunks []listFileChunk
-	var currentPath string
-	var currentLines []string
+// deduplicateTableRows removes duplicate markdown table rows within a section.
+// The 4B model frequently repeats symbols 2-3x in reference tables. This
+// function deduplicates by the first column (symbol name), keeping the first
+// occurrence of each symbol.
+func deduplicateTableRows(section string) string {
+	lines := strings.Split(section, "\n")
+	var result []string
+	seen := make(map[string]bool)
 
 	for _, line := range lines {
-		if strings.HasPrefix(line, divider) {
-			// Flush previous chunk
-			if currentPath != "" && len(currentLines) > 0 {
-				chunks = append(chunks, listFileChunk{
-					FilePath: currentPath,
-					Content:  strings.Join(currentLines, "\n"),
-				})
+		trimmed := strings.TrimSpace(line)
+		// Only deduplicate table data rows (not headers or separators)
+		if strings.HasPrefix(trimmed, "| ") && !strings.HasPrefix(trimmed, "| Symbol") && !strings.HasPrefix(trimmed, "|--") && !strings.HasPrefix(trimmed, "| -") {
+			sym := extractSymbolFromTableRow(trimmed)
+			if sym != "" {
+				if seen[sym] {
+					continue // skip duplicate
+				}
+				seen[sym] = true
 			}
-			// Extract file path from divider line: "--- file: /path/to/file lines: N-M ---"
-			rest := line[len(divider):]
-			if idx := strings.Index(rest, " lines: "); idx > 0 {
-				currentPath = rest[:idx]
-			} else {
-				currentPath = strings.TrimSuffix(strings.TrimSpace(rest), " ---")
-			}
-			currentLines = []string{line} // Include the divider itself
-		} else {
-			currentLines = append(currentLines, line)
 		}
+		result = append(result, line)
 	}
 
-	// Flush final chunk
-	if currentPath != "" && len(currentLines) > 0 {
-		chunks = append(chunks, listFileChunk{
-			FilePath: currentPath,
-			Content:  strings.Join(currentLines, "\n"),
-		})
+	if len(lines)-len(result) > 0 {
+		fmt.Fprintf(os.Stderr, "[DocGen/Dedup] Removed %d duplicate table rows\n", len(lines)-len(result))
 	}
-
-	// Merge chunks from the same file (List node may have multiple ranges per file)
-	merged := make(map[string]*listFileChunk)
-	var order []string
-	for _, chunk := range chunks {
-		if existing, ok := merged[chunk.FilePath]; ok {
-			existing.Content += "\n" + chunk.Content
-		} else {
-			merged[chunk.FilePath] = &listFileChunk{
-				FilePath: chunk.FilePath,
-				Content:  chunk.Content,
-			}
-			order = append(order, chunk.FilePath)
-		}
-	}
-
-	var result []listFileChunk
-	for _, path := range order {
-		result = append(result, *merged[path])
-	}
-	return result
+	return strings.Join(result, "\n")
 }
 
-// fanReduceSynthesis splits upstream output into file-level chunks, runs the
-// downstream synthesis goal on each chunk (fan), then merges partial outputs (reduce).
-// This replaces blind compaction with goal-directed synthesis on model-digestible chunks.
-//
-// The downstream goal comes from the compiler's StaticArgs injection — it's the
-// task's GoalPrompt that the downstream synthesis node would use.
-func fanReduceSynthesis(
-	ctx context.Context,
-	rawOutput string,
-	downstreamGoal string,
-	engine ProbeInferenceEngine,
-) (string, error) {
-	chunks := splitListOutputIntoFileChunks(rawOutput)
-	if len(chunks) == 0 {
-		return "", fmt.Errorf("no file chunks found in raw output")
-	}
-
-	// Split any chunk exceeding the threshold into sub-chunks at function
-	// boundaries (\n\n). This handles both single-file and multi-file cases.
-	// Without this, large files like local_model.go (1673 lines) get a 13K+
-	// token prompt that the 4B model fails to process (0 ranges → 150 chars).
-	const intraFileChunkThreshold = 8000
-	var expandedChunks []listFileChunk
-	for _, chunk := range chunks {
-		if len(chunk.Content) <= intraFileChunkThreshold {
-			expandedChunks = append(expandedChunks, chunk)
-			continue
-		}
-		// Split at double-newline boundaries (function/type boundaries in extracted code)
-		parts := strings.Split(chunk.Content, "\n\n")
-		partCount := 0
-		var current strings.Builder
-		for _, part := range parts {
-			if current.Len()+len(part) > intraFileChunkThreshold && current.Len() > 0 {
-				partCount++
-				expandedChunks = append(expandedChunks, listFileChunk{
-					FilePath: chunk.FilePath,
-					Content:  current.String(),
-				})
-				current.Reset()
-			}
-			if current.Len() > 0 {
-				current.WriteString("\n\n")
-			}
-			current.WriteString(part)
-		}
-		if current.Len() > 0 {
-			partCount++
-			expandedChunks = append(expandedChunks, listFileChunk{
-				FilePath: chunk.FilePath,
-				Content:  current.String(),
-			})
-		}
-		fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Split oversized chunk %s (%d chars) into %d sub-chunks\n", chunk.FilePath, len(chunk.Content), partCount)
-	}
-	chunks = expandedChunks
-
-	fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Splitting into %d chunks for goal-directed synthesis\n", len(chunks))
-
-	// Fan: run downstream synthesis on each chunk sequentially
-	fanCtx := context.WithValue(ctx, inference.MaxTokensKey, 2048)
-	fanCtx = context.WithValue(fanCtx, inference.GenerationGuardKey,
-		inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
-
-	var partialOutputs []string
-	for i, chunk := range chunks {
-		sysPrompt := fmt.Sprintf(`You are synthesizing documentation from source code.
-Goal: %s
-
-Source File: %s
-Source Code:
-%s
-
-INSTRUCTIONS:
-- Document ONLY exported symbols (names starting with an UPPERCASE letter in Go).
-- SKIP all unexported/private symbols (names starting with a lowercase letter like sanitizeTableName, csvToJSON, compact, getRawPayload).
-- For each exported symbol: write its full signature and a one-line description.
-- Use markdown format with ### headings for each symbol.
-- CRITICAL: Do NOT invent or hallucinate symbols that do not appear in the source code above. If a function is not in the source code, do NOT include it.
-- Be concise and accurate. Only document what you can see.`, downstreamGoal, chunk.FilePath, chunk.Content)
-
-		userPrompt := "Generate the documentation for the symbols in this file:"
-
-		partial, err := engine.Infer(fanCtx, sysPrompt, userPrompt, "", TargetWorker)
-		if err != nil {
-			errStr := err.Error()
-			// Detect sidecar crash: EOF or connection refused indicates the process died.
-			if strings.Contains(errStr, "EOF") || strings.Contains(errStr, "connection refused") {
-				fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Sidecar crash detected at chunk %d (%s). Attempting restart...\n", i, chunk.FilePath)
-				// Attempt to restart the sidecar
-				health := inference.GlobalWorkerModel.ProbeHealth(ctx)
-				if health == inference.SidecarHealthDead {
-					if restartErr := inference.GlobalWorkerModel.Start(ctx); restartErr != nil {
-						fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Sidecar restart failed: %v\n", restartErr)
-					} else {
-						fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Sidecar restarted. Retrying chunk %d...\n", i)
-						// Retry the chunk once after restart
-						partial, err = engine.Infer(fanCtx, sysPrompt, userPrompt, "", TargetWorker)
-					}
-				}
-			}
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Fan chunk %d (%s) failed: %v\n", i, chunk.FilePath, err)
-				continue
-			}
-		}
-		partial = strings.TrimSpace(partial)
-		// Post-process: strip unexported (lowercase) symbol entries that the
-		// 4B model includes despite the prompt instruction. Split on ### headings
-		// and keep only those where the symbol name starts with uppercase.
-		if strings.Contains(chunk.FilePath, ".go") && partial != "" {
-			partial = stripUnexportedSymbolBlocks(partial)
-		}
-		if partial != "" {
-			// Prepend file path so downstream extractors can locate source files.
-			// Strip annotation suffixes like "(signature fallback)" from the path.
-			cleanPath := chunk.FilePath
-			if idx := strings.Index(cleanPath, " ("); idx > 0 {
-				cleanPath = cleanPath[:idx]
-			}
-			partialOutputs = append(partialOutputs, fmt.Sprintf("<!-- source: %s -->\n%s", cleanPath, partial))
-			fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Fan chunk %d (%s): %d chars output\n", i, chunk.FilePath, len(partial))
-		}
-	}
-
-	if len(partialOutputs) == 0 {
-		return rawOutput, fmt.Errorf("fan-reduce: all fan chunks failed")
-	}
-
-	// Reduce: merge partial outputs
-	combined := strings.Join(partialOutputs, "\n\n---\n\n")
-
-	// If the combined output is small enough, skip the merge inference call
-	// and return the concatenated partials directly. The downstream DocGen
-	// sectioned synthesis will restructure them into sections.
-	// 24K threshold: allows 5-file fan outputs (~20K total) to pass through
-	// without lossy merge compression. DocGen body sections extract per-section
-	// symbols from the full context.
-	if len(combined) <= 24000 {
-		fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Combined partials (%d chars) within budget — returning directly\n", len(combined))
-		return combined, nil
-	}
-
-	// Merge via inference for large combined outputs
-	mergeSys := fmt.Sprintf(`You are merging partial documentation outputs into a single cohesive document.
-Goal: %s
-
-Partial outputs from individual source files:
-%s
-
-INSTRUCTIONS:
-- Combine these partial documentation outputs into a single, well-structured document.
-- Deduplicate any symbols that appear in multiple partials.
-- Preserve all signatures and descriptions accurately.
-- Do NOT add symbols that are not in the partials above.`, downstreamGoal, combined)
-
-	mergeCtx := context.WithValue(ctx, inference.MaxTokensKey, 2048)
-	mergeCtx = context.WithValue(mergeCtx, inference.GenerationGuardKey,
-		inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
-
-	merged, err := engine.Infer(mergeCtx, mergeSys, "Merge the partial outputs into a single document:", "", TargetWorker)
-	if err != nil {
-		// Fallback to raw concatenation on merge failure
-		fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Merge inference failed: %v — returning concatenated partials\n", err)
-		return combined, nil
-	}
-
-	fmt.Fprintf(os.Stderr, "[Recall/FanReduce] Merge complete: %d chars\n", len(merged))
-	return strings.TrimSpace(merged), nil
+// isToolError checks whether tool output text indicates an execution failure.
+func isToolError(toolOutput string) bool {
+	lower := strings.ToLower(toolOutput)
+	return strings.Contains(lower, "error:") ||
+		strings.Contains(lower, "no such file") ||
+		strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "failed to") ||
+		strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "is a directory") ||
+		strings.Contains(lower, "cannot open")
 }
 
 // stripUnexportedSymbolBlocks removes documentation entries for unexported
-// Go symbols from fan-reduce output. The 4B model consistently includes
-// lowercase symbols despite prompt instructions; this structural filter
-// strips them deterministically.
+// Go symbols from synthesis output.
 func stripUnexportedSymbolBlocks(text string) string {
+	return stripUngroundedSymbolBlocks(text, nil, "")
+}
+
+// stripUngroundedSymbolBlocks removes documentation entries for unexported
+// or ungrounded Go symbols from synthesis output. When allowedSyms or rawSourceCtx
+// is provided, headings and table rows referencing symbols that do not exist in
+// either the AST symbol map or verbatim in the raw source text are stripped.
+func stripUngroundedSymbolBlocks(text string, allowedSyms map[string]bool, rawSourceCtx string) string {
 	lines := strings.Split(text, "\n")
 	var kept []string
 	skipping := false
@@ -480,10 +286,27 @@ func stripUnexportedSymbolBlocks(text string) string {
 		// Check ### or #### heading
 		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "#### ") {
 			symbolName := extractSymbolFromHeading(trimmed)
-			if symbolName != "" && !unicode.IsUpper(rune(symbolName[0])) {
-				skipping = true
-				stripped++
-				continue
+			if symbolName != "" {
+				// 1. Must be exported (first char uppercase in Go)
+				if !unicode.IsUpper(rune(symbolName[0])) {
+					skipping = true
+					stripped++
+					continue
+				}
+				// 2. Must be grounded in AST or verbatim in source context if reference data is available
+				if len(allowedSyms) > 0 || len(rawSourceCtx) > 0 {
+					grounded := false
+					if allowedSyms != nil && allowedSyms[symbolName] {
+						grounded = true
+					} else if len(rawSourceCtx) > 0 && strings.Contains(rawSourceCtx, symbolName) {
+						grounded = true
+					}
+					if !grounded {
+						skipping = true
+						stripped++
+						continue
+					}
+				}
 			}
 			skipping = false
 		}
@@ -491,9 +314,23 @@ func stripUnexportedSymbolBlocks(text string) string {
 		// Check table row: | symbolName | kind | file | ...
 		if strings.HasPrefix(trimmed, "| ") && !strings.HasPrefix(trimmed, "| Symbol") && !strings.HasPrefix(trimmed, "|--") {
 			symbolName := extractSymbolFromTableRow(trimmed)
-			if symbolName != "" && !unicode.IsUpper(rune(symbolName[0])) {
-				stripped++
-				continue
+			if symbolName != "" {
+				if !unicode.IsUpper(rune(symbolName[0])) {
+					stripped++
+					continue
+				}
+				if len(allowedSyms) > 0 || len(rawSourceCtx) > 0 {
+					grounded := false
+					if allowedSyms != nil && allowedSyms[symbolName] {
+						grounded = true
+					} else if len(rawSourceCtx) > 0 && strings.Contains(rawSourceCtx, symbolName) {
+						grounded = true
+					}
+					if !grounded {
+						stripped++
+						continue
+					}
+				}
 			}
 		}
 
@@ -503,7 +340,7 @@ func stripUnexportedSymbolBlocks(text string) string {
 	}
 
 	if stripped > 0 {
-		fmt.Fprintf(os.Stderr, "[FanReduce/PostFilter] Stripped %d unexported symbol entries\n", stripped)
+		fmt.Fprintf(os.Stderr, "[Synthesis/PostFilter] Stripped %d ungrounded/unexported symbol entries\n", stripped)
 	}
 	return strings.Join(kept, "\n")
 }
@@ -567,32 +404,3 @@ func extractSymbolFromTableRow(row string) string {
 	return name
 }
 
-// deduplicateTableRows removes duplicate markdown table rows within a section.
-// The 4B model frequently repeats symbols 2-3x in reference tables. This
-// function deduplicates by the first column (symbol name), keeping the first
-// occurrence of each symbol.
-func deduplicateTableRows(section string) string {
-	lines := strings.Split(section, "\n")
-	var result []string
-	seen := make(map[string]bool)
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// Only deduplicate table data rows (not headers or separators)
-		if strings.HasPrefix(trimmed, "| ") && !strings.HasPrefix(trimmed, "| Symbol") && !strings.HasPrefix(trimmed, "|--") && !strings.HasPrefix(trimmed, "| -") {
-			sym := extractSymbolFromTableRow(trimmed)
-			if sym != "" {
-				if seen[sym] {
-					continue // skip duplicate
-				}
-				seen[sym] = true
-			}
-		}
-		result = append(result, line)
-	}
-
-	if len(lines)-len(result) > 0 {
-		fmt.Fprintf(os.Stderr, "[DocGen/Dedup] Removed %d duplicate table rows\n", len(lines)-len(result))
-	}
-	return strings.Join(result, "\n")
-}

@@ -58,8 +58,8 @@ func TestInventoryProbe_EndToEnd_37ADRs(t *testing.T) {
 	}
 
 	taskID := fmt.Sprintf("task-test-37adrs-%d", os.Getpid())
-	probeID := fmt.Sprintf("probe-test-37adrs-%d", os.Getpid())
-	synthesis, err := RunProbePhases(ctx, taskID, probeID, cfg, engine, engine, nil)
+	nodeID := fmt.Sprintf("inventory-test-37adrs-%d", os.Getpid())
+	synthesis, err := RunInventoryPhases(ctx, taskID, nodeID, cfg, engine, engine, nil)
 	if err != nil {
 		t.Fatalf("unexpected runner error: %v", err)
 	}

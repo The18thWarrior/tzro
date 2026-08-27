@@ -158,8 +158,14 @@ func TestRunComparisonSuite_RunsSingleConditionForFilteredTier(t *testing.T) {
 	if r.Condition != ConditionCloudReAct {
 		t.Errorf("Condition = %q, want %q", r.Condition, ConditionCloudReAct)
 	}
-	if r.QualityScore != 4.25 {
-		t.Errorf("QualityScore = %f, want 4.25", r.QualityScore)
+	if r.LLMScore != 4.25 {
+		t.Errorf("LLMScore = %f, want 4.25", r.LLMScore)
+	}
+	if r.QualityScore <= 0 {
+		t.Errorf("QualityScore = %f, want > 0", r.QualityScore)
+	}
+	if r.DeterministicScore <= 0 {
+		t.Errorf("DeterministicScore = %f, want > 0", r.DeterministicScore)
 	}
 	if r.OutputText == "" {
 		t.Error("OutputText should not be empty")

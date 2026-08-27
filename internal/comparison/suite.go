@@ -10,6 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"tzro/internal/config"
+	"tzro/internal/inference"
+	"tzro/internal/tools"
 )
 
 //go:embed testdata/docgen_tasks.json
@@ -189,6 +193,19 @@ func codegenModelMode(conditionID string) string {
 // When Category is "" (CategoryAll), both docgen and codegen tasks are run,
 // each with their appropriate condition set.
 func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *SuiteCallbacks) ([]ComparisonResult, error) {
+	// Auto-populate judge model from config when CLI flag is empty
+	if opts.JudgeModel == "" {
+		opts.JudgeModel = config.GetJudgeModel()
+	}
+
+	// Pre-index projectRoot once for the entire benchmark suite run so individual tasks can clone it in <10ms
+	projectRoot := tools.GetAllowedPaths()[0]
+	fmt.Fprintf(os.Stderr, "[Comparison] Pre-indexing workspace for benchmark suite...\n")
+	if _, err := EnsureBaseProjectIndex(ctx, projectRoot, inference.GlobalEmbeddingSidecar); err != nil {
+		fmt.Fprintf(os.Stderr, "[Comparison Warning] Workspace pre-indexing failed: %v (will index on demand)\n", err)
+	}
+	defer ResetBaseProjectIndex()
+
 	// Build a list of (category, tasks, conditions) groups to run.
 	type categoryGroup struct {
 		category   string
@@ -330,8 +347,13 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 				}
 			}
 
-			// Judge each result for this task, using the task's category for prompt selection
+			// Judge each result for this task, combining deterministic checks and LLM evaluation
 			for i := range taskResults {
+				// Run deterministic checks on all executed tasks
+				detScorecard := EvaluateDeterministic(&taskResults[i], &task)
+				taskResults[i].DeterministicChecks = detScorecard
+				taskResults[i].DeterministicScore = detScorecard.OverallScore
+
 				if taskResults[i].Error != "" || taskResults[i].OutputText == "" {
 					continue
 				}
@@ -347,7 +369,7 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 						taskResults[i].OutputText, task.ExpectedAnswer)
 				}
 
-				judgeResp, judgeErr := JudgeOutputDetailed(ctx, judgeOutput, task.QualityRubric, JudgeOptions{
+				judgeResp, judgeErr := JudgeOutputDetailedWithRetry(ctx, judgeOutput, task.QualityRubric, JudgeOptions{
 					Endpoint: opts.JudgeEndpoint,
 					Category: g.category,
 					Model:    opts.JudgeModel,
@@ -357,8 +379,13 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 				if judgeErr != nil {
 					fmt.Fprintf(os.Stderr, "[Comparison] Judge error for %s/%s: %v\n",
 						taskResults[i].TaskID, taskResults[i].Condition, judgeErr)
+					taskResults[i].JudgeError = "ERR_JUDGE_UNAVAILABLE"
+					taskResults[i].QualityScore = -1
+					taskResults[i].LLMScore = -1
 				} else {
-					taskResults[i].QualityScore = judgeResp.OverallScore
+					taskResults[i].LLMScore = judgeResp.OverallScore
+					compositeScore, _ := CalculateCompositeScore(detScorecard, judgeResp.OverallScore, DefaultDeterministicWeight)
+					taskResults[i].QualityScore = compositeScore
 					taskResults[i].GoalAlignment = judgeResp.GoalAlignment
 					taskResults[i].FactualGrounding = judgeResp.FactualGrounding
 					taskResults[i].Coherence = judgeResp.Coherence
@@ -368,8 +395,8 @@ func RunComparisonSuite(ctx context.Context, opts SuiteOptions, callbacks *Suite
 
 				if callbacks != nil && callbacks.OnJudgeComplete != nil {
 					score := 0.0
-					if judgeResp != nil {
-						score = judgeResp.OverallScore
+					if taskResults[i].QualityScore > 0 {
+						score = taskResults[i].QualityScore
 					}
 					callbacks.OnJudgeComplete(taskResults[i].TaskID, taskResults[i].Condition, score)
 				}

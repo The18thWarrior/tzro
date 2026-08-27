@@ -48,9 +48,19 @@ func ScanAndIndexWorkspace(ctx context.Context, rootDir string, store *IndexStor
 		if d.IsDir() {
 			name := d.Name()
 			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".tzro" || name == "bin" ||
-				name == ".scratch" || name == ".gemini" || name == ".agents" || name == "dist" || name == "build" || name == "tmp" {
+				name == ".scratch" || name == ".gemini" || name == ".agents" || name == "dist" || name == "build" || name == "tmp" ||
+				name == "static" || name == "public" || name == "coverage" || name == ".turbo" || name == ".next" {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		// Skip files larger than 512KB or minified/source-map bundles to avoid AST parser stalls
+		if info.Size() > 512*1024 || shouldSkipFile(d.Name()) {
 			return nil
 		}
 
@@ -116,4 +126,17 @@ func isDocExtension(ext string) bool {
 		return true
 	}
 	return false
+}
+
+func shouldSkipFile(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".min.js") ||
+		strings.HasSuffix(lower, ".min.css") ||
+		strings.HasSuffix(lower, ".map") ||
+		strings.HasSuffix(lower, ".bundle.js") ||
+		strings.HasSuffix(lower, ".chunk.js") ||
+		strings.HasSuffix(lower, ".log") ||
+		strings.HasSuffix(lower, ".db") ||
+		strings.HasSuffix(lower, ".db-wal") ||
+		strings.HasSuffix(lower, ".db-shm")
 }

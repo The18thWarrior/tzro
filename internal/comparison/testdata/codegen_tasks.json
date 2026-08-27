@@ -8,6 +8,10 @@
     "filepath": "handlers/hello.go",
     "language": "go",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["handlers/hello.go"],
+    "expectedSymbols": ["HelloHandler", "GET", "http.ResponseWriter", "json", "message"],
+    "expectedSignatures": ["func HelloHandler(w http.ResponseWriter, r *http.Request)"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Code compiles, handler returns valid JSON with correct status codes"},
@@ -28,6 +32,10 @@
     "language": "go",
     "action": "update",
     "seedFile": "validate_struct.go",
+    "expectedTools": ["read_file", "replace_file_content", "write_file"],
+    "expectedFiles": ["models/user.go"],
+    "expectedSymbols": ["User", "Validate", "NewUser", "DisplayName", "Age", "Email", "Name"],
+    "expectedSignatures": ["func (u *User) Validate() error", "func (u User) Validate() error"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Validate method compiles and returns correct errors for invalid inputs"},
@@ -47,6 +55,10 @@
     "filepath": "src/config.ts",
     "language": "typescript",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["src/config.ts"],
+    "expectedSymbols": ["Config", "parseConfig", "loadConfigFromEnv", "PORT", "HOST", "LOG_LEVEL"],
+    "expectedSignatures": ["export interface Config", "export function parseConfig", "export function loadConfigFromEnv"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "TypeScript compiles, validation catches invalid inputs, types are sound"},
@@ -67,6 +79,10 @@
     "language": "python",
     "action": "update",
     "seedFile": "api_client.py",
+    "expectedTools": ["read_file", "write_file", "replace_file_content"],
+    "expectedFiles": ["weather/client.py"],
+    "expectedSymbols": ["WeatherClient", "WeatherAPIError", "WeatherTimeoutError", "get_current", "get_forecast", "get_alerts"],
+    "expectedSignatures": ["class WeatherAPIError", "class WeatherTimeoutError"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Retry logic works with exponential backoff, timeouts applied per-request"},
@@ -86,6 +102,10 @@
     "filepath": "cache/lru.go",
     "language": "go",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["cache/lru.go"],
+    "expectedSymbols": ["Cache", "New", "Get", "Set", "SetWithTTL", "Delete", "Len", "Clear", "RWMutex"],
+    "expectedSignatures": ["type Cache[K comparable, V any]", "func New[K comparable, V any]"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Generic types compile on Go 1.21+, LRU order maintained, TTL expiration works"},
@@ -106,6 +126,10 @@
     "language": "go",
     "action": "update",
     "seedFile": "auth_middleware.go",
+    "expectedTools": ["read_file", "write_file", "replace_file_content"],
+    "expectedFiles": ["middleware/auth.go"],
+    "expectedSymbols": ["AuthStrategy", "BearerTokenStrategy", "APIKeyStrategy", "AuthMiddleware", "Authenticate", "strategies_tried"],
+    "expectedSignatures": ["type AuthStrategy interface", "func AuthMiddleware"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Interface properly defined, strategies implement it, fallthrough logic works"},
@@ -125,6 +149,10 @@
     "filepath": "src/events/emitter.ts",
     "language": "typescript",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["src/events/emitter.ts"],
+    "expectedSymbols": ["EventEmitter", "createEmitter", "on", "once", "off", "emit", "listenerCount"],
+    "expectedSignatures": ["export class EventEmitter", "export function createEmitter"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Type inference works for event args, wildcard handlers receive correct types"},
@@ -145,6 +173,10 @@
     "language": "go",
     "action": "update",
     "seedFile": "list_handler.go",
+    "expectedTools": ["read_file", "write_file", "replace_file_content"],
+    "expectedFiles": ["handlers/list.go"],
+    "expectedSymbols": ["EncodeCursor", "DecodeCursor", "ItemStore", "Item", "cursor", "limit", "nextCursor", "hasMore"],
+    "expectedSignatures": ["func EncodeCursor", "func DecodeCursor"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Cursor encoding/decoding works, pagination returns correct slices, edge cases handled"},
@@ -164,6 +196,10 @@
     "filepath": "db/query.go",
     "language": "go",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["db/query.go"],
+    "expectedSymbols": ["QueryBuilder", "Select", "From", "Where", "Join", "OrderBy", "Limit", "Offset", "Build", "InsertInto", "Update"],
+    "expectedSignatures": ["func (qb *QueryBuilder) Build() (string, []any, error)", "func (qb *QueryBuilder) Select"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Generated SQL is valid, placeholders correctly numbered, args in correct order"},
@@ -184,6 +220,10 @@
     "language": "typescript",
     "action": "update",
     "seedFile": "legacy_api.ts",
+    "expectedTools": ["read_file", "write_file", "replace_file_content"],
+    "expectedFiles": ["src/notifications/notifier.ts"],
+    "expectedSymbols": ["Notifier", "NotificationPayload", "NotificationResult", "EmailNotifier", "SmsNotifier", "PushNotifier", "CompositeNotifier", "createNotificationService"],
+    "expectedSignatures": ["export interface Notifier", "export function createNotificationService"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Discriminated union narrows correctly, composite dispatch works, types are sound"},

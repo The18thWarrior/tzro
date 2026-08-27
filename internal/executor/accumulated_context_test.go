@@ -522,3 +522,36 @@ func TestAccumulatedContext_PreExtractedCacheIds(t *testing.T) {
 		t.Error("expected extracted cacheId 'cache_1784603777374136000' in metadata block")
 	}
 }
+
+// T9: Synthesis callers preserve large data carrier outputs untruncated (ADR-0044 & ADR-0094).
+// Verifies that 60KB+ raw extraction from a list/probe node is NOT compacted with compactor.CompactContent.
+func TestAccumulatedContext_SynthesisPreservesLargeDataCarrierOutput(t *testing.T) {
+	cleanup := setupContextTestDB(t)
+	defer cleanup()
+
+	taskID := "task_synth_large_carrier_test"
+
+	// 65KB of extracted code / signatures
+	largeExtraction := "// Package cache documentation\n" + strings.Repeat("func ExportedMethod() string { return \"ok\" }\n", 1500)
+	if err := memory.DB.SetNodeState(taskID, "explore", "completed", "output explore"); err != nil {
+		t.Fatalf("failed to set node state: %v", err)
+	}
+	if err := memory.DB.SetNodeRawOutput(taskID, "explore", largeExtraction); err != nil {
+		t.Fatalf("failed to set raw output: %v", err)
+	}
+
+	graph := &compiler.ExecutionGraph{
+		Nodes: []compiler.GraphNode{
+			{ID: "explore", Type: "list", Action: "probe_agent"},
+		},
+	}
+
+	result := buildAccumulatedContext(taskID, graph, "synthesis")
+
+	// Synthesis caller MUST preserve the full 65KB content untruncated for Map-Reduce
+	if !strings.Contains(result, largeExtraction) {
+		t.Errorf("expected synthesis caller to receive full untruncated data carrier output (len %d), got len %d",
+			len(largeExtraction), len(result))
+	}
+}
+

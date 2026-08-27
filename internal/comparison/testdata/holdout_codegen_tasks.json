@@ -8,6 +8,9 @@
     "filepath": "cmd/wordfreq/main.go",
     "language": "go",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["cmd/wordfreq/main.go"],
+    "expectedSymbols": ["main", "os.Stdin", "flag", "sort", "bufio"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Code compiles, reads stdin, counts words, sorts by frequency descending"},
@@ -27,6 +30,10 @@
     "filepath": "src/csv_transform.ts",
     "language": "typescript",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["src/csv_transform.ts"],
+    "expectedSymbols": ["parseCSV", "groupBy", "transformCSV", "summarize"],
+    "expectedSignatures": ["export function parseCSV", "export function groupBy", "export function transformCSV", "export function summarize"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "TypeScript compiles, CSV parsing handles quoted fields, grouping works correctly"},
@@ -46,6 +53,10 @@
     "filepath": "pkg/httpclient/client.go",
     "language": "go",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["pkg/httpclient/client.go"],
+    "expectedSymbols": ["Client", "New", "Do", "Get", "Post", "ErrCircuitOpen", "ErrMaxRetries"],
+    "expectedSignatures": ["func New", "func (c *Client) Do"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Code compiles, retry logic works with exponential backoff and jitter, circuit breaker opens/closes correctly"},
@@ -65,6 +76,10 @@
     "filepath": "pkg/testutil/helpers.go",
     "language": "go",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["pkg/testutil/helpers.go"],
+    "expectedSymbols": ["RunTableTests", "MockServer", "MockJSONServer", "AssertEqual", "AssertNoError", "AssertError", "AssertContains", "TempDir", "CaptureStdout"],
+    "expectedSignatures": ["func RunTableTests", "func AssertEqual"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "Code compiles, generics work correctly, mock servers return expected responses, assertions report correct lines"},
@@ -84,6 +99,10 @@
     "filepath": "src/state_machine.ts",
     "language": "typescript",
     "action": "create",
+    "expectedTools": ["write_file"],
+    "expectedFiles": ["src/state_machine.ts"],
+    "expectedSymbols": ["StateMachine", "send", "canSend", "getState", "onEnter", "onExit", "onTransition", "getHistory", "reset", "InvalidTransitionError"],
+    "expectedSignatures": ["export class StateMachine", "export class InvalidTransitionError"],
     "qualityRubric": {
       "criteria": [
         {"name": "Correctness", "description": "TypeScript compiles, transitions work correctly, guards prevent invalid transitions, callbacks fire in correct order"},

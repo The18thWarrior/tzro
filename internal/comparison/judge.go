@@ -80,8 +80,10 @@ const judgeSystemPrompt = `You are a documentation quality evaluator. You will r
   4 = Good, covers most requirements
   5 = Excellent, comprehensive and accurate
 
+Focus your evaluation strictly on the technical content, accuracy, completeness, and structure of the provided documentation. Do NOT penalize the output for lack of tool-execution logs, file-saving confirmations, or execution metadata (tool calls and file persistence are verified separately by automated harness checks, not within the generated text).
+
 Also rate the output on the 4 canonical evaluation dimensions (1.0 to 5.0 scale):
-- goalAlignment: Does the output satisfy the exact intent, constraints, and target paths requested in the task prompt?
+- goalAlignment: Does the output satisfy the exact technical intent, constraints, and target paths requested in the task prompt?
 - factualGrounding: Are documented package names, functions, signatures, and types accurate and verified against the actual codebase?
 - coherence: Is the output clean, well-structured, professional, and easy to navigate?
 - completeness: Are all requested packages, files, symbols, and sections covered?
@@ -109,6 +111,8 @@ const codeJudgeSystemPrompt = `You are a code quality evaluator. You will receiv
   3 = Functional but incomplete or has style issues
   4 = Good, meets most requirements with minor issues
   5 = Excellent, correct, complete, idiomatic, and well-structured
+
+Focus your evaluation strictly on the generated code quality and correctness. Do NOT penalize for lack of tool-execution logs or file saving metadata.
 
 For "Preservation" criteria (update tasks): verify that existing code, types, method signatures, and imports that were not part of the spec remain unchanged.
 
@@ -144,7 +148,7 @@ on a 1-5 scale:
   4 = Correct values and groupings with only cosmetic issues
   5 = Exact match with expected answer, clearly formatted
 
-Compare the model's output against the Expected Correct Answer section.
+Compare the model's output against the Expected Correct Answer section. Do NOT penalize for lack of tool-execution logs.
 
 Also rate the output on the 4 canonical evaluation dimensions (1.0 to 5.0 scale):
 - goalAlignment: Does the analysis answer the exact question, filter criteria, and columns requested in the prompt?
@@ -176,6 +180,8 @@ const researchJudgeSystemPrompt = `You are a research quality evaluator. You wil
   3 = Adequate research but incomplete coverage or weak sourcing
   4 = Good research with multiple real sources and solid analysis fulfilling the goal
   5 = Excellent, comprehensive research with authoritative sources, structured comparison tables/data, and insightful synthesis
+
+Focus evaluation on research synthesis quality and citations. Do NOT penalize for lack of tool-execution logs.
 
 Evaluation dimensions:
 - goalAlignment (1.0 - 5.0): Whether the synthesis directly addresses all aspects requested in the Task Prompt (e.g. top N selection, comparison matrix).
@@ -303,6 +309,51 @@ func JudgeOutputDetailed(ctx context.Context, outputText string, rubric QualityR
 		return nil, fmt.Errorf("failed to parse judge response in any format (raw: %s)", responseText)
 	}
 	return resp, nil
+}
+
+// judgeRetryBackoffs defines the exponential backoff durations between retry attempts.
+// Production: 2s, 4s, 8s. Tests override this via judgeRetryBackoffsOverride.
+var judgeRetryBackoffs = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
+
+// judgeRetryBackoffsOverride allows tests to use zero-duration backoffs.
+// When non-nil, overrides judgeRetryBackoffs.
+var judgeRetryBackoffsOverride []time.Duration
+
+func getJudgeRetryBackoffs() []time.Duration {
+	if judgeRetryBackoffsOverride != nil {
+		return judgeRetryBackoffsOverride
+	}
+	return judgeRetryBackoffs
+}
+
+// JudgeOutputDetailedWithRetry wraps JudgeOutputDetailed with 3x exponential
+// backoff retries (2s, 4s, 8s) for transient API failures (HTTP 500, rate limits,
+// network errors). Returns the first successful response, or the final error
+// after all attempts are exhausted.
+func JudgeOutputDetailedWithRetry(ctx context.Context, outputText string, rubric QualityRubric, opts JudgeOptions) (*JudgeResponse, error) {
+	backoffs := getJudgeRetryBackoffs()
+	maxAttempts := len(backoffs) + 1 // 1 initial + N retries
+
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			backoff := backoffs[attempt-1]
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			fmt.Fprintf(os.Stderr, "[Judge] Retry attempt %d/%d after %v for judge API call\n", attempt+1, maxAttempts, backoff)
+		}
+
+		resp, err := JudgeOutputDetailed(ctx, outputText, rubric, opts)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+	}
+
+	return nil, fmt.Errorf("judge API failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
 func normalizeJudgeResponse(resp *JudgeResponse, rubric QualityRubric) {
@@ -556,9 +607,9 @@ func callJudgeEndpoint(ctx context.Context, endpoint, userMessage, sysPrompt str
 // Supports any model available on OpenRouter (e.g. "anthropic/claude-sonnet-4").
 // Includes a single retry with 5s backoff for robustness during benchmark runs.
 func callOpenRouterJudge(ctx context.Context, model, userMessage, sysPrompt string) (string, error) {
-	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	apiKey := config.GetOpenRouterAPIKey()
 	if apiKey == "" {
-		return "", fmt.Errorf("OPENROUTER_API_KEY environment variable is required when using --judge-model")
+		return "", fmt.Errorf("openRouterApiKey not set in config.json and OPENROUTER_API_KEY env var is empty")
 	}
 
 	type Message struct {

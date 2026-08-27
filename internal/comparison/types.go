@@ -80,8 +80,12 @@ type ComparisonTask struct {
 	Language       string        `json:"language,omitempty"` // Language hint (e.g. "go", "typescript")
 	Action         string        `json:"action,omitempty"`   // "create" or "update"
 	SeedFile       string        `json:"seedFile,omitempty"` // Relative path in testdata/codegen_seeds/
-	QualityRubric  QualityRubric `json:"qualityRubric"`
-	ExpectedAnswer string        `json:"expectedAnswer,omitempty"` // Pre-computed ground truth for data analysis tasks
+	QualityRubric      QualityRubric `json:"qualityRubric"`
+	ExpectedAnswer     string        `json:"expectedAnswer,omitempty"`     // Pre-computed ground truth for data analysis tasks
+	ExpectedTools      []string      `json:"expectedTools,omitempty"`      // Deterministic: tool names expected to be called
+	ExpectedFiles      []string      `json:"expectedFiles,omitempty"`      // Deterministic: file paths expected to be read/accessed
+	ExpectedSymbols    []string      `json:"expectedSymbols,omitempty"`    // Deterministic: symbols/functions/types expected in output
+	ExpectedSignatures []string      `json:"expectedSignatures,omitempty"` // Deterministic: signature snippets expected in output
 }
 
 // JudgeOptions configures the LLM-as-judge evaluation.
@@ -106,27 +110,59 @@ type SuiteOptions struct {
 	Holdout       bool         // Load holdout tasks instead of development set
 }
 
+// DeterministicCheckItem represents a single automated check result.
+type DeterministicCheckItem struct {
+	Name    string  `json:"name"`
+	Passed  bool    `json:"passed"`
+	Score   float64 `json:"score"`  // 1.0 - 5.0
+	Weight  float64 `json:"weight"` // Relative weighting in score
+	Message string  `json:"message"`
+}
+
+// DeterministicScorecard contains the full breakdown of deterministic evaluations.
+type DeterministicScorecard struct {
+	OverallScore       float64                  `json:"overallScore"`       // Composite deterministic score (1.0 - 5.0)
+	ToolUsageScore     float64                  `json:"toolUsageScore"`     // Tool selection, presence, and count (1.0 - 5.0)
+	FileCoverageScore  float64                  `json:"fileCoverageScore"`  // Target path and file access coverage (1.0 - 5.0)
+	OutputQualityScore float64                  `json:"outputQualityScore"` // Structure, formatting, and non-empty check (1.0 - 5.0)
+	DomainScore        float64                  `json:"domainScore"`        // AST validation, symbol grounding, or answer match (1.0 - 5.0)
+	Checks             []DeterministicCheckItem `json:"checks"`
+	Notes              string                   `json:"notes"`
+}
+
+// RejudgeOptions configures post-hoc rejudging of benchmark results.
+type RejudgeOptions struct {
+	JudgeOptions
+	All               bool    // Re-judge ALL results, not just failed/unscored ones
+	DeterministicOnly bool    // Run only deterministic checks without making LLM calls
+	DetWeight         float64 // Weight for deterministic score (0.0 to 1.0, default 0.5)
+}
+
 // ComparisonResult captures metrics for one condition × task execution run.
 type ComparisonResult struct {
-	TaskID           string               `json:"taskId"`
-	TaskTier         int                  `json:"taskTier"`
-	Holdout          bool                 `json:"holdout,omitempty"`
-	Condition        string               `json:"condition"`
-	CloudTokens      inference.TokenUsage `json:"cloudTokens"`
-	LocalTokens      inference.TokenUsage `json:"localTokens"`
-	WallClockMs      int64                `json:"wallClockMs"`
-	EstCostUSD       float64              `json:"estCostUSD"`
-	ToolCallCount    int                  `json:"toolCallCount"`
-	OutputText       string               `json:"outputText"`
-	DraftText        string               `json:"draftText,omitempty"` // Raw local draft before cloud fix (populated when draft mode activates)
-	QualityScore     float64              `json:"qualityScore"`
-	GoalAlignment    float64              `json:"goalAlignment,omitempty"`
-	FactualGrounding float64              `json:"factualGrounding,omitempty"`
-	Coherence        float64              `json:"coherence,omitempty"`
-	Completeness     float64              `json:"completeness,omitempty"`
-	QualityNotes     string               `json:"qualityNotes"`
-	Error            string               `json:"error,omitempty"`
-	Logs             string               `json:"logs,omitempty"`
+	TaskID              string                  `json:"taskId"`
+	TaskTier            int                     `json:"taskTier"`
+	Holdout             bool                    `json:"holdout,omitempty"`
+	Condition           string                  `json:"condition"`
+	CloudTokens         inference.TokenUsage    `json:"cloudTokens"`
+	LocalTokens         inference.TokenUsage    `json:"localTokens"`
+	WallClockMs         int64                   `json:"wallClockMs"`
+	EstCostUSD          float64                 `json:"estCostUSD"`
+	ToolCallCount       int                     `json:"toolCallCount"`
+	OutputText          string                  `json:"outputText"`
+	DraftText           string                  `json:"draftText,omitempty"` // Raw local draft before cloud fix (populated when draft mode activates)
+	QualityScore        float64                 `json:"qualityScore"`
+	DeterministicScore  float64                 `json:"deterministicScore,omitempty"`
+	LLMScore            float64                 `json:"llmScore,omitempty"`
+	DeterministicChecks *DeterministicScorecard `json:"deterministicChecks,omitempty"`
+	GoalAlignment       float64                 `json:"goalAlignment,omitempty"`
+	FactualGrounding    float64                 `json:"factualGrounding,omitempty"`
+	Coherence           float64                 `json:"coherence,omitempty"`
+	Completeness        float64                 `json:"completeness,omitempty"`
+	QualityNotes        string                  `json:"qualityNotes"`
+	JudgeError          string                  `json:"judgeError,omitempty"` // Set to "ERR_JUDGE_UNAVAILABLE" when judge API fails after retries
+	Error               string                  `json:"error,omitempty"`
+	Logs                string                  `json:"logs,omitempty"`
 }
 
 // PricingTable holds per-1K-token pricing for cloud model inference.

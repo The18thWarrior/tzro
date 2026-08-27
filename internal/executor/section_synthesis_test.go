@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -807,5 +808,169 @@ func TestSynthesizeSection_StaticPrefixSlotting(t *testing.T) {
 		t.Errorf("Turn 4 for Section 2 missing heading %q", spec2.Heading)
 	}
 }
+
+func TestBuildDocGenSafetyFloorOutline_DynamicSplit_ADRSummary(t *testing.T) {
+	goal := "Read all ADR files in docs/adr/ and produce a consolidated decision log with status, date, and key implications for each decision. Focus on technical accuracy. Every ADR must be included — there are 37+ ADR files."
+	var ctxBuilder strings.Builder
+	for i := 1; i <= 37; i++ {
+		ctxBuilder.WriteString(fmt.Sprintf("### docs/adr/%04d-adr-topic-%d.md\nStatus: Accepted\nDate: 2026-08-01\nContext: Issue %d\nDecision: Decision %d\nImplications: Key item %d\n\n", i, i, i, i, i))
+	}
+	refinedCtx := ctxBuilder.String()
+
+	outline := BuildDocGenSafetyFloorOutline(goal, refinedCtx, nil)
+	if outline == nil {
+		t.Fatalf("expected outline, got nil")
+	}
+
+	// 37 ADRs batched at 8 per batch = 5 body batches + 1 initial (overview) + 1 terminal (cross-cutting) = 7 sections
+	if len(outline.Sections) < 5 {
+		t.Fatalf("expected at least 5 partitioned sections for 37 ADRs, got %d sections: %v", len(outline.Sections), outline.Sections)
+	}
+
+	if !outline.Sections[0].IsInitial {
+		t.Errorf("expected section 0 to be initial overview")
+	}
+	if !outline.Sections[len(outline.Sections)-1].IsTerminal {
+		t.Errorf("expected last section to be terminal cross-cutting synthesis")
+	}
+
+	// Ensure body sections mention the partitioned ADR range in heading or objective
+	hasBatchHeading := false
+	for _, sec := range outline.Sections[1 : len(outline.Sections)-1] {
+		if strings.Contains(sec.Heading, "Consolidated Decision Records") {
+			hasBatchHeading = true
+			if !strings.Contains(sec.Heading, "to") && !strings.Contains(sec.Objective, "Specifically cover") {
+				t.Errorf("expected body section to list target ADRs, got heading=%s, obj=%s", sec.Heading, sec.Objective)
+			}
+		}
+	}
+	if !hasBatchHeading {
+		t.Errorf("expected body sections with Consolidated Decision Records, got %v", outline.Sections)
+	}
+}
+
+func TestBuildDocGenSafetyFloorOutline_DynamicSplit_ModuleReference(t *testing.T) {
+	goal := "Explore all source files in internal/inference/ directory and generate module documentation covering all public types across all layers."
+	files := []string{
+		"internal/inference/backend.go",
+		"internal/inference/backend_llama.go",
+		"internal/inference/backend_remote.go",
+		"internal/inference/local_model.go",
+		"internal/inference/model_catalog.go",
+		"internal/inference/routing.go",
+		"internal/inference/routing_dual.go",
+		"internal/inference/prefill.go",
+		"internal/inference/metrics.go",
+		"internal/inference/thermal.go",
+		"internal/inference/token_tracker.go",
+	}
+	var ctxBuilder strings.Builder
+	for _, f := range files {
+		ctxBuilder.WriteString(fmt.Sprintf("### File: %s\npackage inference\ntype TypeFor_%s struct {}\n\n", f, filepathBase(f)))
+	}
+	refinedCtx := ctxBuilder.String()
+
+	outline := BuildDocGenSafetyFloorOutline(goal, refinedCtx, nil)
+	if outline == nil {
+		t.Fatalf("expected outline, got nil")
+	}
+
+	// 11 files batched at 3 per batch = 4 body batches + 1 initial + 1 terminal = 6 sections
+	if len(outline.Sections) < 5 {
+		t.Fatalf("expected at least 5 partitioned sections for 11 source files, got %d sections: %v", len(outline.Sections), outline.Sections)
+	}
+
+	if !outline.Sections[0].IsInitial {
+		t.Errorf("expected section 0 to be initial overview")
+	}
+	if !outline.Sections[len(outline.Sections)-1].IsTerminal {
+		t.Errorf("expected last section to be terminal reference")
+	}
+}
+
+func TestBuildDocGenSafetyFloorOutline_DynamicSplit_16kChars(t *testing.T) {
+	goal := "Document internal architecture decisions and technical specifications."
+	// Single block with >16k characters
+	refinedCtx := strings.Repeat("Detailed architecture design decisions and specifications across subsystems.\n", 300)
+	if len(refinedCtx) <= 16000 {
+		t.Fatalf("test precondition failed: len(refinedCtx) = %d <= 16000", len(refinedCtx))
+	}
+
+	outline := BuildDocGenSafetyFloorOutline(goal, refinedCtx, nil)
+	if outline == nil || len(outline.Sections) < 3 {
+		t.Fatalf("expected valid outline with >= 3 sections for >16k chars context, got: %v", outline)
+	}
+}
+
+func TestBuildDocGenSafetyFloorOutline_NoSplit_SmallContext(t *testing.T) {
+	goal := "Synthesize module architecture and component interactions for the cache subsystem."
+	refinedCtx := "### File: internal/cache/cache.go\ntype CacheStore interface {}\n### File: internal/cache/metrics.go\nfunc GetMetrics()\n"
+
+	outline := BuildDocGenSafetyFloorOutline(goal, refinedCtx, nil)
+	if outline == nil {
+		t.Fatalf("expected outline, got nil")
+	}
+
+	// 2 files and < 16k chars -> static outline (3 sections for module_reference)
+	if len(outline.Sections) != 3 {
+		t.Fatalf("expected standard 3-section outline for small context (2 files), got %d sections: %v", len(outline.Sections), outline.Sections)
+	}
+}
+
+func TestExecuteDirectChunkSummarization(t *testing.T) {
+	goal := "Read all ADR files in docs/adr/ and produce a consolidated decision log."
+	sec := SectionSpec{
+		Heading:   "## 2. Consolidated Decision Records (0001 to 0003)",
+		Objective: "Extract structured decision records for ADR 0001, 0002, 0003.",
+	}
+	secCtx := `### docs/adr/0001-durable-go-dag-executor.md
+Title: ADR 0001 Durable DAG
+Status: Accepted
+Date: 2026-07-29
+Context: Durable DAG needed.
+Decision: Implemented Kahn compiler in Go.
+Implications: Deterministic crash recovery.
+
+### docs/adr/0002-local-gbnf-constraints.md
+Title: ADR 0002 GBNF Constraints
+Status: Accepted
+Date: 2026-07-29
+Context: Constrain local model.
+Decision: Use GBNF grammars.
+Implications: Eliminates invalid JSON output.
+
+### docs/adr/0003-proactive-observer-agent.md
+Title: ADR 0003 Observer Agent
+Status: Accepted
+Date: 2026-07-29
+Context: Proactive memory capture.
+Decision: Async observer thread.
+Implications: Continuous reflection without blocking.`
+
+	mockEngine := &mockSectionInferenceEngine{
+		responses: map[string]string{
+			"0001": "### ADR-0001: Durable DAG Compiler\n- **Status**: Accepted\n- **Date**: 2026-07-29\n- **Context**: Need durable DAG\n- **Decision**: Go Kahn compiler\n- **Technical Implications**: Resilient execution",
+			"0002": "### ADR-0002: Local GBNF Constraints\n- **Status**: Accepted\n- **Date**: 2026-07-29\n- **Context**: Constrain 4B model\n- **Decision**: GBNF grammar constraints\n- **Technical Implications**: Safe JSON generation",
+			"0003": "### ADR-0003: Proactive Observer Agent\n- **Status**: Accepted\n- **Date**: 2026-07-29\n- **Context**: Memory reflection\n- **Decision**: Async observer\n- **Technical Implications**: Background reflection",
+		},
+	}
+
+	result, err := ExecuteDirectChunkSummarization(context.Background(), goal, sec, secCtx, mockEngine)
+	if err != nil {
+		t.Fatalf("ExecuteDirectChunkSummarization failed: %v", err)
+	}
+
+	if !strings.HasPrefix(result, sec.Heading) {
+		t.Errorf("expected result to start with section heading %q, got:\n%s", sec.Heading, result)
+	}
+
+	for _, expected := range []string{"ADR-0001", "ADR-0002", "ADR-0003"} {
+		if !strings.Contains(result, expected) {
+			t.Errorf("expected result to contain %q, got:\n%s", expected, result)
+		}
+	}
+}
+
+
 
 

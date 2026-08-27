@@ -204,6 +204,7 @@ func (r *StrategyRegistry) BuildPlanJSONSchema() string {
 						"outputFormat":        map[string]interface{}{"type": "string", "enum": []string{"source_code", "markdown", "json", "text", ""}},
 						"outputLanguage":      map[string]interface{}{"type": "string"},
 						"activationThreshold": map[string]interface{}{"type": "number"},
+						"recallPolicy":        map[string]interface{}{"type": "string", "enum": []string{"auto", "always", "skip", ""}},
 						"probeConfig": map[string]interface{}{
 							"type": "object",
 							"properties": map[string]interface{}{

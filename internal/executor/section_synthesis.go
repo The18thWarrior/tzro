@@ -151,7 +151,29 @@ const outlineGBNFSchema = `{
           "is_initial": {"type": "boolean"},
           "is_terminal": {"type": "boolean"}
         },
-        "required": ["heading", "objective", "target_source_ids", "is_terminal"]
+        "required": ["heading", "objective"]
+      }
+    }
+  },
+  "required": ["title", "sections"]
+}`
+
+const docGenOutlineGBNFSchema = `{
+  "type": "object",
+  "properties": {
+    "title": {"type": "string"},
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "heading": {"type": "string"},
+          "objective": {"type": "string"},
+          "format_hint": {"type": "string"},
+          "is_initial": {"type": "boolean"},
+          "is_terminal": {"type": "boolean"}
+        },
+        "required": ["heading", "objective"]
       }
     }
   },
@@ -178,11 +200,23 @@ Plan a structured, multi-section technical document that thoroughly answers the 
 Allocate specific source IDs (e.g. [1, 2]) to each section based on where the evidence belongs.
 Mark the first section (if executive summary or overview) with is_initial: true.
 The final section must be marked with is_terminal: true to perform the terminal synthesis.
-Return ONLY a valid JSON object matching the schema.`
+Return ONLY a valid JSON object matching this schema:
+{
+  "title": "Document Title",
+  "sections": [
+    {
+      "heading": "## 1. Section Title",
+      "objective": "Clear description of what this section synthesizes",
+      "target_source_ids": [1, 2],
+      "is_initial": true,
+      "is_terminal": false
+    }
+  ]
+}`
 
 	userPrompt := fmt.Sprintf("Research Goal: %s\n\nAvailable Evidence Sources:\n%s\nPlan the document outline in JSON now.", goal, sourceSummary.String())
 
-	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, "", TargetWorker)
+	resp, err := engine.Infer(ctx, systemPrompt, userPrompt, outlineGBNFSchema, TargetWorker)
 	if err != nil || strings.TrimSpace(resp) == "" {
 		fmt.Fprintf(os.Stderr, "[SectionedSynthesis] Warning: Outline generation failed (%v), using default outline\n", err)
 		return buildDefaultOutline(goal, evidence), nil
@@ -243,7 +277,18 @@ Plan a structured, multi-section documentation outline that faithfully addresses
 Plan between 2 to 6 distinct sections. Do NOT collapse everything into one section.
 Mark the first section (if it is an overview or executive summary) with is_initial: true.
 Mark the final section (if it is a symbol index, API reference, or conclusion) with is_terminal: true.
-Return ONLY a valid JSON object matching the schema.`
+Return ONLY a valid JSON object matching this schema:
+{
+  "title": "Document Title",
+  "sections": [
+    {
+      "heading": "## 1. Section Title",
+      "objective": "Clear description of what this section documents",
+      "is_initial": true,
+      "is_terminal": false
+    }
+  ]
+}`
 
 	userPrompt := fmt.Sprintf("Documentation Goal: %s\n%s\n\nDiscovery Context Preview:\n%s\nPlan the document outline in JSON now.",
 		goal, symSummary.String(), truncateForPrompt(refinedCtx, 4000))
@@ -254,7 +299,7 @@ Return ONLY a valid JSON object matching the schema.`
 	outlineCtx = context.WithValue(outlineCtx, inference.GenerationGuardKey,
 		inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
 
-	resp, err := engine.Infer(outlineCtx, systemPrompt, userPrompt, "", TargetWorker)
+	resp, err := engine.Infer(outlineCtx, systemPrompt, userPrompt, docGenOutlineGBNFSchema, TargetWorker)
 	if err != nil || strings.TrimSpace(resp) == "" {
 		fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Warning: Outline generation failed (%v), using safety floor\n", err)
 		return BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms), nil
@@ -270,8 +315,17 @@ Return ONLY a valid JSON object matching the schema.`
 		}
 	}
 
-	// Detect under-decomposition (lazy 1-section planner on non-trivial codebase context)
-	if len(outline.Sections) < 2 && (len(refinedCtx) >= 1500 || len(syms) >= 4 || strings.Contains(goal, "across") || strings.Contains(goal, "ALL")) {
+	// Detect under-decomposition (lazy 1-section planner or <=3 sections on multi-file / large context)
+	units := parseRefinedContextUnits(refinedCtx)
+	uniqueFiles := getUniqueFilesFromUnitsAndSyms(units, syms)
+	needsDynamicSplit := len(uniqueFiles) > 3 || len(units) > 3 || len(refinedCtx) > 16000
+
+	isUnderDecomposed := len(outline.Sections) < 2
+	if needsDynamicSplit && len(outline.Sections) <= 3 {
+		isUnderDecomposed = true
+	}
+
+	if isUnderDecomposed && (len(refinedCtx) >= 1500 || len(syms) >= 4 || strings.Contains(goal, "across") || strings.Contains(goal, "ALL") || needsDynamicSplit) {
 		fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Notice: Model under-decomposed outline (%d sections), applying safety floor\n", len(outline.Sections))
 		return BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms), nil
 	}
@@ -305,8 +359,11 @@ func IsFunctionIndexGoal(goal string) bool {
 		strings.Contains(lower, "exported type") || strings.Contains(lower, "symbol reference"))
 }
 
-// BuildDocGenSafetyFloorOutline builds a deterministic multi-section outline partitioned by module layers or symbol categories (ADR-0084, ADR-0085).
+// BuildDocGenSafetyFloorOutline builds a deterministic multi-section outline partitioned by module layers, file clusters, or ADR ranges (ADR-0084, ADR-0085).
 func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbol) *SynthesisOutline {
+	units := parseRefinedContextUnits(refinedCtx)
+	uniqueFiles := getUniqueFilesFromUnitsAndSyms(units, syms)
+	needsDynamicSplit := len(uniqueFiles) > 3 || len(units) > 3 || len(refinedCtx) > 16000
 
 	// Classify documentation archetype via Neural Embedding Semantic Vector Space (ADR-0081, SOLUTION_APPROACH.md Principle 1)
 	archetypes := []struct {
@@ -348,6 +405,61 @@ func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbo
 
 	switch bestArchetype {
 	case "function_index":
+		if needsDynamicSplit && len(uniqueFiles) > 3 {
+			batchSize := 3
+			var funcSections []SectionSpec
+			sectionCounter := 2
+
+			numBatches := (len(uniqueFiles) + batchSize - 1) / batchSize
+			for b := 0; b < numBatches; b++ {
+				start := b * batchSize
+				end := start + batchSize
+				if end > len(uniqueFiles) {
+					end = len(uniqueFiles)
+				}
+				batchFiles := uniqueFiles[start:end]
+				var batchFileBases []string
+				for _, f := range batchFiles {
+					batchFileBases = append(batchFileBases, filepathBase(f))
+				}
+				heading := fmt.Sprintf("## %d. Exported Functions & Methods (%s)", sectionCounter, strings.Join(batchFileBases, ", "))
+				objective := fmt.Sprintf("List all exported package-level functions AND all exported methods on types for %s. Include full signatures with parameter types and return values.", strings.Join(batchFileBases, ", "))
+
+				funcSections = append(funcSections, SectionSpec{
+					Heading:    heading,
+					Objective:  objective,
+					FormatHint: "bulleted_deep_dive",
+				})
+				sectionCounter++
+			}
+
+			sections := []SectionSpec{
+				{
+					Heading:    "## 1. Exported Types, Interfaces & Structs",
+					Objective:  "List all exported struct types, interface types, and type aliases with their fields, signatures, and descriptions. Do NOT include functions or methods here.",
+					FormatHint: "bulleted_deep_dive",
+				},
+			}
+			sections = append(sections, funcSections...)
+			sections = append(sections,
+				SectionSpec{
+					Heading:    fmt.Sprintf("## %d. Exported Constants, Variables & Configuration", sectionCounter),
+					Objective:  "List all exported constants, package-level variables, and configuration values with their types and descriptions.",
+					FormatHint: "bulleted_deep_dive",
+				},
+				SectionSpec{
+					Heading:    fmt.Sprintf("## %d. Quick Reference Table", sectionCounter+1),
+					Objective:  "Provide a compact summary table with columns: Symbol | Kind (func/type/const/var) | File | One-line Description. Do NOT include signatures — those are in the sections above.",
+					FormatHint: "table",
+					IsTerminal: true,
+				},
+			)
+			return &SynthesisOutline{
+				Title:    deriveCleanDocumentTitle(goal),
+				Sections: sections,
+			}
+		}
+
 		return &SynthesisOutline{
 			Title: deriveCleanDocumentTitle(goal),
 			Sections: []SectionSpec{
@@ -376,6 +488,61 @@ func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbo
 		}
 
 	case "project_readme":
+		if needsDynamicSplit && len(uniqueFiles) > 3 {
+			batchSize := 3
+			var bodySections []SectionSpec
+			sectionCounter := 3 // starts after 1. Overview and 2. Quickstart
+
+			numBatches := (len(uniqueFiles) + batchSize - 1) / batchSize
+			for b := 0; b < numBatches; b++ {
+				start := b * batchSize
+				end := start + batchSize
+				if end > len(uniqueFiles) {
+					end = len(uniqueFiles)
+				}
+				batchFiles := uniqueFiles[start:end]
+				var batchFileBases []string
+				for _, f := range batchFiles {
+					batchFileBases = append(batchFileBases, filepathBase(f))
+				}
+				clusterLabel := deriveSubsystemClusterLabel(batchFileBases)
+				heading := fmt.Sprintf("## %d. %s Reference (%s)", sectionCounter, clusterLabel, strings.Join(batchFileBases, ", "))
+				objective := fmt.Sprintf("Document the package structure, exported interfaces, and operational components in %s.", strings.Join(batchFileBases, ", "))
+
+				bodySections = append(bodySections, SectionSpec{
+					Heading:    heading,
+					Objective:  objective,
+					FormatHint: "bulleted_deep_dive",
+				})
+				sectionCounter++
+			}
+
+			sections := []SectionSpec{
+				{
+					Heading:    "## 1. Project Overview & Core Mission",
+					Objective:  "Synthesize a clear, professional project overview explaining what the project is, its core capabilities, and high-level architecture.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+				{
+					Heading:    "## 2. Quickstart & Usage Guide",
+					Objective:  "Provide a concrete quickstart guide showing build instructions, CLI commands, and practical usage examples based on verified source files.",
+					FormatHint: "prose",
+				},
+			}
+			sections = append(sections, bodySections...)
+			sections = append(sections, SectionSpec{
+				Heading:    fmt.Sprintf("## %d. Public API & Symbol Reference", sectionCounter),
+				Objective:  "Document key public types, interfaces, and exported functions discovered across packages with signatures and behavior descriptions.",
+				FormatHint: "bulleted_deep_dive",
+				IsTerminal: true,
+			})
+			return &SynthesisOutline{
+				Title:    deriveCleanDocumentTitle(goal),
+				Sections: sections,
+			}
+		}
+
 		return &SynthesisOutline{
 			Title: deriveCleanDocumentTitle(goal),
 			Sections: []SectionSpec{
@@ -405,6 +572,56 @@ func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbo
 		}
 
 	case "system_architecture":
+		if needsDynamicSplit && len(uniqueFiles) > 3 {
+			batchSize := 3
+			var bodySections []SectionSpec
+			sectionCounter := 2
+
+			numBatches := (len(uniqueFiles) + batchSize - 1) / batchSize
+			for b := 0; b < numBatches; b++ {
+				start := b * batchSize
+				end := start + batchSize
+				if end > len(uniqueFiles) {
+					end = len(uniqueFiles)
+				}
+				batchFiles := uniqueFiles[start:end]
+				var batchFileBases []string
+				for _, f := range batchFiles {
+					batchFileBases = append(batchFileBases, filepathBase(f))
+				}
+				clusterLabel := deriveSubsystemClusterLabel(batchFileBases)
+				heading := fmt.Sprintf("## %d. %s (%s)", sectionCounter, clusterLabel, strings.Join(batchFileBases, ", "))
+				objective := fmt.Sprintf("Detail the subsystem responsibilities, structs, and dependency interactions in %s.", strings.Join(batchFileBases, ", "))
+
+				bodySections = append(bodySections, SectionSpec{
+					Heading:    heading,
+					Objective:  objective,
+					FormatHint: "bulleted_deep_dive",
+				})
+				sectionCounter++
+			}
+
+			sections := []SectionSpec{
+				{
+					Heading:    "## 1. System Architecture & High-Level Design",
+					Objective:  "Synthesize the system architecture overview explaining overall design principles, subsystem boundaries, and execution models.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+			}
+			sections = append(sections, bodySections...)
+			sections = append(sections, SectionSpec{
+				Heading:    fmt.Sprintf("## %d. Key Abstractions & Cross-Cutting Mechanics", sectionCounter),
+				Objective:  "Document key interfaces, core abstractions, state management, and configuration mechanisms discovered across the codebase.",
+				FormatHint: "bulleted_deep_dive",
+				IsTerminal: true,
+			})
+			return &SynthesisOutline{
+				Title:    deriveCleanDocumentTitle(goal),
+				Sections: sections,
+			}
+		}
+
 		return &SynthesisOutline{
 			Title: deriveCleanDocumentTitle(goal),
 			Sections: []SectionSpec{
@@ -434,6 +651,77 @@ func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbo
 		}
 
 	case "decision_log":
+		if needsDynamicSplit && (len(units) > 3 || len(uniqueFiles) > 3) {
+			targetUnits := units
+			if len(targetUnits) <= 1 && len(uniqueFiles) > 3 {
+				// Synthesize virtual units from uniqueFiles if units couldn't be parsed separately
+				targetUnits = make([]docGenUnit, len(uniqueFiles))
+				for i, f := range uniqueFiles {
+					targetUnits[i] = docGenUnit{identifier: f, filePath: f}
+				}
+			}
+
+			batchSize := 8
+			if len(targetUnits) <= 12 && len(targetUnits) > 3 {
+				batchSize = 4
+			}
+			var bodySections []SectionSpec
+			sectionCounter := 2
+
+			numBatches := (len(targetUnits) + batchSize - 1) / batchSize
+			for b := 0; b < numBatches; b++ {
+				start := b * batchSize
+				end := start + batchSize
+				if end > len(targetUnits) {
+					end = len(targetUnits)
+				}
+				batchUnits := targetUnits[start:end]
+				var batchNames []string
+				for _, u := range batchUnits {
+					name := u.filePath
+					if name == "" {
+						name = u.identifier
+					}
+					batchNames = append(batchNames, filepathBase(name))
+				}
+				firstName := batchNames[0]
+				lastName := batchNames[len(batchNames)-1]
+
+				heading := fmt.Sprintf("## %d. Consolidated Decision Records (%s to %s)", sectionCounter, firstName, lastName)
+				if numBatches == 1 {
+					heading = fmt.Sprintf("## %d. Consolidated Decision Records", sectionCounter)
+				}
+				objective := fmt.Sprintf("Provide a comprehensive, chronologically organized record of decisions from %s through %s with status, date, context, and key technical implications. Specifically cover: %s.", firstName, lastName, strings.Join(batchNames, ", "))
+
+				bodySections = append(bodySections, SectionSpec{
+					Heading:    heading,
+					Objective:  objective,
+					FormatHint: "bulleted_deep_dive",
+				})
+				sectionCounter++
+			}
+
+			sections := []SectionSpec{
+				{
+					Heading:    "## 1. Architectural Decisions Summary",
+					Objective:  "Synthesize an executive summary of architectural decisions and systemic design patterns established in the project.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+			}
+			sections = append(sections, bodySections...)
+			sections = append(sections, SectionSpec{
+				Heading:    fmt.Sprintf("## %d. Cross-Cutting Implications & Technical Trade-offs", sectionCounter),
+				Objective:  "Synthesize the combined architectural impacts, constraints, and operational trade-offs across decisions.",
+				FormatHint: "prose",
+				IsTerminal: true,
+			})
+			return &SynthesisOutline{
+				Title:    deriveCleanDocumentTitle(goal),
+				Sections: sections,
+			}
+		}
+
 		return &SynthesisOutline{
 			Title: deriveCleanDocumentTitle(goal),
 			Sections: []SectionSpec{
@@ -458,6 +746,56 @@ func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbo
 		}
 
 	default: // "module_reference"
+		if needsDynamicSplit && len(uniqueFiles) > 3 {
+			batchSize := 3
+			var bodySections []SectionSpec
+			sectionCounter := 2
+
+			numBatches := (len(uniqueFiles) + batchSize - 1) / batchSize
+			for b := 0; b < numBatches; b++ {
+				start := b * batchSize
+				end := start + batchSize
+				if end > len(uniqueFiles) {
+					end = len(uniqueFiles)
+				}
+				batchFiles := uniqueFiles[start:end]
+				var batchFileBases []string
+				for _, f := range batchFiles {
+					batchFileBases = append(batchFileBases, filepathBase(f))
+				}
+				clusterLabel := deriveSubsystemClusterLabel(batchFileBases)
+				heading := fmt.Sprintf("## %d. %s (%s)", sectionCounter, clusterLabel, strings.Join(batchFileBases, ", "))
+				objective := fmt.Sprintf("Detail all major structs, functions, lifecycle methods, and operational interactions in %s.", strings.Join(batchFileBases, ", "))
+
+				bodySections = append(bodySections, SectionSpec{
+					Heading:    heading,
+					Objective:  objective,
+					FormatHint: "bulleted_deep_dive",
+				})
+				sectionCounter++
+			}
+
+			sections := []SectionSpec{
+				{
+					Heading:    "## 1. Architecture Overview & Design Principles",
+					Objective:  "Synthesize an in-depth breakdown of module architecture, core design principles, responsibilities, and structural organization.",
+					FormatHint: "prose",
+					IsInitial:  true,
+				},
+			}
+			sections = append(sections, bodySections...)
+			sections = append(sections, SectionSpec{
+				Heading:    fmt.Sprintf("## %d. Public Symbols, Interfaces & Usage Patterns", sectionCounter),
+				Objective:  "Provide an exhaustive reference of all public types, interfaces, methods, configuration context keys, and concrete code usage patterns across all documented files.",
+				FormatHint: "bulleted_deep_dive",
+				IsTerminal: true,
+			})
+			return &SynthesisOutline{
+				Title:    deriveCleanDocumentTitle(goal),
+				Sections: sections,
+			}
+		}
+
 		return &SynthesisOutline{
 			Title: deriveCleanDocumentTitle(goal),
 			Sections: []SectionSpec{
@@ -480,6 +818,54 @@ func BuildDocGenSafetyFloorOutline(goal, refinedCtx string, syms []symbols.Symbo
 				},
 			},
 		}
+	}
+}
+
+func getUniqueFilesFromUnitsAndSyms(units []docGenUnit, syms []symbols.Symbol) []string {
+	seen := make(map[string]bool)
+	var files []string
+	for _, u := range units {
+		f := u.filePath
+		if f == "" && u.identifier != "" && u.identifier != "Discovery Context" {
+			f = extractFilePathFromHeader(u.identifier)
+		}
+		if f != "" {
+			base := filepathBase(f)
+			if !seen[base] {
+				seen[base] = true
+				files = append(files, f)
+			}
+		}
+	}
+	for _, s := range syms {
+		if s.File != "" {
+			base := filepathBase(s.File)
+			if !seen[base] {
+				seen[base] = true
+				files = append(files, s.File)
+			}
+		}
+	}
+	return files
+}
+
+func deriveSubsystemClusterLabel(files []string) string {
+	lowerFiles := strings.ToLower(strings.Join(files, " "))
+	switch {
+	case strings.Contains(lowerFiles, "backend") || strings.Contains(lowerFiles, "remote") || strings.Contains(lowerFiles, "server"):
+		return "Core & Backend Subsystems"
+	case strings.Contains(lowerFiles, "model") || strings.Contains(lowerFiles, "catalog") || strings.Contains(lowerFiles, "local"):
+		return "Local Model & Lifecycle Management"
+	case strings.Contains(lowerFiles, "routing") || strings.Contains(lowerFiles, "router") || strings.Contains(lowerFiles, "prefill"):
+		return "Dual Routing & Preflight Subsystems"
+	case strings.Contains(lowerFiles, "metrics") || strings.Contains(lowerFiles, "thermal") || strings.Contains(lowerFiles, "token") || strings.Contains(lowerFiles, "tracker"):
+		return "Support & Telemetry Subsystems"
+	case strings.Contains(lowerFiles, "cache") || strings.Contains(lowerFiles, "query") || strings.Contains(lowerFiles, "store"):
+		return "Caching & Data Storage Subsystems"
+	case strings.Contains(lowerFiles, "executor") || strings.Contains(lowerFiles, "recall") || strings.Contains(lowerFiles, "node"):
+		return "Execution & Synthesis Subsystems"
+	default:
+		return "Subsystem Layer"
 	}
 }
 
@@ -516,7 +902,14 @@ func parseRefinedContextUnits(refinedCtx string) []docGenUnit {
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "File: ") || strings.HasPrefix(trimmed, "## File: ") {
+		isHeader := strings.HasPrefix(trimmed, "### ") ||
+			strings.HasPrefix(trimmed, "File: ") ||
+			strings.HasPrefix(trimmed, "## File: ") ||
+			strings.HasPrefix(trimmed, "## ADR-") ||
+			strings.HasPrefix(trimmed, "### ADR-") ||
+			(strings.HasPrefix(trimmed, "## ") && (strings.Contains(trimmed, ".go") || strings.Contains(trimmed, ".md") || strings.Contains(trimmed, "ADR-") || strings.Contains(trimmed, "00")))
+
+		if isHeader {
 			flush()
 			curIdentifier = trimmed
 		}
@@ -538,6 +931,10 @@ func extractFilePathFromHeader(header string) string {
 	lower := strings.ToLower(header)
 	re := regexp.MustCompile(`[\w\-\.\/]+\.(?:go|ts|js|py|rs|c|cpp|h|md|json)`)
 	if m := re.FindString(lower); m != "" {
+		return m
+	}
+	adrRe := regexp.MustCompile(`\b(?:adr[-_]?)?\d{4}[-\w]*`)
+	if m := adrRe.FindString(lower); m != "" {
 		return m
 	}
 	return ""
@@ -943,9 +1340,260 @@ func RunSectionedSynthesisPipeline(ctx context.Context, engine ProbeInferenceEng
 }
 
 // ExecuteDocGenSectionedSynthesis executes Inside-Out (Sandwich) Map-Reduce sectioned synthesis for codebase documentation (ADR-0084, ADR-0085).
+// EmbeddingPruneChunks uses the Embedding Sidecar to deduplicate and
+// relevance-filter file chunks before sectioned synthesis (ADR-0094).
+// Pure deterministic scaffolding — no LLM calls.
+//
+// Algorithm:
+//  1. Embed all chunk texts + goal in a single EmbedBatch call
+//  2. Score each chunk by cosine similarity to the goal vector
+//  3. Drop chunks below the relevance floor
+//  4. Sort by goal relevance descending
+//  5. Greedy dedup: skip chunks too similar to any already-kept chunk
+//  6. Concatenate kept chunks within the character budget
+func EmbeddingPruneChunks(
+	ctx context.Context,
+	chunks []ListFileChunk,
+	goal string,
+	redundancyThreshold float32,
+	relevanceFloor float32,
+	maxBudgetChars int,
+) string {
+	if len(chunks) == 0 {
+		return ""
+	}
+
+	// Collect texts for batch embedding
+	texts := make([]string, 0, len(chunks)+1)
+	texts = append(texts, goal) // index 0 = goal vector
+	for _, c := range chunks {
+		// Use filepath + first 500 chars as the embedding text
+		// to capture both structural and content similarity
+		text := c.FilePath + "\n" + c.Content
+		if len(text) > 500 {
+			text = text[:500]
+		}
+		texts = append(texts, text)
+	}
+
+	// Embed via sidecar
+	embCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	vecs, err := inference.GlobalEmbeddingSidecar.EmbedBatch(embCtx, texts)
+	if err != nil || len(vecs) != len(texts) {
+		// Fallback: return concatenated chunks within budget without dedup
+		fmt.Fprintf(os.Stderr, "[EmbeddingPrune] Sidecar unavailable (%v), falling back to budget-only truncation\n", err)
+		return fallbackBudgetTruncate(chunks, maxBudgetChars)
+	}
+
+	goalVec := vecs[0]
+	chunkVecs := vecs[1:]
+
+	// Score chunks by goal relevance
+	type scoredChunk struct {
+		idx       int
+		relevance float32
+	}
+	var scored []scoredChunk
+	for i, vec := range chunkVecs {
+		sim := inference.GlobalEmbeddingSidecar.CosineSimilarity(goalVec, vec)
+		if sim >= relevanceFloor {
+			scored = append(scored, scoredChunk{idx: i, relevance: sim})
+		} else {
+			fmt.Fprintf(os.Stderr, "[EmbeddingPrune] Dropped chunk %s (relevance %.3f < floor %.3f)\n",
+				chunks[i].FilePath, sim, relevanceFloor)
+		}
+	}
+
+	// Sort by relevance descending
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].relevance > scored[j].relevance
+	})
+
+	// Greedy dedup: keep chunk only if not too similar to any already-kept chunk
+	var kept []int
+	var keptVecs [][]float32
+	for _, sc := range scored {
+		isDuplicate := false
+		for _, kv := range keptVecs {
+			sim := inference.GlobalEmbeddingSidecar.CosineSimilarity(chunkVecs[sc.idx], kv)
+			if sim > redundancyThreshold {
+				isDuplicate = true
+				fmt.Fprintf(os.Stderr, "[EmbeddingPrune] Deduped chunk %s (similarity %.3f > threshold %.3f)\n",
+					chunks[sc.idx].FilePath, sim, redundancyThreshold)
+				break
+			}
+		}
+		if !isDuplicate {
+			kept = append(kept, sc.idx)
+			keptVecs = append(keptVecs, chunkVecs[sc.idx])
+		}
+	}
+
+	// Re-sort kept chunks by original order (preserve document flow)
+	sort.Ints(kept)
+
+	// Concatenate within budget
+	var result strings.Builder
+	for _, idx := range kept {
+		chunk := chunks[idx]
+		if result.Len()+len(chunk.Content) > maxBudgetChars {
+			fmt.Fprintf(os.Stderr, "[EmbeddingPrune] Budget cap reached at %d chars (limit %d)\n",
+				result.Len(), maxBudgetChars)
+			break
+		}
+		result.WriteString(chunk.Content)
+		result.WriteString("\n")
+	}
+
+	fmt.Fprintf(os.Stderr, "[EmbeddingPrune] %d/%d chunks kept, %d chars (budget %d)\n",
+		len(kept), len(chunks), result.Len(), maxBudgetChars)
+	return result.String()
+}
+
+// fallbackBudgetTruncate concatenates chunks within the budget without dedup.
+// Used when the Embedding Sidecar is unavailable.
+func fallbackBudgetTruncate(chunks []ListFileChunk, maxBudgetChars int) string {
+	var result strings.Builder
+	for _, c := range chunks {
+		if result.Len()+len(c.Content) > maxBudgetChars {
+			break
+		}
+		result.WriteString(c.Content)
+		result.WriteString("\n")
+	}
+	return result.String()
+}
+
+// ExecuteDirectChunkSummarization processes each file / item chunk in secCtx independently
+// through focused single-turn extraction calls and deterministically concatenates the results.
+func ExecuteDirectChunkSummarization(ctx context.Context, goal string, sec SectionSpec, secCtx string, engine ProbeInferenceEngine) (string, error) {
+	units := parseRefinedContextUnits(secCtx)
+	if len(units) <= 1 {
+		// If only 1 unit or unparsed, check if refinedCtx has chunks that can be split
+		chunks := SplitListOutputIntoFileChunks(secCtx)
+		if len(chunks) > 1 {
+			units = make([]docGenUnit, len(chunks))
+			for i, c := range chunks {
+				units[i] = docGenUnit{
+					identifier: c.FilePath,
+					content:    c.Content,
+					filePath:   c.FilePath,
+				}
+			}
+		}
+	}
+
+	if len(units) <= 1 {
+		return "", fmt.Errorf("insufficient units (%d) for direct chunk summarization", len(units))
+	}
+
+	var itemSummaries []string
+	isADR := strings.Contains(strings.ToLower(goal), "adr") || strings.Contains(strings.ToLower(sec.Heading), "decision")
+
+	for i, u := range units {
+		itemPath := u.filePath
+		if itemPath == "" {
+			itemPath = u.identifier
+		}
+		itemBase := filepathBase(itemPath)
+
+		var sysPrompt string
+		if isADR {
+			sysPrompt = fmt.Sprintf(`You are the Direct Decision Record Extraction Engine.
+Goal: %s
+
+CRITICAL INSTRUCTIONS:
+- You are processing ONE specific Architectural Decision Record (ADR): %s
+- Extract and format:
+  ### ADR Title (as ### Heading with ADR number)
+  - **Status**: Status value (e.g. Accepted, Proposed, Deprecated)
+  - **Date**: Date value
+  - **Context**: Concise 1-2 sentence problem context and background
+  - **Decision**: Concise 1-2 sentence core technical decision made
+  - **Technical Implications**: Bulleted list of key architectural consequences, invariants, and trade-offs
+- Be concise, technical, and strictly grounded in the provided text.
+- Do NOT hallucinate symbols or text from other files.
+- Start directly with the ### heading.`, goal, itemBase)
+		} else {
+			sysPrompt = fmt.Sprintf(`You are the Direct Item Extraction Engine.
+Goal: %s
+
+CRITICAL INSTRUCTIONS:
+- You are processing ONE specific file / item: %s
+- Extract key structures, functions, interfaces, or operational responsibilities.
+- Be concise, technical, and strictly grounded in the provided text.
+- Start directly with the ### item heading.`, goal, itemBase)
+		}
+
+		userPrompt := fmt.Sprintf("Source File/Item: %s\n\nContent:\n%s\n\nExtract the structured record for this item now:", itemPath, u.content)
+
+		callCtx := context.WithValue(ctx, inference.DRYSamplingKey, inference.DRYSamplingConfig{
+			Multiplier: 0.8, Base: 1.75, AllowedLength: 2,
+		})
+		callCtx = context.WithValue(callCtx, inference.PresencePenaltyKey, 0.2)
+		callCtx = context.WithValue(callCtx, inference.MaxTokensKey, 800)
+		callCtx = context.WithValue(callCtx, inference.GenerationGuardKey,
+			inference.NewRepetitionGuardWithMode(inference.ContentModeProse))
+
+		resp, err := engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		if err != nil || strings.TrimSpace(resp) == "" {
+			fmt.Fprintf(os.Stderr, "[DirectChunkSummarization] Item %d/%d (%s) inference retry: %v\n", i+1, len(units), itemBase, err)
+			resp, _ = engine.Infer(callCtx, sysPrompt, userPrompt, "", TargetWorker)
+		}
+
+		resp = stripPromptLeakage(strings.TrimSpace(resp))
+		if resp != "" {
+			if !strings.HasPrefix(resp, "### ") && !strings.HasPrefix(resp, "## ") {
+				resp = fmt.Sprintf("### %s\n\n%s", itemBase, resp)
+			}
+			itemSummaries = append(itemSummaries, resp)
+		}
+	}
+
+	if len(itemSummaries) == 0 {
+		return "", fmt.Errorf("no item summaries produced")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(sec.Heading)
+	sb.WriteString("\n\n")
+	sb.WriteString(strings.Join(itemSummaries, "\n\n---\n\n"))
+	return sb.String(), nil
+}
+
+func isDecisionOrItemLogGoal(goal, heading string) bool {
+	g := strings.ToLower(goal)
+	h := strings.ToLower(heading)
+	return strings.Contains(g, "adr") || strings.Contains(g, "decision") ||
+		strings.Contains(h, "decision") || strings.Contains(h, "adr") ||
+		strings.Contains(h, "records")
+}
+
 func ExecuteDocGenSectionedSynthesis(ctx context.Context, goal, refinedCtx string, outline *SynthesisOutline, syms []symbols.Symbol, engine ProbeInferenceEngine) (string, error) {
 	if outline == nil || len(outline.Sections) == 0 {
 		outline = BuildDocGenSafetyFloorOutline(goal, refinedCtx, syms)
+	}
+
+	// ADR-0094: Embedding-based chunk dedup when receiving raw List output
+	// directly (RecallPolicy: "skip" — no Recall Node compaction).
+	pruneBudget := config.GetEmbeddingPruneBudgetChars()
+	if len(refinedCtx) > pruneBudget {
+		chunks := SplitListOutputIntoFileChunks(refinedCtx)
+		if len(chunks) > 1 {
+			chunks = ExpandChunksIntraFile(chunks, 8000)
+			prunedCtx := EmbeddingPruneChunks(
+				ctx, chunks, goal,
+				config.GetEmbeddingPruneRedundancyThreshold(),
+				config.GetEmbeddingPruneRelevanceFloor(),
+				pruneBudget,
+			)
+			if len(prunedCtx) > 0 {
+				fmt.Fprintf(os.Stderr, "[DocGen] EmbeddingPrune: %d → %d chars\n", len(refinedCtx), len(prunedCtx))
+				refinedCtx = prunedCtx
+			}
+		}
 	}
 
 	// On-the-fly symbol extraction when the symbol index is empty.
@@ -992,11 +1640,29 @@ func ExecuteDocGenSectionedSynthesis(ctx context.Context, goal, refinedCtx strin
 	}
 
 	completedSections := make([]string, numSections)
+	allowedSymsMap := make(map[string]bool)
+	for _, s := range syms {
+		if s.Exported {
+			allowedSymsMap[s.Name] = true
+		}
+	}
 
 	// Phase 1: Synthesize all Body Sections with partitioned context
 	for _, idx := range bodyIndices {
 		sec := outline.Sections[idx]
 		secCtx, secSymBlock := PartitionDocGenContext(refinedCtx, syms, sec, outline.Sections, 40000)
+
+		// Direct chunk summarization fast-path for decision logs / multi-item extractions
+		if isDecisionOrItemLogGoal(goal, sec.Heading) {
+			chunkSynth, chunkErr := ExecuteDirectChunkSummarization(ctx, goal, sec, secCtx, engine)
+			if chunkErr == nil && len(strings.TrimSpace(chunkSynth)) > 100 {
+				completedSections[idx] = chunkSynth
+				continue
+			}
+			if chunkErr != nil {
+				fmt.Fprintf(os.Stderr, "[DocGenSynthesis] Direct chunk summarization skipped (%v), falling back to standard synthesis\n", chunkErr)
+			}
+		}
 
 		// Detect function index archetype for exported-only filtering
 		exportedOnlyHint := ""
@@ -1069,6 +1735,11 @@ CRITICAL INSTRUCTIONS:
 - You are generating the body section: "%s".
 - Begin your response directly with the section heading "%s".
 - Focus deeply on writing comprehensive, technical, concrete code signatures, parameters, types, and operational mechanics.
+- STRICT FACTUAL GROUNDING & OMISSION POLICY:
+  * Document ONLY symbols, methods, and types that appear VERBATIM in the provided source code blocks.
+  * If you are not 100%% certain a symbol or parameter exists in the provided code, OMIT IT ENTIRELY.
+  * Guessing, extrapolating, or inventing a symbol is penalized 10x more severely than omitting an existing one.
+  * If a file has no exported symbols, do NOT infer helper structs or imagined methods.
 - Do NOT repeat symbols already covered in other sections. Only document symbols that match THIS section's scope.%s%s
 - Conclude cleanly without trailing fragments.`, goal, secCtx, secSymBlock, previouslyDocumented, sec.Heading, sec.Heading, exportedOnlyHint, sectionBoundaryHint)
 
@@ -1094,11 +1765,11 @@ CRITICAL INSTRUCTIONS:
 			secText = checkAndRepairSectionTruncation(callCtx, secText, sysPrompt, userPrompt, engine)
 			secText = stripPromptLeakage(secText)
 			secText = strings.TrimSpace(secText)
-			// Post-filter: strip unexported Go symbols for function index goals.
+			// Post-filter: strip unexported and ungrounded Go symbols for function index goals.
 			// Guard: if filtering would gut the section (<200 chars), keep original.
 			// Imperfect content beats empty sections in quality scoring.
 			if IsFunctionIndexGoal(goal) {
-				filtered := stripUnexportedSymbolBlocks(secText)
+				filtered := stripUngroundedSymbolBlocks(secText, allowedSymsMap, secCtx)
 				if len(strings.TrimSpace(filtered)) >= 200 {
 					secText = filtered
 				}
@@ -1234,6 +1905,11 @@ CRITICAL INSTRUCTIONS:
 - Synthesize the final Reference Section: "%s".
 - Begin your response directly with the section heading "%s".
 - Provide an exhaustive, well-structured reference listing every single exported function, method, and type with its full signature and description.
+- STRICT FACTUAL GROUNDING & OMISSION POLICY:
+  * Document ONLY symbols, methods, and types that appear VERBATIM in the provided source code blocks.
+  * If you are not 100%% certain a symbol or parameter exists in the provided code, OMIT IT ENTIRELY.
+  * Guessing, extrapolating, or inventing a symbol is penalized 10x more severely than omitting an existing one.
+  * If a file has no exported symbols, do NOT infer helper structs or imagined methods.
 - Do NOT omit any exported symbols present in the context.
 - Do NOT repeat symbols already fully documented in the body sections above.%s
 - Conclude cleanly without trailing fragments.`, goal, terminalCtx, allSymBlock, sec.Heading, sec.Heading, terminalExportHint)
@@ -1256,7 +1932,7 @@ CRITICAL INSTRUCTIONS:
 			secText = stripPromptLeakage(secText)
 			secText = strings.TrimSpace(secText)
 			if IsFunctionIndexGoal(goal) {
-				filtered := stripUnexportedSymbolBlocks(secText)
+				filtered := stripUngroundedSymbolBlocks(secText, allowedSymsMap, terminalCtx)
 				if len(strings.TrimSpace(filtered)) >= 200 {
 					secText = filtered
 				}

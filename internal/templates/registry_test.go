@@ -93,22 +93,27 @@ func TestGet_Docgen_HasListAndWriteAction(t *testing.T) {
 	if graph == nil {
 		t.Fatal("expected non-nil graph for Docgen")
 	}
-	if len(graph.Nodes) != 2 {
-		t.Fatalf("expected 2 nodes, got %d", len(graph.Nodes))
+	if len(graph.Nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(graph.Nodes))
 	}
 
-	// Find list and action nodes
-	var listNode, action *compiler.GraphNode
+	// Find list, synthesis, and action nodes
+	var listNode, synthNode, action *compiler.GraphNode
 	for i := range graph.Nodes {
 		switch graph.Nodes[i].Type {
 		case "list":
 			listNode = &graph.Nodes[i]
+		case "synthesis":
+			synthNode = &graph.Nodes[i]
 		case "action":
 			action = &graph.Nodes[i]
 		}
 	}
 	if listNode == nil {
 		t.Fatal("expected a list node")
+	}
+	if synthNode == nil {
+		t.Fatal("expected a synthesis node")
 	}
 	if action == nil {
 		t.Fatal("expected an action node")
@@ -117,18 +122,20 @@ func TestGet_Docgen_HasListAndWriteAction(t *testing.T) {
 		t.Errorf("expected action 'write_file', got %q", action.Action)
 	}
 
-	// Verify edge: list → action
-	if len(graph.Edges) != 1 {
-		t.Fatalf("expected 1 edge, got %d", len(graph.Edges))
+	// Verify edges: list → synthesis → action
+	if len(graph.Edges) != 2 {
+		t.Fatalf("expected 2 edges, got %d", len(graph.Edges))
 	}
-	if graph.Edges[0].SourceID != listNode.ID || graph.Edges[0].TargetID != action.ID {
-		t.Errorf("expected edge %s→%s, got %s→%s", listNode.ID, action.ID, graph.Edges[0].SourceID, graph.Edges[0].TargetID)
+	if graph.Edges[0].SourceID != listNode.ID || graph.Edges[0].TargetID != synthNode.ID {
+		t.Errorf("expected edge %s→%s, got %s→%s", listNode.ID, synthNode.ID, graph.Edges[0].SourceID, graph.Edges[0].TargetID)
+	}
+	if graph.Edges[1].SourceID != synthNode.ID || graph.Edges[1].TargetID != action.ID {
+		t.Errorf("expected edge %s→%s, got %s→%s", synthNode.ID, action.ID, graph.Edges[1].SourceID, graph.Edges[1].TargetID)
 	}
 
-	// Verify NO dynamic bindings on action node — list output flows via
-	// AccumulatedContext (edge-driven), not DynamicBindings.
-	if len(action.DynamicBindings) > 0 {
-		t.Errorf("expected no DynamicBindings on list→action template, got %v", action.DynamicBindings)
+	// Verify dynamic binding on action node: content -> synthesize.output
+	if action.DynamicBindings["content"] != "synthesize.output" {
+		t.Errorf("expected dynamic binding content -> synthesize.output, got %v", action.DynamicBindings["content"])
 	}
 }
 
@@ -284,10 +291,43 @@ func TestGet_AllTemplates_PassCompilation(t *testing.T) {
 	}
 }
 
-func TestCategories_Returns6Categories(t *testing.T) {
+func TestGet_ListAndAction_HasListAndAction(t *testing.T) {
+	graph := Get(ListAndAction)
+	if graph == nil {
+		t.Fatal("expected non-nil graph for ListAndAction")
+	}
+	if len(graph.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(graph.Nodes))
+	}
+
+	var listNode, actionNode *compiler.GraphNode
+	for i := range graph.Nodes {
+		switch graph.Nodes[i].Type {
+		case "list":
+			listNode = &graph.Nodes[i]
+		case "action":
+			actionNode = &graph.Nodes[i]
+		}
+	}
+	if listNode == nil {
+		t.Fatal("expected a list node")
+	}
+	if actionNode == nil {
+		t.Fatal("expected an action node")
+	}
+
+	if len(graph.Edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(graph.Edges))
+	}
+	if graph.Edges[0].SourceID != listNode.ID || graph.Edges[0].TargetID != actionNode.ID {
+		t.Errorf("expected edge %s→%s, got %s→%s", listNode.ID, actionNode.ID, graph.Edges[0].SourceID, graph.Edges[0].TargetID)
+	}
+}
+
+func TestCategories_Returns7Categories(t *testing.T) {
 	cats := Categories()
-	if len(cats) != 6 {
-		t.Fatalf("expected 6 categories, got %d: %v", len(cats), cats)
+	if len(cats) != 7 {
+		t.Fatalf("expected 7 categories, got %d: %v", len(cats), cats)
 	}
 }
 

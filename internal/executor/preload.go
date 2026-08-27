@@ -50,9 +50,8 @@ func collectPreloadFiles(paths []string) []string {
 }
 
 // preloadDirectoryContext walks one or more directories and concatenates their
-// readable files into a single context string. This provides probes with complete
-// source material before the Thought Chain loop, eliminating the routing problem
-// where probes miss files during exploration.
+// readable files into a single context string. This provides nodes with complete
+// source material, eliminating the routing problem where nodes miss files during exploration.
 //
 // File handling by extension:
 //   - .go (non-test): AST-extracted exported symbols (types, funcs, methods, vars)
@@ -320,17 +319,14 @@ func formatExpr(expr ast.Expr) string {
 }
 
 // webOnlyTools lists tools that operate exclusively over the network.
-// Probes restricted to these tools should NOT auto-detect local PreloadPaths,
-// because injecting local directory content contaminates web research synthesis
-// (observed: technical_deep_dive_gguf 4.75→1.00 in benchmark run 14).
+// Tasks restricted to these tools should NOT auto-detect local PreloadPaths,
+// because injecting local directory content contaminates web research synthesis.
 var webOnlyTools = map[string]bool{
 	"web_search": true,
 	"web_browse": true,
 }
 
 // isWebOnlyProbe returns true when every tool in allowedTools is a web-only tool.
-// When true, the probe should skip local PreloadPaths auto-detection to avoid
-// contaminating web research context with irrelevant local files.
 func isWebOnlyProbe(allowedTools []string) bool {
 	if len(allowedTools) == 0 {
 		return false
@@ -343,11 +339,8 @@ func isWebOnlyProbe(allowedTools []string) bool {
 	return true
 }
 
-// isCacheEquippedProbe returns true if the probe has cache exploration tools
-// (introspect_cache, sql_cached_data) in its allowedTools. These probes are
-// Analyze Nodes that get data through the cache bridge — preloading directory
-// content produces empty/irrelevant context (e.g., CSV directories yield 0
-// chars from preloadDirectoryContext which only reads code/doc files).
+// isCacheEquippedProbe returns true if the node has cache exploration tools
+// (introspect_cache, sql_cached_data) in its allowedTools.
 func isCacheEquippedProbe(allowedTools []string) bool {
 	for _, t := range allowedTools {
 		if t == "introspect_cache" || t == "sql_cached_data" {
@@ -361,10 +354,8 @@ func isCacheEquippedProbe(allowedTools []string) bool {
 // Requires at least one slash and a word character, optionally ending with a trailing slash.
 var pathPattern = regexp.MustCompile(`(?:^|\s|['"(])([a-zA-Z][a-zA-Z0-9_\-./]*/)`)
 
-// detectPreloadPaths scans probe goal and context text for directory-like paths,
+// detectPreloadPaths scans goal and context text for directory-like paths,
 // resolves them against the project root, and returns paths to existing directories.
-// This auto-detection enables universal pre-loading without requiring the planner
-// to explicitly set PreloadPaths.
 func detectPreloadPaths(goal, taskContext string) []string {
 	allowedPaths := tools.GetAllowedPaths()
 	if len(allowedPaths) == 0 {
@@ -418,7 +409,7 @@ func detectPreloadPaths(goal, taskContext string) []string {
 	result = dedupParentPaths(result)
 
 	if len(result) > 0 {
-		fmt.Fprintf(os.Stderr, "[Probe] Auto-detected PreloadPaths from goal: %v\n", result)
+		fmt.Fprintf(os.Stderr, "[Preload] Auto-detected PreloadPaths from goal: %v\n", result)
 	}
 
 	return result
@@ -427,15 +418,11 @@ func detectPreloadPaths(goal, taskContext string) []string {
 // dedupParentPaths filters out parent directories when a more-specific
 // child path is already in the set. If path A is an ancestor of path B
 // (A + "/" is a prefix of B), then A is dropped.
-//
-// This fixes the v5 bug where both "internal" and "internal/cache" were
-// detected from goal text, causing 576 candidate files instead of 6.
 func dedupParentPaths(paths []string) []string {
 	if len(paths) == 0 {
 		return nil
 	}
 
-	// For each path, check if any other path is a child of it
 	keep := make([]bool, len(paths))
 	for i := range paths {
 		keep[i] = true
@@ -447,8 +434,6 @@ func dedupParentPaths(paths []string) []string {
 			if i == j {
 				continue
 			}
-			// If another path starts with candidate + "/", then candidate
-			// is a parent directory and should be dropped.
 			if strings.HasPrefix(other, prefix) {
 				keep[i] = false
 				break

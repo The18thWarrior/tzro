@@ -68,14 +68,22 @@ func generateMarkdown(results []ComparisonResult, datestamp, jsonPath string) st
 
 	// 2. Per-Task Comparison Table
 	sb.WriteString("## Per-Task Comparison Table\n\n")
-	sb.WriteString("| Task | Condition | Cloud Tokens | Local Tokens | Cost ($) | Wall Clock (ms) | Tool Calls | Goal | Fact | Cohr | Comp | Quality |\n")
-	sb.WriteString("|------|-----------|-------------|-------------|---------|----------------|-----------|------|------|------|------|--------|\n")
+	sb.WriteString("| Task | Condition | Cloud Tokens | Local Tokens | Cost ($) | Wall Clock (ms) | Tool Calls | Det | LLM | Goal | Fact | Cohr | Comp | Quality |\n")
+	sb.WriteString("|------|-----------|-------------|-------------|---------|----------------|-----------|-----|-----|------|------|------|------|--------|\n")
 
 	for _, taskID := range sortedTaskIDs(byTask) {
 		for _, r := range byTask[taskID] {
 			qualityStr := fmt.Sprintf("%.2f", r.QualityScore)
-			if r.Error != "" {
+			if r.Error != "" || r.JudgeError != "" || r.QualityScore < 0 {
 				qualityStr = "ERR"
+			}
+			detStr := "-"
+			if r.DeterministicScore > 0 {
+				detStr = fmt.Sprintf("%.2f", r.DeterministicScore)
+			}
+			llmStr := "-"
+			if r.LLMScore > 0 {
+				llmStr = fmt.Sprintf("%.2f", r.LLMScore)
 			}
 			goalStr := "-"
 			if r.GoalAlignment > 0 {
@@ -93,11 +101,11 @@ func generateMarkdown(results []ComparisonResult, datestamp, jsonPath string) st
 			if r.Completeness > 0 {
 				compStr = fmt.Sprintf("%.2f", r.Completeness)
 			}
-			sb.WriteString(fmt.Sprintf("| %s | %s | %d | %d | %.4f | %d | %d | %s | %s | %s | %s | %s |\n",
+			sb.WriteString(fmt.Sprintf("| %s | %s | %d | %d | %.4f | %d | %d | %s | %s | %s | %s | %s | %s | %s |\n",
 				r.TaskID, r.Condition,
 				r.CloudTokens.TotalTokens, r.LocalTokens.TotalTokens,
 				r.EstCostUSD, r.WallClockMs, r.ToolCallCount,
-				goalStr, factStr, cohrStr, compStr, qualityStr))
+				detStr, llmStr, goalStr, factStr, cohrStr, compStr, qualityStr))
 		}
 	}
 	sb.WriteString("\n")
@@ -162,17 +170,27 @@ func generateMarkdown(results []ComparisonResult, datestamp, jsonPath string) st
 
 	// 5. Quality Comparison
 	sb.WriteString("## Quality Comparison\n\n")
-	sb.WriteString("| Condition | Goal | Fact | Cohr | Comp | Avg Quality Score |\n")
-	sb.WriteString("|-----------|------|------|------|------|------------------|\n")
+	sb.WriteString("| Condition | Det Score | LLM Score | Goal | Fact | Cohr | Comp | Avg Quality Score |\n")
+	sb.WriteString("|-----------|-----------|-----------|------|------|------|------|------------------|\n")
 
 	for _, cond := range AllConditions() {
 		condResults := byCondition[cond]
 		avgQuality := avgQualityScore(condResults)
+		avgDet := avgRating(condResults, func(r ComparisonResult) float64 { return r.DeterministicScore })
+		avgLLM := avgRating(condResults, func(r ComparisonResult) float64 { return r.LLMScore })
 		avgGoal := avgRating(condResults, func(r ComparisonResult) float64 { return r.GoalAlignment })
 		avgFact := avgRating(condResults, func(r ComparisonResult) float64 { return r.FactualGrounding })
 		avgCohr := avgRating(condResults, func(r ComparisonResult) float64 { return r.Coherence })
 		avgComp := avgRating(condResults, func(r ComparisonResult) float64 { return r.Completeness })
 
+		detStr := "-"
+		if avgDet > 0 {
+			detStr = fmt.Sprintf("%.2f", avgDet)
+		}
+		llmStr := "-"
+		if avgLLM > 0 {
+			llmStr = fmt.Sprintf("%.2f", avgLLM)
+		}
 		goalStr := "-"
 		if avgGoal > 0 {
 			goalStr = fmt.Sprintf("%.2f", avgGoal)
@@ -190,19 +208,52 @@ func generateMarkdown(results []ComparisonResult, datestamp, jsonPath string) st
 			compStr = fmt.Sprintf("%.2f", avgComp)
 		}
 
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %.2f |\n", cond, goalStr, factStr, cohrStr, compStr, avgQuality))
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s | %.2f |\n", cond, detStr, llmStr, goalStr, factStr, cohrStr, compStr, avgQuality))
 	}
 	sb.WriteString("\n")
 
-	// 6. Methodology
+	// 6. Deterministic Evaluation Summary
+	sb.WriteString("## Deterministic Evaluation Summary\n\n")
+	sb.WriteString("| Condition | Tool Usage | File Coverage | Output Quality | Domain Invariants |\n")
+	sb.WriteString("|-----------|------------|---------------|----------------|-------------------|\n")
+
+	for _, cond := range AllConditions() {
+		condResults := byCondition[cond]
+		avgTool := avgScorecardDim(condResults, func(s *DeterministicScorecard) float64 { return s.ToolUsageScore })
+		avgCov := avgScorecardDim(condResults, func(s *DeterministicScorecard) float64 { return s.FileCoverageScore })
+		avgQual := avgScorecardDim(condResults, func(s *DeterministicScorecard) float64 { return s.OutputQualityScore })
+		avgDom := avgScorecardDim(condResults, func(s *DeterministicScorecard) float64 { return s.DomainScore })
+
+		toolStr := "-"
+		if avgTool > 0 {
+			toolStr = fmt.Sprintf("%.2f", avgTool)
+		}
+		covStr := "-"
+		if avgCov > 0 {
+			covStr = fmt.Sprintf("%.2f", avgCov)
+		}
+		qualStr := "-"
+		if avgQual > 0 {
+			qualStr = fmt.Sprintf("%.2f", avgQual)
+		}
+		domStr := "-"
+		if avgDom > 0 {
+			domStr = fmt.Sprintf("%.2f", avgDom)
+		}
+
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n", cond, toolStr, covStr, qualStr, domStr))
+	}
+	sb.WriteString("\n")
+
+	// 7. Methodology
 	sb.WriteString("## Methodology\n\n")
 	sb.WriteString(fmt.Sprintf("- **Date:** %s\n", datestamp))
-	sb.WriteString("- **Task suite:** 5 documentation generation tasks (T1–T5) against the tzro codebase\n")
-	sb.WriteString("- **Conditions:** 5 execution modes — cloud_react (baseline), cloud_dag_raw (DAG without pipeline), cloud_dag, local_only, cooperative\n")
-	sb.WriteString("- **Quality scoring:** LLM-as-judge with fixed cloud model\n")
+	sb.WriteString("- **Task suite:** Multi-category benchmark tasks (T1–T5) against the tzro codebase and external datasets\n")
+	sb.WriteString("- **Conditions:** Multi-mode execution — cloud_react (baseline), cloud_dag_raw, cloud_dag, local_only, cooperative, tzro_code\n")
+	sb.WriteString("- **Quality scoring:** Composite rubric combining 50% Deterministic checks (tool calls, file coverage, AST syntax, symbol grounding, ground truth answers, URL citations) and 50% LLM-as-judge\n")
 	sb.WriteString("- **Isolation:** Fresh TokenTracker and SQLite database per condition\n\n")
 
-	// 7. Raw Data
+	// 8. Raw Data
 	sb.WriteString("## Raw Data\n\n")
 	sb.WriteString(fmt.Sprintf("Full results: [%s](%s)\n", filepath.Base(jsonPath), jsonPath))
 
@@ -250,7 +301,7 @@ func avgQualityScore(results []ComparisonResult) float64 {
 	total := 0.0
 	count := 0
 	for _, r := range results {
-		if r.Error == "" {
+		if r.Error == "" && r.JudgeError == "" && r.QualityScore >= 0 {
 			total += r.QualityScore
 			count++
 		}
@@ -270,6 +321,27 @@ func avgRating(results []ComparisonResult, getter func(r ComparisonResult) float
 	for _, r := range results {
 		if r.Error == "" {
 			val := getter(r)
+			if val > 0 {
+				total += val
+				count++
+			}
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return total / float64(count)
+}
+
+func avgScorecardDim(results []ComparisonResult, getter func(s *DeterministicScorecard) float64) float64 {
+	if len(results) == 0 {
+		return 0
+	}
+	total := 0.0
+	count := 0
+	for _, r := range results {
+		if r.DeterministicChecks != nil {
+			val := getter(r.DeterministicChecks)
 			if val > 0 {
 				total += val
 				count++

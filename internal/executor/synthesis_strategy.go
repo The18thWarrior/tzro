@@ -75,7 +75,41 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 	synthCtx := context.WithValue(ctx, inference.MaxTokensKey, 65536)
 	synthCtx = context.WithValue(synthCtx, inference.GenerationGuardKey,
 		inference.NewRepetitionGuardWithMode(guardMode))
-	inferenceResult, err := inference.ExecuteWorkerStructured(synthCtx, req)
+
+	var inferenceResult string
+	var err error
+
+	synthGoal := goalPrompt
+	if synthGoal == "" {
+		synthGoal = node.Instructions
+	}
+
+	// ADR-0084, ADR-0085, ADR-0094: Sectioned Map-Reduce synthesis for codebase docs & research
+	if ShouldRunSectionedSynthesis(synthGoal, "", accumulatedCtx, 0, 0, strings.Contains(taskID, "codegen")) {
+		fmt.Fprintf(os.Stderr, "[SynthesisStrategy] Sectioned Map-Reduce synthesis triggered (ADR-0084)\n")
+		engine := &ProbeInference{}
+		if IsDocGenGoal(synthGoal) || strings.Contains(taskID, "docgen") {
+			outline, outErr := GenerateDocGenOutline(synthCtx, engine, synthGoal, accumulatedCtx, nil)
+			if outErr == nil && outline != nil && len(outline.Sections) > 0 {
+				docSynth, docErr := ExecuteDocGenSectionedSynthesis(synthCtx, synthGoal, accumulatedCtx, outline, nil, engine)
+				if docErr == nil && len(docSynth) > 200 {
+					inferenceResult = docSynth
+					goto postInference
+				}
+				fmt.Fprintf(os.Stderr, "[SynthesisStrategy] DocGen sectioned synthesis failed (%v) — falling back to single-pass\n", docErr)
+			}
+		} else {
+			secSections := DecomposeResearchGoalIntoSections(synthGoal)
+			secSynth, secErr := ExecuteSectionedSynthesis(synthCtx, synthGoal, accumulatedCtx, secSections, engine)
+			if secErr == nil && len(secSynth) > 200 {
+				inferenceResult = secSynth
+				goto postInference
+			}
+			fmt.Fprintf(os.Stderr, "[SynthesisStrategy] Research sectioned synthesis failed (%v) — falling back to single-pass\n", secErr)
+		}
+	}
+
+	inferenceResult, err = inference.ExecuteWorkerStructured(synthCtx, req)
 	if err != nil {
 		return &strategy.ExecutionResult{
 			Output:    fmt.Sprintf("synthesis node execution failed: %v", err),
@@ -83,6 +117,7 @@ func (s *SynthesisStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntim
 		}, nil
 	}
 
+postInference:
 	// Strip thinking traces leaked by the local model (e.g. <thinking>, <tool_code> blocks).
 	// At higher temperatures (0.6+), the 4B model occasionally emits reasoning traces
 	// as output content. These are never valid in user-facing synthesis.

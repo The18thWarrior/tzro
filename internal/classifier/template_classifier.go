@@ -10,13 +10,14 @@ import (
 )
 
 // TopologyArchetypeSystemPrompt instructs the worker model to classify a user
-// prompt into exactly one of the 6 structural Topology Archetypes (ADR-0087).
+// prompt into exactly one of the structural Topology Archetypes (ADR-0087).
 const TopologyArchetypeSystemPrompt = `You are a plan topology classifier for the tzro agentic execution engine. Classify the user's request into exactly one structural topology archetype.
 
 ## Archetypes
 
 - list-synthesis: Exploration, research, discovery, or analysis tasks that produce an answer or synthesis in memory/terminal without writing an output file to disk.
 - list-and-write: Exploration, research, documentation generation, or report writing tasks that MUST save/write output content to a file on disk (e.g. .md, .txt, README).
+- list-and-action: Gathering or extracting context from code, docs, or files to immediately execute an external tool action (e.g. saving to memory, making an API call, running a command, posting a notification).
 - multi-list-synthesis: Tasks requiring exploration of multiple independent sources, directories, or targets that must be synthesized together.
 - codegen: Code generation or modification tasks — writing or editing source code files (.go, .ts, .py, etc.). Context exploration followed by code generation.
 - data-analysis: Analyzing structured or tabular data from CSV files, databases, or cache tables using counting, grouping, filtering, or SQL operations.
@@ -26,14 +27,15 @@ const TopologyArchetypeSystemPrompt = `You are a plan topology classifier for th
 - Respond with ONLY valid JSON matching the schema. No markdown fences.
 - If the task asks to generate, update, or write a documentation file, report, README, index, or summary to a file path, choose "list-and-write".
 - If the task produces a documentation artifact (function index, symbol index, API reference, changelog, architecture document), choose "list-and-write" — these are always written to disk.
-- If the task asks to analyze, explore, summarize, or research without producing a persistent document, choose "list-synthesis".
+- If the task extracts/gathers context from files or code to feed a specific action tool (like save_memory, send_notification, post_webhook), choose "list-and-action".
+- If the task asks to analyze, explore, summarize, or research without producing a persistent document or calling an action tool, choose "list-synthesis".
 - If the task involves writing or modifying executable source code files (.go, .ts, .py, etc.), choose "codegen".
 - If the task involves multiple independent explorations, choose "multi-list-synthesis".
 - If ambiguous between "list-synthesis" and "list-and-write", prefer "list-and-write" when the task produces structured output that should persist.
 
 ## Response Schema
 {
-  "topology": "<one of the 6 archetypes above>"
+  "topology": "<one of the archetypes above>"
 }`
 
 // TopologyArchetypeSchema is the GBNF-constraining JSON schema for Pass 1 topology routing.
@@ -42,7 +44,7 @@ const TopologyArchetypeSchema = `{
   "properties": {
     "topology": {
       "type": "string",
-      "enum": ["list-synthesis", "list-and-write", "multi-list-synthesis", "codegen", "data-analysis", "action-chain"]
+      "enum": ["list-synthesis", "list-and-write", "list-and-action", "multi-list-synthesis", "codegen", "data-analysis", "action-chain"]
     }
   },
   "required": ["topology"]

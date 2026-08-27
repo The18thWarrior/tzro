@@ -17,7 +17,7 @@ import (
 	"tzro/internal/index"
 	"tzro/internal/inference"
 	"tzro/internal/memory"
-	"tzro/internal/symbols"
+
 	"tzro/internal/task"
 	"tzro/internal/telemetry"
 	"tzro/internal/tools"
@@ -181,67 +181,7 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		}
 	}
 
-	var adrCombinedPath string // Set by adr_summary pre-compilation for prompt augmentation (Fix 3)
-	if t.ID == "adr_summary" {
-		adrDir := filepath.Join(testOutputDir, "docs/adr")
-		files, err := os.ReadDir(adrDir)
-		if err == nil {
-			var combined strings.Builder
-			for _, file := range files {
-				name := file.Name()
-				if strings.HasPrefix(name, "00") && strings.HasSuffix(name, ".md") {
-					content, readErr := os.ReadFile(filepath.Join(adrDir, name))
-					if readErr == nil {
-						combined.WriteString(fmt.Sprintf("# ADR %s\n\n%s\n\n---\n\n", name, string(content)))
-					}
-				}
-			}
-			combinedPath := filepath.Join(adrDir, "all_adrs_combined.md")
-			_ = os.WriteFile(combinedPath, []byte(combined.String()), 0644)
-			adrCombinedPath = combinedPath
-			fmt.Fprintf(os.Stderr, "[Comparison] Pre-compiled all ADRs into %s\n", combinedPath)
-		}
-	} else if t.ID == "internal_architecture" {
-		internalDir := filepath.Join(testOutputDir, "internal")
-		graphSymbols, graphEdges, _ := symbols.BuildCallGraph(internalDir)
-		summaries, _ := symbols.ExtractPackageSummaries(internalDir)
-		archContent := symbols.AssembleArchitectureMap(internalDir, summaries, graphSymbols, graphEdges)
-		combinedPath := filepath.Join(internalDir, "all_internal_combined.md")
-		_ = os.WriteFile(combinedPath, []byte(archContent), 0644)
-		fmt.Fprintf(os.Stderr, "[Comparison] Dynamically extracted package architecture for %d packages into %s\n", len(summaries), combinedPath)
-	} else if t.ID == "comprehensive_readme" {
-		// Pre-compile ADRs
-		adrDir := filepath.Join(testOutputDir, "docs/adr")
-		files, err := os.ReadDir(adrDir)
-		var adrsCombined string
-		if err == nil {
-			var combined strings.Builder
-			for _, file := range files {
-				name := file.Name()
-				if strings.HasPrefix(name, "00") && strings.HasSuffix(name, ".md") {
-					content, readErr := os.ReadFile(filepath.Join(adrDir, name))
-					if readErr == nil {
-						combined.WriteString(fmt.Sprintf("# ADR %s\n\n%s\n\n---\n\n", name, string(content)))
-					}
-				}
-			}
-			adrsCombined = combined.String()
-		}
 
-		// Dynamically extract package architecture, CLI entrypoints, and overview
-		internalDir := filepath.Join(testOutputDir, "internal")
-		graphSymbols, graphEdges, _ := symbols.BuildCallGraph(internalDir)
-		summaries, _ := symbols.ExtractPackageSummaries(internalDir)
-		entrypoints := symbols.ExtractEntrypoints(testOutputDir)
-		archContent := symbols.AssembleArchitectureMap(internalDir, summaries, graphSymbols, graphEdges)
-		archPath := filepath.Join(internalDir, "all_internal_combined.md")
-		_ = os.WriteFile(archPath, []byte(archContent), 0644)
-
-		projectContent := symbols.AssembleProjectReadmeMap(testOutputDir, summaries, entrypoints, adrsCombined)
-		projectPath := filepath.Join(testOutputDir, "all_project_combined.md")
-		_ = os.WriteFile(projectPath, []byte(projectContent), 0644)
-		fmt.Fprintf(os.Stderr, "[Comparison] Dynamically compiled project map for %d packages and %d CLI entrypoints into %s\n", len(summaries), len(entrypoints), projectPath)
-	}
 
 	// Re-register write_file with a validator scoped to ONLY the testOutputDir.
 	// This ensures any write_file calls from the DAG planner/executor
@@ -311,6 +251,15 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 	// ADR-0086: Initialize and populate task-isolated Repository Pre-Index in testOutputDir
 	projectRoot := tools.GetAllowedPaths()[0]
 	indexDBPath := filepath.Join(testOutputDir, ".tzro", "index.db")
+	_ = os.MkdirAll(filepath.Dir(indexDBPath), 0755)
+
+	if t.Category == CategoryDocgen || t.Category == CategoryCodegen {
+		baseIdx, err := EnsureBaseProjectIndex(ctx, projectRoot, inference.GlobalEmbeddingSidecar)
+		if err == nil && baseIdx != "" {
+			_ = CopyIndexDB(baseIdx, indexDBPath)
+		}
+	}
+
 	if idxStore, idxErr := index.NewIndexStore(indexDBPath); idxErr == nil {
 		index.SetGlobalIndex(idxStore)
 		defer func() {
@@ -319,13 +268,8 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			_ = os.Remove(indexDBPath)
 		}()
 
-		// Index the virtual test output directory
+		// Index the virtual test output directory (delta only)
 		_, _ = index.ScanAndIndexWorkspace(ctx, testOutputDir, idxStore, inference.GlobalEmbeddingSidecar)
-
-		// For docgen and codegen, also index the project root
-		if t.Category == CategoryDocgen || t.Category == CategoryCodegen {
-			_, _ = index.ScanAndIndexWorkspace(ctx, projectRoot, idxStore, inference.GlobalEmbeddingSidecar)
-		}
 	}
 
 	// For codegen tasks, augment the prompt with the target path inside testOutputDir
@@ -346,12 +290,6 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 			relOutputDir = testOutputDir
 		}
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: Read and explore source code from the project root directory (not from the output directory). Write all output files to this isolated output directory: %s", taskPrompt, relOutputDir)
-
-		// Fix 3: Point the Probe at the pre-compiled ADR file so it doesn't
-		// miss files due to step budget exhaustion.
-		if adrCombinedPath != "" {
-			taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: All ADR files have been pre-compiled into a single document at: %s. Read this file FIRST to access all ADR content in one read.", taskPrompt, adrCombinedPath)
-		}
 	} else if t.Category == CategoryDatanal {
 		// For datanal tasks, the CSV file is at helpers/LeadSuccess.csv relative to the project root.
 		taskPrompt = fmt.Sprintf("%s\n\nIMPORTANT: The data file is located in the project directory at: %s/helpers/LeadSuccess.csv", taskPrompt, projectRoot)
@@ -399,12 +337,23 @@ func RunDAGCondition(ctx context.Context, conditionID string, t ComparisonTask, 
 		// synthesis can introduce truncation and duplication for large modules.
 		// Only fall back to termSynth when docContent is missing or trivially short
 		// (e.g., AccumulatedContext compaction reduced it to ~500 chars).
+		usedTermSynthFallback := false
 		if docContent != "" && len(docContent) >= 1000 {
 			outputText = sanitizeSynthesisOutput(docContent, 10)
 		} else if termSynth != "" {
 			outputText = termSynth
+			usedTermSynthFallback = true
 		} else if docContent != "" {
 			outputText = sanitizeSynthesisOutput(docContent, 10)
+		}
+
+		// Persist the scored output back to disk when the write_file tool
+		// produced truncated content (semantic_validator's 4096-token cap
+		// truncates the content argument). The recall node has the full
+		// synthesis but it never reaches disk via write_file. Write it now
+		// so test_outputs match what the judge actually scores.
+		if usedTermSynthFallback && outputText != "" && testOutputDir != "" {
+			persistScoredOutput(testOutputDir, t, outputText)
 		}
 	} else {
 		outputText = extractTerminalSynthesis(graph, taskID)
@@ -644,7 +593,51 @@ func extractLastWriteContent(taskID string, graph *compiler.ExecutionGraph, test
 	return content
 }
 
+// persistScoredOutput overwrites the docgen/research output file in testOutputDir
+// with the full scored content. This is needed because the semantic_validator's
+// 4096-token cap on write_file argument extraction truncates the content field,
+// causing the file on disk to contain only a partial result while the recall
+// node has the complete synthesis. The judge scores the full synthesis — this
+// function ensures test_outputs match judge input.
+func persistScoredOutput(testOutputDir string, t ComparisonTask, content string) {
+	if testOutputDir == "" || content == "" {
+		return
+	}
 
+	// Find the existing .md file the executor wrote (the truncated one)
+	var targetPath string
+	_ = filepath.Walk(testOutputDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(path), ".md") {
+			targetPath = path
+		}
+		return nil
+	})
+
+	// If no .md file was found, create one from the task's target paths
+	if targetPath == "" {
+		if len(t.TargetPaths) > 0 {
+			targetPath = filepath.Join(testOutputDir, t.TargetPaths[0], "scored_output.md")
+		} else {
+			targetPath = filepath.Join(testOutputDir, "scored_output.md")
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "[persistScoredOutput] Failed to create dir for %s: %v\n", targetPath, err)
+		return
+	}
+
+	if err := os.WriteFile(targetPath, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "[persistScoredOutput] Failed to write %s: %v\n", targetPath, err)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[persistScoredOutput] Overwrote truncated output with %d chars of scored synthesis → %s\n",
+		len(content), targetPath)
+}
 
 // extractLastSourceCodeOutput finds the last completed source_code node's
 // output from the DAG. This handles the case where spawned repair nodes
@@ -850,6 +843,13 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 	// ADR-0086: Initialize and populate task-isolated Repository Pre-Index in testOutputDir
 	projectRoot := tools.GetAllowedPaths()[0]
 	indexDBPath := filepath.Join(testOutputDir, ".tzro", "index.db")
+	_ = os.MkdirAll(filepath.Dir(indexDBPath), 0755)
+
+	baseIdx, err := EnsureBaseProjectIndex(ctx, projectRoot, inference.GlobalEmbeddingSidecar)
+	if err == nil && baseIdx != "" {
+		_ = CopyIndexDB(baseIdx, indexDBPath)
+	}
+
 	if idxStore, idxErr := index.NewIndexStore(indexDBPath); idxErr == nil {
 		index.SetGlobalIndex(idxStore)
 		defer func() {
@@ -858,8 +858,8 @@ func RunCodegenCondition(ctx context.Context, conditionID, modelMode string, t C
 			_ = os.Remove(indexDBPath)
 		}()
 
+		// Index the virtual test output directory (delta only)
 		_, _ = index.ScanAndIndexWorkspace(ctx, testOutputDir, idxStore, inference.GlobalEmbeddingSidecar)
-		_, _ = index.ScanAndIndexWorkspace(ctx, projectRoot, idxStore, inference.GlobalEmbeddingSidecar)
 	}
 
 	// Route: cloud mode always uses direct generation.

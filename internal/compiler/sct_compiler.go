@@ -130,7 +130,8 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 											isDirectSynth := orig.ProbeConfig != nil && orig.ProbeConfig.DirectSynthesis
 											isMultiProbeNoSink := discoveryNodesCount > 1 && !probeFeedsToolSinkInGraph(graph, orig.ID)
 											isTerminalAnalyze := orig.Type == "analyze" && orig.ProbeConfig != nil && orig.ProbeConfig.SourceHint == "cache"
-											if !isDirectSynth && !isMultiProbeNoSink && !isTerminalAnalyze {
+											isRecallSkipped := orig.RecallPolicy == "skip" // ADR-0094
+											if !isDirectSynth && !isMultiProbeNoSink && !isTerminalAnalyze && !isRecallSkipped {
 												targetBindingNode = upstreamID + "_recall"
 											}
 										}
@@ -286,7 +287,13 @@ func ExpandToSCTGraph(graph *ExecutionGraph, schemaResolver func(string) (string
 				}
 
 				shouldInjectRecall := true
-				if isTerminalAnalyze {
+				// ADR-0094: RecallPolicy — declarative control over Recall injection.
+				// Templates or the Strategic Planner set this to skip Recall when
+				// downstream synthesis handles decomposition natively.
+				if node.RecallPolicy == "skip" {
+					shouldInjectRecall = false
+					fmt.Fprintf(os.Stderr, "[Compiler] Node %s has RecallPolicy=skip. Skipping Recall injection — downstream handles decomposition natively.\n", node.ID)
+				} else if isTerminalAnalyze {
 					shouldInjectRecall = false
 				} else if discoveryNodesCount > 1 {
 					// ADR-0079: Dependency-Gated Recall Injection for multi-probe graphs.

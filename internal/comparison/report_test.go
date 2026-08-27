@@ -111,6 +111,7 @@ func TestGenerateReport_ProducesJSONAndMarkdown(t *testing.T) {
 		"Scaling Analysis",
 		"Savings Attribution",
 		"Quality Comparison",
+		"Deterministic Evaluation Summary",
 		"Methodology",
 		"Raw Data",
 	}
@@ -130,5 +131,76 @@ func TestGenerateReport_ProducesJSONAndMarkdown(t *testing.T) {
 	}
 	if !strings.Contains(mdContent, "Local Offloading") {
 		t.Error("Markdown missing savings bucket: Local Offloading")
+	}
+}
+
+func TestReportRendersERRForJudgeFailure(t *testing.T) {
+	results := []ComparisonResult{
+		{
+			TaskID:       "test_task",
+			TaskTier:     1,
+			Condition:    ConditionCooperative,
+			QualityScore: 4.5,
+			OutputText:   "good output",
+		},
+		{
+			TaskID:       "test_task",
+			TaskTier:     1,
+			Condition:    ConditionCloudReAct,
+			QualityScore: -1,
+			JudgeError:   "ERR_JUDGE_UNAVAILABLE",
+			OutputText:   "output exists but judge failed",
+		},
+		{
+			TaskID:       "test_task_2",
+			TaskTier:     2,
+			Condition:    ConditionCooperative,
+			QualityScore: 3.5,
+			OutputText:   "another output",
+		},
+	}
+
+	datestamp := time.Now().Format("2006-01-02")
+	md := generateMarkdown(results, datestamp, "results.json")
+
+	// Verify ERR appears in the markdown for the judge-failed result
+	if !strings.Contains(md, "ERR") {
+		t.Error("expected ERR in markdown for judge-failed result")
+	}
+
+	// Verify the valid scores still appear
+	if !strings.Contains(md, "4.50") {
+		t.Error("expected 4.50 quality score for valid result")
+	}
+	if !strings.Contains(md, "3.50") {
+		t.Error("expected 3.50 quality score for valid result")
+	}
+}
+
+func TestAvgQualityScore_ExcludesJudgeErrors(t *testing.T) {
+	results := []ComparisonResult{
+		{QualityScore: 4.0},
+		{QualityScore: -1, JudgeError: "ERR_JUDGE_UNAVAILABLE"},
+		{QualityScore: 3.0},
+		{QualityScore: 0, Error: "execution failed"},
+	}
+
+	avg := avgQualityScore(results)
+	// Should only average 4.0 and 3.0 (the two valid results)
+	expected := 3.5
+	if avg != expected {
+		t.Errorf("expected avg %.1f, got %.1f (should exclude judge errors and execution errors)", expected, avg)
+	}
+}
+
+func TestAvgQualityScore_AllJudgeErrors(t *testing.T) {
+	results := []ComparisonResult{
+		{QualityScore: -1, JudgeError: "ERR_JUDGE_UNAVAILABLE"},
+		{QualityScore: -1, JudgeError: "ERR_JUDGE_UNAVAILABLE"},
+	}
+
+	avg := avgQualityScore(results)
+	if avg != 0 {
+		t.Errorf("expected avg 0 when all results have judge errors, got %f", avg)
 	}
 }

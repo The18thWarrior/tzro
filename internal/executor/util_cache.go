@@ -1,6 +1,10 @@
 package executor
 
-import "regexp"
+import (
+	"regexp"
+
+	"tzro/internal/compiler"
+)
 
 // sqlFromCacheRe matches SELECT statements targeting cache_* tables.
 // Used by Analyze Nodes to auto-extract SQL from model reasoning text
@@ -15,10 +19,6 @@ var cacheIdRe = regexp.MustCompile(`cache_(?:\d{10,}|derived_[a-f0-9]{16})`)
 // extractSQLFromText attempts to find a SQL SELECT statement targeting a
 // cache_* table in the given text. Returns (sql, cacheTable) on match,
 // or ("", "") if no valid SQL is found.
-//
-// Scoped to Analyze Nodes only — generic Probe Nodes have arbitrary tool
-// surfaces where auto-extraction would be fragile. The cache_\d{10,} pattern
-// ensures we only match ephemeral query database tables, not arbitrary SQL.
 func extractSQLFromText(text string) (string, string) {
 	matches := sqlFromCacheRe.FindStringSubmatch(text)
 	if len(matches) >= 3 {
@@ -60,3 +60,49 @@ func extractCacheIdsFromContext(text string) []string {
 	return result
 }
 
+// isAnalyzeConfig returns true if the allowed tools contain cache tools,
+// indicating this is an analyze node's Thought Chain.
+func isAnalyzeConfig(allowedTools []string) bool {
+	for _, t := range allowedTools {
+		if t == "introspect_cache" || t == "sql_cached_data" {
+			return true
+		}
+	}
+	return false
+}
+
+// containsTool checks if a specific tool name is in the allowed tools list.
+func containsTool(allowedTools []string, tool string) bool {
+	for _, t := range allowedTools {
+		if t == tool {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldPhaseGateApply determines whether the synthesis phase gate should fire
+// for a given probe/analyze config. Returns true when either:
+// 1. Legacy condition: isAnalyze && SourceHint=cache && has sql_cached_data (ADR-0053)
+// 2. New condition: RequiredToolDispatch is non-empty (ADR-0068)
+func shouldPhaseGateApply(config *compiler.ProbeConfig) bool {
+	if config == nil {
+		return false
+	}
+	legacy := isAnalyzeConfig(config.AllowedTools) &&
+		config.SourceHint == "cache" &&
+		containsTool(config.AllowedTools, "sql_cached_data")
+	return legacy || len(config.RequiredToolDispatch) > 0
+}
+
+// requiredToolsBlocked checks whether all tools in RequiredToolDispatch have
+// been dispatched. Returns true and the list of missing tools if any required
+// tool has not been used. Returns false if no dispatch requirements exist.
+func requiredToolsBlocked(required []string, usedToolSet map[string]bool) (blocked bool, missing []string) {
+	for _, tool := range required {
+		if !usedToolSet[tool] {
+			missing = append(missing, tool)
+		}
+	}
+	return len(missing) > 0, missing
+}

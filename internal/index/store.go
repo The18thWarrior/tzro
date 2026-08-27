@@ -50,6 +50,17 @@ func (s *IndexStore) Close() error {
 	return nil
 }
 
+// Checkpoint executes a WAL truncate checkpoint to flush all data to the main DB file.
+func (s *IndexStore) Checkpoint() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db != nil {
+		_, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		return err
+	}
+	return nil
+}
+
 func (s *IndexStore) ensureSchema() error {
 	queries := []string{
 		// Files tracked in index with content hashes for delta invalidation

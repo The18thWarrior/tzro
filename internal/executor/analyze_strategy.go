@@ -29,7 +29,7 @@ type AnalyzeOnlyStrategy struct {
 func NewAnalyzeOnlyStrategy(engine *ExecutionEngine, base *strategy.BaseStrategy) *AnalyzeOnlyStrategy {
 	return &AnalyzeOnlyStrategy{
 		BaseStrategy: *base,
-		runCore:      engine.runProbeAnalyzeCore,
+		runCore:      engine.runAnalyzeCore,
 		publishState: publishNodeState,
 	}
 }

@@ -120,7 +120,7 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 
 	// 1. Determine if we should force cloud for this task
 	m.fallbackMutex.RLock()
-	forceCloud := m.forceCloudFallback[req.TaskID] && cfg.PrivacyLevel != "strict-local"
+	forceCloud := m.forceCloudFallback[req.TaskID] && cfg.PrivacyLevel != "strict-local" && cfg.ModelMode != "local"
 	m.fallbackMutex.RUnlock()
 
 	// 2. Cloud-only mode
@@ -370,7 +370,7 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 	heuristicRes, isHeuristic := m.runHeuristics(req)
 	cloudKey := config.GetCloudAPIKey()
 	if isHeuristic {
-		if m.isInconclusiveHeuristic(req, heuristicRes) && cloudKey != "" {
+		if cfg.ModelMode != "local" && m.isInconclusiveHeuristic(req, heuristicRes) && cloudKey != "" {
 			var cloudRes string
 			var err error
 			if req.StreamMeta != nil {
@@ -385,8 +385,8 @@ func (m *LocalModelManager) ExecuteStructured(ctx context.Context, req Structure
 		return heuristicRes, nil
 	}
 
-	// No heuristic, attempt cloud if configured
-	if cloudKey != "" {
+	// No heuristic, attempt cloud if configured and not in local-only mode
+	if cfg.ModelMode != "local" && cloudKey != "" {
 		if cfg.PrivacyLevel == "strict-local" {
 			return "", fmt.Errorf("cloud execution disabled under strict-local privacy level")
 		}

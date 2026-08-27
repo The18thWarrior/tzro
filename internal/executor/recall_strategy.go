@@ -131,8 +131,8 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 		var lastRefinedContext string
 		for _, upstreamID := range upstreamNodeIDs {
 			for _, upstreamNode := range graph.Nodes {
-				if upstreamNode.ID == upstreamID && (upstreamNode.Type == "list" || upstreamNode.Type == "research") {
-					// Wipe invalidated upstream probe history so re-exploration starts fresh
+				if upstreamNode.ID == upstreamID && (upstreamNode.Type == "research" || upstreamNode.Type == "analyze") {
+					// Wipe invalidated upstream history so re-exploration starts fresh
 					_ = memory.DB.ClearProbeHistory(taskID, upstreamID)
 
 					stepBudget := 10
@@ -145,9 +145,15 @@ func (s *RecallStrategy) Execute(ctx context.Context, nr *strategy.NodeRuntime) 
 						AllowedTools: upstreamNode.AllowedTools,
 						StepBudget:   stepBudget,
 					}
-					reSynth, reErr := RunProbePhases(ctx, taskID, upstreamID, reProbeConfig, recallEngine, recallEngine, nil)
+					var reSynth string
+					var reErr error
+					if upstreamNode.Type == "research" {
+						reSynth, reErr = RunResearchPhases(ctx, taskID, upstreamID, reProbeConfig, recallEngine, recallEngine, nil)
+					} else if upstreamNode.Type == "analyze" {
+						reSynth, reErr = RunAnalyzePhases(ctx, taskID, upstreamID, reProbeConfig, recallEngine, recallEngine, nil)
+					}
 					if reErr == nil && reSynth != "" {
-						fmt.Fprintf(os.Stderr, "[RecallStrategy] Upstream probe %s re-exploration succeeded (%d chars)\n",
+						fmt.Fprintf(os.Stderr, "[RecallStrategy] Upstream node %s re-exploration succeeded (%d chars)\n",
 							upstreamID, len(reSynth))
 						freshRecall, freshErr := s.runRecall(ctx, taskID, node.ID, upstreamNodeIDs, node.Instructions, recallEngine)
 						if freshErr == nil && freshRecall.Synthesis != "" {
