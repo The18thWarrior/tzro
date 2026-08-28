@@ -17,7 +17,7 @@ type ClaudePreToolUseInput struct {
 
 // ClaudePreToolUseOutput represents the response sent to Claude Code.
 type ClaudePreToolUseOutput struct {
-	Decision          string         `json:"decision,omitempty"`           // "allow" | "deny" | "modify"
+	Decision          string         `json:"decision,omitempty"` // "allow" | "deny" | "modify"
 	Reason            string         `json:"reason,omitempty"`
 	ModifiedToolInput map[string]any `json:"modified_tool_input,omitempty"`
 }

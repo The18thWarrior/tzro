@@ -349,9 +349,9 @@ func printE2EPerTurnTable(t *testing.T, r e2eRunResult) {
 		return
 	}
 
-	t.Logf("\n"+
-		"┌───────┬─────────────────┬────────────┬────────────┬────────────┬──────────────┬──────────────┐\n"+
-		"│ Turn  │ Tool            │ Prompt Tok │ Cached Tok │ Hit Ratio  │   Cost ($)   │ Prefix Hash  │\n"+
+	t.Logf("\n" +
+		"┌───────┬─────────────────┬────────────┬────────────┬────────────┬──────────────┬──────────────┐\n" +
+		"│ Turn  │ Tool            │ Prompt Tok │ Cached Tok │ Hit Ratio  │   Cost ($)   │ Prefix Hash  │\n" +
 		"├───────┼─────────────────┼────────────┼────────────┼────────────┼──────────────┼──────────────┤")
 
 	for _, tm := range r.Turns {

@@ -53,14 +53,14 @@ type SweepMetric struct {
 
 // BenchmarkResults is the combined output for both phases.
 type BenchmarkResults struct {
-	Model           string        `json:"model"`
-	Timestamp       string        `json:"timestamp"`
-	Phase1Turns     []TurnMetric  `json:"phase1_incremental"`
-	Phase1Summary   PhaseSummary  `json:"phase1_summary"`
-	Phase2Steps     []SweepMetric `json:"phase2_sweep"`
-	Phase2Summary   PhaseSummary  `json:"phase2_summary"`
-	TotalCostUSD    float64       `json:"total_cost_usd"`
-	CostLimitUSD    float64       `json:"cost_limit_usd"`
+	Model         string        `json:"model"`
+	Timestamp     string        `json:"timestamp"`
+	Phase1Turns   []TurnMetric  `json:"phase1_incremental"`
+	Phase1Summary PhaseSummary  `json:"phase1_summary"`
+	Phase2Steps   []SweepMetric `json:"phase2_sweep"`
+	Phase2Summary PhaseSummary  `json:"phase2_summary"`
+	TotalCostUSD  float64       `json:"total_cost_usd"`
+	CostLimitUSD  float64       `json:"cost_limit_usd"`
 }
 
 // PhaseSummary holds aggregate stats for a phase.

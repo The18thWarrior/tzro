@@ -40,14 +40,14 @@ type Metrics struct {
 
 // Server is the transparent reverse proxy.
 type Server struct {
-	cfg      Config
-	httpSrv  *http.Server
-	dlp      *dlp.Redactor
-	kvLock   *kvlock.LockGuard
-	store    *store.Store
-	metrics  Metrics
-	startAt  time.Time
-	mu       sync.RWMutex
+	cfg     Config
+	httpSrv *http.Server
+	dlp     *dlp.Redactor
+	kvLock  *kvlock.LockGuard
+	store   *store.Store
+	metrics Metrics
+	startAt time.Time
+	mu      sync.RWMutex
 }
 
 // NewServer initializes the proxy server.

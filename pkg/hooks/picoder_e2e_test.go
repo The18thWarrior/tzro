@@ -1027,16 +1027,24 @@ func generateTestDBLog() string {
 	sb.WriteString("\t/app/internal/db/store.go:72 +0x1a5\n")
 	sb.WriteString("acme/inventory/internal/db.TestCreateProductDuplicate(0xc000106d00)\n")
 	sb.WriteString("\t/app/internal/db/store_test.go:45 +0x312\n")
-	for i := 0; i < 30; i++ { sb.WriteString(fmt.Sprintf("testing.go:%d +0x%x\n", 800+i, 0x20+i)) }
-	for i := 0; i < 25; i++ { sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 200+i, 0x10+i)) }
+	for i := 0; i < 30; i++ {
+		sb.WriteString(fmt.Sprintf("testing.go:%d +0x%x\n", 800+i, 0x20+i))
+	}
+	for i := 0; i < 25; i++ {
+		sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 200+i, 0x10+i))
+	}
 	sb.WriteString("\n=== RUN   TestCreateOrder\n--- FAIL: TestCreateOrder (0.05s)\n")
 	sb.WriteString("    orders_test.go:23: foreign key constraint violation: customer_id references users(id)\n")
 	sb.WriteString("panic: runtime error: index out of range [5] with length 3\n\n")
 	sb.WriteString("goroutine 43 [running]:\n")
 	sb.WriteString("acme/inventory/internal/db.(*Store).CreateOrder(0xc0000b2000, {0xc0000fe200})\n")
 	sb.WriteString("\t/app/internal/db/orders.go:18 +0x2b3\n")
-	for i := 0; i < 20; i++ { sb.WriteString(fmt.Sprintf("testing.go:%d +0x%x\n", 900+i, 0x30+i)) }
-	for i := 0; i < 20; i++ { sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 250+i, 0x15+i)) }
+	for i := 0; i < 20; i++ {
+		sb.WriteString(fmt.Sprintf("testing.go:%d +0x%x\n", 900+i, 0x30+i))
+	}
+	for i := 0; i < 20; i++ {
+		sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 250+i, 0x15+i))
+	}
 	sb.WriteString("\n=== RUN   TestDeleteProduct\n--- PASS: TestDeleteProduct (0.01s)\n")
 	sb.WriteString("=== RUN   TestUpdateOrderStatus\n--- PASS: TestUpdateOrderStatus (0.01s)\n")
 	sb.WriteString("FAIL\tacme/inventory/internal/db\t0.18s\n")
@@ -1057,8 +1065,12 @@ func generateTestAPILog() string {
 	sb.WriteString("goroutine 55 [running]:\n")
 	sb.WriteString("acme/inventory/internal/api.updateStockHandler.func1(0xc0001a2000, 0xc0001a4000)\n")
 	sb.WriteString("\t/app/internal/api/products.go:78 +0x3a5\n")
-	for i := 0; i < 15; i++ { sb.WriteString(fmt.Sprintf("net/http/server.go:%d +0x%x\n", 1800+i, 0x30+i)) }
-	for i := 0; i < 15; i++ { sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 300+i, 0x10+i)) }
+	for i := 0; i < 15; i++ {
+		sb.WriteString(fmt.Sprintf("net/http/server.go:%d +0x%x\n", 1800+i, 0x30+i))
+	}
+	for i := 0; i < 15; i++ {
+		sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 300+i, 0x10+i))
+	}
 	sb.WriteString("\n=== RUN   TestCreateOrderHandler\n--- FAIL: TestCreateOrderHandler (0.03s)\n")
 	sb.WriteString("    orders_test.go:45: expected status 201, got 500\n")
 	sb.WriteString("    orders_test.go:46: error: foreign key constraint\n")
@@ -1085,8 +1097,12 @@ func generateTestAuthLog() string {
 	sb.WriteString("goroutine 60 [running]:\n")
 	sb.WriteString("acme/inventory/internal/auth.(*Service).RequireAuth.func1(0xc000200000, 0xc000202000)\n")
 	sb.WriteString("\t/app/internal/auth/middleware.go:25 +0x195\n")
-	for i := 0; i < 20; i++ { sb.WriteString(fmt.Sprintf("net/http/server.go:%d +0x%x\n", 2000+i, 0x40+i)) }
-	for i := 0; i < 15; i++ { sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 350+i, 0x18+i)) }
+	for i := 0; i < 20; i++ {
+		sb.WriteString(fmt.Sprintf("net/http/server.go:%d +0x%x\n", 2000+i, 0x40+i))
+	}
+	for i := 0; i < 15; i++ {
+		sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 350+i, 0x18+i))
+	}
 	sb.WriteString("\n=== RUN   TestRequireAdmin\n--- PASS: TestRequireAdmin (0.01s)\n")
 	sb.WriteString("FAIL\tacme/inventory/internal/auth\t0.21s\n")
 	return sb.String()
@@ -1103,11 +1119,15 @@ func generateTestWorkerLog() string {
 	sb.WriteString("Previous write at 0x00c0001a2020 by goroutine 73:\n")
 	sb.WriteString("  acme/inventory/internal/worker.(*Worker).processJobs()\n")
 	sb.WriteString("      /app/internal/worker/worker.go:68 +0x9a\n")
-	for i := 0; i < 25; i++ { sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 400+i, 0x20+i)) }
+	for i := 0; i < 25; i++ {
+		sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 400+i, 0x20+i))
+	}
 	sb.WriteString("\nGoroutine 72 (running) created at:\n")
 	sb.WriteString("  acme/inventory/internal/worker.(*Worker).Start()\n")
 	sb.WriteString("      /app/internal/worker/worker.go:42 +0x78\n")
-	for i := 0; i < 10; i++ { sb.WriteString(fmt.Sprintf("testing.go:%d +0x%x\n", 1000+i, 0x50+i)) }
+	for i := 0; i < 10; i++ {
+		sb.WriteString(fmt.Sprintf("testing.go:%d +0x%x\n", 1000+i, 0x50+i))
+	}
 	sb.WriteString("==================\n--- FAIL: TestProcessJobs_Race (0.05s)\n")
 	sb.WriteString("=== RUN   TestSyncStock\n--- PASS: TestSyncStock (0.02s)\n")
 	sb.WriteString("=== RUN   TestSendNotification\n--- FAIL: TestSendNotification (0.01s)\n")
@@ -1129,7 +1149,9 @@ func generateBuildLog() string {
 	sb.WriteString("goroutine 1 [running]:\n")
 	sb.WriteString("cmd/compile/internal/gc.Main(0xc0000b2000)\n")
 	sb.WriteString("\t/usr/local/go/src/cmd/compile/internal/gc/main.go:350 +0x1a5\n")
-	for i := 0; i < 15; i++ { sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 300+i, 0x10+i)) }
+	for i := 0; i < 15; i++ {
+		sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 300+i, 0x10+i))
+	}
 	sb.WriteString("\nexit status 2\n")
 	return sb.String()
 }
@@ -1145,7 +1167,9 @@ func generateLintLog() string {
 	sb.WriteString("internal/worker/worker.go:68:1: function processJobs has a data race on shared state (govet)\n")
 	sb.WriteString("internal/worker/notifications.go:15:1: function SendNotification is not idempotent (custom-lint)\n")
 	sb.WriteString("internal/models/order.go:42:1: method CalculateTotal mutates receiver, consider returning new value (revive)\n")
-	for i := 0; i < 20; i++ { sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 500+i, 0x25+i)) }
+	for i := 0; i < 20; i++ {
+		sb.WriteString(fmt.Sprintf("runtime/proc.go:%d +0x%x\n", 500+i, 0x25+i))
+	}
 	sb.WriteString("\n12 issues found (3 errors, 9 warnings)\n")
 	return sb.String()
 }
@@ -1177,7 +1201,10 @@ func generateAPIResponseLog() string {
 func generateCoverageReport() string {
 	var sb strings.Builder
 	sb.WriteString("mode: atomic\n")
-	pkgs := []struct{ pkg string; cov float64 }{
+	pkgs := []struct {
+		pkg string
+		cov float64
+	}{
 		{"internal/config", 92.3}, {"internal/models", 78.4}, {"internal/db", 45.2},
 		{"internal/api", 38.7}, {"internal/auth", 31.5}, {"internal/worker", 22.1},
 	}
@@ -1186,7 +1213,9 @@ func generateCoverageReport() string {
 	}
 	sb.WriteString("\ntotal:\t(statements)\t48.2%\n\nWARNING: coverage below 50% threshold\nPackages below threshold:\n")
 	for _, p := range pkgs {
-		if p.cov < 50.0 { sb.WriteString(fmt.Sprintf("  - %s: %.1f%%\n", p.pkg, p.cov)) }
+		if p.cov < 50.0 {
+			sb.WriteString(fmt.Sprintf("  - %s: %.1f%%\n", p.pkg, p.cov))
+		}
 	}
 	return sb.String()
 }
@@ -1206,7 +1235,9 @@ func generateDeployErrorLog() string {
 	sb.WriteString("      /app/internal/auth/service.go:39 +0x85\n")
 	sb.WriteString("  acme/inventory/internal/api.init()\n")
 	sb.WriteString("      /app/internal/api/router.go:15 +0x120\n")
-	for i := 0; i < 25; i++ { sb.WriteString(fmt.Sprintf("  runtime/proc.go:%d +0x%x\n", 600+i, 0x30+i)) }
+	for i := 0; i < 25; i++ {
+		sb.WriteString(fmt.Sprintf("  runtime/proc.go:%d +0x%x\n", 600+i, 0x30+i))
+	}
 	sb.WriteString("\n2024-06-15T14:32:31Z [deploy] DEPLOYMENT FAILED\n")
 	sb.WriteString("2024-06-15T14:32:31Z [deploy] Rolling back to previous version...\n")
 	sb.WriteString("2024-06-15T14:32:35Z [deploy] Rollback complete. Service stable on previous version.\n")
@@ -1227,11 +1258,15 @@ func loadEnv(t *testing.T) (apiKey, model string) {
 			scanner := bufio.NewScanner(f)
 			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
-				if line == "" || strings.HasPrefix(line, "#") { continue }
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
 				if k, v, ok := strings.Cut(line, "="); ok {
 					switch strings.TrimSpace(k) {
-					case "OPENROUTER_API_KEY": apiKey = strings.TrimSpace(v)
-					case "OPENROUTER_MODEL": model = strings.TrimSpace(v)
+					case "OPENROUTER_API_KEY":
+						apiKey = strings.TrimSpace(v)
+					case "OPENROUTER_MODEL":
+						model = strings.TrimSpace(v)
 					}
 				}
 			}
@@ -1240,7 +1275,9 @@ func loadEnv(t *testing.T) (apiKey, model string) {
 		}
 		dir = filepath.Dir(dir)
 	}
-	if model == "" { model = "openai/gpt-4o-mini" }
+	if model == "" {
+		model = "openai/gpt-4o-mini"
+	}
 	return
 }
 
@@ -1318,17 +1355,25 @@ func executeLocalTool(workspaceDir, toolName, argsJSON string) (string, error) {
 	switch toolName {
 	case "list_dir":
 		path := args["path"]
-		if path == "" { path = "." }
+		if path == "" {
+			path = "."
+		}
 		absPath := filepath.Join(workspaceDir, path)
 		entries, err := os.ReadDir(absPath)
-		if err != nil { return fmt.Sprintf("error: %v", err), nil }
+		if err != nil {
+			return fmt.Sprintf("error: %v", err), nil
+		}
 		var sb strings.Builder
 		for _, e := range entries {
 			kind := "file"
-			if e.IsDir() { kind = "dir" }
+			if e.IsDir() {
+				kind = "dir"
+			}
 			info, _ := e.Info()
 			size := int64(0)
-			if info != nil { size = info.Size() }
+			if info != nil {
+				size = info.Size()
+			}
 			sb.WriteString(fmt.Sprintf("%s (%s, %d bytes)\n", e.Name(), kind, size))
 		}
 		return sb.String(), nil
@@ -1337,7 +1382,9 @@ func executeLocalTool(workspaceDir, toolName, argsJSON string) (string, error) {
 		path := args["path"]
 		absPath := filepath.Join(workspaceDir, path)
 		data, err := os.ReadFile(absPath)
-		if err != nil { return fmt.Sprintf("error: %v", err), nil }
+		if err != nil {
+			return fmt.Sprintf("error: %v", err), nil
+		}
 		return string(data), nil
 
 	case "run_command":
@@ -1360,7 +1407,10 @@ func executeLocalTool(workspaceDir, toolName, argsJSON string) (string, error) {
 			var sb strings.Builder
 			for _, name := range []string{"test_db.log", "test_api.log", "test_auth.log", "test_worker.log"} {
 				data, err := os.ReadFile(filepath.Join(workspaceDir, "logs", name))
-				if err == nil { sb.WriteString(string(data)); sb.WriteString("\n") }
+				if err == nil {
+					sb.WriteString(string(data))
+					sb.WriteString("\n")
+				}
 			}
 			return sb.String(), nil
 		case strings.Contains(cmd, "go build"):
@@ -1506,7 +1556,9 @@ Remember: ONE tool call per turn. Be methodical.`
 
 		reqBody := orRequest{Model: model, Messages: messages, Tools: tools}
 		reqJSON, err := json.Marshal(reqBody)
-		if err != nil { t.Fatalf("turn %d: marshal request: %v", turn, err) }
+		if err != nil {
+			t.Fatalf("turn %d: marshal request: %v", turn, err)
+		}
 
 		req, _ := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(reqJSON))
 		req.Header.Set("Content-Type", "application/json")
@@ -1561,7 +1613,9 @@ Remember: ONE tool call per turn. Be methodical.`
 		// Execute each tool call
 		for _, tc := range assistantMsg.ToolCalls {
 			rawOutput, err := executeLocalTool(workspaceDir, tc.Function.Name, tc.Function.Arguments)
-			if err != nil { rawOutput = fmt.Sprintf("tool error: %v", err) }
+			if err != nil {
+				rawOutput = fmt.Sprintf("tool error: %v", err)
+			}
 
 			toolOutput := rawOutput
 
@@ -1676,35 +1730,35 @@ func agentLoopWithTzro(t *testing.T, apiKey, model, tzroBin, workspaceDir string
 
 	tools := []orTool{
 		{Type: "function", Function: orToolFunction{
-			Name: "tzro_probe",
+			Name:        "tzro_probe",
 			Description: "Search for symbols, functions, types, or patterns across the entire codebase. Returns exact file:line locations in <500 tokens. USE THIS FIRST.",
 			Parameters: map[string]any{"type": "object", "properties": map[string]any{
 				"query": map[string]string{"type": "string", "description": "Search query."},
 			}, "required": []string{"query"}},
 		}},
 		{Type: "function", Function: orToolFunction{
-			Name: "tzro_skeleton",
+			Name:        "tzro_skeleton",
 			Description: "Get a compressed overview of a source file (imports + signatures, bodies elided as hash tags). 70-90% smaller than full file.",
 			Parameters: map[string]any{"type": "object", "properties": map[string]any{
 				"file": map[string]string{"type": "string", "description": "Path to source file (relative to workspace root)."},
 			}, "required": []string{"file"}},
 		}},
 		{Type: "function", Function: orToolFunction{
-			Name: "tzro_expand",
+			Name:        "tzro_expand",
 			Description: "Retrieve a function body by its hash from skeleton output (e.g. '// [body elided: #abc123]'). Returns only ~20 lines.",
 			Parameters: map[string]any{"type": "object", "properties": map[string]any{
 				"hash": map[string]string{"type": "string", "description": "Hash from skeleton elision comment."},
 			}, "required": []string{"hash"}},
 		}},
 		{Type: "function", Function: orToolFunction{
-			Name: "read_file",
+			Name:        "read_file",
 			Description: "Read the full contents of a file. Use for READMEs, configs, log files. Prefer tzro_skeleton for source code.",
 			Parameters: map[string]any{"type": "object", "properties": map[string]any{
 				"path": map[string]string{"type": "string", "description": "Relative path from workspace root."},
 			}, "required": []string{"path"}},
 		}},
 		{Type: "function", Function: orToolFunction{
-			Name: "run_command",
+			Name:        "run_command",
 			Description: "Run a shell command (go test, go build, etc.).",
 			Parameters: map[string]any{"type": "object", "properties": map[string]any{
 				"command": map[string]string{"type": "string", "description": "Shell command to execute."},
@@ -1752,7 +1806,10 @@ Task: Efficiently diagnose all issues in this codebase.
 		req.Header.Set("X-Title", "tzro-tools-benchmark")
 
 		resp, err := client.Do(req)
-		if err != nil { t.Logf("turn %d: request failed (ending): %v", turn, err); break }
+		if err != nil {
+			t.Logf("turn %d: request failed (ending): %v", turn, err)
+			break
+		}
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
@@ -1763,7 +1820,8 @@ Task: Efficiently diagnose all issues in this codebase.
 
 		var orResp orResponse
 		if err := json.Unmarshal(respBody, &orResp); err != nil {
-			t.Logf("turn %d: unparseable (ending)", turn); break
+			t.Logf("turn %d: unparseable (ending)", turn)
+			break
 		}
 
 		result.PromptTokens += orResp.Usage.PromptTokens
@@ -1775,7 +1833,10 @@ Task: Efficiently diagnose all issues in this codebase.
 			result.CacheWriteTokens += orResp.Usage.PromptTokensDetails.CacheWriteTokens
 		}
 
-		if len(orResp.Choices) == 0 { t.Logf("turn %d: no choices (ending)", turn); break }
+		if len(orResp.Choices) == 0 {
+			t.Logf("turn %d: no choices (ending)", turn)
+			break
+		}
 		choice := orResp.Choices[0]
 		assistantMsg := choice.Message
 		messages = append(messages, assistantMsg)
@@ -1787,7 +1848,9 @@ Task: Efficiently diagnose all issues in this codebase.
 
 		for _, tc := range assistantMsg.ToolCalls {
 			rawOutput, err := executeLocalToolWithTzro(tzroBin, workspaceDir, tc.Function.Name, tc.Function.Arguments)
-			if err != nil { rawOutput = fmt.Sprintf("tool error: %v", err) }
+			if err != nil {
+				rawOutput = fmt.Sprintf("tool error: %v", err)
+			}
 
 			// Apply hooks
 			toolOutput := rawOutput
@@ -1797,7 +1860,9 @@ Task: Efficiently diagnose all issues in this codebase.
 			if err := HandlePiCoderPostTool(bytes.NewReader(hookJSON), &hookOut, nil); err == nil {
 				var hookResp PiCoderPostToolOutput
 				if err := json.Unmarshal(hookOut.Bytes(), &hookResp); err == nil {
-					if s, ok := hookResp.ToolOutput.(string); ok { toolOutput = s }
+					if s, ok := hookResp.ToolOutput.(string); ok {
+						toolOutput = s
+					}
 				}
 			}
 
@@ -1813,7 +1878,9 @@ Task: Efficiently diagnose all issues in this codebase.
 }
 
 func min(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
 }
 
@@ -1842,7 +1909,9 @@ func TestPiCoderE2E(t *testing.T) {
 	// Pre-index: run tzro skeleton on all .go files to populate the hash store
 	t.Log("Pre-indexing workspace with tzro skeleton...")
 	err := filepath.Walk(workspace, func(path string, info os.FileInfo, err error) error {
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		if !info.IsDir() && strings.HasSuffix(path, ".go") {
 			cmd := exec.Command(tzroBin, "skeleton", path)
 			cmd.Dir = workspace
@@ -1869,15 +1938,21 @@ func TestPiCoderE2E(t *testing.T) {
 
 	// --- Savings calculations ---
 	pct := func(base, val int) float64 {
-		if base == 0 { return 0 }
+		if base == 0 {
+			return 0
+		}
 		return (1.0 - float64(val)/float64(base)) * 100
 	}
 	pctF := func(base, val float64) float64 {
-		if base == 0 { return 0 }
+		if base == 0 {
+			return 0
+		}
 		return (1.0 - val/base) * 100
 	}
 	pctMs := func(base, val int64) float64 {
-		if base == 0 { return 0 }
+		if base == 0 {
+			return 0
+		}
 		return (1.0 - float64(val)/float64(base)) * 100
 	}
 
@@ -1919,4 +1994,3 @@ func TestPiCoderE2E(t *testing.T) {
 		}
 	}
 }
-

@@ -364,4 +364,3 @@ func sanitizeIdentifier(name string) string {
 func (s *Store) Close() error {
 	return s.db.Close()
 }
-

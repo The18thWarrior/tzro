@@ -202,4 +202,3 @@ func TestSkeletonize_Markdown(t *testing.T) {
 		}
 	}
 }
-

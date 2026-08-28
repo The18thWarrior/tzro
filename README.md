@@ -47,6 +47,7 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 │  4. Local SQLite FTS5 Content-Hash Store (`tzro expand`)    │
 │  5. Smart JSON Crusher & Stack Trace Elider                 │
 │  6. Zero-Cloud DLP / Secret Masking                         │
+│  7. Tabular Data Engine (`tzro ingest` / `tzro query`)      │
 └──────────────────────────────┬──────────────────────────────┘
                                │ (Dense, High-Signal, Cache-Locked Payload)
                                ▼
@@ -55,6 +56,17 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 │           ~80% Token Reduction / Zero Rate Limits           │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 🆕 v2.0.0 Highlights
+
+- **5-Harness Hook Bridge**: Native lifecycle hook integration for Antigravity, Claude Code, Hermes, GitHub Copilot, and Pi-Coder — auto-compacts tool outputs before they enter agent context
+- **Tabular Data Engine**: Import CSV/TSV/JSON data with `tzro ingest`, query with SQL via `tzro query` — 97%+ token reduction on data workloads
+- **`tzro init` Auto-Installer**: Single command to detect and configure hooks for all active agent environments
+- **KV-Cache Benchmarks**: E2E benchmarks proving 5–10 percentage point improvement over native provider caching
+- **Architecture Simplification**: Removed the internal DAG engine, MCP server, daemon, and dashboard — 1M LOC replaced by 3K LOC across 8 focused `pkg/` packages
+- **Pi-Coder Integration**: First-class hook support for Pi-Coder TypeScript-based tool interception
 
 ---
 
@@ -175,6 +187,21 @@ tzro expand aa179288
 
 # Pipe raw test logs or JSON on stdin for compaction
 go test ./... 2>&1 | tzro compact
+
+# Agent lifecycle hook bridge (5 harnesses)
+tzro hook claude post-tool    # Claude Code post-tool compaction
+tzro hook antigravity pre-tool # Antigravity pre-tool interception
+tzro hook compact              # Generic stdin/stdout compaction
+
+# Auto-configure hooks for detected agent environments
+tzro init --hooks auto         # Auto-detect and configure
+tzro init --hooks all          # Force-configure all harnesses
+tzro init --workspace          # Workspace-scoped hooks
+
+# Import tabular data and query with SQL
+tzro ingest data.csv --name my_table
+cat report.json | tzro ingest -
+tzro query my_table "SELECT col, COUNT(*) FROM my_table GROUP BY col"
 ```
 
 ---

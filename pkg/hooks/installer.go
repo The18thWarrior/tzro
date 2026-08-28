@@ -21,10 +21,10 @@ const (
 
 // InitResult reports the outcome of initializing hooks for a harness.
 type InitResult struct {
-	Harness HarnessType `json:"harness"`
-	ConfigPath string   `json:"configPath"`
-	Updated    bool     `json:"updated"`
-	Status     string   `json:"status"`
+	Harness    HarnessType `json:"harness"`
+	ConfigPath string      `json:"configPath"`
+	Updated    bool        `json:"updated"`
+	Status     string      `json:"status"`
 }
 
 // DetectAndInstallHooks detects installed environments and installs appropriate hooks.

@@ -15,21 +15,21 @@ import (
 
 // MatchResult represents a single discovered code symbol or location.
 type MatchResult struct {
-	FilePath    string `json:"file_path"`
-	SymbolName  string `json:"symbol_name,omitempty"`
-	Kind        string `json:"kind,omitempty"`
-	StartLine   int    `json:"start_line"`
-	EndLine     int    `json:"end_line"`
+	FilePath     string `json:"file_path"`
+	SymbolName   string `json:"symbol_name,omitempty"`
+	Kind         string `json:"kind,omitempty"`
+	StartLine    int    `json:"start_line"`
+	EndLine      int    `json:"end_line"`
 	MatchingLine string `json:"matching_line"`
-	Hash        string `json:"hash,omitempty"`
+	Hash         string `json:"hash,omitempty"`
 }
 
 // ProbeReport contains the aggregate discovery results.
 type ProbeReport struct {
-	Query       string        `json:"query"`
-	Matches     []MatchResult `json:"matches"`
-	ScannedFiles int          `json:"scanned_files"`
-	DurationMs  int64         `json:"duration_ms"`
+	Query        string        `json:"query"`
+	Matches      []MatchResult `json:"matches"`
+	ScannedFiles int           `json:"scanned_files"`
+	DurationMs   int64         `json:"duration_ms"`
 }
 
 // FormatMarkdown formats the probe report into a high-density, token-efficient summary.

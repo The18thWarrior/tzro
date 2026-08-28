@@ -95,15 +95,21 @@ func TestTabularE2E(t *testing.T) {
 
 	// --- Savings calculations ---
 	pct := func(base, val int) float64 {
-		if base == 0 { return 0 }
+		if base == 0 {
+			return 0
+		}
 		return (1.0 - float64(val)/float64(base)) * 100
 	}
 	pctF := func(base, val float64) float64 {
-		if base == 0 { return 0 }
+		if base == 0 {
+			return 0
+		}
 		return (1.0 - val/base) * 100
 	}
 	pctMs := func(base, val int64) float64 {
-		if base == 0 { return 0 }
+		if base == 0 {
+			return 0
+		}
 		return (1.0 - float64(val)/float64(base)) * 100
 	}
 
@@ -130,10 +136,15 @@ func TestTabularE2E(t *testing.T) {
 		fullTzro.TotalCostUSD, fullTzro.CachedTokens, fullTzro.CacheWriteTokens)
 
 	// Answer dumps
-	for _, pair := range []struct{ name string; r RunResult }{{"baseline", baseline}, {"full_tzro", fullTzro}} {
+	for _, pair := range []struct {
+		name string
+		r    RunResult
+	}{{"baseline", baseline}, {"full_tzro", fullTzro}} {
 		if pair.r.FinalAnswer != "" {
 			answerPreview := pair.r.FinalAnswer
-			if len(answerPreview) > 500 { answerPreview = answerPreview[:500] + "..." }
+			if len(answerPreview) > 500 {
+				answerPreview = answerPreview[:500] + "..."
+			}
 			t.Logf("%s answer (%d chars):\n%s", pair.name, len(pair.r.FinalAnswer), answerPreview)
 		} else {
 			t.Logf("WARNING: %s did not produce final answer (%d turns)", pair.name, pair.r.Turns)
@@ -171,14 +182,14 @@ func tabularAgentLoop(t *testing.T, apiKey, model, repoRoot, tzroBin string, s *
 	if useTzro {
 		tools = []orTool{
 			{Type: "function", Function: orToolFunction{
-				Name: "read_file",
+				Name:        "read_file",
 				Description: "Read a file from the workspace. For tabular data (CSV/TSV/JSON), tzro will automatically import it into a queryable SQLite table and return a data envelope with sample rows and a table pointer.",
 				Parameters: map[string]any{"type": "object", "properties": map[string]any{
 					"path": map[string]string{"type": "string", "description": "Relative path from workspace root."},
 				}, "required": []string{"path"}},
 			}},
 			{Type: "function", Function: orToolFunction{
-				Name: "tzro_query",
+				Name:        "tzro_query",
 				Description: "Execute a read-only SQL query against an imported tabular data table. Use the table name from the data envelope returned by read_file. Supports standard SQL: SELECT, WHERE, GROUP BY, ORDER BY, COUNT, AVG, MAX, MIN, SUM, etc.",
 				Parameters: map[string]any{"type": "object", "properties": map[string]any{
 					"table": map[string]string{"type": "string", "description": "Table name from the data envelope (e.g. tbl_abc123)."},
@@ -189,7 +200,7 @@ func tabularAgentLoop(t *testing.T, apiKey, model, repoRoot, tzroBin string, s *
 	} else {
 		tools = []orTool{
 			{Type: "function", Function: orToolFunction{
-				Name: "read_file",
+				Name:        "read_file",
 				Description: "Read the full contents of a file in the workspace.",
 				Parameters: map[string]any{"type": "object", "properties": map[string]any{
 					"path": map[string]string{"type": "string", "description": "Relative path from workspace root."},
@@ -244,7 +255,10 @@ Read the data file and analyze it to answer the questions. Output your final num
 		req.Header.Set("X-Title", "tzro-tabular-benchmark")
 
 		resp, err := client.Do(req)
-		if err != nil { t.Logf("turn %d: request failed: %v", turn, err); break }
+		if err != nil {
+			t.Logf("turn %d: request failed: %v", turn, err)
+			break
+		}
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
@@ -255,7 +269,8 @@ Read the data file and analyze it to answer the questions. Output your final num
 
 		var orResp orResponse
 		if err := json.Unmarshal(respBody, &orResp); err != nil {
-			t.Logf("turn %d: unparseable response", turn); break
+			t.Logf("turn %d: unparseable response", turn)
+			break
 		}
 
 		result.PromptTokens += orResp.Usage.PromptTokens
@@ -267,7 +282,10 @@ Read the data file and analyze it to answer the questions. Output your final num
 			result.CacheWriteTokens += orResp.Usage.PromptTokensDetails.CacheWriteTokens
 		}
 
-		if len(orResp.Choices) == 0 { t.Logf("turn %d: no choices", turn); break }
+		if len(orResp.Choices) == 0 {
+			t.Logf("turn %d: no choices", turn)
+			break
+		}
 		choice := orResp.Choices[0]
 		assistantMsg := choice.Message
 		messages = append(messages, assistantMsg)
@@ -313,7 +331,9 @@ Read the data file and analyze it to answer the questions. Output your final num
 								}
 							}
 						}
-						if toolOutput == "" { toolOutput = rawContent }
+						if toolOutput == "" {
+							toolOutput = rawContent
+						}
 					} else {
 						toolOutput = rawContent
 					}

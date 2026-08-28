@@ -71,7 +71,7 @@ func SmartJSONCrusher(input string) string {
 
 var (
 	// Regex patterns for runtime / framework internal frames
-	goRuntimeFrameRe   = regexp.MustCompile(`(?m)^\s*(runtime/|testing\.go|net/http/server\.go).*$`)
+	goRuntimeFrameRe    = regexp.MustCompile(`(?m)^\s*(runtime/|testing\.go|net/http/server\.go).*$`)
 	nodeInternalFrameRe = regexp.MustCompile(`(?m)^\s*at\s+.*\(node:internal/.*$`)
 	pyFrameworkFrameRe  = regexp.MustCompile(`(?m)^\s*File ".*/lib/python.*/site-packages/.*", line \d+, in .*$`)
 )
