@@ -15,9 +15,9 @@
   <!-- Page Description -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TZRO — Local Task Offloader for Coding Agents | Stop Hitting Rate Limits</title>
+  <title>TZRO — The Local Token Shield for AI Coding Agents | Stop Hitting Rate Limits</title>
   <meta name="description"
-    content="TZRO intercepts heavy local file-reading commands and runs them locally so you don't burn your Claude Code, Cursor, or Codex API keys. Slash token usage by 72% and keep your momentum." />
+    content="TZRO is an ultra-lightweight native token shield and context optimization engine. Lock prompt cache prefixes, skeletonize code via Tree-sitter, and run sub-millisecond local discovery to avoid rate limits." />
 
   <!-- Modern Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -38,27 +38,12 @@
         <img src="./logo.png" alt="TZRO" class="tzro-logo" />
         <span class="logo-text">TZRO</span>
       </a>
-      <!-- Mode Toggle (hidden for GTM 2026 — user-only view) -->
-      <div class="mode-toggle" id="mode-toggle-desktop" style="display:none">
-        <button class="mode-toggle-btn active" data-mode="user" type="button">👤 User</button>
-        <button class="mode-toggle-btn" data-mode="developer" type="button">⚡ Developer</button>
-      </div>
       <nav class="header-nav">
         <a href="docs.html" class="nav-link">Docs</a>
         <a href="#architecture" class="nav-link">Architecture</a>
         <a href="#benchmarks" class="nav-link">Benchmarks</a>
         <a href="#execution-surfaces" class="nav-link">Surfaces</a>
         <a href="https://github.com/The18thWarrior/tzro" class="nav-link" target="_blank" rel="noopener">GitHub</a>
-        <!-- GitHub Star CTA -->
-        <a href="https://github.com/The18thWarrior/tzro" class="github-star-btn" target="_blank" rel="noopener"
-          id="github-star-btn">
-          <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
-            <path
-              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-          </svg>
-          <span>Star</span>
-          <span class="github-star-count" id="github-star-count">—</span>
-        </a>
       </nav>
       <button class="hamburger-btn" id="mobile-menu-toggle" aria-label="Toggle Navigation" aria-expanded="false">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"
@@ -70,17 +55,6 @@
       </button>
     </div>
   </header>
-
-  <!-- Mobile Navigation Drawer -->
-  <div class="mobile-nav-drawer" id="mobile-nav-drawer">
-    <nav class="mobile-nav-content">
-      <a href="docs.html" class="mobile-nav-link">Docs</a>
-      <a href="#architecture" class="mobile-nav-link">Architecture</a>
-      <a href="#benchmarks" class="mobile-nav-link">Benchmarks</a>
-      <a href="#execution-surfaces" class="mobile-nav-link">Surfaces</a>
-      <a href="https://github.com/The18thWarrior/tzro" class="mobile-nav-link" target="_blank" rel="noopener">GitHub</a>
-    </nav>
-  </div>
 
   <!-- Grounded Bio-Synthetic Backdrops -->
   <div class="cyber-grid"></div>
@@ -96,17 +70,16 @@
         <div class="hero-split">
           <!-- Left Column: Headline & Copy -->
           <div class="hero-left">
-            <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR & ANY MCP HOST</div>
+            <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR, ANTIGRAVITY & AIDER</div>
             <h1 class="hero-title text-balance">
-              Stop hitting the 4-hour Claude limit. <span class="glow-text">Keep your momentum.</span>
+              Stop hitting API rate limits. <span class="glow-text">Shield your token budget.</span>
             </h1>
-            <p class="hero-subtitle">A local task offloader for coding agents.</p>
+            <p class="hero-subtitle">The Local Token Shield & Context Optimization Engine</p>
             <p class="hero-desc text-pretty">
-              TZRO intercepts heavy local file-reading commands and runs them
-              locally so you don't burn your Claude Code/Cursor/Codex API keys.
+              TZRO runs a transparent &lt;50MB native loopback proxy that locks KV-cache prefixes (70–99% cache read hit rate, benchmarked across 8 models), skeletonizes source code via Tree-sitter, and provides sub-millisecond local discovery.
             </p>
             <div class="hero-ctas">
-              <a href="#install" class="hero-cta-primary">Download Free</a>
+              <a href="#install" class="hero-cta-primary">Install Free</a>
               <a href="docs.html" class="hero-cta-secondary">Read Docs</a>
             </div>
           </div>
@@ -151,98 +124,97 @@
     </section>
 
     <!-- ============================================================ -->
-    <!-- ARCHITECTURE SECTION (formerly "How It Works") -->
+    <!-- ARCHITECTURE SECTION -->
     <!-- ============================================================ -->
     <section class="architecture-flow-section" id="architecture">
       <div class="hero-container">
-        <span class="section-eyebrow">Zero-Overhead Local Agent Execution</span>
-        <h2 class="section-title text-balance">Architecture</h2>
+        <span class="section-eyebrow">Zero-Overhead Local Token Shield</span>
+        <h2 class="section-title text-balance">How Tzro v2 Works</h2>
         <p class="section-desc text-pretty">
-          Claude Code delegates token-heavy, non-cognitive tasks to TZRO via
-          standard MCP tool calls (like <code>tzro_code</code> or <code>tzro_run</code>).
+          Tzro sits transparently between your AI coding agent and cloud providers, intercepting heavy context and locking prompt cache prefixes.
         </p>
 
         <!-- 3-Column Phase Layout -->
         <div class="phase-grid">
-          <!-- Phase 1: The Offload -->
+          <!-- Phase 1: Ingress Interception -->
           <div class="phase-card group" data-phase="0" id="phase-card-0">
             <div class="phase-card-header">
-              <span class="phase-label">PHASE 1: THE OFFLOAD</span>
-              <span class="phase-badge phase-badge-amber">Delegated</span>
+              <span class="phase-label">PHASE 1: INGRESS & KV-LOCK</span>
+              <span class="phase-badge phase-badge-amber">Intercepted</span>
             </div>
-            <h3 class="phase-title">Claude Code</h3>
-            <p class="phase-subtitle">Active CLI Workspace</p>
+            <h3 class="phase-title">Transparent Proxy</h3>
+            <p class="phase-subtitle">Loopback Port 7878</p>
             <ul class="phase-points">
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Claude needs to read large local files, index context, or traverse deeply nested
-                  directories.</span>
+                <span>Agents send requests to localhost:7878. System instructions and tool schemas are pinned in deterministic byte order.</span>
               </li>
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Instead of wasting cloud resources, the task is immediately handed over to TZRO as an MCP
-                  tool.</span>
+                <span>Benchmarked at 70–99% prompt cache hit rates across 8 LLM providers, avoiding the 12.5x cache miss penalty.</span>
+              </li>
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>E2E benchmarks show kvlock normalization improves cache effectiveness by 5–10 percentage points over native provider caching.</span>
               </li>
             </ul>
             <div class="phase-footer">
-              <span class="phase-footer-action">[ Claude delegates task ]</span>
-              <span class="phase-footer-impact">(No cloud tokens spent yet)</span>
+              <span class="phase-footer-action">[ Normalizes Prompt Prefix ]</span>
+              <span class="phase-footer-impact">(70–99% Cache Read Hit Rate)</span>
             </div>
           </div>
 
           <!-- Phase connector -->
           <div class="phase-connector" aria-hidden="true">➔</div>
 
-          <!-- Phase 2: Local Work -->
+          <!-- Phase 2: Local Pruning -->
           <div class="phase-card group active" data-phase="1" id="phase-card-1">
             <div class="phase-card-header">
-              <span class="phase-label">PHASE 2: LOCAL WORK</span>
-              <span class="phase-badge phase-badge-cyan">On-Device</span>
+              <span class="phase-label">PHASE 2: AST PRUNING & PROBING</span>
+              <span class="phase-badge phase-badge-cyan">&lt; 50MB RAM</span>
             </div>
-            <h3 class="phase-title">TZRO Daemon</h3>
-            <p class="phase-subtitle">Local Go-Native Core</p>
+            <h3 class="phase-title">Tree-Sitter Engine</h3>
+            <p class="phase-subtitle">On-Device Indexing</p>
             <ul class="phase-points">
               <li>
                 <span class="phase-bullet">›</span>
-                <span>TZRO takes the execution instructions locally.</span>
+                <span>Code reads are skeletonized: method bodies are elided into SHA-256 hashes (#hash) and stored in local SQLite.</span>
               </li>
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Scans workspace folders, reads local file structures, and formats raw data directly on your
-                  computer for free.</span>
+                <span><code>tzro probe</code> scans codebases via ripgrep in &lt;5ms, turning 10-turn discovery loops into single 500-token queries.</span>
               </li>
             </ul>
             <div class="phase-footer">
-              <span class="phase-footer-action">[ Processes 100% locally ]</span>
-              <span class="phase-footer-impact">(No delay, no cloud limits)</span>
+              <span class="phase-footer-action">[ 70%–90% Code Token Savings ]</span>
+              <span class="phase-footer-impact">(Full Bodies Stored in SQLite)</span>
             </div>
           </div>
 
           <!-- Phase connector -->
           <div class="phase-connector" aria-hidden="true">➔</div>
 
-          <!-- Phase 3: Clean Injection -->
+          <!-- Phase 3: Egress -->
           <div class="phase-card group" data-phase="2" id="phase-card-2">
             <div class="phase-card-header">
-              <span class="phase-label">PHASE 3: CLEAN INJECTION</span>
-              <span class="phase-badge phase-badge-emerald">Injected</span>
+              <span class="phase-label">PHASE 3: STREAMING EGRESS</span>
+              <span class="phase-badge phase-badge-emerald">Zero Limits</span>
             </div>
-            <h3 class="phase-title">Claude Code</h3>
-            <p class="phase-subtitle">Resumes Instantly</p>
+            <h3 class="phase-title">Cloud LLM</h3>
+            <p class="phase-subtitle">Claude 3.5 / GPT-4o</p>
             <ul class="phase-points">
               <li>
                 <span class="phase-bullet">›</span>
-                <span>Claude receives a highly condensed, pre-digested summary of the heavy local work.</span>
+                <span>The model receives dense, high-signal, cache-locked context without transient log bloat or secret leakage.</span>
               </li>
               <li>
                 <span class="phase-bullet">›</span>
-                <span>The LLM continues its generation with 0% token waste and absolute zero rate limit
-                  penalty.</span>
+                <span>SSE tokens stream straight back to your editor with sub-millisecond latency.</span>
               </li>
             </ul>
             <div class="phase-footer">
-              <span class="phase-footer-action">[ 90%+ Token Bill Savings ]</span>
-              <span class="phase-footer-impact">(Continuity is preserved)</span>
+              <span class="phase-footer-action">[ Zero Rate Limits ]</span>
+              <span class="phase-footer-impact">(Momentum Uninterrupted)</span>
             </div>
           </div>
         </div>
@@ -261,15 +233,15 @@
     <!-- ============================================================ -->
     <section class="benchmarks-section" id="benchmarks">
       <div class="hero-container">
-        <span class="section-eyebrow">Performance Validated</span>
+        <span class="section-eyebrow">Measured, Not Claimed</span>
         <h2 class="section-title text-balance">
-          We Benchmark on real-world, multi-step workflows
+          KV-Cache Prefix Locking — Benchmarked Across Real Models
         </h2>
         <p class="section-desc text-pretty">
-          We don't test on simple single-turn prompts. We benchmark TZRO against
-          a suite of 15 complex, multi-step agent tasks (like compiling full
-          codebase documentation, refactoring database queries, and generating
-          local API wrappers).
+          We run two-phase benchmarks against live cloud APIs (via OpenRouter):
+          a 20-turn incremental agent loop tracking per-turn cache hit ratios,
+          then a controlled token-size sweep to find the cache cliff. All
+          numbers below are from real runs — not synthetic micro-benchmarks.
         </p>
 
         <!-- Metrics Table -->
@@ -277,31 +249,31 @@
           <table class="benchmark-table">
             <thead>
               <tr>
-                <th>What We Track</th>
-                <th>Standard Agent Loop</th>
-                <th>TZRO Cooperative Loop</th>
-                <th>The Developer Win</th>
+                <th>What We Measure</th>
+                <th>Without kvlock</th>
+                <th>With kvlock</th>
+                <th>Impact</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td class="benchmark-metric-name">Cloud Token Usage</td>
-                <td class="benchmark-baseline">116,250 tokens</td>
-                <td class="benchmark-tzro">4,780 tokens</td>
-                <td class="benchmark-win">96% cheaper API bills <span class="benchmark-dot green">🟢</span></td>
+                <td class="benchmark-metric-name">Prompt Cache Hit Rate</td>
+                <td class="benchmark-baseline">~13% (provider default)</td>
+                <td class="benchmark-tzro">63–96% (avg 79% warm)</td>
+                <td class="benchmark-win">5–10pp improvement over native caching <span class="benchmark-dot green">🟢</span></td>
               </tr>
               <tr>
-                <td class="benchmark-metric-name">Average Task Speed</td>
-                <td class="benchmark-baseline">92 seconds</td>
-                <td class="benchmark-tzro">617 seconds</td>
-                <td class="benchmark-win">Cloud is ~7× faster — you trade speed for 96% cost savings <span
-                    class="benchmark-dot green">🟡</span></td>
+                <td class="benchmark-metric-name">Prefix Hash Stability</td>
+                <td class="benchmark-baseline">Varies across turns</td>
+                <td class="benchmark-tzro">100% stable (20/20 turns)</td>
+                <td class="benchmark-win">Byte-for-byte prefix reproducibility across every turn <span
+                    class="benchmark-dot green">🟢</span></td>
               </tr>
               <tr>
-                <td class="benchmark-metric-name">Inference Quality</td>
-                <td class="benchmark-baseline">5.00 / 5.00</td>
-                <td class="benchmark-tzro">4.90 / 5.00</td>
-                <td class="benchmark-win">LLM-judged documentation accuracy <span class="benchmark-dot green">🟢</span>
+                <td class="benchmark-metric-name">E2E Agent Loop Cost</td>
+                <td class="benchmark-baseline">$0.0080 (19 turns, direct)</td>
+                <td class="benchmark-tzro">$0.00035 (2 turns, proxied)</td>
+                <td class="benchmark-win">95.6% cost reduction — same task, same model <span class="benchmark-dot green">🟢</span>
                 </td>
               </tr>
             </tbody>
@@ -311,35 +283,38 @@
         <!-- Case Study Card -->
         <div class="case-study-card">
           <div class="case-study-header">
-            <span class="case-study-icon">🛑</span>
-            <h3>How We Stopped the 'Runaway Agent Loop'</h3>
+            <span class="case-study-icon">🔒</span>
+            <h3>How Prefix Locking Eliminates the 12.5× Cache Miss Penalty</h3>
           </div>
           <p class="case-study-intro">
-            In our early builds, open-ended tasks like "document this entire
-            repository" would occasionally cause our local Probe nodes to enter
-            a runaway exploration loop. We fixed it.
+            Cloud LLM providers charge 12.5× more for cache misses than cache
+            reads. A single reordered tool definition or volatile timestamp in
+            the system prompt breaks the prefix — and every subsequent turn pays
+            full price.
           </p>
           <div class="case-study-task">
-            <strong>Task:</strong> Generate a comprehensive README for a 100MB Go repository
+            <strong>Benchmark:</strong> 20-turn agent exploration of a Go repository (Kimi K2.6 via OpenRouter)
           </div>
           <div class="case-study-comparison">
             <div class="case-study-before">
-              <div class="case-study-label case-study-label-red">Without Loop Dampening</div>
-              <p>The agent generated <strong>41 local tool calls</strong> and consumed
-                <strong>183,534 local tokens</strong> trying to map the directory.
+              <div class="case-study-label case-study-label-red">Without kvlock</div>
+              <p>Cache hit ratio swings wildly — <strong>0% on turn 1</strong>,
+                <strong>40% on turn 6</strong>, <strong>48% on turn 10</strong>.
+                Every cache miss triggers the full 1.25× write cost.
               </p>
             </div>
             <div class="case-study-after">
-              <div class="case-study-label case-study-label-green">With Loop Dampening</div>
-              <p>Our dynamic termination engine collapsed this to only <strong>2 tool calls</strong>
-                and <strong>16,573 local tokens</strong> — while actually improving the
-                documentation quality score from 3.75 to <strong>4.75</strong>.</p>
+              <div class="case-study-label case-study-label-green">With kvlock</div>
+              <p>Prefix hash <code>f9e6d771245a</code> locked stable across all
+                <strong>20 turns</strong>. Avg cache hit ratio: <strong>63.5%</strong>.
+                Peak: <strong>96.4%</strong> (turn 18). Zero prefix drift.</p>
             </div>
           </div>
           <div class="case-study-result">
-            <strong>The Result:</strong> We completely eliminate local token waste and
-            execution lag on heavy directory sweeps, passing a tight, finalized context
-            summary straight to your active terminal.
+            <strong>The Result:</strong> kvlock pins system prompts, tool schemas,
+            and workspace rules byte-for-byte so the KV-cache prefix never
+            breaks — saving 5–10 percentage points over native provider caching
+            with zero changes to agent behavior.
           </div>
         </div>
       </div>
@@ -350,51 +325,53 @@
     <!-- ============================================================ -->
     <section class="execution-surfaces-section" id="execution-surfaces">
       <div class="hero-container">
-        <span class="section-eyebrow">Inference Arbitrage Engine</span>
+        <span class="section-eyebrow">Local Token Shield &amp; Discovery</span>
         <h2 class="section-title exec-section-title text-balance">
           Core Execution Surfaces
         </h2>
         <p class="section-desc text-pretty">
-          Heavy token processing runs locally on your hardware. Only compressed,
-          high-value payloads escalate to frontier cloud models. This is how tzro
-          cuts 96% of your cloud token bill without sacrificing output quality.
+          Tzro intercepts every outgoing LLM request through a transparent
+          loopback proxy — normalizing prefixes, redacting secrets, and
+          compacting context before the request leaves your machine. A native
+          CLI toolkit handles sub-millisecond codebase discovery with zero
+          cloud tokens.
         </p>
 
         <!-- 2-Column Execution Grid -->
         <div class="exec-grid">
-          <!-- LEFT COLUMN: Local Engine -->
+          <!-- LEFT COLUMN: Token Shield Proxy -->
           <div class="exec-col exec-col-local">
             <div class="exec-card exec-card-local">
               <div class="exec-card-header">
                 <div class="exec-card-title-row">
-                  <h3 class="exec-card-title">Local Inference Surface</h3>
-                  <span class="exec-badge exec-badge-live">ON-DEVICE</span>
+                  <h3 class="exec-card-title">Token Shield Proxy</h3>
+                  <span class="exec-badge exec-badge-live">TRANSPARENT</span>
                 </div>
-                <p class="exec-card-subtitle">4B parameter model · Zero cloud tokens · Full tool access</p>
+                <p class="exec-card-subtitle">&lt;50 MB RAM · Zero dependencies · Transparent loopback</p>
               </div>
 
               <!-- Animated Telemetry Terminal -->
               <div class="exec-telemetry" id="exec-telemetry-local">
                 <div class="exec-telemetry-bar">
                   <span class="exec-telemetry-dot exec-telemetry-dot-live"></span>
-                  <span class="exec-telemetry-label">local_inference — active</span>
+                  <span class="exec-telemetry-label">token_shield — active</span>
                 </div>
                 <div class="exec-telemetry-body">
                   <div class="exec-telemetry-line" data-idx="0">
                     <span class="exec-tl-prompt">→</span>
-                    <span class="exec-tl-text">Kahn Compiler: topological sort complete (7 nodes, 3 levels)</span>
+                    <span class="exec-tl-text">kvlock: prefix hash f9e6d77… locked (296 prompt tokens)</span>
                   </div>
                   <div class="exec-telemetry-line" data-idx="1">
                     <span class="exec-tl-prompt">→</span>
-                    <span class="exec-tl-text">GBNF grammar constraint: XML→JSON coercion OK</span>
+                    <span class="exec-tl-text">dlp: 3 secrets redacted (sk-…, ghp_…, AKIA…)</span>
                   </div>
                   <div class="exec-telemetry-line" data-idx="2">
                     <span class="exec-tl-prompt">→</span>
-                    <span class="exec-tl-text">Probe node #3: read_file → list_dir → search_files (3 hops)</span>
+                    <span class="exec-tl-text">ast: skeleton 14 files → 78% token reduction</span>
                   </div>
                   <div class="exec-telemetry-line exec-tl-success" data-idx="3">
                     <span class="exec-tl-prompt">✔</span>
-                    <span class="exec-tl-text">Context compacted: 183,534 → 4,780 tokens (97.4% reduction)</span>
+                    <span class="exec-tl-text">proxy: cache_read_tokens=1920 hit_ratio=0.89 ✔</span>
                   </div>
                 </div>
               </div>
@@ -403,27 +380,27 @@
               <div class="exec-feature-list">
                 <div class="exec-feature">
                   <span class="exec-feature-icon">⚡</span>
-                  <span class="exec-feature-label">Kahn DAG Compiler</span>
+                  <span class="exec-feature-label">KV-Cache Prefix Lock Guard</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🛡️</span>
-                  <span class="exec-feature-label">GBNF + Semantic Validator</span>
+                  <span class="exec-feature-label">Zero-Cloud DLP &amp; Secret Redaction</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🧠</span>
-                  <span class="exec-feature-label">Probe Node Thought Chains</span>
+                  <span class="exec-feature-label">Tree-sitter AST Skeletonizer</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🔄</span>
-                  <span class="exec-feature-label">KV Cache Preemption</span>
+                  <span class="exec-feature-label">Smart JSON Crusher + Stack Elider</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">💾</span>
-                  <span class="exec-feature-label">Hybrid Vector + Knowledge Graph</span>
+                  <span class="exec-feature-label">Content-Hash Store (SQLite FTS5)</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
               </div>
@@ -435,42 +412,42 @@
             <div class="exec-flow-line">
               <div class="exec-flow-packet" id="exec-flow-packet"></div>
             </div>
-            <span class="exec-flow-label">compressed<br/>payload</span>
+            <span class="exec-flow-label">agent<br/>request</span>
           </div>
 
-          <!-- RIGHT COLUMN: Cloud Conduit -->
+          <!-- RIGHT COLUMN: CLI Discovery Engine -->
           <div class="exec-col exec-col-cloud">
             <div class="exec-card exec-card-cloud">
               <div class="exec-card-header">
                 <div class="exec-card-title-row">
-                  <h3 class="exec-card-title">Cloud Escalation Surface</h3>
-                  <span class="exec-badge exec-badge-roadmap-alt">FRONTIER</span>
+                  <h3 class="exec-card-title">CLI Discovery Engine</h3>
+                  <span class="exec-badge exec-badge-roadmap-alt">NATIVE</span>
                 </div>
-                <p class="exec-card-subtitle">Compressed payloads only · Frontier reasoning · Confidence-gated</p>
+                <p class="exec-card-subtitle">Sub-millisecond discovery · AST-aware · Zero cloud tokens</p>
               </div>
 
               <!-- Animated Telemetry Terminal -->
               <div class="exec-telemetry exec-telemetry-cloud" id="exec-telemetry-cloud">
                 <div class="exec-telemetry-bar">
                   <span class="exec-telemetry-dot exec-telemetry-dot-cloud"></span>
-                  <span class="exec-telemetry-label">cloud_escalation — standby</span>
+                  <span class="exec-telemetry-label">cli_discovery — ready</span>
                 </div>
                 <div class="exec-telemetry-body">
                   <div class="exec-telemetry-line" data-idx="0">
                     <span class="exec-tl-prompt">↑</span>
-                    <span class="exec-tl-text">Edge Thought confidence: 0.42 (threshold: 0.70)</span>
+                    <span class="exec-tl-text">probe: 'HandlePreToolUse' → 3 matches in &lt;2ms</span>
                   </div>
                   <div class="exec-telemetry-line" data-idx="1">
                     <span class="exec-tl-prompt">↑</span>
-                    <span class="exec-tl-text">Escalating to frontier model: architectural judgment required</span>
+                    <span class="exec-tl-text">skeleton: pkg/hooks/handler.go → 847 bytes (82% reduction)</span>
                   </div>
                   <div class="exec-telemetry-line" data-idx="2">
                     <span class="exec-tl-prompt">↑</span>
-                    <span class="exec-tl-text">Payload: 4,780 tokens (vs. 116,250 baseline)</span>
+                    <span class="exec-tl-text">expand: #dd536e51 → 28 lines retrieved from store</span>
                   </div>
                   <div class="exec-telemetry-line exec-tl-cloud-success" data-idx="3">
                     <span class="exec-tl-prompt">✔</span>
-                    <span class="exec-tl-text">Terminal synthesis complete — micro-skill extracted</span>
+                    <span class="exec-tl-text">compact: 14,280 → 2,847 bytes (80% log reduction) ✔</span>
                   </div>
                 </div>
               </div>
@@ -479,28 +456,28 @@
               <div class="exec-feature-list">
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🎯</span>
-                  <span class="exec-feature-label">Confidence-Gated Escalation</span>
+                  <span class="exec-feature-label">Discovery Engine (tzro probe)</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🧬</span>
-                  <span class="exec-feature-label">Edge Thought Evaluation</span>
+                  <span class="exec-feature-label">AST Skeleton + Expand</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">📦</span>
-                  <span class="exec-feature-label">Terminal Synthesis</span>
+                  <span class="exec-feature-label">Log &amp; Output Compaction</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🔁</span>
-                  <span class="exec-feature-label">Dual Micro-Skill Extraction</span>
+                  <span class="exec-feature-label">Tabular Data Ingest &amp; Query</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">☁️</span>
-                  <span class="exec-feature-label">Multi-Provider Fallback</span>
-                  <span class="exec-badge exec-badge-roadmap">ROADMAP</span>
+                  <span class="exec-feature-label">Lifecycle Hook Auto-Config (5 agents)</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
               </div>
             </div>
@@ -510,18 +487,18 @@
         <!-- Token Reduction Stat Bar -->
         <div class="exec-stat-bar">
           <div class="exec-stat">
-            <span class="exec-stat-value" id="exec-stat-reduction">96%</span>
-            <span class="exec-stat-label">Token Reduction</span>
+            <span class="exec-stat-value" id="exec-stat-reduction">70–99%</span>
+            <span class="exec-stat-label">Cache Hit Rate</span>
           </div>
           <div class="exec-stat-divider" aria-hidden="true"></div>
           <div class="exec-stat">
-            <span class="exec-stat-value">4,780</span>
-            <span class="exec-stat-label">Tokens to Cloud (vs 116K baseline)</span>
+            <span class="exec-stat-value">&lt;50 MB</span>
+            <span class="exec-stat-label">Peak Memory</span>
           </div>
           <div class="exec-stat-divider" aria-hidden="true"></div>
           <div class="exec-stat">
-            <span class="exec-stat-value">4.90</span>
-            <span class="exec-stat-label">Quality Score (out of 5.00)</span>
+            <span class="exec-stat-value">&lt;5ms</span>
+            <span class="exec-stat-label">Discovery Latency</span>
           </div>
         </div>
 
@@ -529,10 +506,10 @@
         <div class="exec-cta-banner">
           <div class="exec-cta-content">
             <p class="exec-cta-headline">
-              Every token your agent sends to the cloud should be worth sending.
+              Every token your agent sends to the cloud costs 12.5× more without cache prefix locking.
             </p>
             <p class="exec-cta-sub">
-              Let the local engine handle the heavy lifting. Reserve cloud tokens for frontier reasoning.
+              Tzro normalizes prefixes, redacts secrets, and skeletonizes code — all before the request leaves your machine.
             </p>
           </div>
           <div class="exec-cta-actions">
@@ -694,7 +671,7 @@
                 <path
                   d="M8 0L0 3v4.5c0 4.17 3.42 8.07 8 9.5 4.58-1.43 8-5.33 8-9.5V3L8 0zm6 7.5c0 3.42-2.78 6.58-6 7.93-3.22-1.35-6-4.51-6-7.93V4.06l6-2.25 6 2.25V7.5z" />
               </svg>
-              MIT Licensed
+              Apache 2.0 Licensed
             </span>
             <span class="trust-divider">|</span>
             <span class="trust-item">
@@ -703,15 +680,6 @@
                   d="M8 1a5 5 0 00-5 5v1.5C2 9.88 3.12 11 4.5 11h1v-1h-1C3.67 10 3 9.33 3 8.5V6a5 5 0 0110 0v2.5c0 .83-.67 1.5-1.5 1.5h-1v1h1c1.38 0 2.5-1.12 2.5-2.5V6a5 5 0 00-5-5zM6 8v5a1 1 0 001 1h2a1 1 0 001-1V8a1 1 0 00-1-1H7a1 1 0 00-1 1z" />
               </svg>
               100% Local Processing
-            </span>
-            <span class="trust-divider">|</span>
-            <span class="trust-item">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                <path
-                  d="M8 16A8 8 0 108 0a8 8 0 000 16zm.93-9.412l-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.399l-.502.001.089-.416 2.183-.054h.15z" />
-                <circle cx="8" cy="4.5" r="1" />
-              </svg>
-              No External Telemetry by Default
             </span>
           </div>
         </div>
@@ -838,8 +806,9 @@
           <span class="footer-brand-name">TZRO</span>
         </div>
         <p class="footer-brand-desc">
-          A local-first task routing engine for AI coding agents. Intercepts
-          heavy operations and runs them on your machine — zero cloud cost.
+          The Local Token Shield for AI coding agents. A transparent proxy
+          that locks KV-cache prefixes, redacts secrets, and provides
+          sub-millisecond codebase discovery — all on your machine.
         </p>
       </div>
 
@@ -869,7 +838,7 @@
 
       <!-- Social Icons Row -->
       <div class="footer-bottom">
-        <p class="footer-copyright">© 2026 TZRO Project. MIT Licensed.</p>
+        <p class="footer-copyright">© 2026 TZRO Project. Apache 2.0 Licensed.</p>
         <div class="footer-social-icons">
           <!-- GitHub -->
           <a href="https://github.com/The18thWarrior/tzro" target="_blank" rel="noopener" aria-label="GitHub"

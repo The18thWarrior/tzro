@@ -39,15 +39,6 @@ jobs:
         with:
           go-version: "1.22"
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Build MCP progress app
-        run: |
-          cd cmd/tzro-mcp && bash build-app.sh
-
       - name: Build tzro CLI
         env:
           GOOS: ${{ matrix.goos }}
@@ -56,30 +47,12 @@ jobs:
         run: |
           go build -ldflags="-s -w" -o "tzro-${{ matrix.suffix }}" ./cmd/tzro
 
-      - name: Build tzro-mcp
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: |
-          go build -ldflags="-s -w" -o "tzro-mcp-${{ matrix.suffix }}" ./cmd/tzro-mcp
-
-      - name: Build tzrod daemon
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: |
-          go build -ldflags="-s -w" -o "tzrod-${{ matrix.suffix }}" ./cmd/tzrod
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.suffix }}
           path: |
             tzro-${{ matrix.suffix }}
-            tzro-mcp-${{ matrix.suffix }}
-            tzrod-${{ matrix.suffix }}
 
   release:
     needs: build
@@ -109,17 +82,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Archive Plugins
-        run: zip -r plugins.zip plugins/
-
       - name: Upload to S3
         env:
           S3_BUCKET: tzro-app
         run: |
           TAG=${{ steps.tag.outputs.tag }}
           
-          # Upload binaries and plugins to tagged release and latest
-          for file in tzro-* tzro-mcp-* tzrod-* plugins.zip; do
+          # Upload binaries to tagged release and latest
+          for file in tzro-*; do
             aws s3 cp "$file" "s3://$S3_BUCKET/releases/$TAG/"
             aws s3 cp "$file" "s3://$S3_BUCKET/releases/latest/"
           done

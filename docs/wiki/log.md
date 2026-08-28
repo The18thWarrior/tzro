@@ -2,6 +2,444 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-08-26T21:18:00-07:00] to-prd | Tzro v2: The Local Token Shield PRD & Strategic Refactor Plan
+
+- **Activity**: Formulated and published the comprehensive PRD and implementation plan for the complete ground-up rewrite of Tzro into **Tzro v2: The Local Token Shield**.
+- **Key Architectural Deliverables**:
+  1. **Scorched Earth Strategy on Branch `V2`**: Dropped legacy MCP orchestration, static Kahn DAG compilation, relational memory/KG graphs, and heavy GGUF sidecar managers.
+  2. **8 Core Subsystems Designed**:
+     - `pkg/proxy`: Transparent HTTP/HTTPS reverse proxy (`localhost:7878`) with direct SSE token streaming pass-through for OpenAI, Anthropic, and Gemini/Vertex.
+     - `pkg/kvlock`: KV-Cache Prefix Lock Guard benchmarked at 70–99% prompt cache read hit rates across 8 models, avoiding the 12.5x cache miss penalty.
+     - `pkg/ast`: Native Tree-sitter AST Skeletonizer for 10 languages (70%–90% token reduction via SHA-256 body hash markers).
+     - `pkg/store`: Embedded SQLite WAL mode + FTS5 full-text content-addressed storage engine.
+     - `pkg/probe`: Sub-millisecond local discovery engine (`tzro probe`) pairing ripgrep with Tree-sitter scope isolation.
+     - `pkg/compactor`: Deterministic Smart JSON Crusher (tabular schemas) and Stack Trace Elider (removes runtime internals).
+     - `pkg/dlp`: Zero-Cloud Data Loss Prevention and secret redaction engine.
+     - `pkg/hooks`: Antigravity lifecycle hook adapters (`PreToolUse`, `PostToolUse`, `PreInvocation`, `Stop`).
+- **PRD Published**: [PRD_TZRO_V2.md](../../PRD_TZRO_V2.md) and [.scratch/tzro-v2-token-shield/PRD.md](../../../.scratch/tzro-v2-token-shield/PRD.md)
+- **Feature Summary Created**: [Tzro v2 Feature Summary](features/tzro-v2-token-shield.md)
+
+## [2026-08-26T13:37:00-07:00] grill-with-docs | ADR-0094: RecallPolicy and Embedding-Based Chunk Dedup
+
+- **Activity**: 9-question grill-with-docs session stress-testing fan-reduce optimization plan against domain model, glossary, and ADRs.
+- **Decisions Resolved**:
+  1. `fanReduceSynthesis` violates Recall Node glossary ("No LLM compaction calls") — belongs in synthesis pipeline.
+  2. Skip Recall injection entirely for docgen via new `RecallPolicy: "skip"` on `ListAndWrite` template.
+  3. `RecallPolicy` field on `GraphNode` — universal, declarative, no compiler special-cases.
+  4. Embedding-based chunk dedup lives inside Sectioned Synthesis as deterministic scaffolding (Principle 3).
+  5. Extract `splitListOutputIntoFileChunks` to shared `chunk_utils.go`.
+  6. Delete `fanReduceSynthesis` entirely — dead code.
+  7. Parameters configurable: redundancy threshold 0.85, relevance floor 0.20, budget 80K chars.
+- **New ADR**: [ADR-0094](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0094-recall-policy-and-embedding-prune.md)
+- **CONTEXT.md Updates**: Added `RecallPolicy` glossary term. Updated `Recall Node`, `Budget-Overflow Recall Injection`, `Sectioned Map-Reduce Synthesis`.
+
+## [2026-08-26T10:45:00-07:00] diagnose | Phase 3: Dead Code Deletion & Probe Utility Extraction Completed
+
+- **Activity**: Executed Phase 3 of the Strategic Framework Pivots roadmap using the `/diagnose` skill to systematically decouple, extract, and delete legacy probe code.
+- **Key Accomplishments**:
+  1. **Decoupled & Extracted Shared Utilities**:
+     - `internal/executor/inference_engine.go`: Extracted `ModelTarget`, `ProbeInferenceEngine`, `ProbeInference`, `ThoughtChainStep`, and synthesis validation schemas.
+     - `internal/executor/util_strings.go`: Extracted `truncate`, `parseActionFromResponse`, and `hybridSynthesisThreshold`.
+     - `internal/executor/util_cache.go`: Extracted `cacheIdRe`, `extractCache*`, `extractSQL*`, `defaultSQL*`, `isAnalyzeConfig`, `containsTool`, `shouldPhaseGateApply`, and `requiredToolsBlocked`.
+     - `internal/executor/preload.go`: Extracted `detectPreloadPaths`, `dedupParentPaths`, `collectPreloadFiles`, `preloadDirectoryContext`, etc.
+     - `internal/executor/analyze_core.go`: Extracted and renamed `runAnalyzeCore` to power `AnalyzeOnlyStrategy`.
+     - `internal/executor/inventory_phases.go`: Extracted inventory extraction phase runner.
+     - `internal/executor/research_phases.go`: Co-located research query generation, clause segmentation, and URL extractors.
+     - `internal/executor/recall_compaction.go`: Added `isToolError` helper.
+  2. **Deleted ~7,077 LOC Across 25 Legacy Probe Source & Test Files**:
+     - Deleted `probe.go`, `probe_analyze_node.go`, `probe_callgraph.go`, `probe_compaction.go`, `probe_index.go`, `probe_mapreduce.go`, `probe_phases.go`, `probe_preload.go`, `probe_prompts.go`, `probe_research_grammar.go`, `probe_sql_extract.go`, `probe_synthesis.go`, `probe_tools.go`, and all corresponding `probe_*_test.go` files.
+  3. **Architecture Invariant Enforced**:
+     - Extended `TestArchitectureInvariants` with `NoProbeSourceFiles` subtest, ensuring no `probe*.go` files can be reintroduced into `internal/executor/`.
+  4. **Verification**: Full test suite across all `internal/...` and `cmd/...` packages passes cleanly.
+
+
+
+## [2026-08-26T10:04:00-07:00] wayfinder | Resolved Ticket 06: Migration Roadmap and Phased Rollout (Wayfinding Complete)
+
+- **Activity**: Wayfinder grilling session resolving [06-migration-roadmap-and-phased-rollout](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/06-migration-roadmap-and-phased-rollout.md), completing the [Strategic Framework Pivots & Execution Simplification](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md) effort.
+- **Key Decisions Resolved**:
+  1. **5-Phase Migration Sequence Approved**: Phase 1 (Harness Hardening & Re-Judge CLI) $\to$ Phase 2 (Architecture AST Linter Gate) $\to$ Phase 3 (Dead Code Deletion of ~7,800 LOC & 3-Primitive Consolidation) $\to$ Phase 4 (Holdout Suite Verification & Baseline Lock) $\to$ Phase 5 (Documentation & ADR-0093).
+- **Wayfinder Map Status**: All 6 decision tickets closed. Map Destination fully charted and clear. Ready for execution via `/plan` or direct implementation.
+
+## [2026-08-26T10:00:00-07:00] wayfinder | Resolved Ticket 05: Holdout Suite and Generalization Gate
+
+- **Activity**: Wayfinder grilling session resolving [05-holdout-suite-generalization-gate](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/05-holdout-suite-generalization-gate.md).
+- **Key Decisions Resolved**:
+  1. **Strict Train/Holdout Separation**: Standardized development suites (`*_tasks.json`) for local TDD/diagnosis and blind holdout suites (`holdout_*.json`) for unbiased verification.
+  2. **Automated Quality Floor Gate (`tzro compare --holdout`)**: Enforced a composite quality floor of $\ge 3.80 / 5.0$, zero unhandled runtime crashes, zero regression delta ($\Delta \ge 0.00$), and $<\$0.01$ unexpected cloud token spend as a mandatory release blocker.
+- **Wayfinder Map Updated**: Closed ticket 05 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 06.
+
+## [2026-08-26T09:58:00-07:00] wayfinder | Resolved Ticket 04: Cognitive Boundary Invariants
+
+- **Activity**: Wayfinder grilling session resolving [04-small-model-cognitive-boundary-invariants](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/04-small-model-cognitive-boundary-invariants.md).
+- **Key Decisions Resolved**:
+  1. **Cognitive Boundary Matrix Codified**: Enforced strict separation where 4B models never perform step routing loops, in-context arithmetic, or binary formatting, reserving LLM inference for GBNF macro classification, search expansion, verbatim line extraction, sectioned markdown synthesis, and spec-driven AST coding.
+  2. **Linear Custom Tool Planning**: Custom tools (e.g. MCP charting tools, S3 uploads) are planned 1-shot by the Strategic Planner and wired into linear Kahn DAG layers with dynamic JSONPath data bindings (`{{nodes.step1.output}}`).
+  3. **Automated Architecture Linter Test**: Mandated an AST-level CI validation test (`TestArchitectureInvariants`) preventing regex entity extractors, naive string slicing, or hardcoded task ID branches from creeping into the codebase.
+- **Wayfinder Map Updated**: Closed ticket 04 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md).
+
+## [2026-08-26T08:49:00-07:00] wayfinder | Resolved Ticket 03: Core Primitives and Pipeline Pruning
+
+- **Activity**: Wayfinder grilling session resolving [03-execution-pipeline-pruning-and-core-primitives](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/03-execution-pipeline-pruning-and-core-primitives.md).
+- **Key Decisions Resolved**:
+  1. **The 3 Universal Engine Primitives**: Consolidated all workloads (DocGen, Web Research, Data Analysis, Codegen) into: Primitive 1 (Deterministic Ingest/Discovery Walkers), Primitive 2 (Context Budgeting & Compaction via ADR-0092 Prefix Slotting and embedding ranking), and Primitive 3 (Inside-Out Sectioned Map-Reduce Synthesis & Codegen Gate).
+  2. **Dual-Planner Model Split**: Local 4B models are constrained to the **4 Canonical Archetypes** (`docgen`, `research`, `analyze`, `codegen`) + T0 Direct Fast-Path to prevent cyclic graph hallucinations; Cloud frontier models retain full compositional freedom to dynamically plan arbitrary DAG topologies from the 3 primitives.
+  3. **Codebase Pruning**: Approved immediate deletion of ~7,077 LOC of legacy Probe code and ~748 LOC of XML Semantic Validator code.
+- **Wayfinder Map Updated**: Closed ticket 03 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 04.
+
+## [2026-08-26T08:37:00-07:00] wayfinder | Resolved Ticket 02: Node Types and Subsystem Audit
+
+- **Activity**: Wayfinder research session auditing all registered node types, strategies, and execution branches in `internal/executor/`, `internal/compiler/`, and `internal/strategy/`.
+- **Key Findings & Asset Created**:
+  1. Authored research asset [Research Asset: Node Types, Execution Strategies, and Subsystem Audit](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/assets/node-strategy-audit.md).
+  2. Identified **7,077 LOC** of legacy Probe Node files and **748 LOC** of XML Semantic Validator code in `internal/executor/` ready for deletion.
+  3. Identified 3 true active execution workhorses: `ListStrategy` + Repository Pre-Index, `RecallStrategy` + Structural Compaction, and `SectionSynthesis` + Codegen Gate.
+- **Wayfinder Map Updated**: Closed ticket 02 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 03.
+
+## [2026-08-26T08:35:00-07:00] wayfinder | Resolved Ticket 01: Benchmark Harness Integrity
+
+- **Activity**: Wayfinder grilling session resolving [01-benchmark-harness-integrity](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/01-benchmark-harness-integrity.md).
+- **Key Decisions Resolved**:
+  1. **Judge Error Handling**: Implemented 3x exponential backoff retries (2s, 4s, 8s) for all cloud judge API calls in `internal/comparison/judge.go`. On terminal failure, tag task with `JudgeError: "ERR_JUDGE_UNAVAILABLE"`, record `QualityScore = -1`, render `ERR` in report, and exclude `ERR` tasks from quality denominator.
+  2. **Dedicated Re-Judge CLI Command**: Added a standalone `tzro compare --rejudge <results.json>` CLI command to re-score unjudged/failed tasks post-hoc without re-running model task execution.
+  3. **Purged Task-Specific Scaffolding**: Completely removed all `if t.ID == ...` pre-compilation blocks and prompt augmentations from `internal/comparison/conditions.go`, requiring all DocGen benchmarks to execute through the unassisted general runtime pipeline.
+  4. **Golden Baseline Savings Attribution**: Enforced 3-bucket savings attribution against `golden_baseline_react.json` and added a `CLOUD_LEAK_WARNING` badge for unexpected cloud token usage in cooperative/local modes.
+- **Wayfinder Map Updated**: Closed ticket 01 in [MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md). Unblocked ticket 05.
+
+## [2026-08-26T08:24:00-07:00] wayfinder | Charting Map: Strategic Framework Pivots & Execution Simplification
+
+- **Activity**: Wayfinder session charting a strategic architectural roadmap to break out of the 4B-model micro-optimization loop, harden the evaluation harness against silent failure traps, and consolidate tzro's 92 ADR layers into 3 core primitives.
+- **Wayfinder Map Created**: [.scratch/framework-pivots-and-simplification/MAP.md](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/MAP.md)
+- **Tickets Charted**:
+  1. [01-benchmark-harness-integrity](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/01-benchmark-harness-integrity.md) (grilling, HITL) — Eliminate judge 0.00 silent failure traps, retry transient cloud errors, and purge task-specific hacks from `conditions.go`.
+  2. [02-audit-active-node-types-and-strategies](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/02-audit-active-node-types-and-strategies.md) (research, AFK) — Inventory all active vs legacy node types, strategies, and execution branches.
+  3. [03-execution-pipeline-pruning-and-core-primitives](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/03-execution-pipeline-pruning-and-core-primitives.md) (grilling, HITL) — Consolidate execution engine into 3 primitives (Deterministic Walker, Context Budgeting, Inside-Out Map-Reduce/Codegen Gate).
+  4. [04-small-model-cognitive-boundary-invariants](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/04-small-model-cognitive-boundary-invariants.md) (grilling, HITL) — Codify invariants preventing ad-hoc Go heuristic extractors and phrase splitters.
+  5. [05-holdout-suite-generalization-gate](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/05-holdout-suite-generalization-gate.md) (grilling, HITL) — Design independent holdout evaluation suites and automated quality floor gates.
+  6. [06-migration-roadmap-and-phased-rollout](file:///Users/jp/Desktop/Repos/tzro/.scratch/framework-pivots-and-simplification/issues/06-migration-roadmap-and-phased-rollout.md) (grilling, HITL) — Phased rollout sequence.
+
+## [2026-08-26T07:30:00-07:00] grill-with-docs | Lossless Context Prefill Optimization and Prefix-Slot Architecture (ADR-0092)
+
+- **Activity**: Grill-with-docs session evaluating context prefill optimization strategies (inspired by research on bit-exact KV compression, symbolic meta-token dictionary encoding, LCM carrier streams, and RadixAttention prefix caching) for tzro's Go harness, `llama-server` sidecar, and Apple Silicon / Metal execution.
+- **Key Decisions Resolved**:
+  1. **Static Prefix Slotting (Invariant 3-Turn Base + Volatile Dynamic Tail)**: Standardized a 4-turn message structure (`system: Invariant Prompt` $\to$ `user: Immutable Goal` $\to$ `assistant: Ack` $\to$ `user: Dynamic Tail`) across List Node file extractions, Sectioned Synthesis passes, and Codegen Edit Loops. Guarantees that `llama-server`'s `--cache-reuse` reuses KV state through Turns 1–3, evaluating only the dynamic tail on passes 2 through $N$.
+  2. **Symbolic In-Context Dictionary Encoding (Meta-Tokens)**: Transparent harness-level pre-pass discovering long repetitive path prefixes (`/Users/.../internal/...`, `github.com/...`) and schema headers in contexts $>4\text{KB}$. Substitutes them with compact meta-tokens (`§0`, `§1`) and decodes them deterministically in Go before Section Assembly or Tool Sinks.
+  3. **Context-Role Aware 2-Tier AST Stubbing & Sparse Ceilings**: In Codegen, reference/sibling files have function/method bodies stubbed to `{ /* ... */ }` via tree-sitter AST parsing (`internal/symbols`), preserving all exported signatures while shrinking context files by ~85%. Active target file retains full content. In Sectioned Synthesis, enforced strict sparse context ceilings ($K=4$ embedding snippets, cosine similarity $\ge 0.55$).
+  4. **Role-Differentiated KV Cache Quantization**: Router sidecar (1B) always launches with `--cache-type-k q4_0 --cache-type-v q4_0` to conserve Metal memory bandwidth during 1-shot GBNF classifications; Worker sidecar (4B/7B) uses `q8_0` in local mode and `q4_0` in cooperative mode.
+- **CONTEXT.md Updated**: Added **Static Prefix Slotting**, **Symbolic In-Context Dictionary**, and **AST Body Stubbing** to glossary.
+- **ADR Created**: [ADR-0092](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0092-lossless-prefill-optimization-and-prefix-slotting.md)
+- **Wiki Updated**: Added ADR-0091 and ADR-0092 to `docs/wiki/index.md`.
+
+## [2026-08-25T11:22:00-07:00] grill-with-docs | Probe Node Removal & list-and-write Topology (ADR-0091)
+
+- **Activity**: Grill-with-docs session analyzing 0.6v5 benchmark failures. Deep dive into cloud token routing leak (fixed: 1-line guard in `compilation_hook.go`) and documentation failure modes led to architectural decision to delete the Probe Node entirely.
+- **Key Decisions Resolved**:
+  1. **Probe Node deleted**: ReAct loop consistently underperformed across 4B, 8B, and 35B model sizes. The multi-hop navigation niche is already handled by Repository Pre-Index (AST imports, dependency graphs) and Symbol Extractor at the discovery level.
+  2. **List Node becomes primary**: All code/documentation discovery tasks route through the List Node. Verbatim GBNF line-range extraction replaces lossy Probe synthesis.
+  3. **`list-and-write` topology**: New Plan Template Registry archetype replacing `probe-and-write` and `probe-synthesis`. Topology: `List → [conditional Recall] → Sectioned Synthesis → Tool Sink`.
+  4. **Budget-Overflow Recall Injection**: Recall injected only when List output exceeds downstream context budget. Uses deterministic structural compaction (Symbol Extractor for code, heading extraction for markdown) — no LLM compaction calls.
+  5. **Research Node unchanged**: Web tasks keep their own pipeline (Search → Browse → Evidence Card → Synthesis).
+  6. **Analyze Node unchanged**: Data/SQL tasks keep their pipeline.
+- **CONTEXT.md Updated**: Removed Probe Node definition. Updated Recall Node, List Node, Budget-Overflow Recall Injection, Verified Task Execution, Re-Explore, Strategic Planner, Response Resolver, Proactive Binding Splice, Phase Runner, Research Node, Analyze Node, Agent definitions.
+- **ADR Created**: [ADR-0091](file:///Users/jp/Desktop/Repos/tzro/docs/adr/0091-probe-removal-list-and-write-topology.md)
+- **Bug Fixed**: Cloud semantic review (ADR-0070) missing `isCloudRepairBlocked()` guard in `compilation_hook.go:180`. T4+ codegen tasks leaked 12,954 cloud tokens in `local_only` mode. Test updated.
+
+## [2026-08-25T10:32:00-07:00] tdd | List Node Implementation (ADR-0090)
+
+- **Activity**: TDD implementation of the List Node — extraction-only node type where the model returns GBNF-constrained line-range integer arrays and the Go harness copies verbatim source snippets.
+- **Vertical Tracer-Bullet Slices Delivered**:
+  1. **Slice 1 (IsExtractionGoal)**: Embedding sidecar + bag-of-words fallback goal classifier with 6 extraction prototypes. Config accessor `GetExtractionIntentThreshold`. 12 tests.
+  2. **Slice 2 (Line-Range Extraction)**: `LineRange`, `MergeAndClampRanges`, `FormatExtractedSnippets`, `ChunkFile`, `ExtractLineRanges` in [`list_extract.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/list_extract.go). 10 tests.
+  3. **Slice 3 (ListStrategy)**: Full `NodeStrategy` implementation with Orient → Discover → Extract → Assemble pipeline in [`list_strategy.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/list_strategy.go). Registered as `"list"` in Strategy Registry. 5 tests.
+  4. **Slice 4 (Compiler Integration)**: Added `"list"` to discovery node count in Kahn Compiler. List Nodes bypass Recall/Validator injection by default (no type match in existing code). 2 tests.
+  5. **Slice 5 (Parent-Dedup Fix)**: `dedupParentPaths` in [`probe_preload.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_preload.go) fixes v5 bug where `internal` + `internal/cache` both appeared. 6 tests.
+  6. **Slice 6 (Coverage Check)**: `CheckListCoverage` with PascalCase identifier detection for Pre-Flight verification. 3 tests.
+- **Test Results**: All 38 new tests pass alongside full regression (executor, compiler, strategy).
+
+## [2026-08-25T10:08:00-07:00] grill-with-docs | List Node — Extraction Without Synthesis (ADR-0090)
+
+- **Activity**: Grill-with-docs session designing a new List Node type to address chronic low scoring on extraction/enumeration benchmark tasks (e.g. `cache_function_index`). Forensic analysis across 3 benchmark runs (v3/v4/v5) showed Probe Node synthesis corruption as the root cause — the 4B model reliably identifies relevant content but unreliably rewrites it.
+- **Key Design Decisions Resolved**:
+  1. **Name**: List Node — extraction-only node type, model points at line ranges, harness copies verbatim source.
+  2. **Discovery**: Orient → Discover phases built into the List Node, fully deterministic (list_dir + RichScoreAndSelect). No LLM-driven Phase Runner.
+  3. **Path Extraction**: Kahn Compiler extracts target paths at compilation time with parent-directory deduplication. Fixes the v5 bug where `internal` and `internal/cache` were both extracted.
+  4. **Routing**: Kahn Compiler uses `IsExtractionGoal()` (embedding sidecar, no keyword heuristics per Principle 1) to swap node type from `probe` to `list` within the existing `probe-and-write` template. No new topology archetype in the classifier.
+  5. **Per-File Inference**: GBNF-constrained `[[startLine, endLine], ...]` arrays. One call per file. Merge overlapping ranges, clamp out-of-bounds. Chunk files >800 lines with 50-line overlaps.
+  6. **Downstream Path**: Direct to Deterministic Write — no Recall Node, no Semantic Validator. Output flows directly to `write_file`.
+  7. **VTE**: Pre-Flight coverage check only (no cloud Verification Gate). Re-extraction pass on coverage miss targets files that returned empty arrays.
+  8. **Output Format**: Annotated dividers (`--- file: path lines: N-M ---`) for machine-parseability and human readability.
+  9. **Template Shape**: Reuse `probe-and-write` template. Kahn Compiler swaps node type and skips Recall/Validator injection for `type: "list"`.
+  10. **Composability**: When post-processing is needed, the frontier planner (T2) composes List → Probe/Recall → Write.
+- **Terms Updated**: Added **List Node** to CONTEXT.md glossary.
+- **ADR Created**: [ADR-0090](../adr/0090-list-node-extraction-without-synthesis.md)
+
+## [2026-08-23T11:10:00-07:00] tdd | Native ReAct Loop within Probe & Research Nodes Implementation (ADR-0089)
+
+- **Activity**: Test-Driven Development (TDD) implementation of the native Go ReAct agent loop for exploratory Probe and Research nodes within the Durable DAG engine.
+- **Vertical Tracer-Bullet Slices Delivered**:
+  1. **Slice 1 (Tracer Bullet & Convergence)**: Implemented `ReActConfig`, `ReActResult`, and `RunReActLoop` in [`internal/executor/react_node.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/react_node.go) with tool definition generator and iterative tool execution. Verified via `TestReActLoop_DirectConvergence` and `TestReActLoop_MultiStepToolExecution`.
+  2. **Slice 2 (Error Recovery & Repetition Guard)**: Embedded `role: "tool"` error feedback for self-correcting agent execution and integrated `RepetitionGuard` to intercept repeated tool invocations. Verified via `TestReActLoop_ToolErrorRecovery` and `TestReActLoop_RepetitionGuard`.
+  3. **Slice 3 (Budgets & Sliding Window Pruning)**: Implemented forced final synthesis upon step budget exhaustion (`StepBudget`, default 15) and `pruneMessagesIfExceeded` sliding window turn-dropping at the 12,000 token threshold. Verified via `TestReActLoop_StepBudgetEnforcement` and `TestReActLoop_SlidingWindowContextPruning`.
+  4. **Slice 4 (DAG Integration & Live Inference)**: Implemented `LiveReActInference` in [`internal/executor/react_inference.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/react_inference.go) and wired `RunReActLoop` into `runProbeAnalyzeCore` in [`internal/executor/probe_analyze_node.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_analyze_node.go).
+- **Test Results**: All 6 ReAct unit tests pass (`0.789s`) alongside the full core test suite (`internal/executor`, `internal/compiler`, `internal/inference`, `internal/task`, `internal/routing`, `internal/strategy`).
+
+## [2026-08-23T11:06:00-07:00] grill-with-docs | Native ReAct Loop within Probe & Research Nodes (ADR-0089)
+
+
+- **Activity**: Grill-with-docs session stress-testing the architectural trade-offs between pure Kahn-compiled DAG execution, unconstrained ReAct loops, and embedded exploratory sub-graphs based on full 25-task benchmarks (`results-full-local-dag-3` vs `results-full-local-react-2`).
+- **Key Design Decisions Resolved**:
+  1. **Hybrid Execution Topology**: The outer execution engine remains a Durable DAG (preserving Kahn topological sorting, parallel layer dispatch, checkpointing, and deterministic tool sinks), while exploratory **Probe Nodes** and **Research Nodes** execute a native **ReAct Loop** internally.
+  2. **Native Go ReAct Engine (`RunReActLoop`)**: Implemented directly in Go (`internal/executor/react_node.go`) using `tools.Registry` and direct OpenAI-compatible `/v1/chat/completions` tool calling on local sidecars, eliminating external Node/npm dependencies.
+  3. **Tool Error as Observation**: Tool execution failures return as `role: "tool"` observation messages, allowing the model to naturally self-correct without aborting the node.
+  4. **Repetition Guard & Tiered Step Budgets**: Bounded by `RepetitionGuard` and configurable step budgets (15 steps default covering >90% of tasks; 25 steps for broad repo sweeps), with forced synthesis at budget exhaustion.
+  5. **Sliding Window Context Protection**: Drops oldest tool observation turn pairs when prompt tokens exceed 12k to maintain constant-time prefill and prevent context window overflow.
+  6. **Clean Terminal Return Payload Contract**: Probe nodes return only the final assistant text message (`output.text`/`output.summary`) to downstream DAG nodes, preserving context hygiene while persisting intermediate traces in SQLite for auditability.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Updated canonical definition for **Probe Node** to encapsulate an internal ReAct Loop.
+  - `docs/adr/0089-react-loop-in-probe-nodes.md`: Authored and accepted ADR-0089.
+  - `docs/wiki/index.md`: Registered ADR-0089 in Architecture & Concepts index.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
+## [2026-08-22T20:25:00-07:00] grill-with-docs | DAG Parity Optimization — Immutable Goals, Typed Compaction, Terminal Sinks & Fast-Path (ADR-0088)
+
+
+- **Activity**: Grill-with-docs session stress-testing the architectural root causes of quality and latency regressions between ReAct and DAG under 35B model parity.
+- **Key Design Decisions Resolved**:
+  1. **Immutable Goal Prompt Injection**: Preserve verbatim user prompt (`Task.GoalPrompt`) at intake and inject immutably into downstream Synthesis, Analyze, and Codegen node execution contexts under a dedicated `## Primary User Specification` block to eliminate prompt dilution during graph mutation.
+  2. **Domain-Aware Structured Compaction**: Ground Probe and Recall compaction in typed representations (Code $\to$ AST Skeletons; Web Research $\to$ Evidence Cards; Data Analysis $\to$ Analytical Evidence) rather than generic text summarization.
+  3. **Compiler-Injected Terminal Tool Sinks**: Automatically append a deterministic `write_file` Action Node bound to `terminal_synthesis.output` for all `docgen` tasks to eliminate missing-file evaluation deductions.
+  4. **Fast-Path T0 Short-Circuit**: For T0 Direct tasks (single queries, simple edits), bypass template mutation and pre-indexing to dispatch a direct single-node execution graph in <30 seconds.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added canonical definitions for **Immutable Goal Prompt**, **Terminal Tool Sink**, and **Fast-Path Execution**.
+  - `docs/adr/0088-dag-parity-optimization-immutable-goals-and-fast-path.md`: Authored and accepted ADR-0088.
+  - `docs/wiki/index.md`: Registered ADR-0088 in Architecture & Concepts index.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
+## [2026-08-22T14:22:00-07:00] grill-with-docs | Orthogonal Plan Templates, Single-Decision Router Invariant & Baseline Fallback (ADR-0087)
+
+- **Activity**: Grill-with-docs session resolving plan template dispatch and plan repair failures from ReAct vs. DAG benchmarks, decoupling graph topology from tool source modality, and enforcing sequential single-decision routing on the 1B router model.
+- **Key Design Decisions Resolved**:
+  1. **Orthogonal Plan Template Registry**: Deconstructed monolithic template categories (`explore-only`, `docgen`, `research`) into pure **Topology Archetypes** (`probe-synthesis`, `probe-and-write`, `multi-probe-synthesis`, `codegen`, `data-analysis`, `action-chain`) and **Source Modalities** (`local`, `web`, `hybrid`).
+  2. **Single-Decision Router Invariant & 2-Pass Routing**: The 1B router sidecar is constrained to single-decision GBNF passes. Intake runs Pass 1 (Topology Archetype) followed by Pass 2 (Source Modality when multi-tool domains/web tools exist, else defaults to `local`).
+  3. **Source-Aware Plan Repair**: `repairGraphWithProbe` inherits the task's resolved `SourceModality`, provisioning `web_search`/`web_browse` and `SourceHint="web"` for web research tasks.
+  4. **Deterministic Baseline Template Fallback**: When local model template mutations fail validation and repair in `local_only` mode, the engine safely falls back to the unmodified base hydrated template with prompt injection, ensuring 100% DAG compilation survival.
+  5. **Polymorphic `StaticArgs` Normalization**: `GraphNode` JSON unmarshaling normalized to accept both JSON objects/maps and flat strings seamlessly.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added **Plan Template Registry**, **Topology Archetype**, **Source Modality**, **Single-Decision Router Principle**, and **Baseline Template Fallback**.
+  - `AGENTS.md`: Added the **Single-Decision Router Invariant** under High-Reliability Prompting.
+  - `docs/adr/0087-orthogonal-plan-templates-and-single-decision-routing.md`: Authored and accepted ADR-0087.
+  - `docs/wiki/index.md`: Registered ADR-0087 in the architecture index.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
+## [2026-08-19T11:12:00-07:00] tdd | Repository Pre-Index, Dual-Plane Indexing & Context Budget Packing (ADR-0086)
+
+- **Activity**: Implemented the complete 5-slice vertical tracer-bullet architecture for the Repository Pre-Index, Dual-Plane Indexing, Hybrid Search with Reciprocal Rank Fusion, Context Budget Packing, and Probe Node Direct Synthesis Pre-flight integration.
+- **Key Deliverables**:
+  1. **IndexStore Persistence & Schema** ([`internal/index/store.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/store.go)):
+     - SQLite-backed storage (`.tzro/index.db`) managing `index_files`, `index_symbols`, `index_edges`, `index_doc_chunks`, and `index_fts` virtual table for BM25 text search.
+  2. **Document Plane Parser & Chunker** ([`internal/index/chunker.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/chunker.go)):
+     - Structural Markdown heading decomposition (`#`, `##`, `###`), plain-text paragraph chunking, and backticked symbol identifier extraction.
+  3. **Hybrid Search & Reciprocal Rank Fusion** ([`internal/index/search.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/search.go)):
+     - Concurrent FTS5 BM25 match + EmbeddingSidecar vector cosine similarity merged via $\text{RRF} = 1/(60+\text{Rank}_{\text{FTS}}) + 1/(60+\text{Rank}_{\text{Vec}})$.
+  4. **Context Budget Packer** ([`internal/index/packer.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/packer.go)):
+     - Knapsack-style budget packer filtering below confidence floor and packing up to 70% Reserve-Ratio context budget (~6,000 tokens) into structured Markdown sections.
+  5. **Workspace Scanner & Probe Direct Synthesis Pre-flight** ([`internal/index/indexer.go`](file:///Users/jp/Desktop/Repos/tzro/internal/index/indexer.go), [`internal/executor/probe_index.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_index.go), [`internal/executor/probe_analyze_node.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/probe_analyze_node.go)):
+     - Scans workspace with file-hash staleness checks and auto-promotes Probe Nodes with high index confidence ($\ge 0.012$ RRF) to instant `DirectSynthesis`.
+- **Verification**: 100% test pass rate across `internal/index/...`, `internal/symbols/...`, `internal/compiler/...`, and `internal/executor/...`.
+
+## [2026-08-19T11:08:00-07:00] grill-with-docs | Repository Pre-Index, Dual-Plane Indexing & Context Budget Packing (ADR-0086)
+
+- **Activity**: Grill-with-docs session stress-testing the architecture for workspace pre-indexing (AST + Documents + Embeddings) against Probe Node wall-clock latency, token usage, and multi-modal document search.
+- **Key Design Decisions Resolved**:
+  1. **Index Lifecycle & Invalidation (Option 1)**: Eager background index ingestion by the daemon at workspace startup (`.tzro/index.db`), with `<10ms` incremental file invalidation on filesystem save events via `fsnotify`.
+  2. **Dual-Plane Indexing & Vector Scope (Option 1)**: Partitioning into an AST-backed **Code Plane** (symbols, signatures, call edges, package docstrings) and a heading/page-chunked **Document Plane** (`.md`, `.txt`, `.pdf`, `.docx`). Embedding Sidecar vectorizes document chunks and package/struct docstrings, while internal symbol bodies rely on AST graph + FTS5 BM25 search.
+  3. **Context Budget Packing (Option 1)**: Knapsack-style budget packer filtering candidate chunks against a confidence floor and packing up to a 70% Context Reserve Ratio (with 15% Prompt overhead and 15% Generation room), bypassing multi-turn Probe Thought Chains into single-shot synthesis.
+  4. **Fallback & Exploration Escape Hatch (Option 1)**: Transparent hybrid demotion to the multi-step `Thought Chain` / `Deterministic Walker` (ADR-0019, ADR-0078) when retrieval confidence is low (< 0.50) or targets unindexed ephemeral paths.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added canonical definitions for **Repository Pre-Index**, **Dual-Plane Indexing**, and **Context Budget Packer**.
+  - `docs/adr/0086-repository-pre-index-and-dual-plane-retrieval.md`: Authored and accepted ADR-0086.
+  - `docs/wiki/index.md`: Registered ADR-0086 in the architecture decision log.
+  - `docs/wiki/log.md`: Logged session outcomes.
+
+## [2026-08-18T20:56:00-07:00] grill-with-docs | Goal-Specific Inventory Extractor & Map-Reduce Documentation Pipeline (ADR-0084)
+
+- **Activity**: Grill-with-docs session analyzing `adr_summary`, `internal_architecture`, and `comprehensive_readme` benchmark regressions (caused by hardcoded top-10 candidate pruning and sequential tool loops) and architecting the **Goal-Specific Inventory Extractor** Map-Reduce pipeline.
+- **Key Design Decisions Resolved**:
+  1. **Architectural Placement (Option A)**: Embed as a specialized `Inventory Extractor` Phase within `ProbePhases` (`PhaseRunner`) rather than introducing new compiler-level nodes.
+  2. **Triggering & Intent Matching**: Trigger when target file candidates $> 5$ and neural cosine similarity between the goal vector and bulk-documentation intent prototypes $\ge 0.65$ (using the `EmbeddingSidecar`).
+  3. **Dynamic Schema Derivation (Option A)**: The local model derives 3–6 extraction fields with `minLength` and `maxLength` ($\le 256$ chars, configurable in `config.json`) and compiles a live GBNF grammar for the Map phase, falling back to a universal schema on failure.
+  4. **Deterministic File Tagging & Relevance Skipping**: The Go harness injects the file path deterministically (`file: string`), while the GBNF schema includes `{ "relevant": false }` to cleanly discard uninformative files.
+  5. **Content-Aware Slicing in Map Phase (Option A)**: Pass full content for small files ($\le 200$ lines), AST Code Skeletons for large code files, and top-150 lines for large markdown docs to ensure high throughput (<0.5s per file).
+  6. **Tagged YAML Matrix & Synthesis Gating (Option A)**: Transmit the aggregated Inventory Matrix to the Reduce phase in compact tagged block YAML (`---`), routing to single-pass synthesis for $\le 20$ rows and Sectioned Map-Reduce Synthesis for $> 20$ rows or multi-section documents.
+- **Artifacts Updated**:
+  - `CONTEXT.md`: Added canonical definitions for `Inventory Extractor` and `Inventory Matrix`.
+
+## [2026-08-18T14:20:00-07:00] tdd | Dynamic Sectioned Map-Reduce Synthesis & Semantic Citation Remapping (ADR-0083)
+
+- **Activity**: Implemented the complete 4-stage Dynamic Sectioned Map-Reduce Synthesis pipeline and Semantic Citation Remapping verification gate for Web Research nodes under ADR-0083.
+- **Key Deliverables**:
+  1. **Config & Sizing Knobs** ([`internal/config/config.go`](file:///Users/jp/Desktop/Repos/tzro/internal/config/config.go)):
+     - Added `ResearchEvidenceSnippetsPerSource` (default: 8, tuneable), `ResearchCitationRemapThreshold` (default: 0.45), and `ResearchMetricBindingThreshold` (default: 0.65).
+  2. **Map Phase (Evidence Ranking)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `RankEvidenceForSource` extracting quantitative metrics (`metricPattern`) and top-$K$ snippets via `GlobalEmbeddingSidecar.EmbedBatch` / cosine similarity into structured `EvidenceTable` structs.
+  3. **Step 2 (Dynamic Synthesis Outline Planner)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `GenerateSynthesisOutline` with GBNF JSON grammar producing unbounded `[]SectionSpec` with explicit `target_source_ids` and deterministic fallback on syntax failure.
+  4. **Step 3 (Section Assembler with Rolling Prefix Context)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `AssembleSection` with rolling `sectionLeads` context buffer and terminal reference set inflation ensuring conclusions receive all evidence tables.
+  5. **Step 4 (Verification Gate & Semantic Citation Remapping)** ([`internal/executor/section_synthesis.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/section_synthesis.go)):
+     - Implemented `RemapAndGroundCitations` remapping out-of-bounds `[N]` tags ($\ge 0.45$), auto-binding unsourced quantitative metrics ($\ge 0.65$), and appending verified bibliography tables.
+  6. **End-to-End Integration** ([`internal/executor/research_phases.go`](file:///Users/jp/Desktop/Repos/tzro/internal/executor/research_phases.go)):
+     - Wired `RunSectionedSynthesisPipeline` into `RunResearchPhases` and PhaseRunner `EvidenceCardsProvider`.
+- **Verification**: All unit and integration test suites (`go test ./...`) passed 100% with zero regressions.
+
+
+## [2026-08-18T10:50:00-07:00] tdd | Semantic Regex Migration & Neural Query Intent (ADR-0081 / ADR-0082)
+
+- **Activity**: Implemented complete deprecation of 46 semantic parsing regexes across `deterministic_query.go`, `query_intent.go`, and `promotion.go`, replacing heuristic pattern matching with the on-device Neural Embedding Sidecar (`inference.GlobalEmbeddingSidecar`) and deterministic Bag-of-Words fallback.
+- **Key Deliverables**:
+  1. `internal/executor/query_intent.go` & `internal/executor/query_intent_embedding_test.go`:
+     - Added phrase-window multi-filter extraction via `splitGoalIntoPhrases` populating `intent.Filters []FilterClause`.
+     - Added support for normalized and fuzzy column matching (e.g. `Target_Account?` → `Target_Account_`, `accout owner` → `Accout_Owner`).
+     - Added scalar metric aggregate priority ordering in `IntentToOperations` (`avg_deal_size DESC` / `sum_revenue DESC` over `count`).
+     - Added `percentage` and `ratio` alias handling and automatic `COUNT(*)` injection when `group_by` is active.
+  2. `internal/tools/query_builder.go` & `internal/tools/query_builder_test.go`:
+     - Verified exact window ratio calculation (`ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS [percentage]`) and NULL-safe categorical grouping (`COALESCE(NULLIF([col], ''), '(Unspecified)')`).
+     - Added `TestBuildSQL_MultiFilter_MultiAggregate` verifying multi-aggregate, multi-filter, and ratio window assembly.
+  3. `internal/executor/deterministic_query.go` & `internal/executor/deterministic_query_test.go`:
+     - Completely removed 32 brittle regexes (`filterPatterns`, `groupByPatterns`, `aggregatePatterns`, `distinctPatterns`, `orderPatterns`).
+     - Implemented `ExtractDeterministicQueryIntent` routing directly through `ExtractQueryIntent` and scoring `QueryConfidence` from neural/BoW similarity.
+     - Updated all unit tests to `TestNeuralExtract_*` suites.
+  4. `internal/classifier/promotion.go` & `internal/classifier/promotion_test.go`:
+     - Deprecated 14 temporal and HITL regexes/keywords.
+     - Implemented `isTemporalDelay` (delay verbs + time units without regex) and prototype embedding similarity matching against `workflowTemporalPrototypes` and `workflowHitlPrototypes` with strict $> 0.70$ threshold gate and multi-token keyword fallback.
+- **Verification**: `go test -v ./internal/executor ./internal/tools ./internal/classifier` passed 100% with zero regressions; `go build ./...` succeeded.
+
+## [2026-08-18T10:20:00-07:00] grill-with-docs | Deterministic Harness Scaffolding for Small-Model Parity (ADR-0082)
+
+- **Activity**: Grill-with-docs session analyzing Benchmark Run 38 (Qwen 35B MoE remote inferenceBackend vs 4B on-device models) and architecting deterministic Go harness scaffolding to achieve 4.25+ benchmark quality on 4B local models.
+- **Key Findings & Design Decisions**:
+  1. **Model Parameter Scaling Bottleneck**: Confirmed that moving from 4B to 35B improved raw code generation (4.26 / 5.0) and high-volume probe traversal stability, but overall quality plateaued at 3.57 because the remaining failure modes in Data Analysis (2.80) and Web Research (2.82) are structural/harness limitations rather than model reasoning flaws.
+  2. **Relevance-Scored Exploration Queue**: Use the local Embedding Sidecar (cosine similarity) during the `orient` phase to rank candidate files against the probe goal and prune to top-$K$, preventing indiscriminate repository-wide file reads on targeted queries.
+  3. **Neural Semantic QueryIntent & Window Functions**: Replace regex intent extraction with vector similarity matching against operation prototypes, adding compound aggregation support, SQLite window functions for ratio/percentage calculations (`% of total`), and NULL-safe categorical grouping.
+  4. **Numbered Citation Preamble & Citation Assertion**: Enforce structured numbered bibliography indices (`[1] URL - Title`) with deterministic Pre-Flight Stage 2 Citation Assertions, eliminating ungrounded numerical hallucinations.
+  5. **Tree-Sitter AST Import Validator & LanguageLinter**: Implement language-agnostic in-memory tree-sitter AST validation across Go, TypeScript, Python, and Rust with 1-turn local self-repair and an extensible `LanguageLinter` interface for custom toolchains.
+- **Artifacts Created / Updated**:
+  - `CONTEXT.md`: Added definitions for `Relevance-Scored Exploration Queue`, `Citation Preamble`, `Citation Assertion`, `AST Import Validator`, `Language Linter`, and updated `Deterministic Query Path` with neural semantic matching.
+  - `docs/adr/0082-deterministic-harness-scaffolding-for-small-model-parity.md`: Formally recorded architectural decisions.
+
+## [2026-08-16T19:40:00-07:00] tdd | Recall Context Safety (Semantic Pruning + KNN) & Research Markdown GBNF Grammar Synthesis
+
+- **Activity**: Implemented TDD-aligned architectural remediations for Benchmark Run 35 failure modes (eliminating HTTP 400 context overflow crashes in multi-probe codebase exploration tasks and enforcing Markdown comparison tables + verifiable source citations in web research tasks).
+- **Key Deliverables**:
+  1. `internal/inference/local_model.go`:
+     - Extended `CallLocalModel` and `CallLocalModelStream` to support raw GBNF grammars via `{"type": "grammar", "grammar": ...}` when `gbnfSchema` is not JSON (e.g. begins with `root ::=` or GBNF grammar rules).
+  2. `internal/executor/recall_pruner.go` & `internal/executor/recall.go`:
+     - Implemented `PruneUpstreamOutput`: Performs semantic chunking (700 chars with 100-char overlap), hybrid BM25 + Cosine scoring against the goal, and KNN / adjacent window expansion ($i \pm 1$) to prune upstream `RawOutput` into safe $\le 4,000$ character segments while preserving narrative continuity.
+     - Injected `PruneUpstreamOutput` into `RunRecall` manifest assembly, reducing multi-probe manifest prompts from 98,250 tokens down to $< 5,000$ characters.
+     - Added hard pre-flight token clamp `maxSafePromptChars = 80000` (~20,000 tokens) before calling `engine.Infer`.
+  3. `internal/executor/research_evidence.go`:
+     - Implemented `extractResearchEvidence`: Queries SQLite ThoughtSteps for uncompacted `web_search` and `web_browse` / `fetch_web_page` hits and constructs a dedicated `## Verified Search Sources & Evidence` block (budgeted up to 12,288 chars), preserving verbatim source URLs, CVSS numbers, and metrics.
+  4. `internal/executor/probe_research_grammar.go` & `internal/executor/probe_synthesis.go`:
+     - Implemented `buildResearchMarkdownGrammar`: Constructs context-free GBNF grammar enforcing `# Overview`, `## Detailed Analysis`, `## Comparative Overview` (Markdown table syntax), and `## Sources & Citations` (bulleted list).
+     - Wired high-fidelity research evidence and direct Markdown GBNF grammar dispatch into `runSynthesisPass` and `parseSynthesisResponse`.
+- **Testing**:
+  - `internal/inference/local_model_test.go`: `TestCallLocalModel_RawGBNFGrammar`.
+  - `internal/executor/recall_pruner_test.go`: `TestPruneUpstreamOutput_SmallPassThrough` and `TestPruneUpstreamOutput_SemanticChunkAndKNN`.
+  - `internal/executor/recall_overflow_test.go`: `TestRunRecall_ContextOverflowSafety`.
+  - `internal/executor/research_evidence_test.go`: `TestExtractResearchEvidence`.
+  - `internal/executor/probe_research_grammar_test.go`: `TestBuildResearchMarkdownGrammar`.
+  - `internal/executor/probe_research_synthesis_test.go`: `TestProbeSynthesis_ResearchMarkdownGrammar`.
+- **Verification**: `go test ./internal/...` passed 100% with zero regressions across all packages.
+
+## [2026-08-14T14:52:00-07:00] tdd | Run 31 Failure Mode Hardening (Compaction, Imputation, Preservation, Grounding)
+
+- **Activity**: Implemented comprehensive hardening for all four concrete failure modes from Benchmark Run 31 (Docgen context blowup, Data analysis null-bucket omission, Codegen preamble syntax errors, and Web research re-explore synthesis preservation).
+- **Key Deliverables**:
+  1. `internal/executor/stage_driver.go`:
+     - Added `compactPhaseToolOutput` in `DeterministicQueueDriver` extracting AST code skeletons (`symbols`/`compactor`) and document headings before logging tool outputs.
+     - Implemented strict rolling buffer cap `MaxPhaseToolLogChars = 24000` with FIFO eviction of older non-root entries.
+  2. `internal/executor/phase_runner.go`:
+     - Enhanced `synthesizePhase` with emergency 50% head/tail pruning retry on local synthesis failures (HTTP 400 context limit).
+  3. `internal/tools/query_builder.go`:
+     - Updated `BuildSQL` to wrap `GROUP BY` and `SELECT` columns in `COALESCE(NULLIF([col], ''), '(Unspecified)')` preventing SQLite empty key drops.
+  4. `internal/executor/analyze_phases.go`:
+     - Added `renderJSONToMarkdownTable` and updated `buildDataPassthrough` to deterministically render formatted Markdown tables in Go with injected `Ground Truth Table: Total Records = %d` headers.
+  5. `internal/codegen/codegen.go` & `internal/codegen/compilation_hook.go`:
+     - Implemented `SanitizeSourceCode` to deterministically strip conversational preambles before language entry tokens (`package`, `import`, `export`, etc.).
+     - Injected strict code-only system prompt into `attemptLocalRegeneration`.
+     - Injected `OriginalContent` seed file into cloud repair and full cloud regeneration prompts.
+  6. `internal/executor/recall_strategy.go` & `internal/executor/research_phases.go`:
+     - Fixed re-exploration bug by preserving `freshRecall.Synthesis` and marking `verificationResult.Accepted = true` upon successful re-exploration.
+     - Injected structured URL citation requirements into the web research synthesis prompt.
+- **Testing**:
+  - `internal/executor/stage_driver_test.go`: `TestDeterministicQueueDriver_CodeFileSkeletonAndRollingBufferCap`.
+  - `internal/tools/query_builder_test.go`: `TestBuildSQL_GroupByCoalesceImputation` and all 16 SQL builder tests.
+  - `internal/codegen/compilation_test.go`: `TestSanitizeSourceCode_StripsConversationalPreamble`.
+- **Verification**: `go test -v ./internal/executor ./internal/tools ./internal/codegen` passed 100% with 0 regressions.
+
+## [2026-08-14T12:08:00-07:00] grill-with-docs | Milestone Verification & Dependency-Gated Recall (ADR-0079)
+
+- **Activity**: Grill-with-docs session designing Mid-Flight Milestone Verification, the Milestone Rubric, Sink-Aware Re-Synthesis, and Dependency-Gated Recall Injection to eliminate false-rejection cascades and the $N \times \text{Recall}$ latency multiplier in multi-probe DAGs.
+- **Key Findings & Design Decisions**:
+  1. **Dual-Mode Verification Gate**: Differentiated `VerifyTaskOutput` into (1) **Milestone Verification Gate** for intermediate nodes, and (2) **Terminal Verification Gate** for final deliverables.
+  2. **Milestone Rubric**: Scored on `{stepAlignment, factualGrounding, downstreamViability, reason, reExplore, reExploreHint}` ($\ge 0.60$ threshold). Drops global `completeness`, eliminating false rejections when intermediate probes explore single layers of a multi-layer task.
+  3. **Sink-Aware Re-Synthesis**: Mid-flight cloud re-synthesis on rejection only triggers if the node has outgoing edges to a **Tool Sink** (`write_file`, `save_memory`, `db_insert`). Pure exploration fan-outs defer re-synthesis to the terminal gate.
+  4. **Dependency-Gated Recall Injection**: Replaced blind 1-to-1 probe-to-recall expansion in the Kahn Compiler with dependency-aware injection. Probes that only feed downstream synthesis route directly to the consolidated join node, cutting multi-probe wall-clock time by ~60%.
+- **Resolved terms in CONTEXT.md**:
+  - Added **Milestone Verification Gate**, **Terminal Verification Gate**, **Milestone Rubric**, **Tool Sink**, and **Dependency-Gated Recall Injection**.
+  - Updated **Verification Gate**, **Recall Node**, and **Cloud Re-Synthesis**.
+- **ADR created**: [ADR-0079: Milestone Verification and Dependency-Gated Recall](../adr/0079-milestone-verification-and-dependency-gated-recall.md).
+- **Wiki Index updated**: Added ADR-0079 entry to `docs/wiki/index.md`.
+
+## [2026-08-14T10:17:00-07:00] tdd | Hybrid Extractive Text Compactor (BM25 + Cosine Similarity)
+
+
+- **Activity**: Implemented Hybrid Extractive Text Compaction for high-volume text outputs (web research, documentation, large text files) combining parallel BM25 keyword density scoring and Dense/BoW Cosine Similarity.
+- **Key Deliverables**:
+  1. `internal/compactor/bm25.go`: `BM25Scorer` computing exact keyword and term frequency matching across text chunks ($k_1 = 1.5, b = 0.75$).
+  2. `internal/compactor/hybrid_text.go`:
+     - `ScoreChunksHybrid`: Computes normalized hybrid scores combining BM25 keyword density and `embeddings.CosineSimilarity` ($0.5 \cdot \text{BM25}_{\text{norm}} + 0.5 \cdot \text{Cosine}$).
+     - `SplitSemanticChunks`: Breaks unstructured text into semantic blocks while preserving markdown headers.
+     - `CompactTextHybrid`: Knapsack selection of top-scoring chunks within budget, re-sorted in chronological document order with omission dividers.
+  3. `internal/compactor/tool_output.go`:
+     - Added `CompactorGoalKey` and wired `CompactTextHybrid` into `compactToolOutput` for text and fallback segments.
+     - Fixed `looksLikeCode` to require real code syntax markers so markdown headers are not misclassified as code.
+     - Fixed `perStepBudget` calculation to allow accurate sub-500 budget allocations.
+  4. `internal/executor/recall_compaction.go` & `internal/executor/recall.go`:
+     - Updated `buildCompactedRecallContext` to accept `goal string` and pass `CompactorGoalKey`, enabling pure deterministic hybrid text compaction across upstream ThoughtSteps in <5ms with 0 LLM calls.
+- **Testing**:
+  - `internal/compactor/text_compactor_test.go`: Tests for BM25 scoring, hybrid keyword + synonym scoring, and budget/order preservation.
+  - `internal/compactor/tool_output_test.go`: `TestCompactToolOutputs_TextWithGoalUsesHybridCompactor` verifying deterministic hybrid text compaction.
+- **Verification**: `go test ./internal/...` passed 100% across the codebase.
+
+## [2026-08-14T08:35:00-07:00] ideate-and-drill | Model/Scaffolding Split & Deterministic Walkers (ADR-0078)
+
+- **Activity**: Ideate & Drill session designing the Model/Scaffolding Split, Deterministic Walkers, Web Research Pipeline with Worker query decomposition and URL loop, and VTE Defensive Re-Synthesis invariants.
+- **Key Deliverables**:
+  1. **Deterministic Walker & StageDriver Architecture**: Decoupled PhaseRunner state machine from step-level LLM inference. Eliminated `two_pass.go` and step-level Pass 1/2 loops (~95% latency reduction, 0 parameter hallucinations).
+  2. **Web Research Pipeline**: 1-shot 4B Worker query decomposition with GBNF array grammar, automated multi-query `web_search` dispatch, regex URL extraction to `DiscoveredURLs` queue, and bounded top-K `web_browse` deep read.
+  3. **VTE Recovery & Defensive Re-Synthesis**: Implemented defensive re-synthesis baseline on rejection; bounded in-place re-exploration ($\le 1$ attempt) in `RecallNode` when `reExplore: true`; guaranteed that rejected local synthesis is never returned.
+  4. `CONTEXT.md`: Added **Stage Driver** and **Deterministic Walker**; updated **Phase Runner**, **Verified Task Execution**, and **Re-Explore**.
+  5. `docs/adr/0078-model-scaffolding-split-deterministic-walkers.md`: Created ADR-0078.
+- **Testing Plan**: Test-driven implementation using `tdd` for `StageDriver`, `DeterministicQueueDriver`, `GenerateSearchQueries`, and VTE recovery.
+
+## [2026-08-13T19:10:00-07:00] tdd | Read-Only Git & Grep Tools for Probe Nodes
+
+- **Activity**: Implemented read-only git tools (`git_log`, `git_diff`, `git_show`), upgraded `search_files` with `fileGlob` and ripgrep/Go dual-backend, and added probe argument rescue and classification logic per `docs/superpowers/specs/2026-08-13-readonly-git-grep-probe-tools-design.md`.
+- **Key Deliverables**:
+  1. `internal/tools/git.go`: `NewGitLogTool`, `NewGitDiffTool`, `NewGitShowTool` with shared `gitExec` infrastructure, zero-arg defaults, and stat-first routing for outputs exceeding 500 lines.
+  2. `internal/tools/filesystem.go`: Upgraded `NewSearchFilesTool` with `fileGlob` support and cached `rg` execution with Go fallback.
+  3. `internal/tools/tools.go`: Registered the three git tools in `Init()`.
+  4. `internal/executor/probe_tools.go`: Extended `rescueEmptyPathFromThought` for git tools; added `rescueRefFromThought`, `rescueMaxCountFromThought`, `rescueFileGlobFromThought`; and added git keywords to `classifyProbeGoal`.
+  5. `internal/executor/probe.go`: Wired new rescue functions into the Thought Chain argument normalization loop.
+  6. `internal/strategy/builtin.go`: Updated Probe strategy PlannerCard with git tools critical rule.
+  7. `CONTEXT.md`: Added Git Tools to Language glossary.
+- **Testing**:
+  - `internal/tools/git_test.go`: 12 tests covering log, diff, show, zero-args, stat-first fallback, non-git dir rejection, and path boundary validation.
+  - `internal/tools/filesystem_test.go`: Tests for `fileGlob` filtering and Go fallback path.
+  - `internal/executor/probe_tools_test.go`: Tests for ref, count, and glob extraction from thought text, path rescue for git tools, and goal classification.
+- **Verification**: `go test ./...` passed across the entire codebase.
+
 ## [2026-08-07T12:25:00-07:00] grill-with-docs | Plan Template Registry Design (ADR-0048 updated)
 
 - **Activity**: Grill-with-docs session stress-testing the Plan Template Registry handoff against the domain model, codebase, and existing ADRs. 10 design questions resolved covering insertion point, storage format, classification mechanism, mutation authority, structural invariants, prompt mechanics, escape hatch, template categories, and benchmark interaction.
@@ -2002,3 +2440,54 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 
 **Modified files**:
 - [MODIFY] [probe.go](internal/executor/probe.go) — conditional few-shot, generic fallback, updated cacheId handling guidance
+
+---
+
+## [2026-08-18T18:15:00-07:00] design | Research Benchmark 23 Evaluation & Cooperative Hardening Grilling Session
+
+- **Activity**: Conducted a `/grill-with-docs` alignment session evaluating research benchmark run 23 (`.scratch/benchmark/results-research-23`). Resolved four critical failure modes across search rate limiting, entity-balanced queueing, structured outline synthesis, and upstream evidence void detection.
+- **Key Design Decisions**:
+  - **Fast-Fail Multi-Tier Search Fallback**: HTTP 202/rate-limits on DuckDuckGo immediately trigger fast-failover across alternative non-key tiers (Startpage, rotating user-agents) rather than blocking with a 30-second sleep. Returns `SearchRateLimited` on full exhaustion to redirect budget to deep reading existing URLs.
+  - **Entity-Partitioned Deep-Read Allocation**: In multi-subject research tasks, candidate URLs are partitioned by target entity and consumed round-robin (minimum 1, maximum 2 deep-read slots per entity). The 5-slot hard limit applies only to single-entity tasks. Low-authority SEO blog aggregator domains are filtered in favor of official docs and primary repositories.
+  - **Two-Stage Outline-Gated Synthesis & Strict VTE Verification**: In `RunSectionedSynthesisPipeline`, the 4B model emits a structured JSON outline enforcing entity selection and section constraints before map-reduce generation. In `verificationEvaluateSystemPrompt`, VTE explicitly audits cardinality, ranking, and structural constraints (e.g. verifying "top 3" selection).
+  - **Re-Exploration on Evidence Voids & Grounding Guardrails**: When the verification gate identifies that required specific identifiers/records (e.g., specific CVEs or version matrices) are completely absent from the evidence context, VTE triggers `reExplore: true` with a targeted hint instead of blind Tier 2 cloud re-synthesis. In `ReSynthesize`, negative constraints explicitly enforce stating "Data not found in source evidence" rather than estimating or hallucinating parameters.
+- **Key Files Modified/Updated**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Updated Research Node definition with Entity-Partitioned Deep-Read Allocation)
+  - [MODIFY] [log.md](log.md) (This log entry)
+
+---
+
+## [2026-08-18T21:40:00-07:00] grill-with-docs | Generalized Sectioned Map-Reduce Synthesis for DocGen and Research (ADR-0084)
+
+- **Activity**: Conducted a `/grill-with-docs` session diagnosing single-pass generation cap truncations in DocGen benchmark runs (`inference_module_docs`, `comprehensive_readme`). Formalized and aligned on the generalized Sectioned Map-Reduce Synthesis architecture.
+- **Terminology & Glossary Updates**:
+  - Broadened **Sectioned Map-Reduce Synthesis** in `CONTEXT.md` to encompass docgen and long-form codebase documentation while explicitly exempting pure code generation (`tzro_code`).
+  - Added **Dynamic Synthesis Outline** to `CONTEXT.md` defining GBNF-constrained outline blueprints with deterministic package/layer safety floors.
+- **Key Architectural Decisions**:
+  - **Dynamic GBNF Outline Planning**: Replaced brittle keyword regex checks (`compare`, `framework`) and static comparison templates with dynamic Local Model outline planning (`title`, `sections[]: {heading, objective, is_terminal}`).
+  - **Deterministic Safety Floor**: If a 4B model under-decomposes a large multi-file/multi-layer context ($>4,000$ chars, $>4$ packages), deterministic package/directory boundary partitioning kicks in.
+  - **Full Context Broadcasting & KV Cache Prefix Reuse**: Section generators receive the complete `refinedContext` + static AST Symbol reference block in the system prompt prefix (maximizing llama.cpp KV cache hit rate across sections $2 \dots N$) alongside Rolling Prefix Context (lead sentences of prior sections) and the specific section objective.
+  - **Deterministic Reduce Assembly & Section Truncation Guard**: Normalizes and stitches sections sequentially, verifies no individual section was cut off mid-sentence (triggering localized section retries rather than full-document cloud rewrites), validates AST Symbol Anchoring ($\ge 80\%$), and deterministically appends verified references.
+- **Key Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Broadened Sectioned Map-Reduce Synthesis, added Dynamic Synthesis Outline)
+  - [NEW] [0084-generalized-sectioned-map-reduce-synthesis.md](../adr/0084-generalized-sectioned-map-reduce-synthesis.md)
+  - [MODIFY] [index.md](index.md) (Indexed ADR-0083 and ADR-0084)
+  - [MODIFY] [log.md](log.md) (Appended this entry)
+
+---
+
+## [2026-08-24T17:07:00-07:00] grill-with-docs | Rich Relevance Scoring for Exploration Queue Deep-Read (ADR-0082 Gap Closure)
+
+- **Activity**: Conducted a `/grill-with-docs` session stress-testing the proposed relevance-gated deep-read design for Probe Node codebase exploration. Identified that the current deep-read phase reads ALL remaining files after ScoreAndPrune with no cap, burning 94K-139K local tokens on probe-heavy tasks for mediocre quality (2.0-2.8).
+- **Terminology & Glossary Updates**:
+  - Updated **Exploration Queue** in `CONTEXT.md` to document multi-signal Rich Relevance Scoring (AST + semantic + path + import affinity), goal-adaptive K values, and per-file-type scoring formulas. Replaces the single-signal filepath-only embedding pruning description.
+- **Key Design Decisions**:
+  - **Not New Architecture**: Closing an ADR-0082 §1 gap, not introducing a new concept. No new ADR needed.
+  - **Per-Type Scoring**: Code files score via AST symbol similarity (tree-sitter, all supported languages, 0.65 weight) + path similarity (0.35 weight). Text/doc files score via semantic content embedding (first 20 lines, 0.65 weight) + path similarity (0.35 weight).
+  - **Import Affinity**: 1-hop, 1.25× multiplicative boost from the same tree-sitter parse. Files imported by high-scoring candidates get boosted. Transitive propagation rejected (risks pulling entire dependency tree).
+  - **Goal-Adaptive K**: focused=5, overview=8, default=5. Absolute floor=0.10. Inventory Extractor path (`"aggregate"` goals) bypasses scoring entirely.
+  - **Replaces ScoreAndPrune**: Unified rich scoring replaces the single-signal top-10 coarse filter. One pass selects both Discover (top-3) and Deep-Read (top-K) files.
+  - **Expanded Extension List**: `collectPreloadFiles` now collects `.go`, `.py`, `.ts`, `.tsx`, `.js`, `.jsx`, `.rs`, `.java`, `.md`, `.txt`, `.rst` — matching tree-sitter Symbol Extractor support.
+- **Key Files Created/Modified**:
+  - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Updated Exploration Queue glossary entry)
+  - [MODIFY] [log.md](log.md) (Appended this entry)

@@ -1,0 +1,261 @@
+{
+  "model": "minimax/minimax-m3",
+  "timestamp": "2026-08-28T04:19:52Z",
+  "direct": {
+    "mode": "direct",
+    "model": "minimax/minimax-m3",
+    "turns": [
+      {
+        "turn": 1,
+        "tool_name": "tzro_probe",
+        "prompt_tokens": 966,
+        "cached_tokens": 128,
+        "cache_write_tokens": 0,
+        "completion_tokens": 94,
+        "cost_usd": 0.000345208,
+        "cache_hit_ratio": 0.13250517598343686,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 2,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 1683,
+        "cached_tokens": 128,
+        "cache_write_tokens": 0,
+        "completion_tokens": 59,
+        "cost_usd": 0.000507468,
+        "cache_hit_ratio": 0.07605466428995841,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 3,
+        "tool_name": "tzro_expand",
+        "prompt_tokens": 1864,
+        "cached_tokens": 1664,
+        "cache_write_tokens": 0,
+        "completion_tokens": 53,
+        "cost_usd": 0.000207484,
+        "cache_hit_ratio": 0.8927038626609443,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 4,
+        "tool_name": "read_file",
+        "prompt_tokens": 1993,
+        "cached_tokens": 896,
+        "cache_write_tokens": 0,
+        "completion_tokens": 32,
+        "cost_usd": 0.000392536,
+        "cache_hit_ratio": 0.44957350727546413,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 5,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 2299,
+        "cached_tokens": 1792,
+        "cache_write_tokens": 0,
+        "completion_tokens": 62,
+        "cost_usd": 0.000310512,
+        "cache_hit_ratio": 0.779469334493258,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 6,
+        "tool_name": "read_file",
+        "prompt_tokens": 2514,
+        "cached_tokens": 1920,
+        "cache_write_tokens": 0,
+        "completion_tokens": 32,
+        "cost_usd": 0.00030904,
+        "cache_hit_ratio": 0.7637231503579952,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 7,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 2882,
+        "cached_tokens": 2432,
+        "cache_write_tokens": 0,
+        "completion_tokens": 62,
+        "cost_usd": 0.000330392,
+        "cache_hit_ratio": 0.8438584316446912,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 8,
+        "tool_name": "read_file",
+        "prompt_tokens": 3236,
+        "cached_tokens": 2816,
+        "cache_write_tokens": 0,
+        "completion_tokens": 31,
+        "cost_usd": 0.000309396,
+        "cache_hit_ratio": 0.8702101359703337,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 9,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 3597,
+        "cached_tokens": 3200,
+        "cache_write_tokens": 0,
+        "completion_tokens": 132,
+        "cost_usd": 0.00043556,
+        "cache_hit_ratio": 0.8896302474284126,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 10,
+        "tool_name": "read_file",
+        "prompt_tokens": 3887,
+        "cached_tokens": 3712,
+        "cache_write_tokens": 0,
+        "completion_tokens": 31,
+        "cost_usd": 0.000290972,
+        "cache_hit_ratio": 0.9549781322356573,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 11,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 4206,
+        "cached_tokens": 3840,
+        "cache_write_tokens": 0,
+        "completion_tokens": 69,
+        "cost_usd": 0.00039342,
+        "cache_hit_ratio": 0.912981455064194,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 12,
+        "tool_name": "read_file",
+        "prompt_tokens": 4507,
+        "cached_tokens": 4224,
+        "cache_write_tokens": 0,
+        "completion_tokens": 32,
+        "cost_usd": 0.000350984,
+        "cache_hit_ratio": 0.9372087863323718,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 13,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 5153,
+        "cached_tokens": 4480,
+        "cache_write_tokens": 0,
+        "completion_tokens": 114,
+        "cost_usd": 0.00056472,
+        "cache_hit_ratio": 0.8693964680768484,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 14,
+        "tool_name": "read_file",
+        "prompt_tokens": 5462,
+        "cached_tokens": 5248,
+        "cache_write_tokens": 0,
+        "completion_tokens": 50,
+        "cost_usd": 0.000408808,
+        "cache_hit_ratio": 0.9608202123764189,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 15,
+        "tool_name": "read_file",
+        "prompt_tokens": 5916,
+        "cached_tokens": 5504,
+        "cache_write_tokens": 0,
+        "completion_tokens": 167,
+        "cost_usd": 0.000607284,
+        "cache_hit_ratio": 0.9303583502366464,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 16,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 6392,
+        "cached_tokens": 6016,
+        "cache_write_tokens": 0,
+        "completion_tokens": 71,
+        "cost_usd": 0.000520276,
+        "cache_hit_ratio": 0.9411764705882353,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 17,
+        "tool_name": "read_file",
+        "prompt_tokens": 6677,
+        "cached_tokens": 6400,
+        "cache_write_tokens": 0,
+        "completion_tokens": 31,
+        "cost_usd": 0.00047006,
+        "cache_hit_ratio": 0.9585143028306126,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 18,
+        "tool_name": "tzro_skeleton",
+        "prompt_tokens": 7390,
+        "cached_tokens": 6656,
+        "cache_write_tokens": 0,
+        "completion_tokens": 142,
+        "cost_usd": 0.000734456,
+        "cache_hit_ratio": 0.9006765899864682,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 19,
+        "tool_name": "(final)",
+        "prompt_tokens": 7776,
+        "cached_tokens": 7424,
+        "cache_write_tokens": 0,
+        "completion_tokens": 31,
+        "cost_usd": 0.000548404,
+        "cache_hit_ratio": 0.9547325102880658,
+        "prefix_hash": "29f592cbff38"
+      }
+    ],
+    "total_cost_usd": 0.00803698,
+    "total_prompt_tokens": 78400,
+    "total_cached_tokens": 68480,
+    "avg_cache_hit_ratio": 0.7904511467431586,
+    "warm_cache_hit_ratio": 0.8270037006742542,
+    "prefix_hash_stable": true,
+    "wall_clock_ms": 77863
+  },
+  "proxied": {
+    "mode": "proxied",
+    "model": "minimax/minimax-m3",
+    "turns": [
+      {
+        "turn": 1,
+        "tool_name": "run_command",
+        "prompt_tokens": 966,
+        "cached_tokens": 256,
+        "cache_write_tokens": 0,
+        "completion_tokens": 46,
+        "cost_usd": 0.000263736,
+        "cache_hit_ratio": 0.2650103519668737,
+        "prefix_hash": "29f592cbff38"
+      },
+      {
+        "turn": 2,
+        "tool_name": "(final)",
+        "prompt_tokens": 1023,
+        "cached_tokens": 896,
+        "cache_write_tokens": 0,
+        "completion_tokens": 5,
+        "cost_usd": 0.000091236,
+        "cache_hit_ratio": 0.8758553274682307,
+        "prefix_hash": "29f592cbff38"
+      }
+    ],
+    "total_cost_usd": 0.000354972,
+    "total_prompt_tokens": 1989,
+    "total_cached_tokens": 1152,
+    "avg_cache_hit_ratio": 0.5704328397175522,
+    "warm_cache_hit_ratio": 0.8758553274682307,
+    "prefix_hash_stable": true,
+    "wall_clock_ms": 3965
+  }
+}

@@ -82,6 +82,7 @@ mcp.lock
 *.db
 .llama-embed.port
 
+workspaces/*
 models/*
 
 benchmark-results*
@@ -105,3 +106,6 @@ AGENTS.md
 CONTEXT.md
 DESIGN.md
 docs/superpowers/specs/
+
+
+.sf

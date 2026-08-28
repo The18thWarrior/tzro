@@ -1,99 +1,50 @@
-# tzro Release Roadmap
+# Tzro v2 Product Roadmap
 
-This roadmap outlines the remaining milestones, sprint schedules, and engineering deliverables required to prepare the `tzro` durable local agentic execution framework for its general developer release.
-
-By prioritizing developer-oriented library integration and dynamic quickstart scripts over complex consumer-desktop application packaging, we have streamlined our engineering focus and compressed the timeline to a **5-Week Release Schedule**.
+This roadmap outlines the milestones and engineering deliverables for **Tzro v2: The Local Token Shield & Context Optimization Engine**.
 
 ---
 
-## 📅 Release Timeline Overview
+## 📅 Roadmap Overview
 
 ```mermaid
 gantt
-    title tzro Framework Release Timeline
+    title Tzro v2 Development & Launch Roadmap
     dateFormat  YYYY-MM-DD
-    section Sprint 1: Hardening
-    MCP Self-Healing            :active, s1, 2026-05-25, 5d
-    Docker/Wasm Sandboxing     :active, s2, after s1, 7d
-    Kahn Mutex & Concurrency    :active, s3, after s2, 2d
-    section Sprint 2: Local AI
-    ONNX Local Embeddings       :s4, 2026-06-08, 6d
-    Keyring OS Secrets          :s5, after s4, 6d
-    SSE JWT Gateway             :s6, after s5, 2d
-    section Sprint 3: Onboarding
-    Developer Install Script    :s7, 2026-06-22, 4d
-    Developer Install Script    :done, s7, 2026-06-22, 4d
-    Quickstart Code Boilerplate :done, s8, after s7, 3d
-    Public SDK API Reference    :done, s9, after s8, 3d
+    section Phase 1: Core Shield
+    Native Binary & SQLite Store       :done, p1, 2026-08-20, 3d
+    Tree-Sitter AST Skeletonizer       :done, p2, 2026-08-23, 2d
+    KV-Cache Prefix Lock Guard         :done, p3, 2026-08-25, 2d
+    Sub-ms Discovery (tzro probe)      :done, p4, 2026-08-26, 1d
+    section Phase 2: Integrations
+    Antigravity Lifecycle Hooks        :done, p5, 2026-08-26, 1d
+    VS Code & Cursor Extensions        :active, p6, 2026-09-01, 7d
+    Claude Code Automated Proxy Bridge :active, p7, 2026-09-08, 5d
+    section Phase 3: Enterprise & Edge
+    Bidirectional Symbol Obfuscation   :p8, 2026-09-15, 7d
+    Edge ARM64 & CI/CD Runner Tuning   :p9, 2026-09-22, 5d
 ```
 
 ---
 
-## 🚀 Sprint-by-Sprint Deliverables
+## 🚀 Phase Breakdown
 
-### Sprint 1: Hardening & Sandbox Security (Weeks 1 & 2)
+### Phase 1: Core Token Shield Architecture (Completed)
+- `[x]` **Zero-Dependency Native Binary**: Compiled Go binary with embedded SQLite WAL + FTS5 store (<50 MB RAM).
+- `[x]` **KV-Cache Prefix Lock Guard**: Pins system prompts and tool schemas to maximize prompt cache read hits (benchmarked at 70–99% across 8 models via OpenRouter; $0.10 \times P_{\text{base}}$ when cached) and avoid the 12.5x cache miss penalty.
+- `[x]` **Tree-Sitter AST Skeletonizer**: Language-aware structural code pruner across 10 languages (70%–90% token reduction via SHA-256 body hash markers).
+- `[x]` **High-Speed Discovery (`tzro probe`)**: Embedded ripgrep + Tree-sitter symbol boundary extraction in <5ms.
+- `[x]` **Smart JSON Crusher & Stack Trace Elider**: Deterministic tabular schema flattening and runtime stack frame trimming.
+- `[x]` **Zero-Cloud DLP**: On-device regex and entropy scanner for secret masking.
+- `[x]` **Transparent Reverse Proxy**: Loopback gateway on `127.0.0.1:7878` with direct SSE token streaming pass-through for Anthropic & OpenAI.
 
-- **Objective:** Secure local execution boundaries and guarantee stdio process resilience.
+### Phase 2: Seamless Agent Integrations (Current Focus)
+- `[x]` **Antigravity Hooks Adapter**: Native `hooks.json` command bridge for `PreToolUse`, `PostToolUse`, and `PreInvocation`.
+- `[ ]` **Cursor & VS Code One-Click Helper**: One-click status bar extension showing active shielded tokens and cache hit metrics.
+- `[ ]` **Automated Environment Detector**: CLI helper `tzro hook env` that auto-exports `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` in shell profiles.
 
-- `[x]` **Stdio MCP Auto-Recovery [5 Days]** _(Completed)_
-  - _Implementation:_ Refactored `internal/mcp/mcp.go` stdio wrappers.
-  - _Mechanism:_ Thread-safe process auto-recovery. Transparently monitors child stdio streams, auto-spawns on crash, and retries JSON-RPC commands without interrupting the active executor step.
-- `[x]` **Subprocess Containerization & Sandboxing [7 Days]** _(Completed)_
-  - _Implementation:_ Refactored `internal/mcp/mcp.go` and `mcp_config.json`.
-  - _Mechanism:_ Supports executing MCP host programs inside isolated Docker container instances, restricting procedural micro-skills within lightweight, resource-isolated Wasm runtimes with strict runtime limitations.
-- `[x]` **Kahn Executor Concurrency Polish [2 Days]** _(Completed)_
-  - _Implementation:_ Resolved race contentions and thread collisions inside `internal/executor/executor.go` and `internal/task/task.go`.
-  - _Mechanism:_ Validated concurrent step runs at identical Kahn topological levels under parallel load, preventing SQLite thread collisions.
+### Phase 3: Enterprise DLP & Security (Upcoming)
+- `[ ]` **Bidirectional Symbol Obfuscation**: Maps internal proprietary symbols to synthetic IDs (`InternalFinLedger` $\to$ `Class_8F2`) and re-hydrates returned code edits locally.
+- `[ ]` **Air-Gapped Audit Logger**: OpenTelemetry-compliant trace exporter for enterprise compliance verification.
 
----
-
-### Sprint 2: Local Semantic Search & Secure Storage (Weeks 3 & 4)
-
-- **Objective:** Enable pure local semantic matching and secure API credential storage.
-
-- `[x]` **ONNX Local Vector Embeddings [6 Days]** _(Completed)_
-  - _Implementation:_ Created `internal/embeddings/` and `internal/memory/` local search routes.
-  - _Mechanism:_ Runs hybrid local semantic searches inside SQLite using FTS5 keyword candidate generation and in-memory ONNX cosine similarity ranking (`all-MiniLM-L6-v2`), with zero-dependency compiler-friendly TF-IDF fallback.
-- `[x]` **OS-Level Keyring secrets Integration [6 Days]** _(Resolved & Replaced)_
-  - _Implementation:_ Refactored config parsers to recursive **Delegated Secrets** in `internal/config/config.go`.
-  - _Mechanism:_ OS Keyring was deprecated via cooperative architectural decision to prevent prompt hijacking and CI/CD breaks. Implemented environment-delegated secrets, resolving environment variable strings recursively at runtime.
-- `[x]` **Multi-User REST/SSE Gateway Security [2 Days]** _(Resolved & Replaced)_
-  - _Implementation:_ Local-first single-user workstation execution.
-  - _Mechanism:_ REST/SSE security was deferred to post-GA. Core engine binds strictly to POSIX local loopback (`127.0.0.1`) and uses host filesystem permissions, preserving the developer-friendly zero-setup onboarding experience.
-
----
-
-### Sprint 3: Developer Onboarding & Quickstart Bootstrap (Week 5)
-
-- **Objective:** Deploy automated developer initialization tools and comprehensive framework onboarding assets.
-
-- `[x]` **One-Line Developer Install Script [4 Days]** _(Completed)_
-  - _Implementation:_ Created `install.sh` and verified with `install_test.go`.
-  - _Mechanism:_ One-line curl-compatible bootstrapper that provisions target `.tzro/` cache directories, compiles the local client binary, provisions sidecars, and bootstraps SQLite tables.
-- `[x]` **Quickstart Code Boilerplates [3 Days]** _(Completed)_
-  - _Implementation:_ Created `examples/quickstart/main.go` and verified with `main_test.go`.
-  - _Mechanism:_ Delivered fully functional, importable Go template showing task creation, Kahn graph compilation, tool registration, and StreamBus event subscription.
-- `[x]` **Public SDK & API Reference Documentation [3 Days]** _(Completed)_
-  - _Implementation:_ Created `docs/sdk/README.md`.
-  - _Mechanism:_ Drafted comprehensive Go API guide, schema specifications, and security designs for enterprise developer consumption.
-
----
-
-## 🏆 Strategic Release Readiness Scorecard
-
-Below is our current technical readiness matrix showing the completed production status across all subsystems:
-
-| Subsystem                   | Readiness | Core Status                                                                                                                                                                              | Major Remaining Hurdle          |
-| :-------------------------- | :-------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------ |
-| **DAG Compiler & Executor** | **100%**  | Kahn topological sorting is fully functional. Checkpointing, parallel concurrency, and cycle controls are rock-solid.                                                                    | _Ready for Production Release._ |
-| **Local Inference Server**  | **100%**  | GBNF dynamic grammars, speculative decoding, warm KV Cache sharing, and background memory KV cache GC are fully integrated.                                                              | _Ready for Production Release._ |
-| **Process MCP Registry**    | **100%**  | stdio JSON-RPC daemon proxy maps tools sub-10ms and supports thread-safe process self-healing & auto-recovery.                                                                           | _Ready for Production Release._ |
-| **Compaction & Cache**      | **100%**  | The 5-layer compaction pipeline and SQLite Disk-Backed JQ Cache are complete and fully optimized.                                                                                        | _Ready for Production Release._ |
-| **Hybrid Memory & RAG**     | **100%**  | Neighborhood multi-hop search, Tabular facts KV, SQLite Knowledge Graphs, and high-performance local hybrid vector queries (FTS5 + ONNX cosine similarity ranking) are fully integrated. | _Ready for Production Release._ |
-| **CLI & fullscreen TUI**    | **100%**  | Cobra subcommands, minified JSON scripting pipelines, and the Bubble Tea TUI dashboard are highly polished.                                                                              | _Ready for Production Release._ |
-| **System Security**         | **100%**  | Isolated containerized (Docker) subprocess execution, loopback POSIX boundaries, and recursively resolved environment-delegated secrets are complete.                                    | _Ready for Production Release._ |
-| **Developer Onboarding**    | **100%**  | Automated curl-compatible installer (`install.sh`), quickstart Go integration boilerplates, and comprehensive SDK manual are live.                                                       | _Ready for Production Release._ |
-
-> [!IMPORTANT]
-> **Total Release Readiness: 100% Ready for General Availability (GA) Developer Launch.**
-> The framework is in an exceptionally robust, production-grade state. The entire Go backend business logic is 100% complete and fully covered by stable, passing unit and integration tests. All pre-GA roadmap sprint cycles are fully finished, and `tzro` is completely prepared for its general developer release!
+### Phase 4: Edge & Embedded Deployment (Upcoming)
+- `[ ]` **Embedded Edge Hardware Profiles**: Optimized builds for NVIDIA Jetson, Apple Silicon Metal, and lightweight CI/CD container runners.
