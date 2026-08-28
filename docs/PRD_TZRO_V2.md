@@ -25,7 +25,7 @@ Developers on resource-constrained machines urgently need a lightweight, single-
 
 1. **The Passive Plane (Transparent Proxy & Lifecycle Hooks)**:
    - Intercepts outgoing LLM calls (Anthropic, OpenAI, Gemini) and Antigravity tool lifecycle hooks (`hooks.json`).
-   - Applies **KV-Cache Prefix Locking** to guarantee >90% cache hits.
+   - Applies **KV-Cache Prefix Locking** (benchmarked at 70–99% cache hit rates across 8 models).
    - Skeletons source code using native **Tree-sitter** grammars (70%–90% token reduction), replacing method bodies with cryptographic SHA-256 hash markers stored in a local SQLite FTS5 database.
    - Deterministically compacts build logs, test outputs, and JSON payloads.
    - Enforces **Zero-Cloud Data Loss Prevention (DLP)**, masking secrets and proprietary symbols before network egress.
@@ -41,7 +41,7 @@ Developers on resource-constrained machines urgently need a lightweight, single-
 
 ### A. Rate Limit & Cost Reduction
 1. As a developer using AI coding agents on tight API rate limits, I want Tzro to skeletonize large source code files before sending them to the cloud LLM, so that I can inspect module interfaces without exhausting my daily token quota.
-2. As a developer paying for Anthropic/OpenAI API usage, I want Tzro to lock and normalize prompt prefixes across turns, so that I receive the 90% prompt cache read discount and avoid the 12.5x cache miss penalty.
+2. As a developer paying for Anthropic/OpenAI API usage, I want Tzro to lock and normalize prompt prefixes across turns, so that I maximize prompt cache read hits (benchmarked at 70–99%) and avoid the 12.5x cache miss penalty.
 3. As a developer running test suites in agent sessions, I want Tzro to collapse 3,000-line test outputs down to only the failing assertions and root cause traces, so that transient test logs do not pollute the context window.
 4. As a developer receiving large database or API query results in agent sessions, I want Tzro's Smart JSON Crusher to flatten repeated key schemas into compact tabular formats, reducing JSON token burn by up to 80%.
 

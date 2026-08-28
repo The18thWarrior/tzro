@@ -41,7 +41,7 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 ┌─────────────────────────────────────────────────────────────┐
 │                 TZRO v2 LOCAL TOKEN SHIELD                  │
 │                                                             │
-│  1. KV-Cache Prefix Lock Guard (Guarantees 90% Cache Read)  │
+│  1. KV-Cache Prefix Lock Guard (70-99% Cache Read Hit Rate)  │
 │  2. Tree-Sitter AST Skeletonizer (70-90% Token Reduction)   │
 │  3. Sub-Millisecond Local Discovery (`tzro probe`)          │
 │  4. Local SQLite FTS5 Content-Hash Store (`tzro expand`)    │
@@ -110,7 +110,8 @@ Add to `.agents/hooks.json` or `~/.gemini/config/hooks.json`:
 ### 1. KV-Cache Prefix Lock Guard (The Financial Shield)
 - Pins system prompts, repository instructions, and tool definitions in deterministic byte order at the start of the message array.
 - Isolates dynamic variables (timestamps, ephemeral session tokens) to trailing messages.
-- Guarantees a **>90% prompt cache hit rate** on Anthropic and OpenAI, protecting you from the 12.5x cache miss penalty.
+- Benchmarked at **70–85% prompt cache hit rate** during real agent workflows and **up to 99% under controlled conditions** (8-model benchmark across OpenRouter). Protects you from the 12.5x cache miss penalty.
+- E2E benchmarks show kvlock normalization improves cache effectiveness by **5–10 percentage points** over native provider caching (tested with GPT-5.6 Luna and MiniMax).
 
 ### 2. Native Tree-Sitter AST Skeletonizer
 - Language-aware structural pruning across 10 programming languages (Go, TypeScript, JavaScript, Python, Rust, Java, C/C++, Ruby, PHP, C#).
@@ -148,7 +149,7 @@ Found 1 match for "jwt token validation":
 | **System Memory (RAM)** | ~4.8 GB RAM (8 PyTorch workers) | N/A | **< 50 MB RAM** (Native Go) |
 | **Cold Start Latency** | ~60 seconds (model downloads) | 0 ms | **< 10 ms** (Instant) |
 | **GPU Dependency** | Required for fast inference | None | **Zero GPU required** |
-| **Prompt Cache Stability** | Unstable (reordered turns) | Variable (12.5x miss penalties) | **> 90% Cache Read Guarantee** |
+| **Prompt Cache Stability** | Unstable (reordered turns) | Variable (12.5x miss penalties) | **70–99% Cache Read (benchmarked)** |
 | **Code Read Token Reduction**| 0% (Full files sent) | 0% (Full files sent) | **70% – 90% Reduction** |
 | **Codebase Discovery Loop** | 10 turns (~250,000 cloud tokens) | 10 turns (~250,000 tokens) | **1 turn via `tzro probe` (<500 tokens)** |
 

@@ -10,7 +10,7 @@ This document codifies the core philosophies, architectural principles, solution
 
 Our solution hierarchy:
 1. **Deterministic Systems Scaffolding**: Fast Go networking, Tree-sitter syntax parsing, embedded SQLite FTS5, and ripgrep scanning.
-2. **KV-Cache Prefix Normalization**: Pinning invariant system prompts and tool schemas to guarantee >90% prompt cache read hits ($0.10 \times P_{\text{base}}$).
+2. **KV-Cache Prefix Normalization**: Pinning invariant system prompts and tool schemas to maximize prompt cache read hits (benchmarked at 70–99% across 8 models via OpenRouter; $0.10 \times P_{\text{base}}$ when cached).
 3. **AST Structural Skeletons**: Preserving module interfaces while hashing method bodies into cryptographic markers.
 4. **On-Demand Context Expansion**: Non-destructive retrieval of exact method bodies via SQLite content hashes.
 

@@ -16,7 +16,7 @@ Tzro v2 is an ultra-lightweight, compiled native Go system (<50 MB RAM) built to
 │                 TZRO v2 LOCAL TOKEN SHIELD                  │
 │                                                             │
 │  [pkg/proxy]   Transparent Loopback Proxy (port 7878)       │
-│  [pkg/kvlock]  KV-Cache Prefix Lock Guard (>90% hit rate)   │
+│  [pkg/kvlock]  KV-Cache Prefix Lock Guard (70–99% hit rate)   │
 │  [pkg/ast]     Native Tree-Sitter AST Skeletonizer (CST)    │
 │  [pkg/probe]   Sub-Millisecond Codebase Discovery (ripgrep) │
 │  [pkg/store]   SQLite Content-Hash Store (WAL + FTS5)       │
@@ -59,7 +59,7 @@ tzro/
 ### A. The Passive Ingress Plane (`pkg/proxy`)
 1. **Loopback Interception**: The agent sends standard OpenAI (`/v1/chat/completions`) or Anthropic (`/v1/messages`) payloads to `http://127.0.0.1:7878`.
 2. **DLP Redaction (`pkg/dlp`)**: The request payload is scanned for API keys, private credentials, and private IPs. Matched secrets are replaced with `[REDACTED_...]` placeholders, and an in-memory mapping is retained.
-3. **KV-Cache Prefix Locking (`pkg/kvlock`)**: System prompts and tool definitions are sorted and pinned at the top of the message array. Volatile timestamps and ephemeral IDs are isolated to trailing turns. Guarantees >90% prefix cache reuse, avoiding Anthropic/OpenAI's 12.5x cache miss penalty.
+3. **KV-Cache Prefix Locking (`pkg/kvlock`)**: System prompts and tool definitions are sorted and pinned at the top of the message array. Volatile timestamps and ephemeral IDs are isolated to trailing turns. Benchmarked at 70–99% prefix cache reuse across 8 models, avoiding Anthropic/OpenAI's 12.5x cache miss penalty.
 4. **SSE Pass-Through**: The request is forwarded upstream, and response tokens stream back via Server-Sent Events with <1ms latency.
 
 ### B. The Code Pruning Plane (`pkg/ast` & `pkg/store`)

@@ -30,7 +30,7 @@ gantt
 
 ### Phase 1: Core Token Shield Architecture (Completed)
 - `[x]` **Zero-Dependency Native Binary**: Compiled Go binary with embedded SQLite WAL + FTS5 store (<50 MB RAM).
-- `[x]` **KV-Cache Prefix Lock Guard**: Pins system prompts and tool schemas to guarantee >90% prompt cache read hits ($0.10 \times P_{\text{base}}$) and avoid the 12.5x cache miss penalty.
+- `[x]` **KV-Cache Prefix Lock Guard**: Pins system prompts and tool schemas to maximize prompt cache read hits (benchmarked at 70–99% across 8 models via OpenRouter; $0.10 \times P_{\text{base}}$ when cached) and avoid the 12.5x cache miss penalty.
 - `[x]` **Tree-Sitter AST Skeletonizer**: Language-aware structural code pruner across 10 languages (70%–90% token reduction via SHA-256 body hash markers).
 - `[x]` **High-Speed Discovery (`tzro probe`)**: Embedded ripgrep + Tree-sitter symbol boundary extraction in <5ms.
 - `[x]` **Smart JSON Crusher & Stack Trace Elider**: Deterministic tabular schema flattening and runtime stack frame trimming.

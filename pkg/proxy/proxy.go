@@ -97,6 +97,11 @@ func (s *Server) Start() error {
 	return s.httpSrv.ListenAndServe()
 }
 
+// Handler returns the HTTP handler for use with httptest.NewServer.
+func (s *Server) Handler() http.Handler {
+	return s.httpSrv.Handler
+}
+
 // Shutdown stops the proxy server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpSrv.Shutdown(ctx)

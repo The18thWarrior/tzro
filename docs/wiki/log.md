@@ -9,7 +9,7 @@ Chronological append-only record of wiki operations and major agent engineering 
   1. **Scorched Earth Strategy on Branch `V2`**: Dropped legacy MCP orchestration, static Kahn DAG compilation, relational memory/KG graphs, and heavy GGUF sidecar managers.
   2. **8 Core Subsystems Designed**:
      - `pkg/proxy`: Transparent HTTP/HTTPS reverse proxy (`localhost:7878`) with direct SSE token streaming pass-through for OpenAI, Anthropic, and Gemini/Vertex.
-     - `pkg/kvlock`: KV-Cache Prefix Lock Guard guaranteeing >90% prompt cache read hits to avoid the 12.5x cache miss penalty.
+     - `pkg/kvlock`: KV-Cache Prefix Lock Guard benchmarked at 70–99% prompt cache read hit rates across 8 models, avoiding the 12.5x cache miss penalty.
      - `pkg/ast`: Native Tree-sitter AST Skeletonizer for 10 languages (70%–90% token reduction via SHA-256 body hash markers).
      - `pkg/store`: Embedded SQLite WAL mode + FTS5 full-text content-addressed storage engine.
      - `pkg/probe`: Sub-millisecond local discovery engine (`tzro probe`) pairing ripgrep with Tree-sitter scope isolation.

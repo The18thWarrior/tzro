@@ -21,7 +21,7 @@ description: >-
 
 # tzro — The Local Token Shield & Context Optimization Engine
 
-` + "`tzro`" + ` is a compiled, zero-dependency native Go engine (<50 MB RAM) that eliminates cloud API rate limits, locks prompt cache prefixes (guaranteeing 90% cache read discounts), and provides sub-millisecond local codebase discovery (` + "`tzro probe`" + `).
+` + "`tzro`" + ` is a compiled, zero-dependency native Go engine (<50 MB RAM) that eliminates cloud API rate limits, locks prompt cache prefixes (benchmarked at 70–99% cache read hit rates across 8 models), and provides sub-millisecond local codebase discovery (` + "`tzro probe`" + `).
 
 ---
 
@@ -59,7 +59,7 @@ Never make 10–20 sequential cloud tool calls to locate symbols or understand a
 | ` + "`tzro compact`" + ` | Stdin/stdout pipe for log, stack trace, and JSON array compaction | **80% token reduction on test/build logs** |
 | ` + "`tzro ingest <file>`" + ` | Import CSV/TSV/JSON into SQLite, returns envelope with table pointer | **97%+ token reduction on tabular data** |
 | ` + "`tzro query <table> \"<sql>\"`" + ` | Execute read-only SQL against imported tabular data | Fetches only the query results |
-| ` + "`tzro start --port 7878`" + `| Launches the transparent loopback reverse proxy | **Locks KV-cache prefix for 90% discount** |
+| ` + "`tzro start --port 7878`" + `| Launches the transparent loopback reverse proxy | **Locks KV-cache prefix (70–99% hit rate)** |
 | ` + "`tzro status`" + ` | Displays real-time shielded tokens, memory usage, and proxy metrics | Diagnostic monitoring |
 `
 

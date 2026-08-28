@@ -19,7 +19,7 @@ Tzro v2 ("The Local Token Shield") is a complete ground-up rewrite of the Tzro e
    - Streaming SSE tokens pass through with sub-millisecond overhead.
 2. **KV-Cache Prefix Lock Guard (`pkg/kvlock`)**:
    - Pins system instructions and tool definitions; isolates dynamic timestamps to trailing messages.
-   - Guarantees >90% prompt cache hit rate, avoiding the 12.5x cache miss penalty on Anthropic/OpenAI.
+   - Benchmarked at 70–99% prompt cache hit rate across 8 LLM providers, avoiding the 12.5x cache miss penalty.
 3. **Tree-Sitter AST Skeletonizer (`pkg/ast`)**:
    - Native C Tree-sitter bindings for 10 languages (Go, TS, JS, Python, Rust, Java, C/C++, Ruby, PHP, C#).
    - Replaces method bodies with cryptographic SHA-256 hashes (`// [body elided: #a8f19c]`), achieving 70%–90% token reduction.
