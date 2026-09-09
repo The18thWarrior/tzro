@@ -47,13 +47,15 @@ type Artifact struct {
 	TransformVersion string    `json:"transform_version,omitempty"`
 	IsRedacted       bool      `json:"is_redacted"`
 	Body             string    `json:"body,omitempty"`
+	LastAccessedAt   time.Time `json:"last_accessed_at"`
 }
 
 // Store handles local SQLite content-addressed storage and FTS5 search.
 type Store struct {
-	db   *sql.DB
-	mu   sync.RWMutex
-	path string
+	db      *sql.DB
+	mu      sync.RWMutex
+	path    string
+	hasFTS5 bool
 }
 
 // OpenStore opens or initializes the SQLite store at dbPath.
@@ -89,7 +91,7 @@ func OpenStore(dbPath string) (*Store, error) {
 }
 
 func (s *Store) initSchema() error {
-	schema := `
+	baseSchema := `
 	CREATE TABLE IF NOT EXISTS content_blobs (
 		hash TEXT PRIMARY KEY,
 		file_path TEXT NOT NULL,
@@ -110,33 +112,6 @@ func (s *Store) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_symbol_name ON symbol_index(symbol);
 	CREATE INDEX IF NOT EXISTS idx_symbol_file ON symbol_index(file_path);
-
-	CREATE VIRTUAL TABLE IF NOT EXISTS symbol_fts USING fts5(
-		symbol,
-		kind,
-		file_path,
-		line UNINDEXED,
-		hash UNINDEXED,
-		content='symbol_index',
-		content_rowid='id'
-	);
-
-	CREATE TRIGGER IF NOT EXISTS symbol_ai AFTER INSERT ON symbol_index BEGIN
-		INSERT INTO symbol_fts(rowid, symbol, kind, file_path, line, hash)
-		VALUES (new.id, new.symbol, new.kind, new.file_path, new.line, new.hash);
-	END;
-
-	CREATE TRIGGER IF NOT EXISTS symbol_ad AFTER DELETE ON symbol_index BEGIN
-		INSERT INTO symbol_fts(symbol_fts, rowid, symbol, kind, file_path, line, hash)
-		VALUES ('delete', old.id, old.symbol, old.kind, old.file_path, old.line, old.hash);
-	END;
-
-	CREATE TRIGGER IF NOT EXISTS symbol_au AFTER UPDATE ON symbol_index BEGIN
-		INSERT INTO symbol_fts(symbol_fts, rowid, symbol, kind, file_path, line, hash)
-		VALUES ('delete', old.id, old.symbol, old.kind, old.file_path, old.line, old.hash);
-		INSERT INTO symbol_fts(rowid, symbol, kind, file_path, line, hash)
-		VALUES (new.id, new.symbol, new.kind, new.file_path, new.line, new.hash);
-	END;
 
 	CREATE TABLE IF NOT EXISTS cache_sessions (
 		session_id TEXT PRIMARY KEY,
@@ -173,7 +148,8 @@ func (s *Store) initSchema() error {
 		size_bytes INTEGER NOT NULL,
 		transform_version TEXT,
 		is_redacted BOOLEAN DEFAULT FALSE,
-		body TEXT NOT NULL
+		body TEXT NOT NULL,
+		last_accessed_at INTEGER NOT NULL DEFAULT 0
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_artifacts_ws ON artifacts(workspace);
@@ -190,8 +166,54 @@ func (s *Store) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_ws ON sessions(workspace);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(baseSchema); err != nil {
+		return err
+	}
+
+	// Schema migration for existing artifacts table if last_accessed_at is missing from an older database
+	_, _ = s.db.Exec(`ALTER TABLE artifacts ADD COLUMN last_accessed_at INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_accessed ON artifacts(workspace, last_accessed_at)`)
+
+	// Attempt to create FTS5 virtual table and triggers; fall back gracefully if unsupported
+	ftsSchema := `
+	CREATE VIRTUAL TABLE IF NOT EXISTS symbol_fts USING fts5(
+		symbol,
+		kind,
+		file_path,
+		line UNINDEXED,
+		hash UNINDEXED,
+		content='symbol_index',
+		content_rowid='id'
+	);
+
+	CREATE TRIGGER IF NOT EXISTS symbol_ai AFTER INSERT ON symbol_index BEGIN
+		INSERT INTO symbol_fts(rowid, symbol, kind, file_path, line, hash)
+		VALUES (new.id, new.symbol, new.kind, new.file_path, new.line, new.hash);
+	END;
+
+	CREATE TRIGGER IF NOT EXISTS symbol_ad AFTER DELETE ON symbol_index BEGIN
+		INSERT INTO symbol_fts(symbol_fts, rowid, symbol, kind, file_path, line, hash)
+		VALUES ('delete', old.id, old.symbol, old.kind, old.file_path, old.line, old.hash);
+	END;
+
+	CREATE TRIGGER IF NOT EXISTS symbol_au AFTER UPDATE ON symbol_index BEGIN
+		INSERT INTO symbol_fts(symbol_fts, rowid, symbol, kind, file_path, line, hash)
+		VALUES ('delete', old.id, old.symbol, old.kind, old.file_path, old.line, old.hash);
+		INSERT INTO symbol_fts(rowid, symbol, kind, file_path, line, hash)
+		VALUES (new.id, new.symbol, new.kind, new.file_path, new.line, new.hash);
+	END;
+	`
+	if _, err := s.db.Exec(ftsSchema); err != nil {
+		// Non-fatal: mark FTS5 as unavailable, falling back to standard lexical LIKE queries
+		s.hasFTS5 = false
+	} else {
+		s.hasFTS5 = true
+	}
+
+	// Schema migration for existing artifacts table if last_accessed_at is missing
+	_, _ = s.db.Exec(`ALTER TABLE artifacts ADD COLUMN last_accessed_at INTEGER NOT NULL DEFAULT 0`)
+
+	return nil
 }
 
 // PutSession records or updates a versioned session manifest.
@@ -211,6 +233,13 @@ func (s *Store) PutSession(id, workspace, branch string, schemaVersion int, mani
 	`
 	_, err := s.db.Exec(query, id, workspace, branch, now, schemaVersion, manifestJSON)
 	return err
+}
+
+// HasFTS5 returns true if the SQLite engine successfully initialized the FTS5 virtual table.
+func (s *Store) HasFTS5() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.hasFTS5
 }
 
 // GetSession retrieves a stored session manifest by ID, verifying workspace isolation.
@@ -348,7 +377,11 @@ func (s *Store) PutArtifact(art *Artifact) (string, error) {
 		art.Hash = SHA256Full(art.Body)
 	}
 	if art.ID == "" {
-		art.ID = "art_" + art.Hash[:16]
+		h := art.Hash
+		if len(h) > 16 {
+			h = h[:16]
+		}
+		art.ID = "art_" + h
 	}
 	if art.CreatedAt.IsZero() {
 		art.CreatedAt = time.Now().UTC()
@@ -357,14 +390,18 @@ func (s *Store) PutArtifact(art *Artifact) (string, error) {
 		// Default TTL: 7 days
 		art.ExpiresAt = art.CreatedAt.Add(7 * 24 * time.Hour)
 	}
+	if art.LastAccessedAt.IsZero() {
+		art.LastAccessedAt = art.CreatedAt
+	}
 	art.SizeBytes = int64(len(art.Body))
 
 	query := `
-	INSERT INTO artifacts (id, hash, source_hash, type, workspace, created_at, expires_at, pinned, size_bytes, transform_version, is_redacted, body)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO artifacts (id, hash, source_hash, type, workspace, created_at, expires_at, pinned, size_bytes, transform_version, is_redacted, body, last_accessed_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		pinned=excluded.pinned,
-		expires_at=excluded.expires_at;
+		expires_at=excluded.expires_at,
+		last_accessed_at=excluded.last_accessed_at;
 	`
 	_, err := s.db.Exec(query,
 		art.ID,
@@ -372,13 +409,14 @@ func (s *Store) PutArtifact(art *Artifact) (string, error) {
 		art.SourceHash,
 		art.Type,
 		art.Workspace,
-		art.CreatedAt.Unix(),
-		art.ExpiresAt.Unix(),
+		art.CreatedAt.UnixNano(),
+		art.ExpiresAt.UnixNano(),
 		art.Pinned,
 		art.SizeBytes,
 		art.TransformVersion,
 		art.IsRedacted,
 		art.Body,
+		art.LastAccessedAt.UnixNano(),
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to put artifact: %w", err)
@@ -388,12 +426,13 @@ func (s *Store) PutArtifact(art *Artifact) (string, error) {
 }
 
 // GetArtifact retrieves an artifact by ID, strictly verifying workspace isolation if workspace is provided.
+// It updates the last_accessed_at timestamp for LRU cache tracking.
 func (s *Store) GetArtifact(id string, workspace string) (*Artifact, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	query := `
-	SELECT id, hash, source_hash, type, workspace, created_at, expires_at, pinned, size_bytes, transform_version, is_redacted, body
+	SELECT id, hash, source_hash, type, workspace, created_at, expires_at, pinned, size_bytes, transform_version, is_redacted, body, last_accessed_at
 	FROM artifacts
 	WHERE id = ?
 	`
@@ -406,7 +445,7 @@ func (s *Store) GetArtifact(id string, workspace string) (*Artifact, error) {
 
 	row := s.db.QueryRow(query, args...)
 	var a Artifact
-	var createdAtSec, expiresAtSec int64
+	var createdAtNano, expiresAtNano, lastAccessedNano int64
 	var srcHash, transVer sql.NullString
 
 	err := row.Scan(
@@ -415,13 +454,14 @@ func (s *Store) GetArtifact(id string, workspace string) (*Artifact, error) {
 		&srcHash,
 		&a.Type,
 		&a.Workspace,
-		&createdAtSec,
-		&expiresAtSec,
+		&createdAtNano,
+		&expiresAtNano,
 		&a.Pinned,
 		&a.SizeBytes,
 		&transVer,
 		&a.IsRedacted,
 		&a.Body,
+		&lastAccessedNano,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -436,8 +476,18 @@ func (s *Store) GetArtifact(id string, workspace string) (*Artifact, error) {
 	if transVer.Valid {
 		a.TransformVersion = transVer.String
 	}
-	a.CreatedAt = time.Unix(createdAtSec, 0).UTC()
-	a.ExpiresAt = time.Unix(expiresAtSec, 0).UTC()
+	a.CreatedAt = time.Unix(0, createdAtNano).UTC()
+	a.ExpiresAt = time.Unix(0, expiresAtNano).UTC()
+	if lastAccessedNano == 0 {
+		a.LastAccessedAt = a.CreatedAt
+	} else {
+		a.LastAccessedAt = time.Unix(0, lastAccessedNano).UTC()
+	}
+
+	// Update last_accessed_at for LRU
+	nowNano := time.Now().UTC().UnixNano()
+	_, _ = s.db.Exec(`UPDATE artifacts SET last_accessed_at = ? WHERE id = ?`, nowNano, id)
+	a.LastAccessedAt = time.Unix(0, nowNano).UTC()
 
 	return &a, nil
 }
@@ -447,7 +497,7 @@ func (s *Store) PruneExpiredArtifacts() (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now().UTC().Unix()
+	now := time.Now().UTC().UnixNano()
 	res, err := s.db.Exec(`DELETE FROM artifacts WHERE pinned = FALSE AND expires_at < ?`, now)
 	if err != nil {
 		return 0, err
@@ -455,24 +505,39 @@ func (s *Store) PruneExpiredArtifacts() (int64, error) {
 	return res.RowsAffected()
 }
 
-// EnforceQuota prunes the oldest unpinned artifacts in a workspace until total bytes <= maxBytes.
+// EnforceQuota is an alias for EvictArtifactsLRU with unlimited count, matching legacy callers.
 func (s *Store) EnforceQuota(workspace string, maxBytes int64) (int64, error) {
+	return s.EvictArtifactsLRU(workspace, 0, maxBytes)
+}
+
+// EvictArtifactsLRU prunes the least recently accessed unpinned artifacts in a workspace
+// until total artifact count <= maxCount (if maxCount > 0) AND total bytes <= maxBytes (if maxBytes > 0).
+func (s *Store) EvictArtifactsLRU(workspace string, maxCount int, maxBytes int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var totalBytes int64
-	err := s.db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM artifacts WHERE workspace = ?`, workspace).Scan(&totalBytes)
+	var totalCount int
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0), COUNT(*) FROM artifacts WHERE workspace = ?`, workspace).Scan(&totalBytes, &totalCount)
 	if err != nil {
 		return 0, err
 	}
 
-	if totalBytes <= maxBytes {
+	needCountPrune := maxCount > 0 && totalCount > maxCount
+	needBytesPrune := maxBytes > 0 && totalBytes > maxBytes
+
+	if !needCountPrune && !needBytesPrune {
 		return 0, nil
 	}
 
 	var deletedCount int64
-	// Delete oldest unpinned artifacts until quota is met
-	rows, err := s.db.Query(`SELECT id, size_bytes FROM artifacts WHERE workspace = ? AND pinned = FALSE ORDER BY created_at ASC`, workspace)
+	// Query unpinned artifacts ordered by least recently accessed first
+	rows, err := s.db.Query(`
+		SELECT id, size_bytes 
+		FROM artifacts 
+		WHERE workspace = ? AND pinned = FALSE 
+		ORDER BY last_accessed_at ASC, created_at ASC
+	`, workspace)
 	if err != nil {
 		return 0, err
 	}
@@ -491,12 +556,15 @@ func (s *Store) EnforceQuota(workspace string, maxBytes int64) (int64, error) {
 	}
 
 	for _, it := range toDelete {
-		if totalBytes <= maxBytes {
+		countOK := maxCount <= 0 || totalCount <= maxCount
+		bytesOK := maxBytes <= 0 || totalBytes <= maxBytes
+		if countOK && bytesOK {
 			break
 		}
-		_, err := s.db.Exec(`DELETE FROM artifacts WHERE id = ?`, it.id)
-		if err == nil {
+
+		if _, err := s.db.Exec(`DELETE FROM artifacts WHERE id = ?`, it.id); err == nil {
 			totalBytes -= it.size
+			totalCount--
 			deletedCount++
 		}
 	}
@@ -584,7 +652,7 @@ func (s *Store) SearchSymbols(queryStr string, limit int) ([]SymbolEntry, error)
 	}
 
 	var results []SymbolEntry
-	if len(ftsTokens) > 0 {
+	if s.hasFTS5 && len(ftsTokens) > 0 {
 		ftsExpr := strings.Join(ftsTokens, " OR ")
 		ftsQuery := `
 		SELECT symbol, kind, file_path, line, hash

@@ -16,9 +16,10 @@ Five capabilities that deepen Tzro's local-first context layer, ordered by depen
 
 1. **Compatibility-Aware Automatic Shielding** — Fix proxy payload fidelity (unknown field preservation, tool-call IDs, provider adapters, doctor/inspect). Foundation prerequisite.
 2. **Enforceable Local Privacy Policies** — Structured workspace allow/deny/redact/block policies, custom detectors, preview, audit. Foundation prerequisite.
-3. **Task-Aware Context Packs** — Token-budgeted ranked retrieval with FTS5, structural relationships, and explainable inclusion. First visible feature.
-4. **Reversible Compaction and Artifact Retrieval** — Immutable artifact store, full-original retention before compaction, range/query expansion.
+3. **Task-Aware Context Packs** — Token-budgeted ranked retrieval with FTS5, structural relationships, TypeScript/JavaScript `tsconfig.json` path alias resolution, and explainable inclusion. First visible feature.
+4. **Reversible Compaction and Artifact Retrieval** — Immutable artifact store, full-original retention before compaction, range/query expansion, and configurable LRU artifact eviction (`last_accessed_at`).
 5. **Portable Session Handoffs** — Versioned JSON manifest for agent session state with freshness-aware import.
+6. **Graceful Engine Fallbacks** — Automatic fallback to standard lexical search if SQLite FTS5 extension is unavailable, with `tzro doctor` runtime diagnostics.
 
 ## Key Modules
 

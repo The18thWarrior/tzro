@@ -78,8 +78,10 @@ curl -fsSL https://get.tzro.ai | sh
 ```
 *Or build directly from source:*
 ```bash
-go install ./cmd/tzro
+# Prerequisites: Go 1.22+, SQLite 3.9+ with FTS5 virtual table extension enabled
+CGO_ENABLED=1 go install ./cmd/tzro
 ```
+> **Note on SQLite FTS5**: Tzro includes embedded FTS5 full-text indexing for BM25 symbol ranking. If built without CGO or on SQLite builds without FTS5, Tzro automatically falls back gracefully to standard indexed lexical search. Use `tzro doctor` to verify active capabilities.
 
 ### 2. Start the Token Shield Daemon
 ```bash

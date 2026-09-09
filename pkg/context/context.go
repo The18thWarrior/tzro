@@ -154,6 +154,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 	}
 
 	candidateMap := make(map[string]*PackItem)
+	tsconfig := LoadTSConfig(workspaceRoot)
 
 	// 2. FTS5 Symbol search
 	if a.store != nil {
@@ -264,7 +265,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 				if strings.HasSuffix(relLower, ".ts") || strings.HasSuffix(relLower, ".tsx") || strings.HasSuffix(relLower, ".js") || strings.HasSuffix(relLower, ".jsx") {
 					imports, _ := ExtractImports(path, contentBytes)
 					for _, imp := range imports {
-						for _, candidatePath := range ResolveImportedFile(path, imp.ImportPath) {
+						for _, candidatePath := range ResolveImportedFile(workspaceRoot, path, imp.ImportPath, tsconfig) {
 							if _, err := os.Stat(candidatePath); err == nil {
 								relImpPath, _ := filepath.Rel(workspaceRoot, candidatePath)
 								impContent, err := os.ReadFile(candidatePath)

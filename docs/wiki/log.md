@@ -2,6 +2,32 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-08T22:17:00-07:00] engineering | Hardening Astra Context Capabilities: TSConfig Paths, FTS5 Fallback & LRU Eviction
+
+- **Activity**: Implemented three critical hardening and developer-experience upgrades across `pkg/context`, `pkg/store`, `cmd/tzro`, and documentation:
+  1. **`tsconfig.json` / `jsconfig.json` Path Alias Resolution (`pkg/context`)**:
+     - Added robust JSONC comment stripper (`stripJSONComments`) handling single-line `//` and multiline `/* ... */` comments.
+     - Implemented `LoadTSConfig` and updated `ResolveImportedFile` to map wildcard aliases (`@components/*`, `@/*`, etc.) using `baseUrl` and `paths`.
+     - Verified with unit tests (`ts_imports_tsconfig_test.go`).
+  2. **Graceful SQLite FTS5 Fallback & Build Requirements (`pkg/store`, `cmd/tzro`, `README.md`)**:
+     - Separated base schema from FTS5 virtual table definition. If `sqlite` runs in an environment missing the FTS5 module, `store.go` falls back gracefully to indexed lexical `LIKE` searches without crashing initialization.
+     - Added `Store.HasFTS5()` method.
+     - Integrated SQLite FTS5 engine health verification into `tzro doctor`.
+     - Documented `CGO_ENABLED=1` and SQLite 3.9+ prerequisites in `README.md`.
+  3. **Configurable LRU Artifact Retention & Eviction (`pkg/store`)**:
+     - Added `last_accessed_at` column tracking with nanosecond timestamp precision.
+     - Updated `GetArtifact` to refresh `last_accessed_at` on every retrieval.
+     - Implemented `EvictArtifactsLRU(workspace, maxCount, maxBytes)` pruning unpinned artifacts ordered by `last_accessed_at ASC`.
+     - Preserves pinned artifacts (`pinned = TRUE`) regardless of quota limits.
+     - Verified with comprehensive eviction tests (`lru_test.go`).
+- **Files Touched**:
+  - `pkg/context/ts_imports.go`, `pkg/context/context.go`, `pkg/context/ts_imports_tsconfig_test.go`
+  - `pkg/store/store.go`, `pkg/store/lru_test.go`
+  - `cmd/tzro/main.go`
+  - `README.md`
+  - `docs/wiki/features/astra-context-capabilities.md`
+  - `docs/wiki/log.md`
+
 ## [2026-09-08T21:10:00-07:00] to-issues | Astra Context Capabilities Issues
 
 - **Activity**: Decomposed `.scratch/astra-context-capabilities/PRD.md` into 16 independently-grabbable AFK tracer-bullet issues across 5 capability tiers.

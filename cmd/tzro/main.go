@@ -456,6 +456,21 @@ func main() {
 				fmt.Printf("  %s DLP Redaction Pipeline: PASS (%d secret(s) redacted)\n", infoStyle.Render("✔"), len(dlpMap))
 			}
 
+			// Check 5: Local SQLite Store & FTS5 Capability
+			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n🗄️  Local Storage & Search Engine Check:"))
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				fmt.Printf("  %s SQLite Store Init: FAILED (%v)\n", warnStyle.Render("✗"), err)
+			} else {
+				defer s.Close()
+				if s.HasFTS5() {
+					fmt.Printf("  %s SQLite FTS5 Engine: ACTIVE (BM25 full-text indexing enabled)\n", infoStyle.Render("✔"))
+				} else {
+					fmt.Printf("  %s SQLite FTS5 Engine: UNAVAILABLE (falling back to standard lexical index. Ensure CGO_ENABLED=1 and SQLite 3.9+ with FTS5)\n", warnStyle.Render("!"))
+				}
+				fmt.Printf("  %s Database Path: %s\n", infoStyle.Render("✔"), getDBPath())
+			}
+
 			fmt.Println(infoStyle.Render("\n✔ Doctor inspection completed."))
 			return nil
 		},
