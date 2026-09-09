@@ -22,6 +22,7 @@ _Map of system features, product requirements, and specs._
 - [Response Resolver](features/response-resolver.md) - Three-tier output resolution cascade (recursive key search + KV-line + semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator. (Sources: 1 | Last Updated: 2026-06-10)
 - [Dual-Audience Hardening](features/dual-audience-hardening.md) - Secure local-first loopback, MCP-to-daemon delegation proxy, and complete Package Manager CLI/MCP integration. (Sources: 1 | Last Updated: 2026-06-15)
 - [Data Profiler & Cache Bridge Node](../working-specs/data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file with deterministic Cache Bridge Node injection for CSV, TSV, Excel, and large JSON. (Sources: 1 | Last Updated: 2026-07-13)
+- [Astra Context Capabilities](features/astra-context-capabilities.md) - Five high-impact additions: task-aware context packs, reversible compaction, portable session handoffs, enforceable privacy policies, and compatibility-aware automatic shielding. (Sources: 3 | Last Updated: 2026-09-08)
 
 ## Bugs & Post-Mortems
 

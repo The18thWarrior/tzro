@@ -3,7 +3,9 @@ package compactor
 import (
 	"strings"
 	"testing"
+	"tzro/pkg/store"
 )
+
 
 func TestSmartJSONCrusher(t *testing.T) {
 	input := `[
@@ -48,3 +50,31 @@ main.main()
 		t.Errorf("expected runtime frame to be elided")
 	}
 }
+
+func TestCompactWithArtifact_RetentionAndSSE(t *testing.T) {
+	s, err := store.OpenStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenStore failed: %v", err)
+	}
+	defer s.Close()
+
+	// 1. Stack trace input compaction with artifact retention
+	logInput := `Error in worker:
+runtime/panic.go:838 +0x207
+main.Process()
+	/app/process.go:12
+testing.go:1234 +0x56`
+
+	compacted := CompactWithArtifact(logInput, "/workspace", s)
+	if !strings.Contains(compacted, "// [Tzro Artifact: art_") {
+		t.Errorf("expected artifact ID header in compacted output, got %s", compacted)
+	}
+
+	// 2. SSE payload must be passed through untouched
+	sse := "event: message_delta\ndata: {\"text\":\"hi\"}\n\n"
+	passthrough := CompactWithArtifact(sse, "/workspace", s)
+	if passthrough != sse {
+		t.Errorf("expected SSE payload untouched, got %q", passthrough)
+	}
+}
+

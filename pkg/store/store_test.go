@@ -58,7 +58,18 @@ func TestStore_IndexAndSearchSymbols(t *testing.T) {
 	if results[0].Hash != "a8f19c" {
 		t.Errorf("expected hash a8f19c, got %s", results[0].Hash)
 	}
+
+	// Test multiword query matching across symbols and paths
+	_ = s.IndexSymbol("CheckPermission", "method", "auth/rbac.go", 12, "b7d21a")
+	multiwordResults, err := s.SearchSymbols("token validation auth", 10)
+	if err != nil {
+		t.Fatalf("SearchSymbols multiword failed: %v", err)
+	}
+	if len(multiwordResults) == 0 {
+		t.Fatalf("expected multiword matches from FTS5, got none")
+	}
 }
+
 
 func TestImportTabular_Basic(t *testing.T) {
 	s, err := OpenStore(":memory:")

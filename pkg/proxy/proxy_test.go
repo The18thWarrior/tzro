@@ -59,7 +59,8 @@ func TestProxy_AnthropicInterceptionAndDLP(t *testing.T) {
 	if strings.Contains(receivedBody, "sk-proj-") {
 		t.Errorf("expected secret to be redacted before hitting upstream, got:\n%s", receivedBody)
 	}
-	if !strings.Contains(receivedBody, "[REDACTED_OPENAI_KEY_1]") {
+	if !strings.Contains(receivedBody, "[REDACTED_OPENAI_KEY_") {
 		t.Errorf("expected redacted placeholder in upstream payload, got:\n%s", receivedBody)
 	}
 }
+

@@ -2,6 +2,40 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-08T21:10:00-07:00] to-issues | Astra Context Capabilities Issues
+
+- **Activity**: Decomposed `.scratch/astra-context-capabilities/PRD.md` into 16 independently-grabbable AFK tracer-bullet issues across 5 capability tiers.
+- **Issues Created**:
+  1. `01-provider-fidelity-unknown-fields.md` (AFK, Blocked by: None) — Provider Fidelity: Unknown-Field Preservation
+  2. `02-provider-fidelity-fixture-tests.md` (AFK, Blocked by: #01) — Provider Fidelity: Protocol Fixture Test Matrix
+  3. `03-privacy-policy-workspace-enforcement.md` (AFK, Blocked by: None) — Privacy Policy Engine: Workspace Policy Schema & Enforcement
+  4. `04-privacy-policy-detectors-audit.md` (AFK, Blocked by: #03) — Privacy Policy Engine: Custom Detectors, Preview & Audit
+  5. `05-store-fts5-symbol-index.md` (AFK, Blocked by: None) — Store: FTS5 Symbol Index Migration
+  6. `06-context-pack-ranked-retrieval.md` (AFK, Blocked by: #05) — Context Pack Assembler: Ranked Retrieval with Budget
+  7. `07-context-pack-incremental-freshness.md` (AFK, Blocked by: #06) — Context Pack Assembler: Incremental Indexing & Freshness
+  8. `08-context-pack-ts-js-import-graph.md` (AFK, Blocked by: #06) — Context Pack Assembler: TypeScript/JS Import Graph
+  9. `09-context-pack-holdout-evaluation.md` (AFK, Blocked by: #06) — Context Pack Assembler: Holdout Quality Evaluation
+  10. `10-artifact-store-immutable-persistence.md` (AFK, Blocked by: #03) — Artifact Store: Immutable Persistence with Collision-Resistant Identity
+  11. `11-reversible-compaction-retention.md` (AFK, Blocked by: #10) — Reversible Compaction: Full-Original Retention & Artifact IDs
+  12. `12-reversible-compaction-range-sql.md` (AFK, Blocked by: #11) — Reversible Compaction: Range Expansion & SQL Queries
+  13. `13-session-manifest-save-export.md` (AFK, Blocked by: #10) — Session Manifest: Save & Export
+  14. `14-session-manifest-import-security.md` (AFK, Blocked by: #13) — Session Manifest: Import, Freshness Detection & Security
+  15. `15-provider-adapters-expanded.md` (AFK, Blocked by: #01, #03) — Provider Adapters: OpenAI Responses, Gemini-Native & Local Endpoints
+  16. `16-doctor-inspect-measured-metrics.md` (AFK, Blocked by: #15) — Doctor/Inspect & Measured Token Metrics
+- **Triage Status**: All issues marked `ready-for-agent`.
+
+## [2026-09-08T21:04:00-07:00] to-prd | Astra Context Capabilities PRD
+
+- **Activity**: Synthesized three source documents (astra-changes-plan, astra-changes-architecture.md, astra-changes-handoff) into a comprehensive PRD for five high-impact Tzro v2 additions.
+- **Files Created**:
+  - `.scratch/astra-context-capabilities/PRD.md` — Full PRD with 48 user stories, 7 deep modules, dependency-ordered delivery plan, schema changes, and testing decisions for all modules.
+  - `docs/wiki/features/astra-context-capabilities.md` — Feature summary wiki page.
+- **Files Updated**:
+  - `docs/wiki/index.md` — Added Astra Context Capabilities under Features & PRDs.
+  - `docs/wiki/log.md` — This entry.
+- **Capabilities Covered**: Task-Aware Context Packs, Reversible Compaction & Artifact Retrieval, Portable Session Handoffs, Enforceable Local Privacy Policies, Compatibility-Aware Automatic Shielding.
+- **Status**: `ready-for-agent`. No implementation or code changes performed.
+
 ## [2026-08-26T21:18:00-07:00] to-prd | Tzro v2: The Local Token Shield PRD & Strategic Refactor Plan
 
 - **Activity**: Formulated and published the comprehensive PRD and implementation plan for the complete ground-up rewrite of Tzro into **Tzro v2: The Local Token Shield**.

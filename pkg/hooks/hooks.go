@@ -2,14 +2,17 @@ package hooks
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"tzro/pkg/compactor"
+	"tzro/pkg/dlp"
 	"tzro/pkg/probe"
 	"tzro/pkg/store"
 )
+
 
 // PreToolUseInput represents the input received on stdin for PreToolUse events.
 type PreToolUseInput struct {
@@ -44,6 +47,33 @@ func HandlePreToolUse(r io.Reader, w io.Writer, s *store.Store) error {
 
 	output := PreToolUseOutput{Decision: "allow"}
 
+	// Privacy policy enforcement at hook boundary
+	cwd, _ := os.Getwd()
+	if policy, err := dlp.LoadWorkspacePolicy(cwd); err == nil && policy != nil {
+		engine := dlp.NewPolicyEngine(policy)
+		// Check path args for view_file, edit_file, etc.
+		for _, argKey := range []string{"AbsolutePath", "TargetFile", "FilePath", "path", "file"} {
+			if pathVal, ok := input.ToolCall.Args[argKey].(string); ok && pathVal != "" {
+				eval := engine.EvaluatePath(pathVal)
+				if !eval.Allowed {
+					output.Decision = "deny"
+					output.Reason = fmt.Sprintf("Egress blocked by workspace privacy policy: %s", eval.Reason)
+					return json.NewEncoder(w).Encode(output)
+				}
+			}
+		}
+
+		// Check command line if run_command
+		if cmd, ok := input.ToolCall.Args["CommandLine"].(string); ok && cmd != "" {
+			eval := engine.EvaluateContent(cmd)
+			if !eval.Allowed {
+				output.Decision = "deny"
+				output.Reason = fmt.Sprintf("Command blocked by workspace privacy policy: %s", eval.Reason)
+				return json.NewEncoder(w).Encode(output)
+			}
+		}
+	}
+
 	// Optimization: If the agent is trying to run a raw find/grep command, rewrite or optimize it
 	if input.ToolCall.Name == "run_command" {
 		cmd, ok := input.ToolCall.Args["CommandLine"].(string)
@@ -55,6 +85,7 @@ func HandlePreToolUse(r io.Reader, w io.Writer, s *store.Store) error {
 
 	return json.NewEncoder(w).Encode(output)
 }
+
 
 // HandlePostToolUse compresses raw command/tool outputs before they are written to history.
 // Now also intercepts tabular data for SQLite import.
@@ -81,19 +112,33 @@ func CompactOrIntercept(output string, toolName string, s *store.Store) string {
 	isFileRead := compactor.IsFileReadTool(toolName)
 	threshold := compactor.GetThreshold()
 
+	cwd, _ := os.Getwd()
 	td, ok := compactor.DetectTabular(output)
 	if ok && compactor.ShouldIntercept(td, isFileRead, threshold) && s != nil {
-		// Generate table name from content hash of first 3 rows
-		tableName := generateTableName(td)
+		// Store full original before tabular import
+		artID, _ := s.PutArtifact(&store.Artifact{
+			Type:      "tabular",
+			Workspace: cwd,
+			Body:      output,
+		})
+
+		// Generate unique collision-resistant table name from full SHA-256
+		fullHash := store.SHA256Full(output)
+		tableName := "tbl_" + fullHash[:12]
 
 		if err := s.ImportTabular(tableName, td.Columns, td.Rows); err == nil {
-			return compactor.FormatEnvelope(tableName, td, 5)
+			env := compactor.FormatEnvelope(tableName, td, 5)
+			if artID != "" {
+				env = fmt.Sprintf("// [Tzro Artifact: %s | Source Data]\n%s", artID, env)
+			}
+			return env
 		}
 		// Fall through to compact on import error
 	}
 
-	return compactor.CompactLog(output)
+	return compactor.CompactWithArtifact(output, cwd, s)
 }
+
 
 // generateTableName creates a deterministic table name from the first few rows of tabular data.
 func generateTableName(td *compactor.TabularData) string {
