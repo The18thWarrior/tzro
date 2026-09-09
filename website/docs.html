@@ -458,8 +458,8 @@
 
         <p>
           Zero habit change. <code>tzro</code> plugs directly into your existing client tools — Claude Code,
-          Cursor, Windsurf, GitHub Copilot, OpenCode, or Antigravity IDE — as an MCP server. You keep using
-          your tools exactly as before; the sidecar silently intercepts execution-level work and routes it locally.
+          Cursor, Windsurf, GitHub Copilot, OpenCode, or Antigravity IDE — via its transparent proxy (`tzro start`). You keep using
+          your tools exactly as before; the proxy silently intercepts execution-level work and routes it locally.
         </p>
 
         <div class="docs-steps">
@@ -489,7 +489,7 @@
               <p>Behind the scenes, the bootstrap script performs:</p>
               <ul>
                 <li>Provisions the <code>~/.tzro/</code> directory (<code>bin/</code>, <code>cache/</code>, <code>models/</code>)</li>
-                <li>Downloads three binaries: <code>tzro</code> (CLI), <code>tzro-mcp</code> (MCP server), and <code>tzrod</code> (daemon)</li>
+                <li>Downloads the standalone <code>tzro</code> CLI binary</li>
                 <li>Fetches the <strong>worker model</strong> — Agents-A1 4B GGUF (~3 GB)</li>
                 <li>Fetches the <strong>router model</strong> — MiniCPM5 1B GGUF (~1.2 GB) for fast classification</li>
                 <li>Fetches the <strong>vision projector</strong> — mmproj F32 GGUF for multimodal input</li>
@@ -515,16 +515,15 @@
           <div class="docs-step" id="step-registration">
             <div class="docs-step-number">2</div>
             <div class="docs-step-body">
-              <div class="docs-step-title">Automated MCP Registration</div>
+              <div class="docs-step-title">Transparent Proxy Setup</div>
               <p>
-                The installer auto-detects your AI editors and offers to configure them automatically.
-                It wires up the <code>tzro-mcp</code> binary as an MCP server and injects agent skill
-                instructions into each editor's config.
+                Run <code>tzro start --port 7878</code> to launch the transparent proxy.
+                Then simply point your AI client's API base URL to <code>http://127.0.0.1:7878</code>.
               </p>
 
               <div class="docs-code-block">
                 <div class="docs-code-header">
-                  <span class="docs-code-lang">Terminal Output</span>
+                  <span class="docs-code-lang">Shell</span>
                   <button class="docs-code-copy" aria-label="Copy code">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                       <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -533,17 +532,8 @@
                     <span class="copy-label">Copy</span>
                   </button>
                 </div>
-                <pre><code><span class="tok-comment">  ⚙  AI Editor Configuration</span>
-
-  <span class="tok-string">✔ Claude Code</span>
-  <span class="tok-string">✔ Cursor</span>
-  <span class="tok-comment">○ Windsurf (not detected)</span>
-  <span class="tok-comment">○ GitHub Copilot (not detected)</span>
-  <span class="tok-comment">○ OpenCode (not detected)</span>
-  <span class="tok-string">✔ Gemini / Antigravity IDE</span>
-
-  Select interfaces to configure:
-  <span class="tok-comment">Press Enter to accept detected defaults</span></code></pre>
+                <pre><code><span class="tok-comment"># Start the proxy in the background</span>
+<span class="tok-function">tzro</span> start <span class="tok-flag">--port</span> 7878</code></pre>
               </div>
 
               <p>
@@ -578,41 +568,12 @@
                 </tbody>
               </table>
 
-              <p>
-                If you prefer manual configuration, the MCP server entry looks like this for any editor:
-              </p>
-
-              <div class="docs-code-block">
-                <div class="docs-code-header">
-                  <span class="docs-code-lang">JSON — MCP Server Config</span>
-                  <button class="docs-code-copy" aria-label="Copy code">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                      <rect x="9" y="9" width="13" height="13" rx="2" />
-                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                    </svg>
-                    <span class="copy-label">Copy</span>
-                  </button>
-                </div>
-                <pre><code>{
-  <span class="tok-property">"mcpServers"</span><span class="tok-punctuation">:</span> {
-    <span class="tok-property">"tzro"</span><span class="tok-punctuation">:</span> {
-      <span class="tok-property">"command"</span><span class="tok-punctuation">:</span> <span class="tok-string">"~/.tzro/bin/tzro-mcp"</span><span class="tok-punctuation">,</span>
-      <span class="tok-property">"args"</span><span class="tok-punctuation">:</span> []<span class="tok-punctuation">,</span>
-      <span class="tok-property">"env"</span><span class="tok-punctuation">:</span> {
-        <span class="tok-property">"TZRO_DIR"</span><span class="tok-punctuation">:</span> <span class="tok-string">"/path/to/your/project"</span>
-      }
-    }
-  }
-}</code></pre>
-              </div>
-
               <div class="docs-callout callout-tip">
                 <div class="docs-callout-icon">⚡</div>
                 <div class="docs-callout-body">
-                  <div class="docs-callout-title">TZRO_DIR</div>
+                  <div class="docs-callout-title">Workspace Discovery</div>
                   <p>
-                    <code>TZRO_DIR</code> tells the engine which directory to use as its project root.
-                    The daemon auto-discovers project structure, existing <code>.agents/</code> configs, and
+                    The proxy auto-discovers project structure, existing <code>.agents/</code> configs, and
                     any <code>tzro.db</code> state from prior runs.
                   </p>
                 </div>
@@ -624,10 +585,9 @@
           <div class="docs-step" id="step-first-run">
             <div class="docs-step-number">3</div>
             <div class="docs-step-body">
-              <div class="docs-step-title">Trigger an Offline Run</div>
+              <div class="docs-step-title">Trigger a Discovery Query</div>
               <p>
-                With the MCP server registered, your AI client can now delegate execution tasks to the
-                local engine. Try it:
+                With the transparent proxy running, your AI client can now execute CLI commands like <code>tzro probe</code> or <code>tzro query</code> to explore the codebase instantly. Try it:
               </p>
 
               <div class="docs-code-block">
@@ -641,11 +601,11 @@
                     <span class="copy-label">Copy</span>
                   </button>
                 </div>
-                <pre><code><span class="tok-comment"># From Claude Code, Cursor, or any MCP-compatible client:</span>
+                <pre><code><span class="tok-comment"># From Claude Code, Cursor, or any AI client connected to the proxy:</span>
 <span class="tok-string">"Use tzro to build markdown documentation for this entire directory."</span>
 
 <span class="tok-comment"># Or directly via CLI:</span>
-<span class="tok-function">tzro</span> chat <span class="tok-string">"Explore this codebase and explain its architecture."</span></code></pre>
+<span class="tok-function">tzro</span> probe <span class="tok-string">"architecture"</span></code></pre>
               </div>
 
               <p>

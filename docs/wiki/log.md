@@ -2,6 +2,117 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-09T12:42:00-07:00] tdd | Implemented Issue 04: Artifact LRU Quota Lifecycle and Expiry Sweep
+
+- **Activity**: Implemented all 4 design decisions from `04-artifact-lru-quota-lifecycle-and-expiry-sweep.md` using TDD red→green→refactor across 8 vertical slices.
+- **Modified**: `pkg/store/store.go` — Added quota constants (`DefaultWorkspaceMaxBytes=100MB`, `DefaultWorkspaceMaxCount=1000`, `MaxSingleArtifactBytes=20MB`). Refactored `EvictArtifactsLRU` into two-layer `evictArtifactsLRULocked`/`EvictArtifactsLRU` to prevent deadlocks. `PutArtifact` now rejects oversized bodies pre-flight and enforces workspace quotas post-insert. Added `EvictExpiredArtifacts` with `(pinned, expires_at)` index. Added `lastSweepTime` for opportunistic sweep (>10 min). Added `ListArtifacts` (body-free) and `GetWorkspaceArtifactStats` query methods.
+- **New File**: `pkg/store/quota_test.go` — 8 behavior tests: oversized rejection, count quota enforcement, bytes quota enforcement, pinned survival, expired eviction, pinned-expired preservation, list workspace scoping, stats accuracy.
+- **Modified**: `cmd/tzro/main.go` — Added `tzro artifacts [list|prune]` command group with `--workspace`, `--json`, `--expired-only`, `--max-mb`, `--max-count` flags. Added artifact storage metrics to `tzro status`. Added `formatBytes` helper.
+- **Schema**: Added `CREATE INDEX IF NOT EXISTS idx_artifacts_expires ON artifacts(pinned, expires_at)` in `initSchema`.
+- **Tests**: 28/28 pass (20 existing + 8 new). Zero regressions. Binary builds clean.
+
+## [2026-09-09T12:26:00-07:00] tdd | Implemented Issue 03: Session Capture Git Sensing and Manifest Splicing
+
+- **Activity**: Implemented all 5 design decisions from `03-session-capture-git-sensing-and-manifest-splicing.md` using TDD red→green→refactor across 7 vertical slices.
+- **New File**: `pkg/session/git.go` — Git sensing functions (`StreamSHA256`, `SenseBranch`, `SenseChangedFiles`) with graceful degradation.
+- **New File**: `pkg/session/git_test.go` — 10 tests covering streaming hash, branch detection (normal/detached/CI/non-git), changed file parsing, unquote, and delete status filtering.
+- **Modified**: `pkg/session/session.go` — `ValidateFreshness` now uses streaming SHA-256 and supports both 64-char full hashes and legacy 8-char prefix hashes for backward compatibility. Removed `os` and `store` imports (no longer needed).
+- **Modified**: `pkg/store/store.go` — Added `GetRecentUnexpiredArtifactIDs(workspace, limit)` workspace-scoped query. Fixed timestamp unit to `UnixNano` for consistency with `PutArtifact`.
+- **Modified**: `pkg/store/artifacts_test.go` — Added test for `GetRecentUnexpiredArtifactIDs` covering workspace isolation, pinned/expired filtering, and limit.
+- **Modified**: `pkg/session/import_test.go` — Added `TestSessionManifest_ValidateFreshness_FullSHA256` for backward-compat hash matching.
+- **Modified**: `cmd/tzro/main.go` — Rewired `sessionSaveCmd`: auto-sense branch via `SenseBranch`, auto-sense changed files via `SenseChangedFiles`, fixed order-of-operations (store opened before `ToJSON()`), splice artifact IDs, and added `StringArrayVarP` flags (`-d/--decision`, `-c/--constraint`, `-p/--pending`, `-F/--file`).
+- **Tests**: All 12 packages pass. Zero regressions.
+
+## [2026-09-09T11:24:00-07:00] wayfinder | Resolved Prototype Ticket 06 (Live Doctor Route and Connectivity Diagnostics) & Completed Foundation Map
+
+- **Activity**: Resolved and closed HITL prototype ticket `06-live-doctor-route-and-connectivity-diagnostics.md` on the `.scratch/context-foundation-hardening/MAP.md` Wayfinder map, completing all 6 core foundation hardening tickets.
+- **Decisions Locked**:
+  1. Dynamic Route State & Offline Handling: Replaced static `VERIFIED` table in `tzro doctor` with dynamic inspection; if the daemon is stopped, routes clearly report `OFFLINE (Proxy daemon stopped)` instead of false verification.
+  2. Non-Blocking, Non-Paid Route Probing: Intercepted handlers in `pkg/proxy/proxy.go` short-circuit HTTP `OPTIONS` / `X-Tzro-Probe: health` to return 200 OK and route capabilities immediately, guaranteeing 0 cloud token egress and handling browser/webview CORS preflight requests.
+  3. Upstream DNS & TLS Handshakes: Concurrent non-blocking probes (`api.anthropic.com:443`, `api.openai.com:443`, `generativelanguage.googleapis.com:443`, `127.0.0.1:11434`) bounded by a 2-second timeout, verifying DNS resolution, TCP connect, and TLS certificate chain validity with zero API keys or token costs.
+- **Map Destination Status**:
+  - All 6 foundation hardening tickets (`01` through `06`) on `.scratch/context-foundation-hardening/MAP.md` are now resolved and closed.
+- **Domain Docs Updated**: Added `Live Route & Provider Diagnostics` to `CONTEXT.md`.
+- **Files Modified**:
+  - `.scratch/context-foundation-hardening/MAP.md`
+  - `.scratch/context-foundation-hardening/issues/06-live-doctor-route-and-connectivity-diagnostics.md`
+  - `.scratch/context-foundation-hardening/assets/06-live-doctor-route-and-connectivity-diagnostics-prototype.md`
+  - `CONTEXT.md`
+  - `docs/wiki/log.md`
+
+## [2026-09-09T11:20:00-07:00] wayfinder | Resolved Grilling Ticket 05 (Uniform Privacy Policy Enforcement Layer)
+
+- **Activity**: Resolved and closed HITL grilling ticket `05-uniform-privacy-policy-enforcement-layer.md` on the `.scratch/context-foundation-hardening/MAP.md` Wayfinder map.
+- **Decisions Locked**:
+  1. `tzro start` workspace policy loading: resolve root via `os.Getwd()` / `--workspace` flag; fail fast if `.tzro/privacy.json` is malformed (zero silent leaks); default fallback if missing (`.env*`, `*secret*`, `*id_rsa*` blocked); inject into `proxy.Config.Policy`.
+  2. `Assembler.Assemble` candidate filtering: inject `policy *dlp.PolicyEngine` (defaults to auto-loading workspace policy); early pruning of candidate paths in directory walks and FTS5 matches before reading or indexing; candidate dropping on content block/deny; on-device redaction via `dlp.NewRedactor()` before token packing.
+  3. `Store.PutArtifact` sanitization: thread-safe `Store.SetPolicy(pe)`; immediate hard error return on `ActionBlock`/`ActionDeny` (zero unencrypted blocked data written to disk); automatic `dlp.NewRedactor()` masking on `ActionRedact` with `art.IsRedacted = true`, `art.SourceHash` preserved for provenance, and recalculation of hash and size.
+- **Frontier Advanced**:
+  - Unblocked `06-live-doctor-route-and-connectivity-diagnostics.md` (Prototype, HITL).
+- **Domain Docs Updated**: Added `Workspace Privacy Policy` to `CONTEXT.md`.
+- **Files Modified**:
+  - `.scratch/context-foundation-hardening/MAP.md`
+  - `.scratch/context-foundation-hardening/issues/05-uniform-privacy-policy-enforcement-layer.md`
+  - `CONTEXT.md`
+  - `docs/wiki/log.md`
+
+## [2026-09-09T11:09:00-07:00] wayfinder | Resolved Prototype Ticket 02 (AST Symbol Spans & Budget Ceiling)
+
+- **Activity**: Resolved and closed HITL prototype ticket `02-context-assembler-symbol-spans-and-budget-ceiling.md` on the `.scratch/context-foundation-hardening/MAP.md` Wayfinder map.
+- **Decisions Locked**:
+  1. `ast.ExtractDeclarationSpan`: Sub-file AST extraction preserving signatures, attached docstrings, and body elision tags for symbol matches (~35 tokens vs ~600 tokens full skeleton).
+  2. Enclosing scope header (e.g. `type Store struct` or receiver) preserved for nested/enclosed methods, with a strict 10-line cap on surrounding usage context for call sites and inner expressions.
+  3. Non-AST graceful fallback: 25-line sliding window around `sym.Line` capturing comments and opening signature up to block delimiter.
+  4. Strict budget ceiling invariant: eliminated `|| len(pack.Items) == 0` bypass. Candidates strictly enforce `used + c.TokenWeight <= budget` with knapsack backfill.
+- **Domain Docs Updated**: Added `AST Declaration Spans` to `CONTEXT.md`.
+- **Files Modified**:
+  - `.scratch/context-foundation-hardening/MAP.md`
+  - `.scratch/context-foundation-hardening/issues/02-context-assembler-symbol-spans-and-budget-ceiling.md`
+  - `.scratch/context-foundation-hardening/assets/02-context-assembler-symbol-spans-prototype.md`
+  - `CONTEXT.md`
+  - `docs/wiki/log.md`
+
+## [2026-09-09T10:58:00-07:00] wayfinder | Resolved Research Tickets 01, 03, 04 & Advanced Frontier
+
+- **Activity**: Worked the Wayfinder shared decision map (`.scratch/context-foundation-hardening/MAP.md`), resolved three research tickets, and advanced the frontier.
+- **Tickets Resolved & Closed**:
+  1. `01-workspace-store-schema-and-indexing.md` — Decided workspace-scoped compound keys `(workspace, file_path)`, `symbol_fts` virtual table with `workspace UNINDEXED`, and `PRAGMA user_version = 2` transaction migration.
+  2. `03-session-capture-git-sensing-and-manifest-splicing.md` — Decided graceful git sensing (`--abbrev-ref HEAD` with detached HEAD short SHA, `git status --porcelain -uall`, streaming SHA-256), pre-serialization unexpired artifact query (`GetRecentUnexpiredArtifactIDs`), and repeatable Cobra `StringArrayVarP` flags.
+  3. `04-artifact-lru-quota-lifecycle-and-expiry-sweep.md` — Decided 100MB/1,000-item quotas, deadlock-free internal `evictArtifactsLRULocked` helper called on `PutArtifact`, `(pinned, expires_at)` index for non-scanning background/opportunistic sweeps, and dedicated `tzro artifacts [list|prune]` CLI.
+- **Frontier Advanced**:
+  - Unblocked `02-context-assembler-symbol-spans-and-budget-ceiling.md` (Prototype, HITL).
+  - Unblocked `05-uniform-privacy-policy-enforcement-layer.md` (Grilling, HITL).
+- **Domain Docs Updated**: Updated `Content-Hash Store` in `CONTEXT.md` to reflect strict workspace partitioning and LRU artifact quotas.
+- **Files Modified**:
+  - `.scratch/context-foundation-hardening/MAP.md`
+  - `.scratch/context-foundation-hardening/issues/01-workspace-store-schema-and-indexing.md`
+  - `.scratch/context-foundation-hardening/issues/03-session-capture-git-sensing-and-manifest-splicing.md`
+  - `.scratch/context-foundation-hardening/issues/04-artifact-lru-quota-lifecycle-and-expiry-sweep.md`
+  - `CONTEXT.md`
+  - `docs/wiki/log.md`
+
+## [2026-09-09T10:53:00-07:00] wayfinder | Charted Context Foundation Hardening Map
+
+- **Activity**: Charted a new Wayfinder shared decision map (`.scratch/context-foundation-hardening/MAP.md`) based on the architectural evaluation in `docs/wiki/architecture/tzro-next-capabilities-evaluation-2026-09-08.md`.
+- **Destination**: A hardened, zero-leak foundation for tzro v2 context and evidence management by closing the 6 architectural boundaries identified in `astra-changes` (Workspace Isolation, Context Budget Hardening, Real Session Capture, Artifact Quota Lifecycle, Uniform Privacy Enforcement, and Live Doctor Diagnostics).
+- **Frontier & Tickets Created**:
+  1. `01-workspace-store-schema-and-indexing.md` (Research, Unblocked) — Workspace Isolation in Store Schema and Symbol Search
+  2. `02-context-assembler-symbol-spans-and-budget-ceiling.md` (Prototype, Blocked by: #01) — Context Assembler Symbol Spans and Hard Budget Ceiling
+  3. `03-session-capture-git-sensing-and-manifest-splicing.md` (Research, Unblocked) — Session Capture Git Sensing and Manifest Splicing
+  4. `04-artifact-lru-quota-lifecycle-and-expiry-sweep.md` (Research, Unblocked) — Artifact LRU Quota Lifecycle and Expiry Sweep
+  5. `05-uniform-privacy-policy-enforcement-layer.md` (Grilling, Blocked by: #01) — Uniform Privacy Policy Enforcement Layer
+  6. `06-live-doctor-route-and-connectivity-diagnostics.md` (Prototype, Blocked by: #05) — Live Doctor Route and Connectivity Diagnostics
+- **Research Tasks Fired**: Dispatched parallel research subagents for tickets 01, 03, and 04.
+- **Fog of War (Not Yet Specified)**: Tracked the 5 next-generation capabilities (Change Impact, Task Continuity, Compaction Guarantees, Unified Search, Context Inspector) for graduation once foundations are locked.
+- **Files Created**:
+  - `.scratch/context-foundation-hardening/MAP.md`
+  - `.scratch/context-foundation-hardening/issues/01-workspace-store-schema-and-indexing.md`
+  - `.scratch/context-foundation-hardening/issues/02-context-assembler-symbol-spans-and-budget-ceiling.md`
+  - `.scratch/context-foundation-hardening/issues/03-session-capture-git-sensing-and-manifest-splicing.md`
+  - `.scratch/context-foundation-hardening/issues/04-artifact-lru-quota-lifecycle-and-expiry-sweep.md`
+  - `.scratch/context-foundation-hardening/issues/05-uniform-privacy-policy-enforcement-layer.md`
+  - `.scratch/context-foundation-hardening/issues/06-live-doctor-route-and-connectivity-diagnostics.md`
+
 ## [2026-09-08T22:17:00-07:00] engineering | Hardening Astra Context Capabilities: TSConfig Paths, FTS5 Fallback & LRU Eviction
 
 - **Activity**: Implemented three critical hardening and developer-experience upgrades across `pkg/context`, `pkg/store`, `cmd/tzro`, and documentation:
@@ -2547,7 +2658,18 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
   - **Import Affinity**: 1-hop, 1.25× multiplicative boost from the same tree-sitter parse. Files imported by high-scoring candidates get boosted. Transitive propagation rejected (risks pulling entire dependency tree).
   - **Goal-Adaptive K**: focused=5, overview=8, default=5. Absolute floor=0.10. Inventory Extractor path (`"aggregate"` goals) bypasses scoring entirely.
   - **Replaces ScoreAndPrune**: Unified rich scoring replaces the single-signal top-10 coarse filter. One pass selects both Discover (top-3) and Deep-Read (top-K) files.
-  - **Expanded Extension List**: `collectPreloadFiles` now collects `.go`, `.py`, `.ts`, `.tsx`, `.js`, `.jsx`, `.rs`, `.java`, `.md`, `.txt`, `.rst` — matching tree-sitter Symbol Extractor support.
+- **Expanded Extension List**: `collectPreloadFiles` now collects `.go`, `.py`, `.ts`, `.tsx`, `.js`, `.jsx`, `.rs`, `.java`, `.md`, `.txt`, `.rst` — matching tree-sitter Symbol Extractor support.
 - **Key Files Created/Modified**:
   - [MODIFY] [CONTEXT.md](../../CONTEXT.md) (Updated Exploration Queue glossary entry)
   - [MODIFY] [log.md](log.md) (Appended this entry)
+
+## [2026-09-08] query | Project History, Astra Branch Assessment, and Five Capability Proposals
+
+- **Activity**: Reviewed `astra-changes` at `4820318` against local `main` at `1e60244`. Compared historical design records, current implementation, saved benchmark results, and primary external references.
+- **Findings**: Recorded incomplete session capture, budget enforcement, workspace index isolation, retention wiring, privacy coverage, and live diagnostics. Distinguished saved token metrics from independent task-quality evidence.
+- **Proposals**: Change-impact context, automatic task continuity, evidence guarantees for compaction, unified local evidence search, and context replay with quality profiles. These remain proposals, not approved implementation decisions.
+- **Validation**: Short package and CLI tests passed. Proxy tests passed after an unrestricted rerun allowed the temporary loopback server. No live provider benchmarks were rerun.
+- **Files Touched**:
+  - [Capability Evaluation](architecture/tzro-next-capabilities-evaluation-2026-09-08.md)
+  - [Wiki Index](index.md)
+  - [Wiki Log](log.md)

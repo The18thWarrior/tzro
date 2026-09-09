@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -15,6 +18,7 @@ import (
 	"tzro/pkg/compactor"
 	tzroctx "tzro/pkg/context"
 	"tzro/pkg/dlp"
+	"tzro/pkg/doctor"
 	"tzro/pkg/hooks"
 	"tzro/pkg/kvlock"
 	"tzro/pkg/probe"
@@ -65,9 +69,19 @@ func main() {
 			defer s.Close()
 
 			addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+			// Load workspace privacy policy (fail-fast on parse errors)
+			cwd, _ := os.Getwd()
+			wp, err := dlp.LoadWorkspacePolicy(cwd)
+			if err != nil {
+				return fmt.Errorf("privacy policy error: %w", err)
+			}
+			policy := dlp.NewPolicyEngine(wp)
+
 			fmt.Println(titleStyle.Render("🛡️  Tzro v2 — The Local Token Shield"))
 			fmt.Println(infoStyle.Render(fmt.Sprintf("✓ Loopback Proxy listening on http://%s", addr)))
 			fmt.Println(infoStyle.Render(fmt.Sprintf("✓ Content Store active at %s", dbPath)))
+			fmt.Println(infoStyle.Render("✓ Privacy policy loaded"))
 			fmt.Println("\nTo connect your agents, export:")
 			fmt.Printf("  export ANTHROPIC_BASE_URL=http://%s\n", addr)
 			fmt.Printf("  export OPENAI_BASE_URL=http://%s/v1\n\n", addr)
@@ -77,6 +91,7 @@ func main() {
 				UpstreamAnthropic: upstreamAnthropic,
 				UpstreamOpenAI:    upstreamOpenAI,
 				Store:             s,
+				Policy:            policy,
 			})
 
 			return srv.Start()
@@ -126,7 +141,7 @@ func main() {
 				defer s.Close()
 			}
 
-			res, err := ast.Skeletonize(filePath, content, s)
+			res, err := ast.Skeletonize(filePath, content, s, "")
 			if err != nil {
 				return err
 			}
@@ -375,6 +390,22 @@ func main() {
 			fmt.Printf("  Total Observed:       %s\n", formatVal(m.MeasuredTotalTokens))
 			fmt.Printf("  Native Provider Cache:%s\n", formatVal(m.NativeCacheHitTokens))
 			fmt.Printf("  Tzro Prefix Locked:   %s\n", formatVal(m.TzroPrefixLockTokens))
+
+			// Artifact storage stats
+			dbPath := getDBPath()
+			if st, err := store.OpenStore(dbPath); err == nil {
+				defer st.Close()
+				cwd, _ := os.Getwd()
+				count, totalBytes, err := st.GetWorkspaceArtifactStats(cwd)
+				if err == nil {
+					fmt.Printf("\n")
+					fmt.Println(lipgloss.NewStyle().Bold(true).Render("📦 Artifact Storage:"))
+					fmt.Printf("  Workspace:            %s\n", cwd)
+					fmt.Printf("  Artifact Count:       %d / %d\n", count, store.DefaultWorkspaceMaxCount)
+					fmt.Printf("  Disk Usage:           %s / %s\n", formatBytes(totalBytes), formatBytes(store.DefaultWorkspaceMaxBytes))
+				}
+			}
+
 			return nil
 		},
 	}
@@ -389,43 +420,80 @@ func main() {
 			fmt.Println("Inspecting local loopback proxy, upstream providers, and registered hook harnesses...")
 			fmt.Println()
 
-			// Check 1: Local daemon connectivity
+			// Check 1: Live Route Probing (replaces static hardcoded matrix)
 			proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-			resp, err := http.Get(proxyURL + "/health")
-			if err != nil {
-				fmt.Printf("  %s Loopback Proxy: NOT RUNNING on %s (%v)\n", warnStyle.Render("✗"), proxyURL, err)
-			} else {
-				resp.Body.Close()
-				fmt.Printf("  %s Loopback Proxy: ACTIVE on %s\n", infoStyle.Render("✔"), proxyURL)
-			}
+			routeReports := doctor.ProbeRoutes(proxyURL)
 
-			// Check 2: Route Support Diagnostic Matrix
-			type routeCheck struct {
-				Route       string
-				Adapter     string
-				Status      string
-				Intercepted bool
-			}
-			routes := []routeCheck{
-				{Route: "/v1/messages", Adapter: "Anthropic Messages API", Status: "VERIFIED (KV-Lock + DLP)", Intercepted: true},
-				{Route: "/v1/chat/completions", Adapter: "OpenAI Chat Completions", Status: "VERIFIED (KV-Lock + DLP)", Intercepted: true},
-				{Route: "/v1/responses", Adapter: "OpenAI Responses API", Status: "VERIFIED (KV-Lock + DLP)", Intercepted: true},
-				{Route: "/v1beta/models/*", Adapter: "Gemini-native Models API", Status: "VERIFIED (KV-Lock + DLP)", Intercepted: true},
-				{Route: "/v1/models (Local)", Adapter: "Ollama / LM Studio Loopback", Status: "VERIFIED (Direct Pass-through)", Intercepted: true},
-				{Route: "/v1/audio/transcriptions", Adapter: "Audio / Multimodal Speech", Status: "UNSUPPORTED (Direct pass-through / unintercepted)", Intercepted: false},
-				{Route: "/v1/realtime", Adapter: "Websocket Realtime Audio", Status: "UNSUPPORTED (Direct pass-through / unintercepted)", Intercepted: false},
-			}
-
-			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n📡 Provider Route & Interception Matrix:"))
-			for _, rc := range routes {
-				if rc.Intercepted {
-					fmt.Printf("  %s %-25s [%s] -> %s\n", infoStyle.Render("✔"), rc.Route, rc.Adapter, rc.Status)
-				} else {
-					fmt.Printf("  %s %-25s [%s] -> %s\n", warnStyle.Render("!"), rc.Route, rc.Adapter, rc.Status)
+			// Determine proxy status from route reports
+			proxyOnline := false
+			for _, rr := range routeReports {
+				if rr.Status == doctor.RouteStatusActive {
+					proxyOnline = true
+					break
 				}
 			}
 
-			// Check 3: Lifecycle Hooks Diagnostic
+			if proxyOnline {
+				fmt.Printf("  %s Loopback Proxy: ACTIVE on %s\n", infoStyle.Render("✔"), proxyURL)
+			} else {
+				fmt.Printf("  %s Loopback Proxy: NOT RUNNING on %s\n", warnStyle.Render("✗"), proxyURL)
+			}
+
+			// Check 2: Route Support Diagnostic Matrix (Live Probed)
+			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n📡 Provider Route & Interception Matrix (Live Probed):"))
+			for _, rr := range routeReports {
+				switch rr.Status {
+				case doctor.RouteStatusActive:
+					features := "KV-Lock + DLP"
+					if len(rr.Features) > 0 {
+						features = strings.Join(rr.Features, ", ")
+					}
+					fmt.Printf("  %s %-30s [%s] -> ACTIVE (%s, %.1fms)\n",
+						infoStyle.Render("✔"), rr.Route, rr.Adapter, features,
+						float64(rr.Latency.Microseconds())/1000.0)
+				case doctor.RouteStatusOffline:
+					fmt.Printf("  %s %-30s [%s] -> OFFLINE (Proxy daemon stopped)\n",
+						warnStyle.Render("✗"), rr.Route, rr.Adapter)
+				case doctor.RouteStatusUnsupported:
+					fmt.Printf("  %s %-30s [%s] -> UNSUPPORTED (Direct pass-through / unintercepted)\n",
+						warnStyle.Render("!"), rr.Route, rr.Adapter)
+				}
+			}
+
+			if !proxyOnline {
+				fmt.Printf("\n  %s Run 'tzro start' to launch the proxy daemon and activate route interception.\n",
+					warnStyle.Render("→"))
+			}
+
+			// Check 3: Upstream Provider Connectivity (DNS & TLS Handshake)
+			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n🌐 Upstream Provider Connectivity (DNS & TLS Handshake):"))
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			upstreamReports := doctor.ProbeUpstreams(ctx, doctor.DefaultUpstreams())
+			for _, ur := range upstreamReports {
+				switch ur.Status {
+				case doctor.UpstreamStatusReachable:
+					tlsInfo := ""
+					if ur.TLSValid {
+						tlsInfo = "TLS verified, "
+					}
+					fmt.Printf("  %s %-25s (%s) -> REACHABLE (%s%dms)\n",
+						infoStyle.Render("✔"), ur.Provider, ur.Endpoint, tlsInfo,
+						ur.Latency.Milliseconds())
+				case doctor.UpstreamStatusOffline:
+					detail := "not detected"
+					if ur.Error != "" {
+						detail = ur.Error
+					}
+					fmt.Printf("  %s %-25s (%s) -> OFFLINE (%s)\n",
+						warnStyle.Render("!"), ur.Provider, ur.Endpoint, detail)
+				case doctor.UpstreamStatusUnreachable:
+					fmt.Printf("  %s %-25s (%s) -> UNREACHABLE (%s)\n",
+						warnStyle.Render("✗"), ur.Provider, ur.Endpoint, ur.Error)
+				}
+			}
+
+			// Check 4: Lifecycle Hooks Diagnostic
 			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n🪝 Agent Lifecycle Hook Verification:"))
 			results, err := hooks.DetectAndInstallHooks([]string{"auto"}, false)
 			if err != nil {
@@ -438,7 +506,7 @@ func main() {
 				}
 			}
 
-			// Check 4: Synthetic KV-Lock & DLP Normalization Handshake
+			// Check 5: Synthetic KV-Lock & DLP Normalization Handshake
 			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n⚡ Synthetic Normalization & Redaction Handshake:"))
 			testGuard := kvlock.NewLockGuard()
 			_, hash, err := testGuard.NormalizeOpenAI([]byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}`))
@@ -456,7 +524,7 @@ func main() {
 				fmt.Printf("  %s DLP Redaction Pipeline: PASS (%d secret(s) redacted)\n", infoStyle.Render("✔"), len(dlpMap))
 			}
 
-			// Check 5: Local SQLite Store & FTS5 Capability
+			// Check 6: Local SQLite Store & FTS5 Capability
 			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n🗄️  Local Storage & Search Engine Check:"))
 			s, err := store.OpenStore(getDBPath())
 			if err != nil {
@@ -719,7 +787,7 @@ Examples:
 				defer s.Close()
 			}
 
-			assembler := tzroctx.NewAssembler(s)
+			assembler := tzroctx.NewAssembler(s, nil)
 			pack, err := assembler.Assemble(cwd, query, contextBudget)
 			if err != nil {
 				return err
@@ -738,6 +806,10 @@ Examples:
 	var sessionObjective string
 	var sessionBranch string
 	var sessionExportFile string
+	var sessionDecisions []string
+	var sessionConstraints []string
+	var sessionPending []string
+	var sessionFiles []string
 	sessionSaveCmd := &cobra.Command{
 		Use:   "save [session-id]",
 		Short: "Save current session state to local SQLite store and generate Markdown handoff",
@@ -745,24 +817,58 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionID := args[0]
 			cwd, _ := os.Getwd()
+
+			// Auto-sense branch from git if not explicitly provided
 			if sessionBranch == "" {
-				sessionBranch = "main"
+				sessionBranch = session.SenseBranch(context.Background(), cwd)
 			}
 			if sessionObjective == "" {
 				sessionObjective = "Task in progress"
 			}
 
 			manifest := session.NewSessionManifest(sessionID, cwd, sessionBranch, sessionObjective)
-			manifestJSON, err := manifest.ToJSON()
-			if err != nil {
-				return err
+
+			// Populate from CLI flags
+			manifest.Decisions = sessionDecisions
+			manifest.Constraints = sessionConstraints
+			manifest.PendingTasks = sessionPending
+
+			// Auto-sense changed files from git
+			gitSnapshots, err := session.SenseChangedFiles(context.Background(), cwd)
+			if err == nil && len(gitSnapshots) > 0 {
+				manifest.ChangedFiles = append(manifest.ChangedFiles, gitSnapshots...)
 			}
 
+			// Add manually specified files (for non-git workspaces)
+			for _, f := range sessionFiles {
+				hash, hashErr := session.StreamSHA256(filepath.Join(cwd, f))
+				if hashErr != nil {
+					continue
+				}
+				manifest.ChangedFiles = append(manifest.ChangedFiles, session.FileSnapshot{
+					Path: f,
+					Hash: hash,
+				})
+			}
+
+			// Open store BEFORE serializing to splice artifact IDs
 			s, err := store.OpenStore(getDBPath())
 			if err != nil {
 				return fmt.Errorf("failed to open database: %w", err)
 			}
 			defer s.Close()
+
+			// Splice recent unexpired artifact IDs
+			artifactIDs, err := s.GetRecentUnexpiredArtifactIDs(cwd, 20)
+			if err == nil && len(artifactIDs) > 0 {
+				manifest.ArtifactIDs = artifactIDs
+			}
+
+			// Now serialize with all data populated
+			manifestJSON, err := manifest.ToJSON()
+			if err != nil {
+				return err
+			}
 
 			if err := s.PutSession(sessionID, cwd, sessionBranch, manifest.SchemaVersion, manifestJSON); err != nil {
 				return fmt.Errorf("failed to save session: %w", err)
@@ -782,8 +888,12 @@ Examples:
 		},
 	}
 	sessionSaveCmd.Flags().StringVarP(&sessionObjective, "objective", "o", "", "Task objective")
-	sessionSaveCmd.Flags().StringVar(&sessionBranch, "branch", "", "Active branch name")
+	sessionSaveCmd.Flags().StringVar(&sessionBranch, "branch", "", "Active branch name (auto-sensed from git if omitted)")
 	sessionSaveCmd.Flags().StringVarP(&sessionExportFile, "export", "e", "", "File path to export JSON manifest")
+	sessionSaveCmd.Flags().StringArrayVarP(&sessionDecisions, "decision", "d", nil, "Architectural decision (repeatable)")
+	sessionSaveCmd.Flags().StringArrayVarP(&sessionConstraints, "constraint", "c", nil, "Approved constraint (repeatable)")
+	sessionSaveCmd.Flags().StringArrayVarP(&sessionPending, "pending", "p", nil, "Outstanding task (repeatable)")
+	sessionSaveCmd.Flags().StringArrayVarP(&sessionFiles, "file", "F", nil, "Manual file to snapshot (repeatable, for non-git workspaces)")
 
 	sessionExportCmd := &cobra.Command{
 		Use:   "export [session-id]",
@@ -880,7 +990,145 @@ Examples:
 
 	sessionCmd.AddCommand(sessionSaveCmd, sessionExportCmd, sessionLoadCmd)
 
-	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, sessionCmd)
+	// ARTIFACTS COMMAND GROUP
+	artifactsCmd := &cobra.Command{
+		Use:   "artifacts",
+		Short: "Manage stored artifacts (list, prune, inspect quotas)",
+	}
+
+	var artifactsListWorkspace string
+	var artifactsListJSON bool
+	artifactsListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List stored artifacts with size, type, pinned status, and expiration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath := getDBPath()
+			s, err := store.OpenStore(dbPath)
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			ws := artifactsListWorkspace
+			if ws == "" {
+				ws, _ = os.Getwd()
+			}
+
+			artifacts, err := s.ListArtifacts(ws)
+			if err != nil {
+				return err
+			}
+
+			if artifactsListJSON {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(artifacts)
+			}
+
+			if len(artifacts) == 0 {
+				fmt.Println(infoStyle.Render("No artifacts found for workspace: " + ws))
+				return nil
+			}
+
+			fmt.Println(titleStyle.Render("📦 Artifacts"))
+			fmt.Printf("Workspace: %s\n\n", ws)
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "ID\tTYPE\tSIZE\tPINNED\tEXPIRES\tCREATED")
+			for _, a := range artifacts {
+				sizeStr := formatBytes(a.SizeBytes)
+				pinnedStr := "no"
+				if a.Pinned {
+					pinnedStr = "yes"
+				}
+				expiresStr := a.ExpiresAt.Format(time.RFC3339)
+				if a.ExpiresAt.Before(time.Now()) && !a.Pinned {
+					expiresStr = warnStyle.Render("EXPIRED")
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					a.ID, a.Type, sizeStr, pinnedStr, expiresStr, a.CreatedAt.Format(time.RFC3339))
+			}
+			w.Flush()
+
+			count, totalBytes, _ := s.GetWorkspaceArtifactStats(ws)
+			fmt.Printf("\nTotal: %d artifacts, %s\n", count, formatBytes(totalBytes))
+			return nil
+		},
+	}
+	artifactsListCmd.Flags().StringVar(&artifactsListWorkspace, "workspace", "", "Workspace path (defaults to cwd)")
+	artifactsListCmd.Flags().BoolVar(&artifactsListJSON, "json", false, "Output as JSON")
+
+	var artifactsPruneWorkspace string
+	var artifactsPruneExpiredOnly bool
+	var artifactsPruneMaxMB int64
+	var artifactsPruneMaxCount int
+	artifactsPruneCmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune artifacts by expiration, size, or count limits",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dbPath := getDBPath()
+			s, err := store.OpenStore(dbPath)
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			ws := artifactsPruneWorkspace
+			if ws == "" {
+				ws, _ = os.Getwd()
+			}
+
+			var totalDeleted int64
+
+			// Always sweep expired first
+			expired, err := s.EvictExpiredArtifacts()
+			if err != nil {
+				return fmt.Errorf("expiry sweep failed: %w", err)
+			}
+			totalDeleted += expired
+			if expired > 0 {
+				fmt.Printf("  Swept %d expired artifacts\n", expired)
+			}
+
+			if !artifactsPruneExpiredOnly {
+				maxBytes := store.DefaultWorkspaceMaxBytes
+				if artifactsPruneMaxMB > 0 {
+					maxBytes = artifactsPruneMaxMB * 1024 * 1024
+				}
+				maxCount := store.DefaultWorkspaceMaxCount
+				if artifactsPruneMaxCount > 0 {
+					maxCount = artifactsPruneMaxCount
+				}
+
+				evicted, err := s.EvictArtifactsLRU(ws, maxCount, maxBytes)
+				if err != nil {
+					return fmt.Errorf("LRU eviction failed: %w", err)
+				}
+				totalDeleted += evicted
+				if evicted > 0 {
+					fmt.Printf("  Evicted %d artifacts via LRU (max-count=%d, max-mb=%d)\n", evicted, maxCount, maxBytes/(1024*1024))
+				}
+			}
+
+			if totalDeleted == 0 {
+				fmt.Println(infoStyle.Render("✓ Nothing to prune — workspace is within quota."))
+			} else {
+				fmt.Println(infoStyle.Render(fmt.Sprintf("✓ Pruned %d total artifacts.", totalDeleted)))
+			}
+
+			count, totalBytes, _ := s.GetWorkspaceArtifactStats(ws)
+			fmt.Printf("  Remaining: %d artifacts, %s\n", count, formatBytes(totalBytes))
+			return nil
+		},
+	}
+	artifactsPruneCmd.Flags().StringVar(&artifactsPruneWorkspace, "workspace", "", "Workspace path (defaults to cwd)")
+	artifactsPruneCmd.Flags().BoolVar(&artifactsPruneExpiredOnly, "expired-only", false, "Only prune expired artifacts, skip LRU eviction")
+	artifactsPruneCmd.Flags().Int64Var(&artifactsPruneMaxMB, "max-mb", 0, "Maximum workspace size in MB (default: 100)")
+	artifactsPruneCmd.Flags().IntVar(&artifactsPruneMaxCount, "max-count", 0, "Maximum artifact count (default: 1000)")
+
+	artifactsCmd.AddCommand(artifactsListCmd, artifactsPruneCmd)
+
+	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, sessionCmd, artifactsCmd)
 
 
 	if err := rootCmd.Execute(); err != nil {
@@ -889,5 +1137,22 @@ Examples:
 	}
 }
 
+func formatBytes(b int64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+	switch {
+	case b >= GB:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(GB))
+	case b >= MB:
+		return fmt.Sprintf("%.1f MB", float64(b)/float64(MB))
+	case b >= KB:
+		return fmt.Sprintf("%.1f KB", float64(b)/float64(KB))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
 
 

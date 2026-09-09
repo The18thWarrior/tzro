@@ -4,10 +4,10 @@ This directory contains the high-fidelity, single-page interactive product websi
 
 ## Positioning: AgenticOS Jumpdrive
 
-> **tzro is The Jumpdrive for AI Agents** — a portable, self-contained runtime that any agent can plug into via MCP or Go framework embedding. One config block = full OS: kernel, scheduler, memory, self-improving inference, and background intelligence.
+> **tzro is The Local Token Shield & Context Optimization Engine** — a portable, self-contained runtime that any AI agent can plug into via transparent proxy or CLI. One command (`tzro start`) = full OS: proxy, AST skeletonization, and fast discovery.
 
 The "Jumpdrive" metaphor conveys three value propositions simultaneously:
-- **Instant activation**: One MCP config block or one Go import, and the full OS activates.
+- **Instant activation**: Start the proxy or run CLI tools, and the full engine activates.
 - **Completeness**: Everything an agent needs in one package.
 - **Portability**: Copy `tzro.db` + binary to another machine = perfect clone.
 
@@ -42,7 +42,7 @@ The site supports two audience modes — **User** and **Developer** — toggled 
 
 | Aspect | User Mode | Developer Mode |
 |--------|-----------|----------------|
-| Hero badge | WORKS WITH CLAUDE, CURSOR & ANY MCP AGENT | AGENTIC OPERATING SYSTEM |
+| Hero badge | WORKS WITH CLAUDE, CURSOR & ANY AI AGENT | AGENTIC OPERATING SYSTEM |
 | Hero title | "Stop babysitting your AI agents" | "tzro — The Jumpdrive for AI Agents" |
 | Hero CTAs | See Use Cases / Install in 60 Seconds | Get Started / Explore the OS |
 | Nav links | Use Cases, How It Works, Install | Architecture, Get Started, Playgrounds, Under the Hood, Quickstart |
@@ -65,7 +65,7 @@ The site supports two audience modes — **User** and **Developer** — toggled 
 2. **"Why Not Just Cloud?" Comparison**: 5-row glass comparison table with technical copy (Cost, Privacy, Latency, Self-Improvement, Crash Recovery).
 3. **Interactive OS Architecture Diagram**: 4×4 block grid mapping classical OS primitives to tzro equivalents. Click any block to scroll to its section. Tooltip on hover. Scroll-spy highlights the active block.
 4. **Get Started — Two Onramps** (tabbed):
-   - **Plug In (MCP)**: Build binary, MCP config, client tabs (Claude/Cursor/Antigravity), verify JSON-RPC, tools list, delegation/wait protocol.
+   - **Plug In (Proxy)**: Start proxy, point client URL, verify interception, tools list, delegation/wait protocol.
    - **Build On (Framework)**: Go SDK code browser (5 guides), synchronous hook playground with PII/Safety/HITL toggles.
 5. **Playgrounds**:
    - **Process Scheduler**: Extended Kahn simulator with **Neural Edge Traversal** — Edge Thought evaluation, confidence below threshold triggers dynamic node spawning with animation.
@@ -76,12 +76,12 @@ The site supports two audience modes — **User** and **Developer** — toggled 
 
 ### User Mode Page Structure
 
-1. **Hero Section**: Badge: `WORKS WITH CLAUDE, CURSOR & ANY MCP AGENT`. Title: `Stop babysitting your AI agents`. Plain-language subtitle.
+1. **Hero Section**: Badge: `WORKS WITH CLAUDE, CURSOR & ANY AI AGENT`. Title: `Stop babysitting your AI agents`. Plain-language subtitle.
 2. **"What Can I Do With tzro?"**: 3 use-case cards (Deep Research, Local Document Processing, Queue & Resume Overnight Work).
 3. **"Why Not Just Cloud?" Comparison**: Same 5-row table with plain-language copy.
 4. **"How It Works" Pipeline**: 5-step visual flow (Goal → Cloud Plans → Local Executes → Progress Saves → Results Delivered).
-5. **Install**: Simplified 3-step flow (curl install → paste config → start using it). No Framework tab.
-6. **Quickstart**: MCP path only.
+5. **Install**: Simplified 3-step flow (curl install → run tzro start → start using it). No Framework tab.
+6. **Quickstart**: Proxy path only.
 7. **Footer**: GitHub, Use Cases, Install links.
 
 ---

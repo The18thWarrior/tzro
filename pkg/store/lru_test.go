@@ -96,12 +96,12 @@ func TestStore_FTS5Fallback(t *testing.T) {
 	}
 
 	// Ensure IndexSymbol and SearchSymbols work in either mode
-	err = s.IndexSymbol("ResolvePath", "function", "pkg/path.go", 42, "hash1234")
+	err = s.IndexSymbol("", "ResolvePath", "function", "pkg/path.go", 42, "hash1234")
 	if err != nil {
 		t.Fatalf("IndexSymbol failed: %v", err)
 	}
 
-	res, err := s.SearchSymbols("ResolvePath", 10)
+	res, err := s.SearchSymbols("", "ResolvePath", 10)
 	if err != nil {
 		t.Fatalf("SearchSymbols failed: %v", err)
 	}

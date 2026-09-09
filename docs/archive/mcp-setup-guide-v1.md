@@ -1,3 +1,5 @@
+> [!CAUTION] This guide is for Tzro v1 which has been fully retired. Tzro v2 uses a CLI + transparent proxy architecture. See AGENTS.md for current setup.
+
 # tzro MCP Setup Guide
 
 This guide details how to build and configure the `tzro-mcp` server target to run as a Model Context Protocol (MCP) server.

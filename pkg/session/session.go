@@ -3,11 +3,9 @@ package session
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"tzro/pkg/store"
 )
 
 
@@ -159,11 +157,13 @@ type FileDrift struct {
 }
 
 // ValidateFreshness compares snapshot hashes with current workspace files on disk.
+// Supports both full 64-char SHA-256 hashes and legacy 8-char prefix hashes.
 func (sm *SessionManifest) ValidateFreshness(workspaceRoot string) []FileDrift {
 	var drifts []FileDrift
 	for _, f := range sm.ChangedFiles {
 		fullPath := filepath.Join(workspaceRoot, f.Path)
-		content, err := os.ReadFile(fullPath)
+
+		fullHash, err := StreamSHA256(fullPath)
 		if err != nil {
 			drifts = append(drifts, FileDrift{
 				Path:         f.Path,
@@ -172,24 +172,42 @@ func (sm *SessionManifest) ValidateFreshness(workspaceRoot string) []FileDrift {
 			})
 			continue
 		}
-		currHash := store.ComputeHash(string(content))
-		if currHash != f.Hash {
+
+		if hashesMatch(f.Hash, fullHash) {
 			drifts = append(drifts, FileDrift{
 				Path:         f.Path,
 				ExpectedHash: f.Hash,
-				ActualHash:   currHash,
-				Status:       "modified",
+				ActualHash:   truncateHash(fullHash, len(f.Hash)),
+				Status:       "fresh",
 			})
 		} else {
 			drifts = append(drifts, FileDrift{
 				Path:         f.Path,
 				ExpectedHash: f.Hash,
-				ActualHash:   currHash,
-				Status:       "fresh",
+				ActualHash:   truncateHash(fullHash, len(f.Hash)),
+				Status:       "modified",
 			})
 		}
 	}
 	return drifts
+}
+
+// hashesMatch compares an expected hash against a full 64-char SHA-256.
+// If expected is 8 chars (legacy), compare against the first 8 chars of full.
+// Otherwise, compare full strings.
+func hashesMatch(expected, fullHash string) bool {
+	if len(expected) <= 8 && len(fullHash) >= len(expected) {
+		return fullHash[:len(expected)] == expected
+	}
+	return expected == fullHash
+}
+
+// truncateHash returns the hash truncated to the given length for display consistency.
+func truncateHash(hash string, targetLen int) string {
+	if targetLen > 0 && targetLen < len(hash) {
+		return hash[:targetLen]
+	}
+	return hash
 }
 
 // ImportSession loads a session manifest, strictly verifying workspace isolation and schema version.

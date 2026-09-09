@@ -194,6 +194,11 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAnthropic(w http.ResponseWriter, r *http.Request) {
+	if s.isHealthProbe(r) {
+		s.respondProbe(w, r)
+		return
+	}
+
 	atomic.AddUint64(&s.metrics.TotalRequests, 1)
 	atomic.AddUint64(&s.metrics.AnthropicRequests, 1)
 
@@ -231,6 +236,11 @@ func (s *Server) handleAnthropic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOpenAI(w http.ResponseWriter, r *http.Request) {
+	if s.isHealthProbe(r) {
+		s.respondProbe(w, r)
+		return
+	}
+
 	atomic.AddUint64(&s.metrics.TotalRequests, 1)
 	atomic.AddUint64(&s.metrics.OpenAIRequests, 1)
 
@@ -281,6 +291,11 @@ func (s *Server) handleOpenAI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
+	if s.isHealthProbe(r) {
+		s.respondProbe(w, r)
+		return
+	}
+
 	atomic.AddUint64(&s.metrics.TotalRequests, 1)
 	atomic.AddUint64(&s.metrics.ResponsesRequests, 1)
 
@@ -314,6 +329,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGemini(w http.ResponseWriter, r *http.Request) {
+	if s.isHealthProbe(r) {
+		s.respondProbe(w, r)
+		return
+	}
+
 	atomic.AddUint64(&s.metrics.TotalRequests, 1)
 	atomic.AddUint64(&s.metrics.GeminiRequests, 1)
 
@@ -347,6 +367,25 @@ func (s *Server) handleGemini(w http.ResponseWriter, r *http.Request) {
 	s.forwardRequest(w, r, targetURL, normalized, dlpMap)
 }
 
+// isHealthProbe returns true if the request is a zero-cost health probe
+// (OPTIONS method or X-Tzro-Probe: health header).
+func (s *Server) isHealthProbe(r *http.Request) bool {
+	return r.Method == http.MethodOptions || r.Header.Get("X-Tzro-Probe") == "health"
+}
+
+// respondProbe writes a JSON health probe response with route metadata.
+// Zero body read, zero DLP evaluation, zero upstream egress.
+func (s *Server) respondProbe(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Tzro-Route-Status", "active")
+	w.Header().Set("X-Tzro-Features", "kvlock,dlp")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":   "active",
+		"route":    r.URL.Path,
+		"features": []string{"kvlock", "dlp"},
+	})
+}
 
 func (s *Server) forwardRequest(w http.ResponseWriter, r *http.Request, targetURL *url.URL, body []byte, dlpMap map[string]string) {
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), bytes.NewReader(body))

@@ -40,12 +40,12 @@ func TestStore_IndexAndSearchSymbols(t *testing.T) {
 	}
 	defer s.Close()
 
-	err = s.IndexSymbol("ValidateToken", "function", "auth/jwt.go", 45, "a8f19c")
+	err = s.IndexSymbol("", "ValidateToken", "function", "auth/jwt.go", 45, "a8f19c")
 	if err != nil {
 		t.Fatalf("IndexSymbol failed: %v", err)
 	}
 
-	results, err := s.SearchSymbols("Validate", 10)
+	results, err := s.SearchSymbols("", "Validate", 10)
 	if err != nil {
 		t.Fatalf("SearchSymbols failed: %v", err)
 	}
@@ -60,8 +60,8 @@ func TestStore_IndexAndSearchSymbols(t *testing.T) {
 	}
 
 	// Test multiword query matching across symbols and paths
-	_ = s.IndexSymbol("CheckPermission", "method", "auth/rbac.go", 12, "b7d21a")
-	multiwordResults, err := s.SearchSymbols("token validation auth", 10)
+	_ = s.IndexSymbol("", "CheckPermission", "method", "auth/rbac.go", 12, "b7d21a")
+	multiwordResults, err := s.SearchSymbols("", "token validation auth", 10)
 	if err != nil {
 		t.Fatalf("SearchSymbols multiword failed: %v", err)
 	}

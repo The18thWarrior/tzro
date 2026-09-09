@@ -64,7 +64,7 @@ func ValidateUserToken() {}
 	}
 	defer s.Close()
 
-	assembler := NewAssembler(s)
+	assembler := NewAssembler(s, nil)
 
 	query := "ValidateUserToken validator service"
 	targetExpectedFiles := []string{

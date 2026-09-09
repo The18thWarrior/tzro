@@ -58,7 +58,7 @@ export function Home() { return <Button />; }`
 	}
 	defer s.Close()
 
-	assembler := NewAssembler(s)
+	assembler := NewAssembler(s, nil)
 	pack, err := assembler.Assemble(tempDir, "Home", 4000)
 	if err != nil {
 		t.Fatalf("Assemble failed: %v", err)

@@ -94,3 +94,96 @@ func TestStore_ArtifactsPersistenceAndCollisions(t *testing.T) {
 	}
 }
 
+func TestStore_GetRecentUnexpiredArtifactIDs(t *testing.T) {
+	s, err := OpenStore(":memory:")
+	if err != nil {
+		t.Fatalf("OpenStore failed: %v", err)
+	}
+	defer s.Close()
+
+	ws := "/workspace/test-artifacts"
+	otherWs := "/workspace/other"
+	now := time.Now().UTC()
+
+	// Insert: 1 pinned (no expiry), 1 unexpired, 1 expired, 1 in other workspace
+	_, err = s.PutArtifact(&Artifact{
+		ID:        "art-pinned",
+		Type:      "text",
+		Workspace: ws,
+		Pinned:    true,
+		ExpiresAt: now.Add(-1 * time.Hour), // expired but pinned
+		Body:      "pinned body",
+	})
+	if err != nil {
+		t.Fatalf("PutArtifact pinned: %v", err)
+	}
+
+	_, err = s.PutArtifact(&Artifact{
+		ID:        "art-fresh",
+		Type:      "text",
+		Workspace: ws,
+		Pinned:    false,
+		ExpiresAt: now.Add(24 * time.Hour), // unexpired
+		Body:      "fresh body",
+	})
+	if err != nil {
+		t.Fatalf("PutArtifact fresh: %v", err)
+	}
+
+	_, err = s.PutArtifact(&Artifact{
+		ID:        "art-expired",
+		Type:      "text",
+		Workspace: ws,
+		Pinned:    false,
+		ExpiresAt: now.Add(-1 * time.Hour), // expired and not pinned
+		Body:      "expired body",
+	})
+	if err != nil {
+		t.Fatalf("PutArtifact expired: %v", err)
+	}
+
+	_, err = s.PutArtifact(&Artifact{
+		ID:        "art-other-ws",
+		Type:      "text",
+		Workspace: otherWs,
+		Pinned:    false,
+		ExpiresAt: now.Add(24 * time.Hour),
+		Body:      "other workspace",
+	})
+	if err != nil {
+		t.Fatalf("PutArtifact other ws: %v", err)
+	}
+
+	// Query: should return pinned + fresh, NOT expired or other-ws
+	ids, err := s.GetRecentUnexpiredArtifactIDs(ws, 20)
+	if err != nil {
+		t.Fatalf("GetRecentUnexpiredArtifactIDs: %v", err)
+	}
+
+	idSet := make(map[string]bool)
+	for _, id := range ids {
+		idSet[id] = true
+	}
+
+	if !idSet["art-pinned"] {
+		t.Error("pinned artifact should be included even with past expiry")
+	}
+	if !idSet["art-fresh"] {
+		t.Error("unexpired artifact should be included")
+	}
+	if idSet["art-expired"] {
+		t.Error("expired unpinned artifact should be excluded")
+	}
+	if idSet["art-other-ws"] {
+		t.Error("artifact from other workspace should be excluded")
+	}
+
+	// Test limit
+	idsLimited, err := s.GetRecentUnexpiredArtifactIDs(ws, 1)
+	if err != nil {
+		t.Fatalf("GetRecentUnexpiredArtifactIDs with limit: %v", err)
+	}
+	if len(idsLimited) != 1 {
+		t.Errorf("expected 1 result with limit=1, got %d", len(idsLimited))
+	}
+}

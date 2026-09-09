@@ -45,7 +45,7 @@ export class AuthService {
 	}
 	defer s.Close()
 
-	assembler := NewAssembler(s)
+	assembler := NewAssembler(s, nil)
 
 	// Query for authService: should bring in authService.ts AND follow the import graph to include utils/token.ts
 	pack, err := assembler.Assemble(tempDir, "authService", 2000)

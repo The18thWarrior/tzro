@@ -52,6 +52,9 @@ _Analyses of critical bugs, diagnostic loops, and prevention measures._
 
 _Glossary terms, data models, ADR summaries, and architectural diagrams._
 
+- [Tzro Capability Evaluation — September 8, 2026](architecture/tzro-next-capabilities-evaluation-2026-09-08.md) - Branch assessment, historical lessons, and five proposed additions beyond Astra context capabilities. (Reviewed: `4820318` | Status: proposals)
+- [Context Foundation Hardening Wayfinder Map](../../.scratch/context-foundation-hardening/MAP.md) - Wayfinder shared decision map for hardening the 6 core context boundaries in astra-changes (workspace isolation, context budgeting, session capture, artifact retention, uniform privacy, doctor diagnostics). (Status: `wayfinder:map` (6/6 tickets resolved) | Started: 2026-09-09)
+
 - [Repository Domain Context](../../CONTEXT.md) - Durable local-first agentic execution language glossary.
 - [Technical Design](../technical-design.md) - Overview of the tzro durable local execution system.
 - [MCP Setup & Integration Guide](../mcp-setup-guide.md) - Configure tzro as a stdio-based MCP server in Claude Desktop, Cursor, etc.

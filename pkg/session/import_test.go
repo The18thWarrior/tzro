@@ -91,6 +91,46 @@ func TestSessionManifest_ValidateFreshness(t *testing.T) {
 	}
 }
 
+func TestSessionManifest_ValidateFreshness_FullSHA256(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "pkg"), 0755)
+
+	// File with a full 64-char SHA-256 hash (new format)
+	content := "package main\nfunc main() {}\n"
+	filePath := "pkg/main.go"
+	os.WriteFile(filepath.Join(tmpDir, filePath), []byte(content), 0644)
+	fullHash := store.SHA256Full(content)
+
+	// File with legacy 8-char prefix hash
+	contentLegacy := "package legacy\n"
+	legacyPath := "pkg/legacy.go"
+	os.WriteFile(filepath.Join(tmpDir, legacyPath), []byte(contentLegacy), 0644)
+	prefixHash := store.ComputeHash(contentLegacy)
+
+	manifest := session.NewSessionManifest("sess_hash_compat", "ws-test", "main", "hash compat")
+	manifest.ChangedFiles = []session.FileSnapshot{
+		{Path: filePath, Hash: fullHash},
+		{Path: legacyPath, Hash: prefixHash},
+	}
+
+	drifts := manifest.ValidateFreshness(tmpDir)
+	driftMap := make(map[string]session.FileDrift)
+	for _, d := range drifts {
+		driftMap[d.Path] = d
+	}
+
+	// Full 64-char hash should match as fresh
+	if driftMap[filePath].Status != "fresh" {
+		t.Errorf("Expected full SHA-256 hash to match as fresh, got %s (expected=%s, actual=%s)",
+			driftMap[filePath].Status, fullHash, driftMap[filePath].ActualHash)
+	}
+
+	// Legacy 8-char prefix should still match as fresh
+	if driftMap[legacyPath].Status != "fresh" {
+		t.Errorf("Expected legacy 8-char hash to match as fresh, got %s", driftMap[legacyPath].Status)
+	}
+}
+
 func TestSessionManifest_PauseEditResume(t *testing.T) {
 	// End-to-end pause-edit-resume test validating that prior decisions and verified checks persist accurately.
 	manifest := session.NewSessionManifest("sess_pause_resume", "ws-audit", "feat/caching", "Implement prefix lock")

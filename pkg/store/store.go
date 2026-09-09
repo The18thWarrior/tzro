@@ -11,7 +11,20 @@ import (
 	"sync"
 	"time"
 
+	"tzro/pkg/dlp"
+
 	_ "modernc.org/sqlite"
+)
+
+const (
+	// DefaultWorkspaceMaxBytes limits total artifact storage to 100 MB per workspace.
+	DefaultWorkspaceMaxBytes int64 = 100 * 1024 * 1024
+
+	// DefaultWorkspaceMaxCount limits total artifacts to 1,000 items per workspace.
+	DefaultWorkspaceMaxCount int = 1000
+
+	// MaxSingleArtifactBytes rejects single payloads exceeding 20 MB before SQLite insertion.
+	MaxSingleArtifactBytes int64 = 20 * 1024 * 1024
 )
 
 // Blob represents a content-addressed code or text segment.
@@ -26,11 +39,12 @@ type Blob struct {
 
 // SymbolEntry represents a symbol indexed in SQLite FTS5.
 type SymbolEntry struct {
-	Symbol   string `json:"symbol"`
-	Kind     string `json:"kind"`
-	FilePath string `json:"file_path"`
-	Line     int    `json:"line"`
-	Hash     string `json:"hash"`
+	Workspace string `json:"workspace,omitempty"`
+	Symbol    string `json:"symbol"`
+	Kind      string `json:"kind"`
+	FilePath  string `json:"file_path"`
+	Line      int    `json:"line"`
+	Hash      string `json:"hash"`
 }
 
 // Artifact represents an immutable stored tool output, log, or query result.
@@ -52,10 +66,19 @@ type Artifact struct {
 
 // Store handles local SQLite content-addressed storage and FTS5 search.
 type Store struct {
-	db      *sql.DB
-	mu      sync.RWMutex
-	path    string
-	hasFTS5 bool
+	db            *sql.DB
+	mu            sync.RWMutex
+	path          string
+	hasFTS5       bool
+	lastSweepTime time.Time
+	policy        *dlp.PolicyEngine
+}
+
+// SetPolicy sets the privacy policy engine for the store.
+func (s *Store) SetPolicy(pe *dlp.PolicyEngine) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.policy = pe
 }
 
 // OpenStore opens or initializes the SQLite store at dbPath.
@@ -91,6 +114,104 @@ func OpenStore(dbPath string) (*Store, error) {
 }
 
 func (s *Store) initSchema() error {
+	// Check for v1→v2 migration need (workspace isolation)
+	var userVersion int
+	_ = s.db.QueryRow(`PRAGMA user_version`).Scan(&userVersion)
+
+	if userVersion < 2 {
+		// Check if legacy tables exist by probing for workspace column
+		var hasWorkspaceCol bool
+		rows, err := s.db.Query(`PRAGMA table_info(symbol_index)`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var cid int
+				var name, ctype string
+				var notnull, pk int
+				var dflt sql.NullString
+				if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil {
+					if name == "workspace" {
+						hasWorkspaceCol = true
+					}
+				}
+			}
+		}
+
+		// Only migrate if legacy tables exist without workspace column
+		if !hasWorkspaceCol {
+			// Check if the old tables actually have data (they exist from a prior version)
+			var tableCount int
+			_ = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='symbol_index'`).Scan(&tableCount)
+
+			if tableCount > 0 {
+				tx, err := s.db.Begin()
+				if err != nil {
+					return fmt.Errorf("migration begin: %w", err)
+				}
+				defer tx.Rollback()
+
+				// Drop old FTS5 virtual table and triggers (they reference old schema)
+				tx.Exec(`DROP TRIGGER IF EXISTS symbol_ai`)
+				tx.Exec(`DROP TRIGGER IF EXISTS symbol_ad`)
+				tx.Exec(`DROP TRIGGER IF EXISTS symbol_au`)
+				tx.Exec(`DROP TABLE IF EXISTS symbol_fts`)
+
+				// Migrate symbol_index
+				_, err = tx.Exec(`CREATE TABLE symbol_index_v2 (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					workspace TEXT NOT NULL,
+					symbol TEXT NOT NULL,
+					kind TEXT NOT NULL,
+					file_path TEXT NOT NULL,
+					line INTEGER NOT NULL,
+					hash TEXT NOT NULL
+				)`)
+				if err != nil {
+					return fmt.Errorf("migrate symbol_index_v2: %w", err)
+				}
+				_, err = tx.Exec(`INSERT INTO symbol_index_v2 (id, workspace, symbol, kind, file_path, line, hash)
+					SELECT id, '', symbol, kind, file_path, line, hash FROM symbol_index`)
+				if err != nil {
+					return fmt.Errorf("copy symbol_index: %w", err)
+				}
+				tx.Exec(`DROP TABLE symbol_index`)
+				tx.Exec(`ALTER TABLE symbol_index_v2 RENAME TO symbol_index`)
+
+				// Migrate file_index_state
+				_, err = tx.Exec(`CREATE TABLE file_index_state_v2 (
+					workspace TEXT NOT NULL,
+					file_path TEXT NOT NULL,
+					mod_time INTEGER NOT NULL,
+					hash TEXT NOT NULL,
+					indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (workspace, file_path)
+				)`)
+				if err != nil {
+					return fmt.Errorf("migrate file_index_state_v2: %w", err)
+				}
+				_, err = tx.Exec(`INSERT INTO file_index_state_v2 (workspace, file_path, mod_time, hash, indexed_at)
+					SELECT '', file_path, mod_time, hash, indexed_at FROM file_index_state`)
+				if err != nil {
+					return fmt.Errorf("copy file_index_state: %w", err)
+				}
+				tx.Exec(`DROP TABLE file_index_state`)
+				tx.Exec(`ALTER TABLE file_index_state_v2 RENAME TO file_index_state`)
+
+				// Set version
+				tx.Exec(`PRAGMA user_version = 2`)
+
+				if err := tx.Commit(); err != nil {
+					return fmt.Errorf("migration commit: %w", err)
+				}
+			}
+		}
+	}
+
+	// Set user_version for fresh databases
+	if userVersion == 0 {
+		_, _ = s.db.Exec(`PRAGMA user_version = 2`)
+	}
+
 	baseSchema := `
 	CREATE TABLE IF NOT EXISTS content_blobs (
 		hash TEXT PRIMARY KEY,
@@ -103,6 +224,7 @@ func (s *Store) initSchema() error {
 
 	CREATE TABLE IF NOT EXISTS symbol_index (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		workspace TEXT NOT NULL,
 		symbol TEXT NOT NULL,
 		kind TEXT NOT NULL,
 		file_path TEXT NOT NULL,
@@ -110,8 +232,8 @@ func (s *Store) initSchema() error {
 		hash TEXT NOT NULL
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_symbol_name ON symbol_index(symbol);
-	CREATE INDEX IF NOT EXISTS idx_symbol_file ON symbol_index(file_path);
+	CREATE INDEX IF NOT EXISTS idx_symbol_ws_file ON symbol_index(workspace, file_path);
+	CREATE INDEX IF NOT EXISTS idx_symbol_ws_symbol ON symbol_index(workspace, symbol);
 
 	CREATE TABLE IF NOT EXISTS cache_sessions (
 		session_id TEXT PRIMARY KEY,
@@ -120,10 +242,12 @@ func (s *Store) initSchema() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS file_index_state (
-		file_path TEXT PRIMARY KEY,
+		workspace TEXT NOT NULL,
+		file_path TEXT NOT NULL,
 		mod_time INTEGER NOT NULL,
 		hash TEXT NOT NULL,
-		indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (workspace, file_path)
 	);
 
 	CREATE TABLE IF NOT EXISTS audit_log (
@@ -173,10 +297,12 @@ func (s *Store) initSchema() error {
 	// Schema migration for existing artifacts table if last_accessed_at is missing from an older database
 	_, _ = s.db.Exec(`ALTER TABLE artifacts ADD COLUMN last_accessed_at INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_accessed ON artifacts(workspace, last_accessed_at)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_expires ON artifacts(pinned, expires_at)`)
 
 	// Attempt to create FTS5 virtual table and triggers; fall back gracefully if unsupported
 	ftsSchema := `
 	CREATE VIRTUAL TABLE IF NOT EXISTS symbol_fts USING fts5(
+		workspace UNINDEXED,
 		symbol,
 		kind,
 		file_path,
@@ -187,20 +313,20 @@ func (s *Store) initSchema() error {
 	);
 
 	CREATE TRIGGER IF NOT EXISTS symbol_ai AFTER INSERT ON symbol_index BEGIN
-		INSERT INTO symbol_fts(rowid, symbol, kind, file_path, line, hash)
-		VALUES (new.id, new.symbol, new.kind, new.file_path, new.line, new.hash);
+		INSERT INTO symbol_fts(rowid, workspace, symbol, kind, file_path, line, hash)
+		VALUES (new.id, new.workspace, new.symbol, new.kind, new.file_path, new.line, new.hash);
 	END;
 
 	CREATE TRIGGER IF NOT EXISTS symbol_ad AFTER DELETE ON symbol_index BEGIN
-		INSERT INTO symbol_fts(symbol_fts, rowid, symbol, kind, file_path, line, hash)
-		VALUES ('delete', old.id, old.symbol, old.kind, old.file_path, old.line, old.hash);
+		INSERT INTO symbol_fts(symbol_fts, rowid, workspace, symbol, kind, file_path, line, hash)
+		VALUES ('delete', old.id, old.workspace, old.symbol, old.kind, old.file_path, old.line, old.hash);
 	END;
 
 	CREATE TRIGGER IF NOT EXISTS symbol_au AFTER UPDATE ON symbol_index BEGIN
-		INSERT INTO symbol_fts(symbol_fts, rowid, symbol, kind, file_path, line, hash)
-		VALUES ('delete', old.id, old.symbol, old.kind, old.file_path, old.line, old.hash);
-		INSERT INTO symbol_fts(rowid, symbol, kind, file_path, line, hash)
-		VALUES (new.id, new.symbol, new.kind, new.file_path, new.line, new.hash);
+		INSERT INTO symbol_fts(symbol_fts, rowid, workspace, symbol, kind, file_path, line, hash)
+		VALUES ('delete', old.id, old.workspace, old.symbol, old.kind, old.file_path, old.line, old.hash);
+		INSERT INTO symbol_fts(rowid, workspace, symbol, kind, file_path, line, hash)
+		VALUES (new.id, new.workspace, new.symbol, new.kind, new.file_path, new.line, new.hash);
 	END;
 	`
 	if _, err := s.db.Exec(ftsSchema); err != nil {
@@ -270,49 +396,61 @@ func (s *Store) GetSession(id, workspace string) (string, error) {
 
 
 
-// GetFileIndexState returns the recorded mod_time and hash for a file.
-func (s *Store) GetFileIndexState(filePath string) (int64, string, error) {
+// GetFileIndexState returns the recorded mod_time and hash for a file within a workspace.
+func (s *Store) GetFileIndexState(workspace, filePath string) (int64, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var modTime int64
 	var hash string
-	err := s.db.QueryRow(`SELECT mod_time, hash FROM file_index_state WHERE file_path = ?`, filePath).Scan(&modTime, &hash)
+	err := s.db.QueryRow(`SELECT mod_time, hash FROM file_index_state WHERE workspace = ? AND file_path = ?`, workspace, filePath).Scan(&modTime, &hash)
 	if err != nil {
 		return 0, "", err
 	}
 	return modTime, hash, nil
 }
 
-// UpdateFileIndexState updates or inserts the file index tracking state.
-func (s *Store) UpdateFileIndexState(filePath string, modTime int64, hash string) error {
+// UpdateFileIndexState updates or inserts the file index tracking state, scoped by workspace.
+func (s *Store) UpdateFileIndexState(workspace, filePath string, modTime int64, hash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	_, err := s.db.Exec(`
-	INSERT INTO file_index_state (file_path, mod_time, hash, indexed_at)
-	VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-	ON CONFLICT(file_path) DO UPDATE SET
+	INSERT INTO file_index_state (workspace, file_path, mod_time, hash, indexed_at)
+	VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+	ON CONFLICT(workspace, file_path) DO UPDATE SET
 		mod_time=excluded.mod_time,
 		hash=excluded.hash,
 		indexed_at=CURRENT_TIMESTAMP
-	`, filePath, modTime, hash)
+	`, workspace, filePath, modTime, hash)
 	return err
 }
 
-// PruneFileSymbols removes all symbols indexed for a deleted or changed file.
-func (s *Store) PruneFileSymbols(filePath string) error {
+// PruneFileSymbols removes all symbols indexed for a deleted or changed file within a workspace.
+func (s *Store) PruneFileSymbols(workspace, filePath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err1 := s.db.Exec(`DELETE FROM symbol_index WHERE file_path = ?`, filePath)
-	_, err2 := s.db.Exec(`DELETE FROM file_index_state WHERE file_path = ?`, filePath)
+	_, err1 := s.db.Exec(`DELETE FROM symbol_index WHERE workspace = ? AND file_path = ?`, workspace, filePath)
+	_, err2 := s.db.Exec(`DELETE FROM file_index_state WHERE workspace = ? AND file_path = ?`, workspace, filePath)
 	if err1 != nil {
 		return err1
 	}
 	return err2
 }
 
+// PruneWorkspace removes all symbols and file index state for the given workspace.
+func (s *Store) PruneWorkspace(workspace string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err1 := s.db.Exec(`DELETE FROM symbol_index WHERE workspace = ?`, workspace)
+	_, err2 := s.db.Exec(`DELETE FROM file_index_state WHERE workspace = ?`, workspace)
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
 
 // LogAudit records an evaluated policy action in audit_log.
 func (s *Store) LogAudit(policyID, action, pattern, path, redactedPreview string) error {
@@ -356,6 +494,35 @@ func (s *Store) GetAuditLogs(limit int) ([]map[string]any, error) {
 }
 
 
+// GetRecentUnexpiredArtifactIDs returns up to limit artifact IDs in the given workspace
+// that are either pinned or have not yet expired, ordered by creation date descending.
+func (s *Store) GetRecentUnexpiredArtifactIDs(workspace string, limit int) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now().UTC().UnixNano()
+	rows, err := s.db.Query(
+		`SELECT id FROM artifacts
+		 WHERE workspace = ? AND (pinned = TRUE OR expires_at > ?)
+		 ORDER BY created_at DESC LIMIT ?`,
+		workspace, now, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query recent artifacts: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan artifact id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // ComputeHash returns the first 8 characters of the SHA-256 hash of the content.
 func ComputeHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
@@ -369,7 +536,31 @@ func SHA256Full(content string) string {
 }
 
 // PutArtifact stores an immutable artifact with full SHA-256 identity, workspace isolation, and TTL.
+// It enforces MaxSingleArtifactBytes pre-flight and workspace quotas (count and bytes) post-insert.
 func (s *Store) PutArtifact(art *Artifact) (string, error) {
+	// Pre-flight: reject oversized payloads before acquiring the lock
+	if int64(len(art.Body)) > MaxSingleArtifactBytes {
+		return "", fmt.Errorf("artifact body size %d bytes exceeds maximum allowed %d bytes (20 MB)", len(art.Body), MaxSingleArtifactBytes)
+	}
+
+	// Privacy policy enforcement: block/deny rejection before any data touches disk
+	if s.policy != nil {
+		eval := s.policy.EvaluateContent(art.Body)
+		if !eval.Allowed {
+			return "", fmt.Errorf("artifact storage blocked by privacy policy: %s", eval.Reason)
+		}
+		// Run redactor to detect and mask secrets
+		redactor := dlp.NewRedactor()
+		redacted, mapping := redactor.Redact(art.Body)
+		if len(mapping) > 0 {
+			art.SourceHash = SHA256Full(art.Body)
+			art.Body = redacted
+			art.IsRedacted = true
+			art.Hash = ""
+			art.SizeBytes = 0
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -420,6 +611,17 @@ func (s *Store) PutArtifact(art *Artifact) (string, error) {
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to put artifact: %w", err)
+	}
+
+	// Post-insert: enforce workspace quotas (deadlock-free — lock already held)
+	if art.Workspace != "" {
+		s.evictArtifactsLRULocked(art.Workspace, DefaultWorkspaceMaxCount, DefaultWorkspaceMaxBytes)
+	}
+
+	// Opportunistic expiry sweep if >10 minutes since last sweep
+	if time.Since(s.lastSweepTime) > 10*time.Minute {
+		s.evictExpiredArtifactsLocked()
+		s.lastSweepTime = time.Now()
 	}
 
 	return art.ID, nil
@@ -493,16 +695,29 @@ func (s *Store) GetArtifact(id string, workspace string) (*Artifact, error) {
 }
 
 // PruneExpiredArtifacts removes unpinned expired artifacts past their TTL.
+// Deprecated: prefer EvictExpiredArtifacts which uses the same logic.
 func (s *Store) PruneExpiredArtifacts() (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.evictExpiredArtifactsLocked()
+}
 
+// evictExpiredArtifactsLocked removes unpinned expired artifacts. Assumes s.mu is held.
+func (s *Store) evictExpiredArtifactsLocked() (int64, error) {
 	now := time.Now().UTC().UnixNano()
 	res, err := s.db.Exec(`DELETE FROM artifacts WHERE pinned = FALSE AND expires_at < ?`, now)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// EvictExpiredArtifacts removes unpinned artifacts whose TTL has elapsed.
+// Uses the (pinned, expires_at) index for efficient non-scanning deletes.
+func (s *Store) EvictExpiredArtifacts() (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.evictExpiredArtifactsLocked()
 }
 
 // EnforceQuota is an alias for EvictArtifactsLRU with unlimited count, matching legacy callers.
@@ -515,6 +730,15 @@ func (s *Store) EnforceQuota(workspace string, maxBytes int64) (int64, error) {
 func (s *Store) EvictArtifactsLRU(workspace string, maxCount int, maxBytes int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.evictArtifactsLRULocked(workspace, maxCount, maxBytes)
+}
+
+// evictArtifactsLRULocked is the internal eviction helper that assumes s.mu is already held.
+// This prevents deadlocks when called from PutArtifact (which already holds s.mu).
+func (s *Store) evictArtifactsLRULocked(workspace string, maxCount int, maxBytes int64) (int64, error) {
+	if workspace == "" {
+		return 0, nil
+	}
 
 	var totalBytes int64
 	var totalCount int
@@ -572,6 +796,68 @@ func (s *Store) EvictArtifactsLRU(workspace string, maxCount int, maxBytes int64
 	return deletedCount, nil
 }
 
+// ListArtifacts returns all artifacts for a workspace without loading bodies (for CLI display).
+// Results are ordered by created_at DESC.
+func (s *Store) ListArtifacts(workspace string) ([]Artifact, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT id, hash, source_hash, type, workspace, created_at, expires_at, pinned, size_bytes, transform_version, is_redacted, last_accessed_at
+		FROM artifacts
+		WHERE workspace = ?
+		ORDER BY created_at DESC
+	`, workspace)
+	if err != nil {
+		return nil, fmt.Errorf("list artifacts: %w", err)
+	}
+	defer rows.Close()
+
+	var artifacts []Artifact
+	for rows.Next() {
+		var a Artifact
+		var createdAtNano, expiresAtNano, lastAccessedNano int64
+		var srcHash, transVer sql.NullString
+
+		if err := rows.Scan(
+			&a.ID, &a.Hash, &srcHash, &a.Type, &a.Workspace,
+			&createdAtNano, &expiresAtNano, &a.Pinned, &a.SizeBytes,
+			&transVer, &a.IsRedacted, &lastAccessedNano,
+		); err != nil {
+			return nil, fmt.Errorf("scan artifact: %w", err)
+		}
+
+		if srcHash.Valid {
+			a.SourceHash = srcHash.String
+		}
+		if transVer.Valid {
+			a.TransformVersion = transVer.String
+		}
+		a.CreatedAt = time.Unix(0, createdAtNano).UTC()
+		a.ExpiresAt = time.Unix(0, expiresAtNano).UTC()
+		if lastAccessedNano == 0 {
+			a.LastAccessedAt = a.CreatedAt
+		} else {
+			a.LastAccessedAt = time.Unix(0, lastAccessedNano).UTC()
+		}
+		// Body intentionally not loaded
+		artifacts = append(artifacts, a)
+	}
+	return artifacts, rows.Err()
+}
+
+// GetWorkspaceArtifactStats returns the total count and byte footprint of artifacts in a workspace.
+func (s *Store) GetWorkspaceArtifactStats(workspace string) (count int, totalBytes int64, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	err = s.db.QueryRow(
+		`SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM artifacts WHERE workspace = ?`,
+		workspace,
+	).Scan(&count, &totalBytes)
+	return
+}
+
 
 // PutBlob stores a content block and returns its hash.
 func (s *Store) PutBlob(filePath string, startLine, endLine int, body string) (string, error) {
@@ -614,18 +900,19 @@ func (s *Store) GetBlob(hash string) (*Blob, error) {
 	return &b, nil
 }
 
-// IndexSymbol records a symbol mapping.
-func (s *Store) IndexSymbol(symbol, kind, filePath string, line int, hash string) error {
+// IndexSymbol records a symbol mapping scoped to a workspace.
+func (s *Store) IndexSymbol(workspace, symbol, kind, filePath string, line int, hash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	query := `INSERT INTO symbol_index (symbol, kind, file_path, line, hash) VALUES (?, ?, ?, ?, ?)`
-	_, err := s.db.Exec(query, symbol, kind, filePath, line, hash)
+	query := `INSERT INTO symbol_index (workspace, symbol, kind, file_path, line, hash) VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := s.db.Exec(query, workspace, symbol, kind, filePath, line, hash)
 	return err
 }
 
 // SearchSymbols finds matching symbols using FTS5 full-text match with BM25 ranking, falling back to LIKE if needed.
-func (s *Store) SearchSymbols(queryStr string, limit int) ([]SymbolEntry, error) {
+// Results are scoped to the given workspace.
+func (s *Store) SearchSymbols(workspace, queryStr string, limit int) ([]SymbolEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -655,18 +942,18 @@ func (s *Store) SearchSymbols(queryStr string, limit int) ([]SymbolEntry, error)
 	if s.hasFTS5 && len(ftsTokens) > 0 {
 		ftsExpr := strings.Join(ftsTokens, " OR ")
 		ftsQuery := `
-		SELECT symbol, kind, file_path, line, hash
+		SELECT workspace, symbol, kind, file_path, line, hash
 		FROM symbol_fts
-		WHERE symbol_fts MATCH ?
+		WHERE symbol_fts MATCH ? AND workspace = ?
 		ORDER BY bm25(symbol_fts)
 		LIMIT ?
 		`
-		rows, err := s.db.Query(ftsQuery, ftsExpr, limit)
+		rows, err := s.db.Query(ftsQuery, ftsExpr, workspace, limit)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
 				var e SymbolEntry
-				if err := rows.Scan(&e.Symbol, &e.Kind, &e.FilePath, &e.Line, &e.Hash); err == nil {
+				if err := rows.Scan(&e.Workspace, &e.Symbol, &e.Kind, &e.FilePath, &e.Line, &e.Hash); err == nil {
 					results = append(results, e)
 				}
 			}
@@ -678,13 +965,13 @@ func (s *Store) SearchSymbols(queryStr string, limit int) ([]SymbolEntry, error)
 
 	// Fallback to LIKE query
 	query := `
-	SELECT symbol, kind, file_path, line, hash 
+	SELECT workspace, symbol, kind, file_path, line, hash 
 	FROM symbol_index 
-	WHERE symbol LIKE ? OR file_path LIKE ?
+	WHERE (symbol LIKE ? OR file_path LIKE ?) AND workspace = ?
 	LIMIT ?
 	`
 	pattern := "%" + queryStr + "%"
-	rows, err := s.db.Query(query, pattern, pattern, limit)
+	rows, err := s.db.Query(query, pattern, pattern, workspace, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -692,7 +979,7 @@ func (s *Store) SearchSymbols(queryStr string, limit int) ([]SymbolEntry, error)
 
 	for rows.Next() {
 		var e SymbolEntry
-		if err := rows.Scan(&e.Symbol, &e.Kind, &e.FilePath, &e.Line, &e.Hash); err != nil {
+		if err := rows.Scan(&e.Workspace, &e.Symbol, &e.Kind, &e.FilePath, &e.Line, &e.Hash); err != nil {
 			return nil, err
 		}
 		results = append(results, e)

@@ -10,6 +10,7 @@ import (
 
 	ignore "github.com/sabhiram/go-gitignore"
 	"tzro/pkg/ast"
+	"tzro/pkg/dlp"
 	"tzro/pkg/store"
 )
 
@@ -69,12 +70,14 @@ func (cp *ContextPack) FormatMarkdown() string {
 
 // Assembler manages building token-budgeted context packs.
 type Assembler struct {
-	store *store.Store
+	store  *store.Store
+	policy *dlp.PolicyEngine
 }
 
 // NewAssembler creates a new context pack assembler.
-func NewAssembler(s *store.Store) *Assembler {
-	return &Assembler{store: s}
+// If policy is nil, the assembler operates without privacy filtering.
+func NewAssembler(s *store.Store, policy *dlp.PolicyEngine) *Assembler {
+	return &Assembler{store: s, policy: policy}
 }
 
 // Assemble selects and ranks relevant symbols, implementations, tests, and documentation.
@@ -123,13 +126,21 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 				return nil
 			}
 
+			// Privacy policy: skip blocked/denied paths without reading from disk
+			if a.policy != nil {
+				eval := a.policy.EvaluatePath(relPath)
+				if !eval.Allowed {
+					return nil
+				}
+			}
+
 			info, err := d.Info()
 			if err != nil {
 				return nil
 			}
 
 			// Check freshness against store
-			lastMod, prevHash, err := a.store.GetFileIndexState(relPath)
+			lastMod, prevHash, err := a.store.GetFileIndexState(workspaceRoot, relPath)
 			currMod := info.ModTime().UnixNano()
 			if err != nil || lastMod != currMod {
 				// File is dirty or never indexed: parse and update index
@@ -137,14 +148,14 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 				if err == nil {
 					currHash := store.ComputeHash(string(content))
 					if currHash != prevHash {
-						_ = a.store.PruneFileSymbols(relPath)
-						_ = a.store.PruneFileSymbols(path)
-						_, _ = ast.Skeletonize(relPath, content, a.store)
-						_ = a.store.UpdateFileIndexState(relPath, currMod, currHash)
+						_ = a.store.PruneFileSymbols(workspaceRoot, relPath)
+						_ = a.store.PruneFileSymbols(workspaceRoot, path)
+						_, _ = ast.Skeletonize(relPath, content, a.store, workspaceRoot)
+						_ = a.store.UpdateFileIndexState(workspaceRoot, relPath, currMod, currHash)
 					} else {
 
 						// Content unchanged, update mod timestamp
-						_ = a.store.UpdateFileIndexState(relPath, currMod, currHash)
+						_ = a.store.UpdateFileIndexState(workspaceRoot, relPath, currMod, currHash)
 					}
 				}
 			}
@@ -159,13 +170,22 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 	// 2. FTS5 Symbol search
 	if a.store != nil {
 
-		syms, err := a.store.SearchSymbols(query, 25)
+		syms, err := a.store.SearchSymbols(workspaceRoot, query, 25)
 		if err == nil {
 			for _, sym := range syms {
 				relPath := sym.FilePath
 				if filepath.IsAbs(relPath) {
 					relPath, _ = filepath.Rel(workspaceRoot, relPath)
 				}
+
+				// Privacy policy: drop symbols from blocked/denied file paths
+				if a.policy != nil {
+					eval := a.policy.EvaluatePath(relPath)
+					if !eval.Allowed {
+						continue
+					}
+				}
+
 				key := fmt.Sprintf("%s:%s", relPath, sym.Symbol)
 				candidateMap[key] = &PackItem{
 					FilePath:   relPath,
@@ -208,6 +228,17 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 			return nil
 		}
 
+		// Privacy policy: skip blocked/denied paths without reading from disk
+		if a.policy != nil {
+			eval := a.policy.EvaluatePath(relPath)
+			if !eval.Allowed {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+
 		if d.IsDir() {
 			return nil
 		}
@@ -235,7 +266,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 		if fileScore > 0 {
 			contentBytes, err := os.ReadFile(path)
 			if err == nil {
-				skel, _ := ast.Skeletonize(relPath, contentBytes, nil)
+				skel, _ := ast.Skeletonize(relPath, contentBytes, nil, "")
 				body := string(contentBytes)
 				if skel != nil && skel.SkeletonCode != "" {
 					body = skel.SkeletonCode
@@ -273,7 +304,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 									impKey := fmt.Sprintf("%s:imported", relImpPath)
 									if _, exists := candidateMap[impKey]; !exists {
 										impBody := string(impContent)
-										skelImp, _ := ast.Skeletonize(relImpPath, impContent, nil)
+										skelImp, _ := ast.Skeletonize(relImpPath, impContent, nil, "")
 										if skelImp != nil && skelImp.SkeletonCode != "" {
 											impBody = skelImp.SkeletonCode
 										}
@@ -307,14 +338,56 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 		if item.Content == "" {
 			fullPath := filepath.Join(workspaceRoot, item.FilePath)
 			contentBytes, err := os.ReadFile(fullPath)
-			if err == nil {
-				skel, _ := ast.Skeletonize(item.FilePath, contentBytes, nil)
-				if skel != nil && skel.SkeletonCode != "" {
-					item.Content = skel.SkeletonCode
-				} else {
-					item.Content = string(contentBytes)
+			if err != nil {
+				continue
+			}
+
+			// For symbol matches, try targeted declaration span extraction first
+			if item.SymbolName != "" {
+				span, spanErr := ast.ExtractDeclarationSpan(
+					item.FilePath, contentBytes, item.StartLine, item.SymbolName, a.store,
+				)
+				if spanErr == nil && span != nil {
+					item.Content = span.Code
+					item.TokenWeight = span.TokenWeight
+					item.StartLine = span.StartLine
+					item.EndLine = span.EndLine
+					item.Kind = span.Kind
+					item.Hash = span.BodyHash
+					continue
 				}
-				item.TokenWeight = EstimateTokens(item.Content)
+			}
+
+			// Fallback: whole-file skeleton
+			skel, _ := ast.Skeletonize(item.FilePath, contentBytes, nil, "")
+			if skel != nil && skel.SkeletonCode != "" {
+				item.Content = skel.SkeletonCode
+			} else {
+				item.Content = string(contentBytes)
+			}
+			item.TokenWeight = EstimateTokens(item.Content)
+		}
+	}
+
+
+	// 4.5. Privacy content evaluation and redaction
+	if a.policy != nil {
+		redactor := dlp.NewRedactor()
+		for key, item := range candidateMap {
+			if item.Content == "" {
+				continue
+			}
+			eval := a.policy.EvaluateContent(item.Content)
+			if !eval.Allowed {
+				// Block/Deny: drop candidate entirely
+				delete(candidateMap, key)
+				continue
+			}
+			// Always run redactor to catch secrets even when policy says allow
+			redacted, mapping := redactor.Redact(item.Content)
+			if len(mapping) > 0 {
+				item.Content = redacted
+				item.TokenWeight = EstimateTokens(redacted)
 			}
 		}
 	}
@@ -338,14 +411,15 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 		return sortedCandidates[i].StartLine < sortedCandidates[j].StartLine
 	})
 
-	// 6. Greedy packing under token budget
+	// 6. Strict knapsack packing under token budget — no unconditional bypasses
 	used := 0
 	for _, c := range sortedCandidates {
-		if used+c.TokenWeight <= budget || len(pack.Items) == 0 {
+		// Strict invariant: NEVER allow used + TokenWeight > budget
+		if used+c.TokenWeight <= budget {
 			pack.Items = append(pack.Items, *c)
 			used += c.TokenWeight
 		}
-		if used >= budget {
+		if used == budget {
 			break
 		}
 	}

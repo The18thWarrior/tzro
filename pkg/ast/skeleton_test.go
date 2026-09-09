@@ -29,7 +29,7 @@ func Multiply(a, b int) int {
 }
 `)
 
-	res, err := Skeletonize("math.go", src, s)
+	res, err := Skeletonize("math.go", src, s, "")
 	if err != nil {
 		t.Fatalf("Skeletonize failed: %v", err)
 	}
@@ -51,7 +51,7 @@ func Multiply(a, b int) int {
 	}
 
 	// Verify the body was stored in SQLite
-	symbols, err := s.SearchSymbols("Add", 10)
+	symbols, err := s.SearchSymbols("", "Add", 10)
 	if err != nil || len(symbols) == 0 {
 		t.Fatalf("expected Add to be indexed in store, got %v", symbols)
 	}
@@ -74,7 +74,7 @@ func TestSkeletonize_Python(t *testing.T) {
     return total
 `)
 
-	res, err := Skeletonize("calc.py", src, nil)
+	res, err := Skeletonize("calc.py", src, nil, "")
 	if err != nil {
 		t.Fatalf("Skeletonize failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestSkeletonize_TypeScript(t *testing.T) {
 }
 `)
 
-	res, err := Skeletonize("auth.ts", src, nil)
+	res, err := Skeletonize("auth.ts", src, nil, "")
 	if err != nil {
 		t.Fatalf("Skeletonize failed: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestSkeletonize_Markdown(t *testing.T) {
 
 	src := []byte("# Project Title\n\nShort intro paragraph.\n\n## Installation\n\n```go\npackage main\n\n" + longCode + "```\n\n## Description\n\n" + longParagraph + "\n\n## License\n\nMIT\n")
 
-	res, err := Skeletonize("README.md", src, s)
+	res, err := Skeletonize("README.md", src, s, "")
 	if err != nil {
 		t.Fatalf("Skeletonize failed: %v", err)
 	}
