@@ -11,30 +11,50 @@ import (
 	ignore "github.com/sabhiram/go-gitignore"
 	"tzro/pkg/ast"
 	"tzro/pkg/dlp"
+	"tzro/pkg/inspector"
 	"tzro/pkg/store"
 )
 
 // PackItem represents a single code snippet, symbol, or test in a context pack.
 type PackItem struct {
-	FilePath    string  `json:"file_path"`
-	SymbolName  string  `json:"symbol_name,omitempty"`
-	Kind        string  `json:"kind,omitempty"`
-	StartLine   int     `json:"start_line"`
-	EndLine     int     `json:"end_line"`
-	Reason      string  `json:"reason"`
-	Score       float64 `json:"score"`
-	Content     string  `json:"content"`
-	TokenWeight int     `json:"token_weight"`
-	Hash        string  `json:"hash,omitempty"`
+	FilePath     string  `json:"file_path"`
+	SymbolName   string  `json:"symbol_name,omitempty"`
+	Kind         string  `json:"kind,omitempty"`
+	StartLine    int     `json:"start_line"`
+	EndLine      int     `json:"end_line"`
+	Reason       string  `json:"reason"`
+	Score        float64 `json:"score"`
+	Content      string  `json:"content"`
+	TokenWeight  int     `json:"token_weight"`
+	Hash         string  `json:"hash,omitempty"`
+	Precision    string  `json:"precision,omitempty"`    // precise | syntactic | inferred
+	Relationship string  `json:"relationship,omitempty"` // caller | implementor | embedder | test | config
+}
+
+// UnresolvedImport records an import that could not be resolved during analysis.
+type UnresolvedImport struct {
+	SourceFile string `json:"source_file"`
+	ImportPath string `json:"import_path"`
+}
+
+// CoverageReport discloses candidate discovery, inclusion, and truncation statistics.
+type CoverageReport struct {
+	TotalCandidates    int                `json:"total_candidates"`
+	IncludedCandidates int                `json:"included_candidates"`
+	TruncatedCount     int                `json:"truncated_count"`
+	TruncatedManifest  []string           `json:"truncated_manifest"`
+	Unresolved         []UnresolvedImport `json:"unresolved,omitempty"`
+	FallbackUsed       bool               `json:"fallback_used"`
 }
 
 // ContextPack represents the assembled context bundle.
 type ContextPack struct {
-	Query       string     `json:"query"`
-	Budget      int        `json:"budget"`
-	UsedTokens  int        `json:"used_tokens"`
-	Items       []PackItem `json:"items"`
-	GeneratedAt time.Time  `json:"generated_at"`
+	Query       string          `json:"query"`
+	Budget      int             `json:"budget"`
+	UsedTokens  int             `json:"used_tokens"`
+	Items       []PackItem      `json:"items"`
+	GeneratedAt time.Time       `json:"generated_at"`
+	Coverage    *CoverageReport `json:"coverage,omitempty"`
 }
 
 // EstimateTokens provides a deterministic rule-of-thumb estimate (~4 chars per token).
@@ -51,12 +71,32 @@ func (cp *ContextPack) FormatMarkdown() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Context Pack: %q (Budget: %d tokens, Used: ~%d tokens)\n\n", cp.Query, cp.Budget, cp.UsedTokens))
 
+	if cp.Coverage != nil {
+		sb.WriteString("### Coverage Report\n")
+		sb.WriteString(fmt.Sprintf("- **Candidates Found:** %d\n", cp.Coverage.TotalCandidates))
+		sb.WriteString(fmt.Sprintf("- **Candidates Included:** %d\n", cp.Coverage.IncludedCandidates))
+		if cp.Coverage.TruncatedCount > 0 {
+			sb.WriteString(fmt.Sprintf("- **Truncated Due to Budget:** %d\n", cp.Coverage.TruncatedCount))
+			sb.WriteString(fmt.Sprintf("- **Truncated Files:** %s\n", strings.Join(cp.Coverage.TruncatedManifest, ", ")))
+		}
+		if len(cp.Coverage.Unresolved) > 0 {
+			sb.WriteString("- **Unresolved Imports:**\n")
+			for _, u := range cp.Coverage.Unresolved {
+				sb.WriteString(fmt.Sprintf("  - `%s` in %s\n", u.ImportPath, u.SourceFile))
+			}
+		}
+		sb.WriteString("\n---\n\n")
+	}
+
 	for i, item := range cp.Items {
 		sb.WriteString(fmt.Sprintf("## [%d] %s", i+1, item.FilePath))
 		if item.SymbolName != "" {
 			sb.WriteString(fmt.Sprintf(" : `%s` (%s)", item.SymbolName, item.Kind))
 		}
 		sb.WriteString(fmt.Sprintf("\n- **Reason:** %s\n", item.Reason))
+		if item.Precision != "" || item.Relationship != "" {
+			sb.WriteString(fmt.Sprintf("- **Impact:** `%s` (%s)\n", item.Relationship, item.Precision))
+		}
 		if item.StartLine > 0 && item.EndLine >= item.StartLine {
 			sb.WriteString(fmt.Sprintf("- **Lines:** %d-%d\n", item.StartLine, item.EndLine))
 		}
@@ -413,17 +453,78 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 
 	// 6. Strict knapsack packing under token budget — no unconditional bypasses
 	used := 0
+	var truncatedManifest []string
 	for _, c := range sortedCandidates {
 		// Strict invariant: NEVER allow used + TokenWeight > budget
 		if used+c.TokenWeight <= budget {
 			pack.Items = append(pack.Items, *c)
 			used += c.TokenWeight
+		} else {
+			truncatedManifest = append(truncatedManifest, c.FilePath)
 		}
 		if used == budget {
 			break
 		}
 	}
 	pack.UsedTokens = used
+	if pack.Coverage == nil {
+		pack.Coverage = &CoverageReport{
+			TotalCandidates:    len(sortedCandidates),
+			IncludedCandidates: len(pack.Items),
+			TruncatedCount:     len(truncatedManifest),
+			TruncatedManifest:  truncatedManifest,
+		}
+	}
+
+	// Always-on trace recording
+	if a.store != nil {
+		traceID := fmt.Sprintf("trace_%d", time.Now().UTC().UnixNano())
+		var disc []inspector.CandidateTrace
+		for _, c := range sortedCandidates {
+			disc = append(disc, inspector.CandidateTrace{
+				Path:   c.FilePath,
+				Hash:   c.Hash,
+				Score:  c.Score,
+				Tokens: c.TokenWeight,
+			})
+		}
+		var ranked []inspector.RankedCandidate
+		for i, c := range sortedCandidates {
+			ranked = append(ranked, inspector.RankedCandidate{
+				Path:         c.FilePath,
+				Rank:         i + 1,
+				Score:        c.Score,
+				Precision:    c.Precision,
+				Relationship: c.Relationship,
+			})
+		}
+		var packed []inspector.PackedItem
+		for _, it := range pack.Items {
+			packed = append(packed, inspector.PackedItem{
+				Path:       it.FilePath,
+				TokensUsed: it.TokenWeight,
+				Tier:       inspector.TierMeasured,
+			})
+		}
+		tr := &inspector.Trace{
+			ID:        traceID,
+			Workspace: workspaceRoot,
+			CreatedAt: time.Now().UTC(),
+			Query:     query,
+			Config: inspector.TraceConfig{
+				Budget: budget,
+			},
+			Discovery: disc,
+			Ranking:   ranked,
+			Packing: inspector.PackingStage{
+				TotalBudget:       budget,
+				BudgetRemaining:   budget - used,
+				IncludedItems:     packed,
+				TruncatedManifest: truncatedManifest,
+			},
+		}
+		_ = inspector.NewEngine(a.store, a.policy).RecordTrace(tr)
+	}
 
 	return pack, nil
 }

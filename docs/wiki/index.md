@@ -54,6 +54,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 
 - [Tzro Capability Evaluation — September 8, 2026](architecture/tzro-next-capabilities-evaluation-2026-09-08.md) - Branch assessment, historical lessons, and five proposed additions beyond Astra context capabilities. (Reviewed: `4820318` | Status: proposals)
 - [Context Foundation Hardening Wayfinder Map](../../.scratch/context-foundation-hardening/MAP.md) - Wayfinder shared decision map for hardening the 6 core context boundaries in astra-changes (workspace isolation, context budgeting, session capture, artifact retention, uniform privacy, doctor diagnostics). (Status: `wayfinder:map` (6/6 tickets resolved) | Started: 2026-09-09)
+- [Context and Evidence Workflows](architecture/context-and-evidence-workflows.md) - Successor map covering five use cases and first-release selection. Links each scenario to its decision ticket. (Status: planning | Started: 2026-09-09)
 
 - [Repository Domain Context](../../CONTEXT.md) - Durable local-first agentic execution language glossary.
 - [Technical Design](../technical-design.md) - Overview of the tzro durable local execution system.

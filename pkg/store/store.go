@@ -25,7 +25,32 @@ const (
 
 	// MaxSingleArtifactBytes rejects single payloads exceeding 20 MB before SQLite insertion.
 	MaxSingleArtifactBytes int64 = 20 * 1024 * 1024
+
+	// DefaultContextTraceMaxBytes limits total trace storage to 50 MB per workspace.
+	DefaultContextTraceMaxBytes int64 = 50 * 1024 * 1024
 )
+
+// ContextTrace represents an always-on six-stage context assembly diagnostic trace.
+type ContextTrace struct {
+	ID         string    `json:"id"`
+	Workspace  string    `json:"workspace"`
+	CreatedAt  time.Time `json:"created_at"`
+	Query      string    `json:"query"`
+	Budget     int       `json:"budget"`
+	ConfigJSON string    `json:"config_json"`
+	TraceJSON  string    `json:"trace_json"`
+	SizeBytes  int64     `json:"size_bytes"`
+}
+
+// ContextTraceMeta provides summary metadata for a context trace without the large JSON payload.
+type ContextTraceMeta struct {
+	ID        string    `json:"id"`
+	Workspace string    `json:"workspace"`
+	CreatedAt time.Time `json:"created_at"`
+	Query     string    `json:"query"`
+	Budget    int       `json:"budget"`
+	SizeBytes int64     `json:"size_bytes"`
+}
 
 // Blob represents a content-addressed code or text segment.
 type Blob struct {
@@ -289,6 +314,25 @@ func (s *Store) initSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_ws ON sessions(workspace);
+
+	CREATE TABLE IF NOT EXISTS context_traces (
+		id TEXT PRIMARY KEY,
+		workspace TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		query TEXT,
+		budget INTEGER,
+		config_json TEXT NOT NULL,
+		trace_json TEXT NOT NULL,
+		size_bytes INTEGER NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_context_traces_ws_created ON context_traces(workspace, created_at);
+
+	CREATE TABLE IF NOT EXISTS trace_outcomes (
+		trace_id TEXT PRIMARY KEY,
+		outcome_json TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	);
 	`
 	if _, err := s.db.Exec(baseSchema); err != nil {
 		return err
@@ -347,7 +391,7 @@ func (s *Store) PutSession(id, workspace, branch string, schemaVersion int, mani
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now().UTC().Unix()
+	now := time.Now().UTC().UnixNano()
 	query := `
 	INSERT INTO sessions (id, workspace, branch, created_at, schema_version, manifest_json)
 	VALUES (?, ?, ?, ?, ?, ?)
@@ -392,6 +436,293 @@ func (s *Store) GetSession(id, workspace string) (string, error) {
 
 	return manifestJSON, nil
 }
+
+// GetLatestSessionByBranch returns the most recent session manifest for a specific branch.
+func (s *Store) GetLatestSessionByBranch(workspace, branch string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT manifest_json FROM sessions WHERE workspace = ? AND branch = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`
+	var manifestJSON string
+	err := s.db.QueryRow(query, workspace, branch).Scan(&manifestJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no session found for workspace %q on branch %q", workspace, branch)
+		}
+		return "", err
+	}
+	return manifestJSON, nil
+}
+
+// GetLatestSession returns the most recent session manifest for a workspace regardless of branch.
+func (s *Store) GetLatestSession(workspace string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT manifest_json FROM sessions WHERE workspace = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`
+	var manifestJSON string
+	err := s.db.QueryRow(query, workspace).Scan(&manifestJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no session found for workspace %q", workspace)
+		}
+		return "", err
+	}
+	return manifestJSON, nil
+}
+
+// ListSessions returns all session manifests for a workspace ordered by created_at DESC.
+func (s *Store) ListSessions(workspace string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT manifest_json FROM sessions WHERE workspace = ? ORDER BY created_at DESC, rowid DESC`
+	rows, err := s.db.Query(query, workspace)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, m)
+	}
+	return sessions, rows.Err()
+}
+
+// PutContextTrace records a context assembly trace and enforces the 50 MB workspace quota.
+func (s *Store) PutContextTrace(trace *ContextTrace) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if trace.CreatedAt.IsZero() {
+		trace.CreatedAt = time.Now().UTC()
+	}
+	if trace.SizeBytes == 0 {
+		trace.SizeBytes = int64(len(trace.ConfigJSON) + len(trace.TraceJSON) + len(trace.Query))
+	}
+
+	query := `
+	INSERT INTO context_traces (id, workspace, created_at, query, budget, config_json, trace_json, size_bytes)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		workspace=excluded.workspace,
+		created_at=excluded.created_at,
+		query=excluded.query,
+		budget=excluded.budget,
+		config_json=excluded.config_json,
+		trace_json=excluded.trace_json,
+		size_bytes=excluded.size_bytes;
+	`
+	_, err := s.db.Exec(query,
+		trace.ID,
+		trace.Workspace,
+		trace.CreatedAt.UnixNano(),
+		trace.Query,
+		trace.Budget,
+		trace.ConfigJSON,
+		trace.TraceJSON,
+		trace.SizeBytes,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to put context trace: %w", err)
+	}
+
+	// Enforce 50 MB workspace LRU quota
+	if trace.Workspace != "" {
+		s.evictContextTracesLRULocked(trace.Workspace, DefaultContextTraceMaxBytes)
+	}
+
+	return nil
+}
+
+// GetContextTrace retrieves a context trace by ID, strictly respecting workspace isolation.
+func (s *Store) GetContextTrace(id, workspace string) (*ContextTrace, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+	SELECT id, workspace, created_at, query, budget, config_json, trace_json, size_bytes
+	FROM context_traces
+	WHERE id = ?
+	`
+	var args []any
+	args = append(args, id)
+	if workspace != "" {
+		query += " AND workspace = ?"
+		args = append(args, workspace)
+	}
+
+	row := s.db.QueryRow(query, args...)
+	var tr ContextTrace
+	var createdNano int64
+	var q sql.NullString
+	var b sql.NullInt64
+
+	err := row.Scan(
+		&tr.ID,
+		&tr.Workspace,
+		&createdNano,
+		&q,
+		&b,
+		&tr.ConfigJSON,
+		&tr.TraceJSON,
+		&tr.SizeBytes,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("context trace %q not found or access denied by workspace isolation", id)
+		}
+		return nil, err
+	}
+
+	if q.Valid {
+		tr.Query = q.String
+	}
+	if b.Valid {
+		tr.Budget = int(b.Int64)
+	}
+	tr.CreatedAt = time.Unix(0, createdNano).UTC()
+
+	return &tr, nil
+}
+
+// ListContextTraces returns recent trace summaries for a workspace.
+func (s *Store) ListContextTraces(workspace string, limit int) ([]ContextTraceMeta, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := `
+	SELECT id, workspace, created_at, query, budget, size_bytes
+	FROM context_traces
+	WHERE workspace = ?
+	ORDER BY created_at DESC
+	LIMIT ?
+	`
+	rows, err := s.db.Query(query, workspace, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list context traces: %w", err)
+	}
+	defer rows.Close()
+
+	var traces []ContextTraceMeta
+	for rows.Next() {
+		var m ContextTraceMeta
+		var createdNano int64
+		var q sql.NullString
+		var b sql.NullInt64
+
+		if err := rows.Scan(&m.ID, &m.Workspace, &createdNano, &q, &b, &m.SizeBytes); err != nil {
+			return nil, err
+		}
+		if q.Valid {
+			m.Query = q.String
+		}
+		if b.Valid {
+			m.Budget = int(b.Int64)
+		}
+		m.CreatedAt = time.Unix(0, createdNano).UTC()
+		traces = append(traces, m)
+	}
+	return traces, rows.Err()
+}
+
+// EvictContextTracesLRU evicts oldest context traces for a workspace until total bytes <= maxBytes.
+func (s *Store) EvictContextTracesLRU(workspace string, maxBytes int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.evictContextTracesLRULocked(workspace, maxBytes)
+}
+
+func (s *Store) evictContextTracesLRULocked(workspace string, maxBytes int64) (int64, error) {
+	if workspace == "" || maxBytes <= 0 {
+		return 0, nil
+	}
+
+	var totalBytes int64
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(size_bytes), 0) FROM context_traces WHERE workspace = ?`, workspace).Scan(&totalBytes)
+	if err != nil || totalBytes <= maxBytes {
+		return 0, err
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, size_bytes FROM context_traces
+		WHERE workspace = ?
+		ORDER BY created_at ASC
+	`, workspace)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type item struct {
+		id   string
+		size int64
+	}
+	var toDelete []item
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.id, &it.size); err == nil {
+			toDelete = append(toDelete, it)
+		}
+	}
+
+	var deletedCount int64
+	for _, it := range toDelete {
+		if totalBytes <= maxBytes {
+			break
+		}
+		if _, err := s.db.Exec(`DELETE FROM context_traces WHERE id = ?`, it.id); err == nil {
+			totalBytes -= it.size
+			deletedCount++
+		}
+	}
+
+	return deletedCount, nil
+}
+
+// PutTraceOutcome records external evaluation outcome data keyed by trace ID.
+func (s *Store) PutTraceOutcome(traceID string, outcomeJSON string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC().UnixNano()
+	query := `
+	INSERT INTO trace_outcomes (trace_id, outcome_json, created_at)
+	VALUES (?, ?, ?)
+	ON CONFLICT(trace_id) DO UPDATE SET
+		outcome_json=excluded.outcome_json,
+		created_at=excluded.created_at;
+	`
+	_, err := s.db.Exec(query, traceID, outcomeJSON, now)
+	return err
+}
+
+// GetTraceOutcome retrieves the external outcome data for a trace ID.
+func (s *Store) GetTraceOutcome(traceID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT outcome_json FROM trace_outcomes WHERE trace_id = ?`
+	var outcome string
+	err := s.db.QueryRow(query, traceID).Scan(&outcome)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	return outcome, nil
+}
+
 
 
 

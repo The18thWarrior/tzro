@@ -2,6 +2,84 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-09T22:00:00-07:00] tdd | Implemented Context and Evidence Workflows (5 Workflows + Shared Infrastructure)
+
+- **Activity**: Implemented all 5 workflows and 5 shared infrastructure components from [context-and-evidence-workflows-handoff.md](../../.scratch/context-and-evidence-workflows/context-and-evidence-workflows-handoff.md) using TDD red→green→refactor across 6 vertical slices.
+- **Slice 1 (Shared Infrastructure: S1, S2, S3)**:
+  - Created `pkg/evidence/evidence.go` & `pkg/evidence/evidence_test.go`: 7 deterministic `SourceKind`s, `Anchor` union (LineRange / SectionPath), `EvidenceItem` / ProvenanceEnvelope, dual staleness logic ($\ge 100$ commits or $\ge 90$ days).
+  - Extended `pkg/store/store.go` & `pkg/store/traces_test.go`: Added `context_traces` and `trace_outcomes` persistence, workspace isolation, nanosecond ordering, and 50 MB LRU quota eviction.
+- **Slice 2 (Compaction Evidence Contract: S5 & `tzro compact`)**:
+  - Created `pkg/compactor/evidence.go` & `pkg/compactor/evidence_contract_test.go`: `CompactedEvidence`, `Diagnostic` model, structured parsers for JUnit XML (innerxml extraction), Go test JSON (`Action: fail`), GNU diagnostics, and DLP-scanned plain text fallback.
+  - Implemented 10-line inline cap with overflow hash stored in Content-Hash Store.
+  - Implemented `RunAndCompact` wrapper mode (`tzro compact --run "<cmd>"`) with observed exit code capture.
+  - Updated CLI in `cmd/tzro/main.go` with `--run` and `--format markdown|json`.
+- **Slice 3 (Automatic Task Continuity: S4 & `tzro session`)**:
+  - Updated `pkg/session/session.go` & created `pkg/session/continuity_test.go`: SchemaVersion 2, `ScopeFiles []string` on `CheckExecution`, `ValidateCheckFreshness` (checks fresh iff all scope files match snapshot hash), missing artifact detection, and 4-tier `ResolveSession` cascade (explicit ID $\to$ branch-keyed $\to$ workspace fallback $\to$ clean start).
+  - Updated CLI in `cmd/tzro/main.go`: `tzro session commit`, `tzro session status` (drift & freshness), and `tzro session load` (validation & graceful degradation).
+- **Slice 4 (Change-Impact Context Packs: `tzro impact`)**:
+  - Updated `pkg/context/context.go` & created `pkg/context/impact.go`, `pkg/context/impact_test.go`: `ReferenceAdapter` interface with `GoGrepAdapter` (reverse references: caller, implementor, embedder, test, config with precision tiers `precise`, `syntactic`, `inferred`), `ImpactAnalyzer` (git diff and symbol analysis, budget packing with precision priority, generated code filtering), and `CoverageReport` envelope.
+  - Updated CLI in `cmd/tzro/main.go`: `tzro impact` with `--budget`, `--staged`, `--unstaged`, `--all`, `--symbol`, `--include-generated`, `--format`.
+- **Slice 5 (Unified Local Evidence Search: `tzro search`)**:
+  - Created `pkg/search/search.go` & `pkg/search/search_test.go`: 4 source categories (repo text files, pure-Go DOCX/PPTX/PDF extractors, tabular discovery markers for un-ingested CSV/TSV, Store artifacts/tombstones).
+  - Added content-hash deduplication, silent omission for privacy-denied paths, and provenance envelope on all search results.
+  - Updated CLI in `cmd/tzro/main.go`: `tzro search <query>` with `--budget` and `--format`.
+- **Slice 6 (Local Context Inspector & Quality Replay: `tzro inspect`)**:
+  - Created `pkg/inspector/inspector.go` & `pkg/inspector/inspector_test.go`: Always-on 6-stage trace recorder (Discovery, Filtering, Ranking, Packing, Transformation, Policy) hooked into `Assembler.Assemble`, offline counterfactual replay, 3-tier epistemological labeling (`measured`, `counterfactual`, `unknown`), external harness outcome hook (`PutTraceOutcome`/`GetTraceOutcome`), and export-time privacy redaction.
+  - Updated CLI in `cmd/tzro/main.go`: `tzro inspect list`, `tzro inspect show`, `tzro inspect explain`, `tzro inspect replay`, and `tzro inspect outcome`.
+- **Integration & End-to-End**:
+  - Created `cmd/tzro/cli_workflows_test.go` verifying live CLI commands end-to-end.
+  - Verified with `go test ./...` across all 16 packages (100% green).
+  - Built production binary at `/Users/jp/go/bin/tzro`.
+
+## [2026-09-09T21:42:00-07:00] wayfinder | Resolved First Release and Implementation Handoff — map complete
+
+- **Activity**: Grilling session resolving [First Release and Implementation Handoff](../../.scratch/context-and-evidence-workflows/issues/06-first-release-and-handoff.md) — the seventh and final decision ticket on the [Context and Evidence Workflows](../../.scratch/context-and-evidence-workflows/MAP.md) map.
+- **Decisions**: All five workflows ship in release 1. Release-gating: Change-Impact Context Packs, Automatic Task Continuity, Compaction with Explicit Evidence Guarantees. Preview (shipped, softer bar): Unified Local Evidence Search, Local Context Inspector and Quality Replay. Five shared infrastructure pieces confirmed with explicit ownership (Evidence Provenance Envelope → Evidence Search; Session Manifest + Hybrid Capture → Task Continuity; Compaction Evidence Contract → Compaction; Workspace Privacy Policy → standalone; Content-Hash Store extensions → standalone). Functional correctness gates the release; latency targets are aspirational design targets, not blockers. Fog patches graduated to the implementation handoff as open questions solvable by inference.
+- **Handoff**: Full implementation handoff document at [context-and-evidence-workflows-handoff.md](../../.scratch/context-and-evidence-workflows/context-and-evidence-workflows-handoff.md) with release scope, infrastructure inventory, per-workflow contracts, dependency order, inherited constraints, and open design questions.
+- **Map**: Status set to `wayfinder:map:complete`. All seven tickets closed. No fog remains. The map's destination — agreeing on scenarios, scope, evidence guarantees, acceptance criteria, and producing an implementation handoff — is reached.
+
+## [2026-09-09T21:24:00-07:00] wayfinder | Resolved Local Context Inspector and Quality Replay decision ticket
+
+- **Activity**: Grilling session resolving [Local Context Inspector and Quality Replay](../../.scratch/context-and-evidence-workflows/issues/05-local-context-inspector-quality-replay.md) — the sixth decision ticket on the [Context and Evidence Workflows](../../.scratch/context-and-evidence-workflows/MAP.md) map.
+- **Decisions**: Always-on six-stage context trace (discovery, filtering, ranking, packing, transformation, policy) written to SQLite on every context assembly — no opt-in. Snapshot replay re-executes ranking/packing/transformation against saved candidates without filesystem access; re-running discovery is a new request, not a replay. Three-tier output labeling: measured (trace facts), counterfactual (replay-derived), unknown (downstream task completion — not produced by inspector). Degradation: evicted artifacts → `content_unavailable` metadata-only; changed sources → replay uses saved snapshot; privacy → enforced at export, not on stored traces (no retroactive scrubbing); trace quotas → 50 MB/workspace LRU default, oldest first, independent of artifact eviction. External evaluation harness hook via stable trace ID — inspector never generates outcome data, but displays it when an external harness attaches records. <100ms trace write, <200ms replay latency, <500 KB per trace storage targets.
+- **Glossary**: Added **Context Trace** to `CONTEXT.md`.
+- **Map**: Sixth entry in "Decisions so far." All five workflow contract tickets (01–05) now closed. Ticket 06 (First Release and Implementation Handoff) is **unblocked** — its five blockers are resolved. No new tickets created; fog unchanged pending release selection.
+
+## [2026-09-09T21:05:00-07:00] wayfinder | Resolved Unified Local Evidence Search decision ticket
+
+- **Activity**: Grilling session resolving [Unified Local Evidence Search](../../.scratch/context-and-evidence-workflows/issues/04-unified-local-evidence-search.md) — the fifth decision ticket on the [Context and Evidence Workflows](../../.scratch/context-and-evidence-workflows/MAP.md) map.
+- **Decisions**: Four source categories in first slice: repo text files, repo binary docs (PDF via `ledongthuc/pdf` digital text, DOCX/PPTX via pure-Go XML — no vision/OCR), explicit imports via `tzro ingest`, and Content-Hash Store artifacts from sibling workflows. Embedded images emit structured placeholder tags for optional downstream processing. Seven deterministic SourceKinds (`code`/`config`/`doc`/`log`/`session`/`import`/`data`) classified by file extension, store origin, or ingestion provenance — no path-pattern heuristics. ADRs not special-cased; all non-code text files unify under `doc`. Provenance envelope: SHA-256, git revision, timestamp, dual anchors (line range or section heading path union), workspace ID. Tabular data (CSV/TSV/JSON) uses discovery markers when not yet ingested. No cross-kind authority ranking; dual staleness flag (≥100 commits or ≥90 days, configurable). Content-hash dedup for duplicates, `deleted: true` flag for removed sources, silent omission for privacy-denied paths (path itself can be a secret), tombstones for expired artifacts. ≥80% recall across 10 hand-curated fixtures, <500ms for 5k files, <50 MB RSS.
+- **Glossary**: Added **Evidence Provenance Envelope** and **Evidence Source Kind** to `CONTEXT.md`.
+- **Map**: Fifth entry in "Decisions so far." One grilling ticket (05 — Local Context Inspector and Quality Replay) + release selection ticket (06, blocked by 05) remain. No new tickets created — fog unchanged pending ticket 05 resolution.
+
+## [2026-09-09T20:32:00-07:00] wayfinder | Resolved Compaction with Explicit Evidence Guarantees decision ticket
+
+- **Activity**: Grilling session resolving [Compaction with Explicit Evidence Guarantees](../../.scratch/context-and-evidence-workflows/issues/03-compaction-evidence-guarantees.md) — the fourth decision ticket on the [Context and Evidence Workflows](../../.scratch/context-and-evidence-workflows/MAP.md) map.
+- **Decisions**: Full diagnostic + warnings guarantee across all 10 AST-supported languages. Three structured format families with full guarantee (JUnit XML, structured JSON, GNU/compiler diagnostics); plain text best-effort with degraded-confidence marker. Result contract: severity, identifier, message, source location, per-test duration, output/diff with 10-line inline cap and expand hash overflow, omitted-span notice, artifact reference. Wrapper mode (`tzro compact --run`) primary CLI; format-inferred exit status fallback with three-tier confidence (observed/inferred/unknown). Raw fallback on compactor failure; partial parse on truncation; raw on broken retention (no expand hashes). Privacy always wins via DLP redaction on raw fallback. 100ms latency target for 100K lines, no memory target.
+- **Glossary**: Added **Compaction Evidence Contract** to `CONTEXT.md`.
+- **Map**: Fourth entry in "Decisions so far." Two grilling tickets (04–05) + release selection ticket (06) remain open on the frontier. No new tickets created — fog unchanged pending remaining workflow resolutions.
+
+## [2026-09-09T15:06:00-07:00] wayfinder | Resolved Agent Client Lifecycle Hook Capabilities research ticket
+
+- **Activity**: Research ticket resolving [Agent Client Lifecycle Hook Capabilities](../../.scratch/context-and-evidence-workflows/issues/07-client-lifecycle-hook-capabilities.md) — the first research ticket on the [Context and Evidence Workflows](../../.scratch/context-and-evidence-workflows/MAP.md) map.
+- **Sources**: Claude Code hooks documentation (primary), Cursor extension API and hooks documentation (web research), Antigravity hooks/sidecars/MCP documentation (local primary source).
+- **Findings**: Claude Code exposes 27+ lifecycle events with rich payloads (low adapter complexity). Cursor exposes 13+ native hooks plus VS Code extension API fallback (medium complexity). Antigravity exposes 5 lifecycle events with compensating transcript, sidecar, and MCP capabilities (medium-high complexity). All clients lack automatic intent capture — `tzro session commit` required by hybrid capture model. Recommended initial pair: Claude Code + Antigravity.
+- **Map**: Third entry in "Decisions so far." No new tickets unblocked. Three grilling tickets (03–05) + release selection ticket (06) remain open on the frontier.
+
+## [2026-09-09T14:34:00-07:00] wayfinder | Resolved Automatic Task Continuity decision ticket
+
+- **Activity**: Grilling session resolving [Automatic Task Continuity across Agent Clients](../../.scratch/context-and-evidence-workflows/issues/02-automatic-task-continuity.md) — the second decision ticket on the [Context and Evidence Workflows](../../.scratch/context-and-evidence-workflows/MAP.md) map.
+- **Decisions**: Cross-client same-machine handoff. Hybrid capture model (hooks observe tool executions, agent explicitly commits intent). Incremental SQLite writes for crash durability. Task selection: explicit override → branch-keyed → most-recent-for-workspace → clean start. Per-check scope-file freshness (no time-based expiry). Graceful degradation for missing hooks, absent artifacts, privacy rejection. LRU manifest retention. Schema v2 adds `ScopeFiles` to `CheckExecution`.
+- **Glossary**: Added **Session Manifest** and **Hybrid Capture** to `CONTEXT.md`.
+- **Map**: Second entry in "Decisions so far." Created research ticket [Agent Client Lifecycle Hook Capabilities](../../.scratch/context-and-evidence-workflows/issues/07-client-lifecycle-hook-capabilities.md). Four workflow tickets + release selection ticket remain open.
+
+## [2026-09-09T14:12:00-07:00] wayfinder | Resolved Change-Impact Context Packs decision ticket
+
+- **Activity**: Grilling session resolving [Change-Impact Context Packs](../../.scratch/context-and-evidence-workflows/issues/01-change-impact-context-packs.md) — the first decision ticket on the [Context and Evidence Workflows](../../.scratch/context-and-evidence-workflows/MAP.md) map.
+- **Decisions**: Diff-anchored input (working-tree changes primary, symbol fallback retained, revision range deferred). Language priority Go → TS/JS → Python/Java → Rust behind a `ReferenceAdapter` interface. Three precision tiers (`precise`, `syntactic`, `inferred`) with five relationship types (`caller`, `implementor`, `embedder`, `test`, `config`). Coverage Envelope for uncertainty disclosure. `ImpactAnalyzer` type in `pkg/context` delegates to `Assembler` for packing. `tzro impact` CLI. ≥90% recall vs. `gopls references`, <2s/50K files. Consume-only SCIP model.
+- **Glossary**: Added **Impact Analyzer**, **Reference Adapter**, and **Coverage Envelope** to `CONTEXT.md`.
+- **Map**: First entry in "Decisions so far." Five workflow tickets + release selection ticket remain open.
+
 ## [2026-09-09T12:42:00-07:00] tdd | Implemented Issue 04: Artifact LRU Quota Lifecycle and Expiry Sweep
 
 - **Activity**: Implemented all 4 design decisions from `04-artifact-lru-quota-lifecycle-and-expiry-sweep.md` using TDD red→green→refactor across 8 vertical slices.
@@ -2673,3 +2751,16 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
   - [Capability Evaluation](architecture/tzro-next-capabilities-evaluation-2026-09-08.md)
   - [Wiki Index](index.md)
   - [Wiki Log](log.md)
+
+## [2026-09-09 13:42] wayfinder | Charted Context and Evidence Workflows
+
+- **Activity**: Created the successor map at the user's request. Mapped all five use cases to independent grilling tickets.
+- **Frontier**: Five workflow decisions are open. First Release and Implementation Handoff depends on all five.
+- **Scope**: User scenarios, scope, evidence guarantees, acceptance criteria, and design decisions required for an implementation-plan handoff.
+- **Continuity**: Moved the later capability proposals from the foundation map into the successor effort. Preserved all six closed foundation decisions.
+- **Decision state**: No feature tickets were resolved. Candidate clients, formats, languages, and delivery order remain open.
+- **Files Touched**:
+  - [Context and Evidence Workflows map](../../.scratch/context-and-evidence-workflows/MAP.md)
+  - [Context and Evidence Workflows overview](architecture/context-and-evidence-workflows.md)
+  - [Context Foundation Hardening](../../.scratch/context-foundation-hardening/MAP.md)
+  - [Wiki Index](index.md)

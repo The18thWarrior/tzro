@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -20,9 +21,11 @@ import (
 	"tzro/pkg/dlp"
 	"tzro/pkg/doctor"
 	"tzro/pkg/hooks"
+	"tzro/pkg/inspector"
 	"tzro/pkg/kvlock"
 	"tzro/pkg/probe"
 	"tzro/pkg/proxy"
+	"tzro/pkg/search"
 	"tzro/pkg/session"
 	"tzro/pkg/store"
 )
@@ -45,7 +48,7 @@ func getDBPath() string {
 	return filepath.Join(home, ".tzro", "token_shield.db")
 }
 
-func main() {
+func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "tzro",
 		Short: "Tzro v2: The Local Token Shield & Context Optimization Engine",
@@ -221,19 +224,67 @@ func main() {
 
 
 	// 5. COMPACT COMMAND
+	var compactRunCmd string
+	var compactFormat string
+
 	compactCmd := &cobra.Command{
 		Use:   "compact",
-		Short: "Read raw test logs or JSON arrays from stdin and print compacted output",
+		Short: "Read raw test logs, or run a command, and emit compacted output with evidence guarantees",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			input, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return err
+			cwd, _ := os.Getwd()
+			s, _ := store.OpenStore(getDBPath())
+			if s != nil {
+				defer s.Close()
 			}
-			compacted := compactor.CompactLog(string(input))
-			fmt.Print(compacted)
+			wp, _ := dlp.LoadWorkspacePolicy(cwd)
+			policy := dlp.NewPolicyEngine(wp)
+
+			var evidenceRes *compactor.CompactedEvidence
+			var err error
+
+			if compactRunCmd != "" {
+				evidenceRes, err = compactor.RunAndCompact(compactRunCmd, cwd, s, policy)
+				if err != nil {
+					return err
+				}
+			} else {
+				input, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return err
+				}
+				evidenceRes, err = compactor.CompactEvidence(string(input), cwd, s, policy, nil)
+				if err != nil {
+					return err
+				}
+			}
+
+			if compactFormat == "json" {
+				b, err := json.MarshalIndent(evidenceRes, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(b))
+			} else {
+				if len(evidenceRes.Diagnostics) > 0 {
+					fmt.Print(evidenceRes.FormatMarkdown())
+				} else if evidenceRes.RawOutput != "" {
+					if evidenceRes.ArtifactRef != "" {
+						fmt.Printf("// [Tzro Artifact: %s | Full original retained (run `tzro expand %s` to retrieve)]\n", evidenceRes.ArtifactRef, evidenceRes.ArtifactRef)
+					}
+					fmt.Println(evidenceRes.RawOutput)
+				} else {
+					fmt.Print(evidenceRes.FormatMarkdown())
+				}
+			}
+
+			if compactRunCmd != "" && evidenceRes.ExitCode != 0 {
+				os.Exit(evidenceRes.ExitCode)
+			}
 			return nil
 		},
 	}
+	compactCmd.Flags().StringVar(&compactRunCmd, "run", "", "Command to execute and compact in wrapper mode")
+	compactCmd.Flags().StringVar(&compactFormat, "format", "markdown", "Output format: markdown|json")
 
 	// 6. HOOK COMMAND (Antigravity, Claude, Hermes, Copilot, Pi-Coder Bridge)
 	hookCmd := &cobra.Command{
@@ -773,6 +824,129 @@ Examples:
 
 	dlpCmd.AddCommand(dlpPreviewCmd)
 
+	// IMPACT COMMAND
+	var impactBudget int
+	var impactStaged bool
+	var impactUnstaged bool
+	var impactAll bool
+	var impactSymbol string
+	var impactIncludeGenerated bool
+	var impactFormat string
+	var impactRevision string
+
+	impactCmd := &cobra.Command{
+		Use:   "impact",
+		Short: "Assemble change-impact context packs from git diff or symbol with coverage guarantees",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			s, _ := store.OpenStore(getDBPath())
+			if s != nil {
+				defer s.Close()
+			}
+			wp, _ := dlp.LoadWorkspacePolicy(cwd)
+			policy := dlp.NewPolicyEngine(wp)
+
+			analyzer := tzroctx.NewImpactAnalyzer(s, policy)
+
+			var pack *tzroctx.ContextPack
+			var err error
+
+			if impactSymbol != "" {
+				pack, err = analyzer.AnalyzeSymbol(cwd, impactSymbol, impactBudget, impactIncludeGenerated)
+			} else {
+				var gitArgs []string
+				if impactStaged {
+					gitArgs = []string{"diff", "--cached"}
+				} else if impactUnstaged {
+					gitArgs = []string{"diff"}
+				} else {
+					gitArgs = []string{"diff", "HEAD"}
+				}
+
+				gitCmd := exec.Command("git", gitArgs...)
+				gitCmd.Dir = cwd
+				diffBytes, gitErr := gitCmd.Output()
+				diffText := string(diffBytes)
+
+				if gitErr != nil || strings.TrimSpace(diffText) == "" {
+					gitCmd2 := exec.Command("git", "diff")
+					gitCmd2.Dir = cwd
+					diffBytes2, _ := gitCmd2.Output()
+					diffText = string(diffBytes2)
+				}
+
+				if strings.TrimSpace(diffText) == "" {
+					fmt.Println(warnStyle.Render("No working-tree diff detected. Use --symbol <name> to analyze a specific symbol."))
+					return nil
+				}
+
+				pack, err = analyzer.AnalyzeDiff(cwd, diffText, impactBudget, impactIncludeGenerated)
+			}
+
+			if err != nil {
+				return err
+			}
+
+			if impactFormat == "json" {
+				b, err := json.MarshalIndent(pack, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(b))
+			} else {
+				fmt.Print(pack.FormatMarkdown())
+			}
+
+			return nil
+		},
+	}
+	impactCmd.Flags().IntVar(&impactBudget, "budget", 4000, "Token budget for context pack")
+	impactCmd.Flags().BoolVar(&impactStaged, "staged", false, "Analyze staged changes only")
+	impactCmd.Flags().BoolVar(&impactUnstaged, "unstaged", false, "Analyze unstaged changes only")
+	impactCmd.Flags().BoolVar(&impactAll, "all", true, "Analyze all working tree changes (staged + unstaged)")
+	impactCmd.Flags().StringVar(&impactSymbol, "symbol", "", "Symbol fallback to analyze")
+	impactCmd.Flags().BoolVar(&impactIncludeGenerated, "include-generated", false, "Include generated code files")
+	impactCmd.Flags().StringVar(&impactFormat, "format", "markdown", "Output format: markdown|json")
+	impactCmd.Flags().StringVar(&impactRevision, "revision", "", "Revision range (reserved)")
+
+	// SEARCH COMMAND (Unified Local Evidence Search)
+	var searchBudget int
+	var searchFormat string
+	searchCmd := &cobra.Command{
+		Use:   "search [query]",
+		Short: "Unified local evidence search across code, docs, configs, logs, sessions, and data",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := args[0]
+			cwd, _ := os.Getwd()
+			s, _ := store.OpenStore(getDBPath())
+			if s != nil {
+				defer s.Close()
+			}
+			wp, _ := dlp.LoadWorkspacePolicy(cwd)
+			policy := dlp.NewPolicyEngine(wp)
+
+			engine := search.NewEngine(s, policy)
+			res, err := engine.Search(cwd, query, searchBudget)
+			if err != nil {
+				return err
+			}
+
+			if searchFormat == "json" {
+				b, err := json.MarshalIndent(res, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(b))
+			} else {
+				fmt.Print(res.FormatMarkdown())
+			}
+			return nil
+		},
+	}
+	searchCmd.Flags().IntVar(&searchBudget, "budget", 4000, "Token budget for search results")
+	searchCmd.Flags().StringVar(&searchFormat, "format", "markdown", "Output format: markdown|json")
+
 	// 13. CONTEXT COMMAND
 	var contextBudget int
 	contextCmd := &cobra.Command{
@@ -797,6 +971,179 @@ Examples:
 			return nil
 		},
 	}
+
+	// 14. INSPECT COMMAND GROUP
+	inspectCmd := &cobra.Command{
+		Use:   "inspect",
+		Short: "Inspect context assembly decisions and perform offline quality replays",
+	}
+
+	inspectListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List recent context assembly traces for the current workspace",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			traces, err := s.ListContextTraces(cwd, 20)
+			if err != nil {
+				return err
+			}
+			if len(traces) == 0 {
+				fmt.Println(infoStyle.Render("No context assembly traces recorded for this workspace."))
+				return nil
+			}
+
+			fmt.Println(titleStyle.Render(fmt.Sprintf("🔍 Context Traces (%d recorded)", len(traces))))
+			for _, tr := range traces {
+				fmt.Printf("- `%s` | Query: %q | Budget: %d | Size: %s | %s\n",
+					tr.ID, tr.Query, tr.Budget, formatBytes(tr.SizeBytes), tr.CreatedAt.Format(time.RFC3339))
+			}
+			return nil
+		},
+	}
+
+	inspectShowCmd := &cobra.Command{
+		Use:   "show [trace-id]",
+		Short: "Display full six-stage diagnostic trace breakdown",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			traceID := args[0]
+			cwd, _ := os.Getwd()
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			wp, _ := dlp.LoadWorkspacePolicy(cwd)
+			policy := dlp.NewPolicyEngine(wp)
+
+			engine := inspector.NewEngine(s, policy)
+			md, err := engine.ExportTraceMarkdown(traceID, cwd)
+			if err != nil {
+				return err
+			}
+			fmt.Print(md)
+			return nil
+		},
+	}
+
+	inspectExplainCmd := &cobra.Command{
+		Use:   "explain [trace-id] [candidate-path]",
+		Short: "Explain why a specific candidate was included or omitted in a trace",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			traceID := args[0]
+			candidatePath := args[1]
+			cwd, _ := os.Getwd()
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			engine := inspector.NewEngine(s, nil)
+			exp, err := engine.ExplainCandidate(traceID, cwd, candidatePath)
+			if err != nil {
+				return err
+			}
+
+			fmt.Println(titleStyle.Render(fmt.Sprintf("🔎 Explanation for `%s` in %s", candidatePath, traceID)))
+			fmt.Printf("- **Stage:** %s\n", exp.Stage)
+			fmt.Printf("- **Reason:** %s\n", exp.Reason)
+			if exp.Rank > 0 {
+				fmt.Printf("- **Rank:** %d\n", exp.Rank)
+			}
+			fmt.Printf("- **Evidence Tier:** %s\n", exp.Tier)
+			return nil
+		},
+	}
+
+	var replayBudget int
+	inspectReplayCmd := &cobra.Command{
+		Use:   "replay [trace-id]",
+		Short: "Replay context ranking and packing under alternative parameters without disk access",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			traceID := args[0]
+			cwd, _ := os.Getwd()
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			engine := inspector.NewEngine(s, nil)
+			res, err := engine.Replay(traceID, cwd, replayBudget)
+			if err != nil {
+				return err
+			}
+
+			fmt.Println(titleStyle.Render(fmt.Sprintf("🔄 Offline Snapshot Replay: %s (Budget: %d tokens)", traceID, replayBudget)))
+			fmt.Printf("Used Tokens: %d\n\n", res.TokensUsed)
+
+			fmt.Printf("### Included Items (%d):\n", len(res.IncludedItems))
+			for i, it := range res.IncludedItems {
+				fmt.Printf("%d. `%s` (%d tokens) [%s]\n", i+1, it.Path, it.TokensUsed, it.Tier)
+			}
+
+			if len(res.TruncatedManifest) > 0 {
+				fmt.Printf("\n### Truncated Candidates (%d):\n", len(res.TruncatedManifest))
+				for _, p := range res.TruncatedManifest {
+					fmt.Printf("- `%s` [%s]\n", p, inspector.TierCounterfactual)
+				}
+			}
+			return nil
+		},
+	}
+	inspectReplayCmd.Flags().IntVar(&replayBudget, "budget", 8000, "Counterfactual token budget to test")
+
+	var outcomeDataStr string
+	inspectOutcomeCmd := &cobra.Command{
+		Use:   "outcome [trace-id]",
+		Short: "Attach external evaluation outcome data to a trace",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			traceID := args[0]
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			if outcomeDataStr == "" {
+				// Query outcome
+				engine := inspector.NewEngine(s, nil)
+				out, err := engine.GetOutcome(traceID)
+				if err != nil {
+					return err
+				}
+				if len(out) == 0 {
+					fmt.Println(infoStyle.Render("No external outcome data attached to trace."))
+					return nil
+				}
+				b, _ := json.MarshalIndent(out, "", "  ")
+				fmt.Println(string(b))
+				return nil
+			}
+
+			if err := s.PutTraceOutcome(traceID, outcomeDataStr); err != nil {
+				return err
+			}
+			fmt.Println(infoStyle.Render("✓ Attached evaluation outcome to trace."))
+			return nil
+		},
+	}
+	inspectOutcomeCmd.Flags().StringVar(&outcomeDataStr, "data", "", "JSON outcome data to attach")
+
+	inspectCmd.AddCommand(inspectListCmd, inspectShowCmd, inspectExplainCmd, inspectReplayCmd, inspectOutcomeCmd)
 	// 14. SESSION COMMAND
 	sessionCmd := &cobra.Command{
 		Use:   "session",
@@ -981,6 +1328,24 @@ Examples:
 				fmt.Println(warnStyle.Render("\nWarning: Workspace file drift detected relative to saved session."))
 			}
 
+			// Check freshness
+			_, checkReports := sm.ValidateCheckFreshness(cwd)
+			for _, cr := range checkReports {
+				if !cr.Fresh {
+					fmt.Printf("  %s Check %q has drifted files: %s\n", warnStyle.Render("STALE CHECK"), cr.Check.Command, strings.Join(cr.DriftedFiles, ", "))
+				}
+			}
+
+			// Missing artifacts
+			s, _ := store.OpenStore(getDBPath())
+			if s != nil {
+				defer s.Close()
+				missingArts := sm.CheckMissingArtifacts(s)
+				for _, a := range missingArts {
+					fmt.Printf("  %s Artifact %s not found in store\n", warnStyle.Render("MISSING ARTIFACT"), a)
+				}
+			}
+
 			fmt.Println(infoStyle.Render("\n✔ Session loaded successfully."))
 			fmt.Println(sm.FormatMarkdown())
 			return nil
@@ -988,7 +1353,118 @@ Examples:
 	}
 	sessionLoadCmd.Flags().BoolVarP(&sessionForceLoad, "force", "f", false, "Force loading session even if workspace files have drifted")
 
-	sessionCmd.AddCommand(sessionSaveCmd, sessionExportCmd, sessionLoadCmd)
+	// COMMIT COMMAND (Explicit Host Agent Intent Capture)
+	var commitObjective string
+	var commitDecisions []string
+	var commitConstraints []string
+	var commitPending []string
+	sessionCommitCmd := &cobra.Command{
+		Use:   "commit",
+		Short: "Explicitly commit agent intent (objective, decisions, constraints, pending tasks)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			branch := session.SenseBranch(context.Background(), cwd)
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			sm, _ := session.ResolveSession(s, cwd, branch, "")
+			if sm == nil {
+				sessionID := fmt.Sprintf("sess_%d", time.Now().Unix())
+				sm = session.NewSessionManifest(sessionID, cwd, branch, commitObjective)
+			}
+
+			if commitObjective != "" {
+				sm.Objective = commitObjective
+			}
+			sm.Decisions = append(sm.Decisions, commitDecisions...)
+			sm.Constraints = append(sm.Constraints, commitConstraints...)
+			sm.PendingTasks = append(sm.PendingTasks, commitPending...)
+
+			// Auto-sense changed files
+			gitSnapshots, err := session.SenseChangedFiles(context.Background(), cwd)
+			if err == nil && len(gitSnapshots) > 0 {
+				sm.ChangedFiles = gitSnapshots
+			}
+
+			manifestJSON, err := sm.ToJSON()
+			if err != nil {
+				return err
+			}
+
+			if err := s.PutSession(sm.ID, cwd, sm.Branch, sm.SchemaVersion, manifestJSON); err != nil {
+				return fmt.Errorf("failed to commit session: %w", err)
+			}
+
+			fmt.Println(titleStyle.Render(fmt.Sprintf("✓ Committed intent to session %s", sm.ID)))
+			fmt.Println(sm.FormatMarkdown())
+			return nil
+		},
+	}
+	sessionCommitCmd.Flags().StringVarP(&commitObjective, "objective", "o", "", "Task objective")
+	sessionCommitCmd.Flags().StringArrayVarP(&commitDecisions, "decision", "d", nil, "Architectural decision (repeatable)")
+	sessionCommitCmd.Flags().StringArrayVarP(&commitConstraints, "constraint", "c", nil, "Approved constraint (repeatable)")
+	sessionCommitCmd.Flags().StringArrayVarP(&commitPending, "pending", "p", nil, "Outstanding task (repeatable)")
+
+	// STATUS COMMAND
+	sessionStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Inspect the status and freshness of the active session",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			branch := session.SenseBranch(context.Background(), cwd)
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			sm, err := session.ResolveSession(s, cwd, branch, "")
+			if err != nil {
+				return err
+			}
+			if sm == nil {
+				fmt.Println(infoStyle.Render("No active session found for current workspace."))
+				return nil
+			}
+
+			fmt.Println(titleStyle.Render(fmt.Sprintf("📋 Active Session: %s", sm.ID)))
+			fmt.Printf("Workspace: %s | Branch: %s\n\n", sm.Workspace, sm.Branch)
+
+			drifts, checkReports := sm.ValidateCheckFreshness(cwd)
+			for _, d := range drifts {
+				switch d.Status {
+				case "modified":
+					fmt.Printf("  %s %s: modified on disk\n", warnStyle.Render("DRIFT"), d.Path)
+				case "missing":
+					fmt.Printf("  %s %s: missing from disk\n", warnStyle.Render("MISSING"), d.Path)
+				case "fresh":
+					fmt.Printf("  %s %s\n", infoStyle.Render("FRESH"), d.Path)
+				}
+			}
+
+			for _, cr := range checkReports {
+				if !cr.Fresh {
+					fmt.Printf("  %s Check %q stale due to: %s\n", warnStyle.Render("STALE"), cr.Check.Command, strings.Join(cr.DriftedFiles, ", "))
+				} else {
+					fmt.Printf("  %s Check %q verified fresh\n", infoStyle.Render("FRESH"), cr.Check.Command)
+				}
+			}
+
+			missingArts := sm.CheckMissingArtifacts(s)
+			for _, a := range missingArts {
+				fmt.Printf("  %s Artifact %s absent from store\n", warnStyle.Render("MISSING"), a)
+			}
+
+			return nil
+		},
+	}
+
+	sessionCmd.AddCommand(sessionCommitCmd, sessionSaveCmd, sessionExportCmd, sessionLoadCmd, sessionStatusCmd)
 
 	// ARTIFACTS COMMAND GROUP
 	artifactsCmd := &cobra.Command{
@@ -1128,9 +1604,13 @@ Examples:
 
 	artifactsCmd.AddCommand(artifactsListCmd, artifactsPruneCmd)
 
-	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, sessionCmd, artifactsCmd)
+	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd)
 
+	return rootCmd
+}
 
+func main() {
+	rootCmd := newRootCmd()
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

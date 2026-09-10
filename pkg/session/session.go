@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"tzro/pkg/store"
 )
 
 
@@ -17,10 +19,11 @@ type FileSnapshot struct {
 
 // CheckExecution records an executed test, build, or verify command.
 type CheckExecution struct {
-	Command   string    `json:"command"`
-	ExitCode  int       `json:"exit_code"`
-	Timestamp time.Time `json:"timestamp"`
-	OutputID  string    `json:"output_id,omitempty"` // Artifact ID of full output
+	Command    string    `json:"command"`
+	ExitCode   int       `json:"exit_code"`
+	Timestamp  time.Time `json:"timestamp"`
+	OutputID   string    `json:"output_id,omitempty"`   // Artifact ID of full output
+	ScopeFiles []string  `json:"scope_files,omitempty"` // Per-check files covered
 }
 
 // SessionManifest represents a complete, portable agent session state.
@@ -39,10 +42,10 @@ type SessionManifest struct {
 	ArtifactIDs   []string         `json:"artifact_ids"`
 }
 
-// NewSessionManifest creates a new initialized SessionManifest with SchemaVersion 1.
+// NewSessionManifest creates a new initialized SessionManifest with SchemaVersion 2.
 func NewSessionManifest(id, workspace, branch, objective string) *SessionManifest {
 	return &SessionManifest{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		ID:            id,
 		Workspace:     workspace,
 		Branch:        branch,
@@ -72,8 +75,8 @@ func FromJSON(data string) (*SessionManifest, error) {
 	if err := json.Unmarshal([]byte(data), &sm); err != nil {
 		return nil, fmt.Errorf("invalid session manifest JSON: %w", err)
 	}
-	if sm.SchemaVersion != 1 {
-		return nil, fmt.Errorf("incompatible schema version %d (expected 1)", sm.SchemaVersion)
+	if sm.SchemaVersion < 1 || sm.SchemaVersion > 2 {
+		return nil, fmt.Errorf("incompatible schema version %d (expected 1 or 2)", sm.SchemaVersion)
 	}
 	return &sm, nil
 }
@@ -223,4 +226,113 @@ func ImportSession(manifestData, targetWorkspace string) (*SessionManifest, erro
 
 	return sm, nil
 }
+
+// CheckFreshnessReport provides freshness status for a single check execution.
+type CheckFreshnessReport struct {
+	Check        CheckExecution `json:"check"`
+	Fresh        bool           `json:"fresh"`
+	DriftedFiles []string       `json:"drifted_files,omitempty"`
+}
+
+// ValidateCheckFreshness evaluates freshness of changed files and individual check executions.
+// A check is fresh if and only if every file in its ScopeFiles matches its snapshot hash.
+func (sm *SessionManifest) ValidateCheckFreshness(workspaceRoot string) ([]FileDrift, []CheckFreshnessReport) {
+	fileDrifts := sm.ValidateFreshness(workspaceRoot)
+	driftMap := make(map[string]FileDrift)
+	for _, fd := range fileDrifts {
+		driftMap[fd.Path] = fd
+	}
+
+	var reports []CheckFreshnessReport
+	for _, check := range sm.Checks {
+		report := CheckFreshnessReport{
+			Check: check,
+			Fresh: true,
+		}
+
+		if len(check.ScopeFiles) == 0 {
+			// Conservative fallback for v1 or unscoped checks: stale if any changed file drifted
+			var anyDrifted []string
+			for _, fd := range fileDrifts {
+				if fd.Status != "fresh" {
+					anyDrifted = append(anyDrifted, fd.Path)
+				}
+			}
+			if len(anyDrifted) > 0 {
+				report.Fresh = false
+				report.DriftedFiles = anyDrifted
+			}
+		} else {
+			for _, sf := range check.ScopeFiles {
+				if d, ok := driftMap[sf]; ok {
+					if d.Status != "fresh" {
+						report.Fresh = false
+						report.DriftedFiles = append(report.DriftedFiles, sf)
+					}
+				} else {
+					// Check file directly if not in ChangedFiles list
+					fullPath := filepath.Join(workspaceRoot, sf)
+					if _, err := StreamSHA256(fullPath); err != nil {
+						report.Fresh = false
+						report.DriftedFiles = append(report.DriftedFiles, sf)
+					}
+				}
+			}
+		}
+
+		reports = append(reports, report)
+	}
+
+	return fileDrifts, reports
+}
+
+// CheckMissingArtifacts identifies any referenced artifact IDs that are absent from the store.
+func (sm *SessionManifest) CheckMissingArtifacts(s *store.Store) []string {
+	if s == nil {
+		return nil
+	}
+	var missing []string
+	for _, id := range sm.ArtifactIDs {
+		if _, err := s.GetArtifact(id, sm.Workspace); err != nil {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
+
+// ResolveSession resolves a session manifest following the task selection hierarchy:
+// 1. Explicit override (if explicitID != "")
+// 2. Branch-keyed lookup (current git branch)
+// 3. Most recent for workspace root
+// 4. Clean start (nil, nil)
+func ResolveSession(s *store.Store, workspace, branch, explicitID string) (*SessionManifest, error) {
+	if s == nil {
+		return nil, nil
+	}
+
+	if explicitID != "" {
+		data, err := s.GetSession(explicitID, workspace)
+		if err != nil {
+			return nil, err
+		}
+		return FromJSON(data)
+	}
+
+	if branch != "" {
+		data, err := s.GetLatestSessionByBranch(workspace, branch)
+		if err == nil && data != "" {
+			return FromJSON(data)
+		}
+	}
+
+	if workspace != "" {
+		data, err := s.GetLatestSession(workspace)
+		if err == nil && data != "" {
+			return FromJSON(data)
+		}
+	}
+
+	return nil, nil
+}
+
 
