@@ -11,7 +11,6 @@ import (
 	"tzro/pkg/store"
 )
 
-
 // HoldoutBenchmarkResult holds measured metrics for context retrieval vs probe baseline.
 type HoldoutBenchmarkResult struct {
 	Query             string

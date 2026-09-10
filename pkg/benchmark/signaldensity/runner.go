@@ -299,4 +299,3 @@ func filterCases(all []TaskCase, tier, primitive string) []TaskCase {
 
 	return filtered
 }
-

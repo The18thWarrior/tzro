@@ -92,4 +92,3 @@ func TestLoadWorkspacePolicy_DefaultAndFile(t *testing.T) {
 		t.Errorf("expected 1 rule, got %d", len(customP.Rules))
 	}
 }
-

@@ -59,14 +59,18 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 
 ---
 
-## 🆕 v2.0.0 Highlights
+## 🆕 v2.1.0 Highlights
 
-- **5-Harness Hook Bridge**: Native lifecycle hook integration for Antigravity, Claude Code, Hermes, GitHub Copilot, and Pi-Coder — auto-compacts tool outputs before they enter agent context
-- **Tabular Data Engine**: Import CSV/TSV/JSON data with `tzro ingest`, query with SQL via `tzro query` — 97%+ token reduction on data workloads
-- **`tzro init` Auto-Installer**: Single command to detect and configure hooks for all active agent environments
-- **KV-Cache Benchmarks**: E2E benchmarks proving 5–10 percentage point improvement over native provider caching
-- **Architecture Simplification**: Removed the internal DAG engine, MCP server, daemon, and dashboard — 1M LOC replaced by 3K LOC across 8 focused `pkg/` packages
-- **Pi-Coder Integration**: First-class hook support for Pi-Coder TypeScript-based tool interception
+- **Task Context Assembly (`tzro context`)**: Assembles ranked, token-budgeted context packs with AST definitions, TypeScript path alias resolution (`tsconfig.json`), and call graphs — replacing 5–10 exploration turns with a single <2k token pack.
+- **Pre-Edit Change Impact Analysis (`tzro impact`)**: Calculates structural blast radius, direct callers, downstream consumers, and existing test coverage before edits are made.
+- **Unified Local Evidence Search (`tzro search`)**: Searches across code, design specs, ADRs, documentation, logs, and stored artifacts with AST span extraction in <10ms.
+- **Agent Session Continuity (`tzro session`)**: Portable Schema v2 snapshot tracking objectives, decisions, executed checks, and git freshness across agent handoffs.
+- **Evidence Contract Compactor (`tzro compact --run`)**: Direct command wrapper capturing verified exit codes, capping inline diagnostics to 10 lines, and storing full logs in SQLite with expansion hashes.
+- **System Diagnostics (`tzro doctor`)**: Live synthetic health checks across proxy routes, upstream provider latency, SQLite FTS5 capability, and agent lifecycle hooks.
+- **Signal Density Benchmark Suite (`tzro bench signal-density`)**: Empirical measurement of task signal density per token ($S = \text{Recall} / \text{Tokens}$) with spending limit circuit breakers.
+- **Offline Context Explainability (`tzro inspect explain`)**: Zero-cloud-token replay explaining why candidates were included, ranked, or omitted.
+- **Zero-Cloud DLP Policy Engine**: Workspace policy engine (`.tzro/privacy.json`) enforcing redaction and egress blocking before payload transmission.
+- **Schema v2 Multi-Workspace Store**: Isolated workspace partitioning, quota enforcement, and LRU artifact eviction.
 
 ---
 
@@ -181,14 +185,40 @@ tzro status
 # Fast local codebase exploration (0 cloud tokens)
 tzro probe "auth middleware jwt"
 
-# Generate AST skeleton for a source file
+# Task Context Assembly: assemble ranked, token-budgeted context packs
+tzro context "implement rate limiting" --budget 2000
+
+# Pre-edit blast radius: compute direct callers, consumers, and test coverage
+tzro impact pkg/context/context.go
+tzro impact # analyze uncommitted git changes
+
+# Unified local evidence search across code, docs, ADRs, logs, and artifacts
+tzro search "token bucket algorithm"
+
+# Generate AST skeleton for a source file (eliding bodies to hashes)
 tzro skeleton ./pkg/kvlock/kvlock.go
 
-# Retrieve original full code body for a hash
+# Retrieve original full code body or stored artifact (with optional line ranges)
 tzro expand aa179288
+tzro expand art_9503e3ba620ad4bf --lines 1-50
 
-# Pipe raw test logs or JSON on stdin for compaction
+# Execute command with evidence contract compaction (10-line inline cap)
+tzro compact --run "go test ./..."
 go test ./... 2>&1 | tzro compact
+
+# Agent session continuity: save, load, and inspect handoffs
+tzro session save --objective "add ratelimit" --constraints "no third-party deps"
+tzro session status
+tzro session load session_manifest.json
+
+# Offline context assembly explainability (0 cloud tokens)
+tzro inspect explain <trace_id> <file_path>
+
+# Run synthetic health checks, provider route diagnostics, and hook probes
+tzro doctor
+
+# Benchmark signal density per token with spending limit guardrails
+tzro bench signal-density --max-cost 1.50
 
 # Agent lifecycle hook bridge (5 harnesses)
 tzro hook claude post-tool    # Claude Code post-tool compaction

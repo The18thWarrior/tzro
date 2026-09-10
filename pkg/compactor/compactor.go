@@ -9,7 +9,6 @@ import (
 	"tzro/pkg/store"
 )
 
-
 // SmartJSONCrusher compresses JSON arrays of uniform objects into compact tabular format.
 func SmartJSONCrusher(input string) string {
 	trimmed := strings.TrimSpace(input)
@@ -161,4 +160,3 @@ func CompactWithArtifact(input, workspace string, s *store.Store) string {
 
 	return compacted
 }
-

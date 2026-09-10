@@ -273,12 +273,12 @@ func TestBenchmark_ASTInterfaceExtraction(t *testing.T) {
 	defer server.Close()
 
 	cfg := BenchmarkConfig{
-		Model:      "openai/gpt-4o",
-		Tier:       TierMicro,
-		Primitive:  PrimitiveSkeleton,
-		MaxCost:    2.00,
-		BaseURL:    server.URL,
-		NoCache:    true,
+		Model:     "openai/gpt-4o",
+		Tier:      TierMicro,
+		Primitive: PrimitiveSkeleton,
+		MaxCost:   2.00,
+		BaseURL:   server.URL,
+		NoCache:   true,
 	}
 
 	runner := NewRunner(cfg)
@@ -439,5 +439,3 @@ func (m *MemoryDriver) Delete(key string) error {
 		t.Errorf("expected at least 2 turns, got %d", res.Turns)
 	}
 }
-
-

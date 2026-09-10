@@ -723,10 +723,6 @@ func (s *Store) GetTraceOutcome(traceID string) (string, error) {
 	return outcome, nil
 }
 
-
-
-
-
 // GetFileIndexState returns the recorded mod_time and hash for a file within a workspace.
 func (s *Store) GetFileIndexState(workspace, filePath string) (int64, string, error) {
 	s.mu.RLock()
@@ -823,7 +819,6 @@ func (s *Store) GetAuditLogs(limit int) ([]map[string]any, error) {
 	}
 	return logs, rows.Err()
 }
-
 
 // GetRecentUnexpiredArtifactIDs returns up to limit artifact IDs in the given workspace
 // that are either pinned or have not yet expired, ordered by creation date descending.
@@ -1189,7 +1184,6 @@ func (s *Store) GetWorkspaceArtifactStats(workspace string) (count int, totalByt
 	return
 }
 
-
 // PutBlob stores a content block and returns its hash.
 func (s *Store) PutBlob(filePath string, startLine, endLine int, body string) (string, error) {
 	s.mu.Lock()
@@ -1321,7 +1315,6 @@ func (s *Store) SearchSymbols(workspace, queryStr string, limit int) ([]SymbolEn
 
 	return results, nil
 }
-
 
 // systemTables are protected from QuerySQL access.
 var systemTables = map[string]bool{

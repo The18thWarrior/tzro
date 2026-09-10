@@ -306,9 +306,9 @@ func TestProxy_ContextCancellation(t *testing.T) {
 	defer s.Close()
 
 	proxySrv := NewServer(Config{
-		ListenAddr:        "127.0.0.1:0",
-		UpstreamOpenAI:    mockUpstream.URL,
-		Store:             s,
+		ListenAddr:     "127.0.0.1:0",
+		UpstreamOpenAI: mockUpstream.URL,
+		Store:          s,
 	})
 
 	testClient := httptest.NewServer(proxySrv.Handler())
@@ -547,4 +547,3 @@ func TestProxy_TokenUsageExtraction(t *testing.T) {
 		t.Errorf("Expected unknown for missing prompt tokens, got: %s", display)
 	}
 }
-

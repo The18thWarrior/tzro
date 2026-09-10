@@ -12,10 +12,10 @@ import (
 
 // ModuleImport represents an imported module or symbol reference.
 type ModuleImport struct {
-	ImportPath     string   // e.g. "./auth/jwt" or "express"
+	ImportPath      string   // e.g. "./auth/jwt" or "express"
 	ImportedSymbols []string // e.g. ["ValidateToken", "TokenPayload"]
-	IsDefault      bool
-	SourceFilePath string
+	IsDefault       bool
+	SourceFilePath  string
 }
 
 // ExtractImports parses a TypeScript or JavaScript source file and extracts imported modules and symbols.
@@ -54,7 +54,7 @@ func ExtractImports(filePath string, source []byte) ([]ModuleImport, error) {
 			sourceNode := bt.ChildByField(node, "source")
 			if sourceNode != nil {
 				rawPath := string(source[sourceNode.StartByte():sourceNode.EndByte()])
-				imp.ImportPath = strings.Trim(rawPath, `"'` + "`")
+				imp.ImportPath = strings.Trim(rawPath, `"'`+"`")
 			}
 
 			// Look for import specifiers inside clause
@@ -109,7 +109,7 @@ func extractImportsLexical(filePath, content string) []ModuleImport {
 			fromIdx := strings.Index(trimmed, " from ")
 			if fromIdx >= 0 {
 				pathPart := strings.TrimSpace(trimmed[fromIdx+6:])
-				pathPart = strings.Trim(pathPart, `;"'` + "`")
+				pathPart = strings.Trim(pathPart, `;"'`+"`")
 
 				clausePart := strings.TrimSpace(trimmed[7:fromIdx])
 				clausePart = strings.Trim(clausePart, "{}")
@@ -133,7 +133,7 @@ func extractImportsLexical(filePath, content string) []ModuleImport {
 			start := strings.Index(trimmed, "require(") + 8
 			end := strings.Index(trimmed[start:], ")")
 			if end >= 0 {
-				rawPath := strings.Trim(strings.TrimSpace(trimmed[start:start+end]), `"'` + "`")
+				rawPath := strings.Trim(strings.TrimSpace(trimmed[start:start+end]), `"'`+"`")
 				imports = append(imports, ModuleImport{
 					ImportPath:     rawPath,
 					SourceFilePath: filePath,
@@ -295,5 +295,3 @@ func ResolveImportedFile(workspaceRoot, sourcePath, importPath string, tsconfig 
 	}
 	return candidates
 }
-
-

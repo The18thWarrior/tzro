@@ -73,4 +73,3 @@ func TestSessionManifest_SaveAndExport(t *testing.T) {
 		t.Errorf("manifest export file missing")
 	}
 }
-

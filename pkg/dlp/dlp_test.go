@@ -63,4 +63,3 @@ func TestRedactor_CustomDetectorsAndSessionIsolation(t *testing.T) {
 		t.Errorf("failed to rehydrate procB")
 	}
 }
-

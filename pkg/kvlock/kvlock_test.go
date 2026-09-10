@@ -138,4 +138,3 @@ func TestLockGuard_UnknownFieldsAndFidelity(t *testing.T) {
 		t.Errorf("expected fail-open raw payload return, got %s", string(normBad))
 	}
 }
-

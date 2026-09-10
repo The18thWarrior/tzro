@@ -13,7 +13,6 @@ import (
 	"tzro/pkg/store"
 )
 
-
 // PreToolUseInput represents the input received on stdin for PreToolUse events.
 type PreToolUseInput struct {
 	ToolCall struct {
@@ -86,7 +85,6 @@ func HandlePreToolUse(r io.Reader, w io.Writer, s *store.Store) error {
 	return json.NewEncoder(w).Encode(output)
 }
 
-
 // HandlePostToolUse compresses raw command/tool outputs before they are written to history.
 // Now also intercepts tabular data for SQLite import.
 func HandlePostToolUse(r io.Reader, w io.Writer, s *store.Store) error {
@@ -138,7 +136,6 @@ func CompactOrIntercept(output string, toolName string, s *store.Store) string {
 
 	return compactor.CompactWithArtifact(output, cwd, s)
 }
-
 
 // generateTableName creates a deterministic table name from the first few rows of tabular data.
 func generateTableName(td *compactor.TabularData) string {

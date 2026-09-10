@@ -323,4 +323,3 @@ func RefreshToken(old string) (string, error) {
 		t.Error("expected declaration span to not include unrelated functions")
 	}
 }
-

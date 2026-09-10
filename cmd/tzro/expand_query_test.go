@@ -72,4 +72,3 @@ func TestCLI_ExpandAndQueryArtifacts(t *testing.T) {
 
 	_ = csvArtID
 }
-

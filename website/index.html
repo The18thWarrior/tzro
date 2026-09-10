@@ -435,25 +435,59 @@
                 <div class="exec-telemetry-body">
                   <div class="exec-telemetry-line" data-idx="0">
                     <span class="exec-tl-prompt">↑</span>
-                    <span class="exec-tl-text">probe: 'HandlePreToolUse' → 3 matches in &lt;2ms</span>
+                    <span class="exec-tl-text">context: 'implement rate limiter' → 1,850 tokens (budget: 2000)</span>
                   </div>
                   <div class="exec-telemetry-line" data-idx="1">
                     <span class="exec-tl-prompt">↑</span>
-                    <span class="exec-tl-text">skeleton: pkg/hooks/handler.go → 847 bytes (82% reduction)</span>
+                    <span class="exec-tl-text">impact: pkg/context/context.go → 14 callers, 3 test suites</span>
                   </div>
                   <div class="exec-telemetry-line" data-idx="2">
                     <span class="exec-tl-prompt">↑</span>
-                    <span class="exec-tl-text">expand: #dd536e51 → 28 lines retrieved from store</span>
+                    <span class="exec-tl-text">search: 'token bucket' → 8 hits across code, ADRs, and docs</span>
                   </div>
-                  <div class="exec-telemetry-line exec-tl-cloud-success" data-idx="3">
+                  <div class="exec-telemetry-line" data-idx="3">
+                    <span class="exec-tl-prompt">↑</span>
+                    <span class="exec-tl-text">session: save 'ratelimit' → schema v2 manifest (fresh git SHA)</span>
+                  </div>
+                  <div class="exec-telemetry-line exec-tl-cloud-success" data-idx="4">
                     <span class="exec-tl-prompt">✔</span>
-                    <span class="exec-tl-text">compact: 14,280 → 2,847 bytes (80% log reduction) ✔</span>
+                    <span class="exec-tl-text">compact --run: 'go test' → exit 0, 10-line inline cap, artifact stored ✔</span>
                   </div>
                 </div>
               </div>
 
               <!-- Feature List -->
               <div class="exec-feature-list">
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🧩</span>
+                  <span class="exec-feature-label">Task Context Packs (tzro context)</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">💥</span>
+                  <span class="exec-feature-label">Pre-Edit Impact Graph (tzro impact)</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🔍</span>
+                  <span class="exec-feature-label">Unified Evidence Search (tzro search)</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">📋</span>
+                  <span class="exec-feature-label">Session Continuity Handoff (tzro session)</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🩺</span>
+                  <span class="exec-feature-label">Diagnostic Doctor (tzro doctor)</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">📊</span>
+                  <span class="exec-feature-label">Signal Density Benchmark (tzro bench)</span>
+                  <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🎯</span>
                   <span class="exec-feature-label">Discovery Engine (tzro probe)</span>
@@ -466,17 +500,12 @@
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">📦</span>
-                  <span class="exec-feature-label">Log &amp; Output Compaction</span>
+                  <span class="exec-feature-label">Log &amp; Output Compaction (--run)</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
                 <div class="exec-feature">
                   <span class="exec-feature-icon">🔁</span>
                   <span class="exec-feature-label">Tabular Data Ingest &amp; Query</span>
-                  <span class="exec-badge exec-badge-live">LIVE</span>
-                </div>
-                <div class="exec-feature">
-                  <span class="exec-feature-icon">☁️</span>
-                  <span class="exec-feature-label">Lifecycle Hook Auto-Config (5 agents)</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
                 </div>
               </div>

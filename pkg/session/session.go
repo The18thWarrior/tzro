@@ -10,7 +10,6 @@ import (
 	"tzro/pkg/store"
 )
 
-
 // FileSnapshot tracks a modified file path and its cryptographic hash.
 type FileSnapshot struct {
 	Path string `json:"path"`
@@ -334,5 +333,3 @@ func ResolveSession(s *store.Store, workspace, branch, explicitID string) (*Sess
 
 	return nil, nil
 }
-
-

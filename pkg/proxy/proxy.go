@@ -33,20 +33,20 @@ type Config struct {
 
 // Metrics tracks token shield performance in real-time.
 type Metrics struct {
-	TotalRequests     uint64 `json:"total_requests"`
-	AnthropicRequests uint64 `json:"anthropic_requests"`
-	OpenAIRequests    uint64 `json:"openai_requests"`
-	ResponsesRequests uint64 `json:"responses_requests"`
-	GeminiRequests    uint64 `json:"gemini_requests"`
-	LocalRequests     uint64 `json:"local_requests"`
-	BytesProcessed    uint64 `json:"bytes_processed"`
-	SecretsRedacted   uint64 `json:"secrets_redacted"`
-	PoliciesBlocked     uint64 `json:"policies_blocked"`
-	UptimeSeconds       int64  `json:"uptime_seconds"`
-	MemoryAllocMB       uint64 `json:"memory_alloc_mb"`
-	MeasuredInputTokens *int64 `json:"measured_input_tokens"`
+	TotalRequests        uint64 `json:"total_requests"`
+	AnthropicRequests    uint64 `json:"anthropic_requests"`
+	OpenAIRequests       uint64 `json:"openai_requests"`
+	ResponsesRequests    uint64 `json:"responses_requests"`
+	GeminiRequests       uint64 `json:"gemini_requests"`
+	LocalRequests        uint64 `json:"local_requests"`
+	BytesProcessed       uint64 `json:"bytes_processed"`
+	SecretsRedacted      uint64 `json:"secrets_redacted"`
+	PoliciesBlocked      uint64 `json:"policies_blocked"`
+	UptimeSeconds        int64  `json:"uptime_seconds"`
+	MemoryAllocMB        uint64 `json:"memory_alloc_mb"`
+	MeasuredInputTokens  *int64 `json:"measured_input_tokens"`
 	MeasuredOutputTokens *int64 `json:"measured_output_tokens"`
-	MeasuredTotalTokens *int64 `json:"measured_total_tokens"`
+	MeasuredTotalTokens  *int64 `json:"measured_total_tokens"`
 	NativeCacheHitTokens *int64 `json:"native_cache_hit_tokens"`
 	TzroPrefixLockTokens *int64 `json:"tzro_prefix_lock_tokens"`
 }

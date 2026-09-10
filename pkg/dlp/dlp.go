@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-
 var (
 	openAIKeyRe = regexp.MustCompile(`\bsk-(?:proj-|live-)?[a-zA-Z0-9_\-]{20,}\b`)
 	githubPatRe = regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9_]{36,}\b`)
@@ -140,4 +139,3 @@ func (r *Redactor) Rehydrate(text string, mapping map[string]string) string {
 	}
 	return text
 }
-

@@ -221,4 +221,3 @@ func (g *LockGuard) NormalizeGemini(raw []byte) ([]byte, string, error) {
 
 	return normalized, prefixHash, nil
 }
-

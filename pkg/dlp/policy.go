@@ -220,4 +220,3 @@ func (pe *PolicyEngine) EvaluateContent(text string) PolicyEvaluation {
 		Reason:  "allowed by policy",
 	}
 }
-

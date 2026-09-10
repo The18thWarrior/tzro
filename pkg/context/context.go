@@ -372,7 +372,6 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 		return nil
 	})
 
-
 	// 4. Resolve candidate content if missing (e.g. from symbol search)
 	for _, item := range candidateMap {
 		if item.Content == "" {
@@ -409,7 +408,6 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 		}
 	}
 
-
 	// 4.5. Privacy content evaluation and redaction
 	if a.policy != nil {
 		redactor := dlp.NewRedactor()
@@ -431,7 +429,6 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 			}
 		}
 	}
-
 
 	// 5. Stable deterministic sorting: primary by Score DESC, secondary by FilePath ASC, then StartLine ASC
 	var sortedCandidates []*PackItem

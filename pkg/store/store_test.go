@@ -70,7 +70,6 @@ func TestStore_IndexAndSearchSymbols(t *testing.T) {
 	}
 }
 
-
 func TestImportTabular_Basic(t *testing.T) {
 	s, err := OpenStore(":memory:")
 	if err != nil {

@@ -6,7 +6,6 @@ import (
 	"tzro/pkg/store"
 )
 
-
 func TestSmartJSONCrusher(t *testing.T) {
 	input := `[
 		{"id": 1, "name": "Alice", "role": "admin"},
@@ -77,4 +76,3 @@ testing.go:1234 +0x56`
 		t.Errorf("expected SSE payload untouched, got %q", passthrough)
 	}
 }
-

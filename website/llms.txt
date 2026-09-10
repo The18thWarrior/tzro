@@ -1,43 +1,54 @@
-# tzro
+# tzro — The Local Token Shield & Context Optimization Engine
 
-`tzro` is a zero-dependency, local-first agentic execution engine. It compiles natural language prompts into topologically-sorted DAG (Directed Acyclic Graph) workflows, executes them durably with checkpointing, and provides relational memory, knowledge graph, and micro-skill extraction.
+`tzro` is a compiled, zero-dependency native Go engine (<50 MB RAM) that eliminates cloud API rate limits, locks prompt cache prefixes (70–99% cache read hit rate), and provides sub-millisecond local codebase discovery, context pack assembly, and log compaction.
 
 ## Onboarding & Installation for Agents
 
 If you are an AI agent or assistant configured in a user's repository and need to install/bootstrap `tzro`:
 
 1. **Run the One-Line Bootstrapper**:
-   Execute the non-interactive automated script in the repository:
    ```bash
-   ./.agents/skills/tzro-onboarding/scripts/onboard.sh
+   curl -fsSL https://get.tzro.ai | sh
    ```
-   Or if downloading from scratch:
+   Or build directly from source:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/The18thWarrior/tzro/main/install.sh | bash
+   CGO_ENABLED=1 go install ./cmd/tzro
    ```
-   This will automatically:
-   - Detect the OS (macOS, Linux) and architecture (arm64, amd64).
-   - Fetch the static precompiled binary for the CLI (`tzro`).
-   - Bootstraps the local SQLite database schema.
 
 2. **Configure Environment PATH**:
-   Add the binary directory to the active shell configuration (`~/.zshrc` or `~/.bashrc`):
+   Ensure `~/.tzro/bin` or `$GOPATH/bin` is on PATH:
    ```bash
-   export PATH="$PATH:$HOME/.tzro"
+   export PATH="$PATH:$HOME/.tzro/bin"
    ```
 
-3. **Reload Environment**:
-   Instruct the user to run `source ~/.zshrc` or restart their terminal.
+## Core Agent Guidelines
 
-## Core Concepts
+When operating in a codebase with tzro, coding agents **must** use tzro's local discovery and compaction tools rather than burning quadratic cloud context:
 
-- **Agent**: The entry point for configuration (models, tools, policies).
-- **Conversation**: Manages history, state, and context compaction.
-- **Connection**: Abstract interface handling transport to the local/cloud model backend.
-- **Probe Nodes**: Executed via the local model using a Thought Chain to explore directories and find files dynamically without wasting cloud tokens.
-- **tzro_code**: Offloads code generation and surgical file updates to the local engine using a dedicated 3-node DAG (Context -> Reason -> Write/Patch).
+1. **Task Context Assembly**: Use `tzro context "<task description>" --budget 2000`
+   - Assembles a ranked, token-budgeted context pack containing relevant symbol definitions, call graphs, TypeScript path alias resolutions, and nearby tests in a single turn.
 
-## How to Delegate to tzro
-When executing tasks that don't require frontier reasoning (e.g. codebase exploration, log searches, web scraping, or routine code generation), delegate to `tzro` via the `tzro_run` tool, `tzro_code` tool, or CLI instead of running them in-context.
-- **Evaluation Trigger**: If about to make 3 or more sequential filesystem / external tool calls, delegate to `tzro`.
-- **Code Generation**: Use `tzro_code` for all non-complex file creations or updates to existing files.
+2. **Pre-Edit Blast Radius**: Use `tzro impact <filepath...>` (or `tzro impact` for uncommitted git changes)
+   - Identifies direct callers, dependent modules, and existing test coverage before modifying shared code or types.
+
+3. **Unified Evidence Search**: Use `tzro search "<query>"` & `tzro probe "<query>"`
+   - `tzro probe "<query>"`: Fast symbol and file discovery using ripgrep + Tree-sitter AST in <5ms.
+   - `tzro search "<query>"`: Multi-source evidence search across code, design specs, ADRs, documentation, artifacts, and logs.
+
+4. **Large File Reads**: Use `tzro skeleton <filepath>` & `tzro expand <hash>`
+   - Inspect interface, imports, and method signatures with function bodies elided to hashes.
+   - Retrieve elided bodies on demand via `tzro expand <hash>`.
+
+5. **Test & Log Compaction**: Use `tzro compact --run "<command>"`
+   - Enforces evidence contract: captures observed exit code, caps inline diagnostics to 10 lines, and saves full failure output into SQLite with an expansion hash.
+
+6. **Agent Task Continuity**: Use `tzro session save / load / status`
+   - Save session state: `tzro session save --objective "<goal>" --constraints "<rules>"`
+   - Resume session state: `tzro session load <manifest.json>`
+   - Inspect freshness: `tzro session status` (detects stale evidence and git deviations).
+
+7. **Tabular Data Analysis**: Use `tzro ingest <file>` & `tzro query <table> "<sql>"`
+   - Import CSV/TSV/JSON array into SQLite. Query with SQL instead of dumping full datasets into prompt context (97%+ token reduction).
+
+8. **System Diagnostics**: Use `tzro doctor`
+   - Run synthetic health checks across loopback proxy, provider routes, FTS5 engine, and agent hooks.

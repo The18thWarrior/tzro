@@ -152,4 +152,3 @@ func TestProxy_HealthProbeShortCircuits(t *testing.T) {
 		})
 	}
 }
-

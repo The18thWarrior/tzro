@@ -31,8 +31,6 @@ import (
 	"tzro/pkg/store"
 )
 
-
-
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -222,7 +220,6 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	expandCmd.Flags().StringVar(&linesRange, "lines", "", "Line range to expand, e.g. 10-50")
-
 
 	// 5. COMPACT COMMAND
 	var compactRunCmd string
@@ -734,7 +731,6 @@ Examples:
 		},
 	}
 
-
 	// 12. DLP PREVIEW COMMAND
 	dlpCmd := &cobra.Command{
 		Use:   "dlp",
@@ -972,6 +968,7 @@ Examples:
 			return nil
 		},
 	}
+	contextCmd.Flags().IntVar(&contextBudget, "budget", 4000, "Token budget for the context pack")
 
 	// 14. INSPECT COMMAND GROUP
 	inspectCmd := &cobra.Command{
@@ -1702,5 +1699,3 @@ func formatBytes(b int64) string {
 		return fmt.Sprintf("%d B", b)
 	}
 }
-
-
