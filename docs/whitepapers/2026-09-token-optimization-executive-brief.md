@@ -3,14 +3,14 @@
 **Subtitle:** Moving Beyond the Agent Mirage to High-Yield, Bounded Production Systems  
 **Author:** PixelTag Consulting (Certified Salesforce Consulting Partner & Enterprise AI Advisory)  
 **Target Audience:** Chief Information Officers (CIOs), Chief Technology Officers (CTOs), Chief AI Officers (CAIOs), VPs of Engineering, and VPs of RevOps  
-**Venue:** Dreamforce Executive Roundtable & C-Suite Briefing Sessions  
+**Venue:** Enterprise AI Executive Briefings · C-Suite Roundtable Series  
 **Publication Date:** September 2026  
 
 ---
 
 ## Executive Abstract
 
-Enterprise technology leaders attending Dreamforce 2026 face relentless pressure to demonstrate measurable business value from generative AI. Yet across the Global 2000, an uncomfortable consensus has emerged behind closed doors: **over 80% of enterprise AI proofs-of-concept (POCs) fail to transition into sustainable production.**
+Enterprise technology leaders face relentless pressure to demonstrate measurable business value and defensible unit economics from generative AI. Yet across the Global 2000, an uncomfortable consensus has emerged behind closed doors: **over 80% of enterprise AI proofs-of-concept (POCs) fail to transition into sustainable production.**
 
 This failure is rarely attributable to foundation model intelligence. Rather, it is the direct consequence of an architectural blind spot: the absence of an intentional **Token Optimization Strategy**.
 
@@ -25,7 +25,7 @@ Drawing on production deployments from PixelTag Consulting—including **`Appear
 * **Pillar 1: Design-Time Governance (Functional Requirements & Architectural Fitness):** Mandating structural discipline before code is written, replacing fragile autonomous agents with deterministic Directed Acyclic Graphs (DAGs) and multi-pass pipelines wherever inputs and outputs are bounded.
 * **Pillar 2: Runtime Shielding (Systems & Infrastructure Defense):** Deploying an on-device systems perimeter that enforces byte-level KV-cache prefix stability (avoiding the 12.5x cache miss penalty), structural syntax skeletonization (70–90% token reduction), sub-millisecond local discovery, and zero-cloud Data Loss Prevention (DLP).
 
-Finally, we equip technology executives with the **Dreamforce Diagnostic Rubric**—five diagnostic questions to audit production readiness on Monday morning—and outline a **Bounded Pilot Program** to transition struggling AI initiatives into lean, high-yield enterprise assets.
+Finally, we equip technology executives with the **Enterprise AI Diagnostic Rubric**—five diagnostic questions to audit production readiness on Monday morning—and outline a **Bounded Pilot Program** to transition struggling AI initiatives into lean, high-yield enterprise assets.
 
 ---
 
@@ -347,13 +347,13 @@ Operating within the local POSIX loopback boundary, `tzro` enforces **Zero-Cloud
 
 ---
 
-## 4. The Dreamforce Executive Diagnostic Rubric
+## 4. The Enterprise Executive Diagnostic Rubric
 
 For technology executives evaluating their organization's AI deployment readiness, PixelTag has codified the following **Five-Point Diagnostic Rubric**. Ask these questions to your engineering leads, system architects, and AI task forces:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                THE DREAMFORCE AI READINESS SCORECARD                         │
+│             THE ENTERPRISE AI PRODUCTION READINESS SCORECARD                 │
 ├─────────────────────────┬───────────────────────────────────┬───────────────┤
 │ Diagnostic Question     │ Production Failure Indicator      │ Target State  │
 ├─────────────────────────┼───────────────────────────────────┼───────────────┤
@@ -403,7 +403,7 @@ For technology executives evaluating their organization's AI deployment readines
 
 ## 5. The Bounded Pilot Program
 
-For enterprise leaders at Dreamforce who recognize that their current AI initiatives are hitting the Token Production Cliff, PixelTag Consulting offers a structured, outcome-driven engagement model.
+For enterprise leaders who recognize that their current AI initiatives are hitting the Token Production Cliff, PixelTag Consulting offers a structured, outcome-driven engagement model.
 
 Rather than conducting open-ended management consulting assessments, PixelTag’s **enterprise architects and consultants** embed directly with your engineering and RevOps teams to execute a **Bounded Pilot Sprint (2 to 4 Weeks)**.
 
