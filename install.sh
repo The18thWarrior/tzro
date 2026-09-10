@@ -100,9 +100,12 @@ else
 fi
 
 echo -e "\n  ${BOLD}Getting Started:${NC}"
-echo -e "    1. Start the Token Shield: ${CYAN}tzro start${NC}"
-echo -e "    2. Explore Codebase:      ${CYAN}tzro probe \"<query>\"${NC}"
-echo -e "    3. Configure Agent Hooks:  ${CYAN}tzro init --hooks all${NC}"
-echo -e "    4. Connect Your Agents:   ${CYAN}export ANTHROPIC_BASE_URL=http://localhost:7878${NC}"
+echo -e "    1. Verify Engine Health:   ${CYAN}tzro doctor${NC}"
+echo -e "    2. Start the Token Shield: ${CYAN}tzro start${NC}"
+echo -e "    3. Explore Codebase:      ${CYAN}tzro probe \"<query>\"${NC}"
+echo -e "    4. Assemble Context Pack:  ${CYAN}tzro context \"<task>\" --budget 2000${NC}"
+echo -e "    5. Analyze Change Impact:  ${CYAN}tzro impact <files...>${NC}"
+echo -e "    6. Configure Agent Hooks:  ${CYAN}tzro init --hooks all${NC}"
+echo -e "    7. Connect Your Agents:   ${CYAN}export ANTHROPIC_BASE_URL=http://localhost:7878${NC}"
 echo -e "                              ${CYAN}export OPENAI_BASE_URL=http://localhost:7878/v1${NC}"
 echo -e "==========================================================\n"
