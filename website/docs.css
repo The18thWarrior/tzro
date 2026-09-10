@@ -42,6 +42,190 @@
   border-radius: 4px;
 }
 
+/* -------------------------------------------------------------------------
+   VERSION SWITCHER DROPDOWN
+   ------------------------------------------------------------------------- */
+
+.docs-version-switch-container {
+  padding: 0 1.25rem 1.25rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.docs-version-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.docs-version-select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.docs-version-select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.55rem 2.2rem 0.55rem 0.85rem;
+  font-size: 0.82rem;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.docs-version-select:hover {
+  border-color: rgba(182, 255, 0, 0.4);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.docs-version-select:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(182, 255, 0, 0.15);
+}
+
+.docs-version-select option {
+  background: #0d0f12;
+  color: var(--text-primary);
+  padding: 0.5rem;
+}
+
+.docs-version-select-wrapper .select-chevron {
+  position: absolute;
+  right: 0.8rem;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: transform var(--transition-fast);
+}
+
+/* -------------------------------------------------------------------------
+   VERSION SECTION VISIBILITY & ARCHIVE BANNER
+   ------------------------------------------------------------------------- */
+
+.docs-version-section {
+  display: none;
+}
+
+.docs-version-section.active {
+  display: block;
+}
+
+.docs-sidebar-version-nav {
+  display: none;
+}
+
+.docs-sidebar-version-nav.active {
+  display: block;
+}
+
+.docs-toc-version {
+  display: none;
+}
+
+.docs-toc-version.active {
+  display: block;
+}
+
+.docs-archive-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 10px;
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 4px 20px rgba(245, 158, 11, 0.05);
+}
+
+.docs-archive-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+  padding-top: 0.1rem;
+}
+
+.docs-archive-body {
+  flex: 1;
+}
+
+.docs-archive-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #fbbf24;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.docs-archive-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 0.15rem 0.45rem;
+  background: rgba(245, 158, 11, 0.2);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 4px;
+  color: #fde68a;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.docs-archive-body p {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.docs-archive-body a {
+  color: var(--accent-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.docs-archive-body a:hover {
+  color: #d4ff4d;
+}
+
+.version-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 20px;
+  background: rgba(182, 255, 0, 0.1);
+  color: var(--accent-color);
+  border: 1px solid rgba(182, 255, 0, 0.25);
+  margin-left: 0.6rem;
+  vertical-align: middle;
+}
+
+.version-pill.legacy {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
 .docs-sidebar-group {
   margin-bottom: 0.25rem;
 }

@@ -250,110 +250,216 @@
     <!-- LEFT SIDEBAR — Navigation                                       -->
     <!-- ============================================================== -->
     <aside class="docs-sidebar">
-      <!-- Section 1 -->
-      <div class="docs-sidebar-group">
-        <div class="docs-sidebar-group-title">
-          Introduction
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+      <!-- Version Selector Dropdown -->
+      <div class="docs-version-switch-container">
+        <label for="docs-version-select" class="docs-version-label">Docs Version</label>
+        <div class="docs-version-select-wrapper">
+          <select id="docs-version-select" class="docs-version-select" aria-label="Select documentation version">
+            <option value="v2" selected>v2.1 (Current) — Token Shield</option>
+            <option value="v1">v1.0 (Archived) — Inference Arbitrage</option>
+          </select>
+          <svg class="select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
         </div>
-        <ul class="docs-sidebar-items">
-          <li><a href="#introduction" class="docs-sidebar-link">What's TZRO</a></li>
-          <li><a href="#inference-arbitrage" class="docs-sidebar-link">Intelligent Task Offloading</a></li>
-          <li><a href="#cloud-vs-local" class="docs-sidebar-link">Cloud vs Local Split</a></li>
-        </ul>
       </div>
 
-      <!-- Section 2 -->
-      <div class="docs-sidebar-group">
-        <div class="docs-sidebar-group-title">
-          Quickstart
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
+      <!-- ============================================================ -->
+      <!-- V2 SIDEBAR NAVIGATION (Current / Default)                    -->
+      <!-- ============================================================ -->
+      <div id="sidebar-nav-v2" class="docs-sidebar-version-nav active">
+        <!-- v2 Group 1: Overview & Architecture -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Overview &amp; Architecture
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v2-overview" class="docs-sidebar-link">What's TZRO v2</a></li>
+            <li><a href="#v2-problem" class="docs-sidebar-link">The 12.5x Cache Miss Penalty</a></li>
+            <li><a href="#v2-architecture" class="docs-sidebar-link">Two-Plane Architecture</a></li>
+            <li><a href="#v2-comparison" class="docs-sidebar-link">Memory &amp; Performance</a></li>
+          </ul>
         </div>
-        <ul class="docs-sidebar-items">
-          <li><a href="#quickstart" class="docs-sidebar-link">5-Minute Setup</a></li>
-          <li><a href="#step-bootstrap" class="docs-sidebar-link">Single-Line Bootstrap</a></li>
-          <li><a href="#step-registration" class="docs-sidebar-link">Client Registration</a></li>
-          <li><a href="#step-first-run" class="docs-sidebar-link">First Offline Run</a></li>
-        </ul>
+
+        <!-- v2 Group 2: Quickstart & Setup -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Quickstart &amp; Setup
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v2-install" class="docs-sidebar-link">Installation</a></li>
+            <li><a href="#v2-proxy" class="docs-sidebar-link">Start Proxy Daemon</a></li>
+            <li><a href="#v2-claude-code" class="docs-sidebar-link">Claude Code Integration</a></li>
+            <li><a href="#v2-cursor" class="docs-sidebar-link">Cursor &amp; OpenAI Clients</a></li>
+            <li><a href="#v2-antigravity" class="docs-sidebar-link">Antigravity Native Hooks</a></li>
+          </ul>
+        </div>
+
+        <!-- v2 Group 3: Core Token Shield -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Core Token Shield
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v2-kv-cache-lock" class="docs-sidebar-link">KV-Cache Prefix Lock</a></li>
+            <li><a href="#v2-ast-skeletonizer" class="docs-sidebar-link">Tree-Sitter Skeletonizer</a></li>
+            <li><a href="#v2-json-crusher" class="docs-sidebar-link">JSON Crusher &amp; Elider</a></li>
+            <li><a href="#v2-security-dlp" class="docs-sidebar-link">Zero-Cloud DLP Policy</a></li>
+          </ul>
+        </div>
+
+        <!-- v2 Group 4: Local Discovery & Expansion -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Discovery &amp; Retrieval
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v2-probe" class="docs-sidebar-link">Sub-ms Probe (<code style="font-size:inherit;">tzro probe</code>)</a></li>
+            <li><a href="#v2-expand" class="docs-sidebar-link">Body Expansion (<code style="font-size:inherit;">tzro expand</code>)</a></li>
+            <li><a href="#v2-search" class="docs-sidebar-link">Unified Search (<code style="font-size:inherit;">tzro search</code>)</a></li>
+            <li><a href="#v2-tabular" class="docs-sidebar-link">Tabular SQL (<code style="font-size:inherit;">tzro ingest</code>)</a></li>
+          </ul>
+        </div>
+
+        <!-- v2 Group 5: Task Context & Impact -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Context &amp; Impact
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v2-context-pack" class="docs-sidebar-link">Context Assembly (<code style="font-size:inherit;">tzro context</code>)</a></li>
+            <li><a href="#v2-impact-analysis" class="docs-sidebar-link">Impact Graph (<code style="font-size:inherit;">tzro impact</code>)</a></li>
+            <li><a href="#v2-session-continuity" class="docs-sidebar-link">Session Continuity (<code style="font-size:inherit;">tzro session</code>)</a></li>
+            <li><a href="#v2-evidence-compact" class="docs-sidebar-link">Evidence Compactor (<code style="font-size:inherit;">tzro compact</code>)</a></li>
+          </ul>
+        </div>
+
+        <!-- v2 Group 6: Diagnostics & CLI -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Diagnostics &amp; CLI
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v2-doctor" class="docs-sidebar-link">System Doctor (<code style="font-size:inherit;">tzro doctor</code>)</a></li>
+            <li><a href="#v2-signal-density" class="docs-sidebar-link">Signal Density Bench</a></li>
+            <li><a href="#v2-cli-reference" class="docs-sidebar-link">Complete CLI Cheat Sheet</a></li>
+          </ul>
+        </div>
       </div>
 
-      <!-- Section 3 -->
-      <div class="docs-sidebar-group">
-        <div class="docs-sidebar-group-title">
-          Security
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
+      <!-- ============================================================ -->
+      <!-- V1 SIDEBAR NAVIGATION (Legacy / Archived)                    -->
+      <!-- ============================================================ -->
+      <div id="sidebar-nav-v1" class="docs-sidebar-version-nav">
+        <!-- Section 1 -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Introduction (v1)
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v1-introduction" class="docs-sidebar-link">What's TZRO (v1)</a></li>
+            <li><a href="#inference-arbitrage" class="docs-sidebar-link">Intelligent Task Offloading</a></li>
+            <li><a href="#cloud-vs-local" class="docs-sidebar-link">Cloud vs Local Split</a></li>
+          </ul>
         </div>
-        <ul class="docs-sidebar-items">
-          <li><a href="#security" class="docs-sidebar-link">Sandbox Transparency</a></li>
-          <li><a href="#data-sovereignty" class="docs-sidebar-link">Data Sovereignty</a></li>
-          <li><a href="#containerized-execution" class="docs-sidebar-link">Containerized Execution</a></li>
-          <li><a href="#grammar-gating" class="docs-sidebar-link">Grammar Gating</a></li>
-          <li><a href="#network-isolation" class="docs-sidebar-link">Network Isolation</a></li>
-        </ul>
-      </div>
 
-      <!-- Section 4 -->
-      <div class="docs-sidebar-group">
-        <div class="docs-sidebar-group-title">
-          Hardware Optimization
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
+        <!-- Section 2 -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Quickstart (v1)
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v1-quickstart" class="docs-sidebar-link">5-Minute Setup</a></li>
+            <li><a href="#step-bootstrap" class="docs-sidebar-link">Single-Line Bootstrap</a></li>
+            <li><a href="#step-registration" class="docs-sidebar-link">Client Registration</a></li>
+            <li><a href="#step-first-run" class="docs-sidebar-link">First Offline Run</a></li>
+          </ul>
         </div>
-        <ul class="docs-sidebar-items">
-          <li><a href="#hardware" class="docs-sidebar-link">Local Performance</a></li>
-          <li><a href="#speculative-decoding" class="docs-sidebar-link">Speculative Decoding</a></li>
-          <li><a href="#kv-prefix-sharing" class="docs-sidebar-link">KV Prefix Sharing</a></li>
-          <li><a href="#attention-preemption" class="docs-sidebar-link">Attention Preemption</a></li>
-        </ul>
-      </div>
 
-      <!-- Section 5 -->
-      <div class="docs-sidebar-group">
-        <div class="docs-sidebar-group-title">
-          Debugging
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
+        <!-- Section 3 -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Security (v1)
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#v1-security" class="docs-sidebar-link">Sandbox Transparency</a></li>
+            <li><a href="#data-sovereignty" class="docs-sidebar-link">Data Sovereignty</a></li>
+            <li><a href="#containerized-execution" class="docs-sidebar-link">Containerized Execution</a></li>
+            <li><a href="#grammar-gating" class="docs-sidebar-link">Grammar Gating</a></li>
+            <li><a href="#network-isolation" class="docs-sidebar-link">Network Isolation</a></li>
+          </ul>
         </div>
-        <ul class="docs-sidebar-items">
-          <li><a href="#debugging" class="docs-sidebar-link">Visibility &amp; Debugging</a></li>
-          <li><a href="#tui-dashboard" class="docs-sidebar-link">TUI Dashboard</a></li>
-          <li><a href="#cost-attestation" class="docs-sidebar-link">Cost Attestation</a></li>
-          <li><a href="#log-audit" class="docs-sidebar-link">Logs &amp; Audit</a></li>
-        </ul>
-      </div>
 
-      <!-- Section 6 -->
-      <div class="docs-sidebar-group">
-        <div class="docs-sidebar-group-title">
-          v2.1.0 Capabilities
-          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
+        <!-- Section 4 -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Hardware Optimization (v1)
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#hardware" class="docs-sidebar-link">Local Performance</a></li>
+            <li><a href="#speculative-decoding" class="docs-sidebar-link">Speculative Decoding</a></li>
+            <li><a href="#kv-prefix-sharing" class="docs-sidebar-link">KV Prefix Sharing</a></li>
+            <li><a href="#attention-preemption" class="docs-sidebar-link">Attention Preemption</a></li>
+          </ul>
         </div>
-        <ul class="docs-sidebar-items">
-          <li><a href="#v210" class="docs-sidebar-link">Context &amp; Evidence</a></li>
-          <li><a href="#context-pack" class="docs-sidebar-link">Task Context Assembly</a></li>
-          <li><a href="#impact-analysis" class="docs-sidebar-link">Pre-Edit Impact Graph</a></li>
-          <li><a href="#evidence-search" class="docs-sidebar-link">Unified Evidence Search</a></li>
-          <li><a href="#session-continuity" class="docs-sidebar-link">Session Continuity</a></li>
-          <li><a href="#evidence-compact" class="docs-sidebar-link">Evidence Compactor</a></li>
-          <li><a href="#doctor-diagnostics" class="docs-sidebar-link">System Doctor</a></li>
-          <li><a href="#signal-density" class="docs-sidebar-link">Signal Density Bench</a></li>
-        </ul>
+
+        <!-- Section 5 -->
+        <div class="docs-sidebar-group">
+          <div class="docs-sidebar-group-title">
+            Debugging (v1)
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+          <ul class="docs-sidebar-items">
+            <li><a href="#debugging" class="docs-sidebar-link">Visibility &amp; Debugging</a></li>
+            <li><a href="#tui-dashboard" class="docs-sidebar-link">TUI Dashboard</a></li>
+            <li><a href="#cost-attestation" class="docs-sidebar-link">Cost Attestation</a></li>
+            <li><a href="#log-audit" class="docs-sidebar-link">Logs &amp; Audit</a></li>
+          </ul>
+        </div>
       </div>
     </aside>
 
@@ -363,23 +469,812 @@
     <main class="docs-content">
 
       <!-- ============================================================ -->
+      <!-- TZRO v2 DOCUMENTATION (CURRENT / DEFAULT)                    -->
+      <!-- ============================================================ -->
+      <div id="docs-content-v2" class="docs-version-section active">
+
+        <!-- ============================================================ -->
+        <!-- 1. OVERVIEW & ARCHITECTURE                                   -->
+        <!-- ============================================================ -->
+        <div class="docs-section" id="v2-overview">
+          <div id="overview"></div>
+          <div id="architecture"></div>
+          <h1>What's TZRO <span class="version-pill">v2.1 STABLE</span></h1>
+          <p class="docs-subtitle">
+            An ultra-lightweight, compiled native Go token shield and context optimization engine (&lt;50 MB RAM, zero ML dependencies).
+            It eliminates cloud API rate limits, locks KV-cache prompt prefixes (benchmarked at 70–99% cache read hit rates across 8 models), and provides sub-millisecond local codebase discovery.
+          </p>
+
+          <!-- ── 1.1 The Problem ────────────────────────────────────── -->
+          <h2 id="v2-problem">The 12.5x Cache Miss Penalty &amp; Context Explosion</h2>
+
+          <p>
+            Autonomous AI coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consume massive volumes of tokens during multi-turn developer interactions. In standard workflows:
+          </p>
+
+          <ul>
+            <li><strong>Transient Tool Bloat:</strong> Directory listings, raw source files dumped for inspection, verbose build logs, repetitive stack traces, and JSON API payloads account for <strong>60% to 90% of all tokens consumed</strong>.</li>
+            <li><strong>Context Rot &amp; Degradation:</strong> As contexts exceed 100k+ tokens, model reasoning degrades (~2% instruction-following loss per 100k tokens), leading to hallucinated APIs and lost system constraints.</li>
+            <li><strong>The 12.5x KV-Cache Penalty:</strong> Major providers (Anthropic, OpenAI) offer a 90% discount on cached prompt prefixes (\(P_{\\text{read}} = 0.10 \\times P_{\\text{base}}\)), but penalize cache misses by charging a 25% surcharge for cache writes (\(P_{\\text{write}} = 1.25 \\times P_{\\text{base}}\)). A single unaligned byte or reordered tool schema invalidates the cache, making subsequent turns <strong>12.5× more expensive</strong> ($1.25 vs $0.10).</li>
+            <li><strong>Heavy ML Sidecar Bloat:</strong> Traditional context compression tools (e.g. Headroom) rely on Python runtimes and PyTorch models consuming 4.8 GB+ RAM with 60-second cold starts, rendering them unusable on standard developer laptops and CI runners.</li>
+          </ul>
+
+          <div class="docs-callout callout-security">
+            <div class="docs-callout-icon">🛡️</div>
+            <div class="docs-callout-body">
+              <div class="docs-callout-title">The Financial Shield</div>
+              <p>
+                Prompt caching is the single highest-leverage economic mechanism in agentic coding. TZRO v2 guarantees prefix stability so that 70%–99% of your prompt tokens hit the provider's cached rate instead of triggering 12.5x write penalties.
+              </p>
+            </div>
+          </div>
+
+          <!-- ── 1.2 Two-Plane Architecture ────────────────────────── -->
+          <h2 id="v2-architecture">Two-Plane Native Architecture</h2>
+
+          <p>
+            TZRO v2 operates across two synchronized planes that sit between your coding agent and upstream cloud providers:
+          </p>
+
+          <div class="docs-feature-grid">
+            <div class="docs-feature-card">
+              <div class="docs-feature-card-icon">⚡</div>
+              <h4>1. The Passive Plane (Loopback Proxy :7878)</h4>
+              <p>
+                A high-throughput, transparent HTTP/HTTPS reverse proxy listening on <code>127.0.0.1:7878</code>.
+                It intercepts outgoing LLM calls, locks KV-cache prefixes in deterministic byte order, prunes source files via Tree-sitter AST, crushes uniform JSON into markdown tables, elides stack traces, and enforces Zero-Cloud DLP.
+              </p>
+            </div>
+            <div class="docs-feature-card">
+              <div class="docs-feature-card-icon">🔍</div>
+              <h4>2. The Active Plane (Local Discovery &amp; Compaction)</h4>
+              <p>
+                Deterministic, sub-millisecond local tools executed directly on your workstation:
+                <code>tzro probe</code> (&lt;5ms symbol search), <code>tzro expand</code> (on-demand body retrieval),
+                <code>tzro context</code> (ranked task context assembly), <code>tzro impact</code> (pre-edit blast radius), and
+                <code>tzro compact</code> (evidence contract compaction).
+              </p>
+            </div>
+          </div>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Data Flow Architecture</span>
+            </div>
+            <pre><code>┌─────────────────────────────────────────────────────────────┐
+│  Developer / Agent (Cursor, Claude Code, Antigravity, CLI)  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Transparent Loopback Proxy / CLI)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 TZRO v2 LOCAL TOKEN SHIELD                  │
+│                                                             │
+│  1. KV-Cache Prefix Lock Guard (70-99% Cache Read Hit Rate)  │
+│  2. Tree-Sitter AST Skeletonizer (70-90% Token Reduction)   │
+│  3. Sub-Millisecond Local Discovery (`tzro probe`)          │
+│  4. Local SQLite FTS5 Content-Hash Store (`tzro expand`)    │
+│  5. Smart JSON Crusher &amp; Stack Trace Elider                 │
+│  6. Zero-Cloud DLP / Secret Masking                         │
+│  7. Tabular Data Engine (`tzro ingest` / `tzro query`)      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ (Dense, High-Signal, Cache-Locked Payload)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│           Cloud LLM Provider (Anthropic / OpenAI)           │
+│           ~80% Token Reduction / Zero Rate Limits           │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+          </div>
+
+          <!-- ── 1.3 Memory & Performance ──────────────────────────── -->
+          <h2 id="v2-comparison">Performance &amp; Footprint Comparison</h2>
+
+          <p>
+            Unlike Python-based compression proxies that consume gigabytes of VRAM and minutes to start, TZRO v2 is a single static Go binary with zero external runtime dependencies:
+          </p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>PyTorch Sidecars (e.g. Headroom)</th>
+                <th>Unoptimized Agent Loops</th>
+                <th>TZRO v2 (Token Shield)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>System Memory (RAM)</strong></td>
+                <td class="comparison-old">~4.8 GB RAM</td>
+                <td>N/A</td>
+                <td class="comparison-new"><strong>&lt; 50 MB RAM</strong> (Native Go)</td>
+              </tr>
+              <tr>
+                <td><strong>Cold Start Latency</strong></td>
+                <td class="comparison-old">~60 seconds</td>
+                <td>0 ms</td>
+                <td class="comparison-new"><strong>&lt; 10 ms</strong> (Instant)</td>
+              </tr>
+              <tr>
+                <td><strong>GPU Dependency</strong></td>
+                <td class="comparison-old">Required for inference</td>
+                <td>None</td>
+                <td class="comparison-new"><strong>Zero GPU required</strong></td>
+              </tr>
+              <tr>
+                <td><strong>Prompt Cache Stability</strong></td>
+                <td class="comparison-old">Unstable (turn shifts)</td>
+                <td class="comparison-old">12.5x miss penalties</td>
+                <td class="comparison-new"><strong>70%–99% Cache Read Hits</strong></td>
+              </tr>
+              <tr>
+                <td><strong>Code Read Token Burn</strong></td>
+                <td class="comparison-old">0% (Full raw files)</td>
+                <td class="comparison-old">0% (Full raw files)</td>
+                <td class="comparison-new"><strong>70%–90% Reduction</strong></td>
+              </tr>
+              <tr>
+                <td><strong>Codebase Discovery</strong></td>
+                <td class="comparison-old">10 turns (~250k tokens)</td>
+                <td class="comparison-old">10 turns (~250k tokens)</td>
+                <td class="comparison-new"><strong>1 turn via <code>tzro probe</code> (&lt;500 tok)</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 2. QUICKSTART & CLIENT SETUP                                 -->
+        <!-- ============================================================ -->
+        <div class="docs-section" id="v2-install">
+          <div id="quickstart"></div>
+          <h2>Quickstart &amp; Agent Integration</h2>
+
+          <p>
+            TZRO connects seamlessly into your existing developer environment without changing your habits.
+          </p>
+
+          <div class="docs-steps">
+            <!-- Step 1 -->
+            <div class="docs-step" id="v2-step-install">
+              <div class="docs-step-number">1</div>
+              <div class="docs-step-body">
+                <div class="docs-step-title">Single-Line Installation</div>
+                <p>
+                  Download and install the pre-compiled binary for your architecture (macOS arm64/x86_64, Linux):
+                </p>
+
+                <div class="docs-code-block">
+                  <div class="docs-code-header">
+                    <span class="docs-code-lang">Shell</span>
+                    <button class="docs-code-copy" aria-label="Copy code">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                      <span class="copy-label">Copy</span>
+                    </button>
+                  </div>
+                  <pre><code><span class="tok-function">curl</span> <span class="tok-flag">-fsSL</span> <span class="tok-url">https://get.tzro.ai</span> <span class="tok-operator">|</span> <span class="tok-function">sh</span></code></pre>
+                </div>
+
+                <p>Or install from source with Go 1.22+ and SQLite FTS5:</p>
+                <div class="docs-code-block">
+                  <div class="docs-code-header">
+                    <span class="docs-code-lang">Shell</span>
+                    <button class="docs-code-copy" aria-label="Copy code">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                      <span class="copy-label">Copy</span>
+                    </button>
+                  </div>
+                  <pre><code><span class="tok-keyword">CGO_ENABLED</span>=1 <span class="tok-function">go</span> install ./cmd/tzro</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="docs-step" id="v2-proxy">
+              <div class="docs-step-number">2</div>
+              <div class="docs-step-body">
+                <div class="docs-step-title">Start the Token Shield Daemon</div>
+                <p>
+                  Launch the transparent loopback reverse proxy on port 7878:
+                </p>
+
+                <div class="docs-code-block">
+                  <div class="docs-code-header">
+                    <span class="docs-code-lang">Shell</span>
+                    <button class="docs-code-copy" aria-label="Copy code">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                      <span class="copy-label">Copy</span>
+                    </button>
+                  </div>
+                  <pre><code><span class="tok-comment"># Start proxy daemon on port 7878:</span>
+<span class="tok-function">tzro</span> start <span class="tok-flag">--port</span> 7878
+
+<span class="tok-comment"># Inspect live status, shielded tokens, and memory footprint:</span>
+<span class="tok-function">tzro</span> status</code></pre>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 3 -->
+            <div class="docs-step" id="v2-step-connect">
+              <div class="docs-step-number">3</div>
+              <div class="docs-step-body">
+                <div class="docs-step-title">Connect Your AI Coding Agents</div>
+                <p>
+                  Configure your agent clients to route API calls through <code>http://127.0.0.1:7878</code>:
+                </p>
+
+                <!-- Claude Code Tab -->
+                <h4 id="v2-claude-code">Claude Code / Anthropic</h4>
+                <div class="docs-code-block">
+                  <div class="docs-code-header">
+                    <span class="docs-code-lang">Shell</span>
+                    <button class="docs-code-copy" aria-label="Copy code">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                      <span class="copy-label">Copy</span>
+                    </button>
+                  </div>
+                  <pre><code><span class="tok-keyword">export</span> <span class="tok-function">ANTHROPIC_BASE_URL</span>=<span class="tok-url">http://localhost:7878</span></code></pre>
+                </div>
+
+                <!-- Cursor Tab -->
+                <h4 id="v2-cursor">Cursor / OpenAI / Aider / Cline</h4>
+                <div class="docs-code-block">
+                  <div class="docs-code-header">
+                    <span class="docs-code-lang">Shell</span>
+                    <button class="docs-code-copy" aria-label="Copy code">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                      <span class="copy-label">Copy</span>
+                    </button>
+                  </div>
+                  <pre><code><span class="tok-keyword">export</span> <span class="tok-function">OPENAI_BASE_URL</span>=<span class="tok-url">http://localhost:7878/v1</span></code></pre>
+                </div>
+
+                <!-- Antigravity Tab -->
+                <h4 id="v2-antigravity">Antigravity Native Lifecycle Hooks</h4>
+                <p>
+                  Add hook configuration to <code>.agents/hooks.json</code> or <code>~/.gemini/config/hooks.json</code> to compact tool outputs natively:
+                </p>
+                <div class="docs-code-block">
+                  <div class="docs-code-header">
+                    <span class="docs-code-lang">JSON</span>
+                    <button class="docs-code-copy" aria-label="Copy code">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                      <span class="copy-label">Copy</span>
+                    </button>
+                  </div>
+                  <pre><code>{
+  <span class="tok-string">"tzro-token-shield"</span>: {
+    <span class="tok-string">"enabled"</span>: <span class="tok-keyword">true</span>,
+    <span class="tok-string">"PostToolUse"</span>: [
+      {
+        <span class="tok-string">"matcher"</span>: <span class="tok-string">"run_command"</span>,
+        <span class="tok-string">"hooks"</span>: [{ <span class="tok-string">"type"</span>: <span class="tok-string">"command"</span>, <span class="tok-string">"command"</span>: <span class="tok-string">"tzro hook compact"</span> }]
+      }
+    ]
+  }
+}</code></pre>
+                </div>
+
+                <div class="docs-callout callout-tip">
+                  <div class="docs-callout-icon">💡</div>
+                  <div class="docs-callout-body">
+                    <div class="docs-callout-title">Automatic Setup</div>
+                    <p>
+                      Run <code>tzro init --hooks auto</code> to automatically detect installed agent environments and configure hooks.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 3. CORE TOKEN SHIELD SUBSYSTEMS                              -->
+        <!-- ============================================================ -->
+        <div class="docs-section" id="v2-shield">
+          <h2>Core Token Shield Subsystems</h2>
+
+          <!-- ── 3.1 KV Cache Lock ──────────────────────────────────── -->
+          <h3 id="v2-kv-cache-lock">1. KV-Cache Prefix Lock Guard</h3>
+
+          <p>
+            Modern frontier LLMs (Claude 3.5/3.7, GPT-4o, DeepSeek-V3) support prompt caching. However, cache hit rates are fragile: even a 1-byte difference in timestamp formatting, an reordered tool schema, or reordered system prompt invalidates the entire cache prefix, resulting in a <strong>12.5x price increase</strong> for the turn.
+          </p>
+
+          <p>
+            The <strong>KV-Cache Prefix Lock Guard</strong> intercepts outgoing request payloads and enforces byte-for-byte prefix reproducibility:
+          </p>
+
+          <ul>
+            <li>Top-pins static system instructions, repository context (<code>AGENTS.md</code>), and tool declarations in deterministic byte order at the head of the payload.</li>
+            <li>Isolates dynamic turn variables (timestamps, ephemeral session tokens) to trailing user messages.</li>
+            <li>Benchmarked at <strong>70%–85% cache hit rates</strong> in real agent workflows and <strong>up to 99%</strong> under controlled multi-turn evaluation across 8 models via OpenRouter.</li>
+          </ul>
+
+          <!-- ── 3.2 Tree-Sitter AST Skeletonizer ───────────────────── -->
+          <h3 id="v2-ast-skeletonizer">2. Tree-Sitter AST Skeletonizer</h3>
+
+          <p>
+            When an agent reads a 2,000-line source file just to understand an interface or signature, sending the full file burns cloud tokens needlessly.
+            TZRO's native C Tree-sitter parsers support 10 languages: <strong>Go, TypeScript, JavaScript, Python, Rust, Java, C/C++, Ruby, PHP, and C#</strong>.
+          </p>
+
+          <p>
+            The skeletonizer parses the AST, preserves package headers, imports, structs, interfaces, exported method signatures, and docstrings, while replacing function bodies with cryptographic hashes:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Go (Skeletonized)</span>
+            </div>
+            <pre><code><span class="tok-keyword">package</span> auth
+
+<span class="tok-comment">// TokenClaims represents the JWT payload metadata.</span>
+<span class="tok-keyword">type</span> TokenClaims <span class="tok-keyword">struct</span> {
+    UserID    <span class="tok-type">string</span>   <span class="tok-string">`json:"sub"`</span>
+    Roles     []<span class="tok-type">string</span> <span class="tok-string">`json:"roles"`</span>
+    ExpiresAt <span class="tok-type">int64</span>    <span class="tok-string">`json:"exp"`</span>
+}
+
+<span class="tok-comment">// ValidateToken verifies signature and expiry against current time.</span>
+<span class="tok-keyword">func</span> ValidateToken(raw <span class="tok-type">string</span>) (*TokenClaims, <span class="tok-type">error</span>) {
+    <span class="tok-comment">// [body elided: #8f2a1c]</span>
+}</code></pre>
+          </div>
+
+          <p>
+            The full body is indexed in local SQLite FTS5. The agent can expand only the specific function body it needs to edit using <code>tzro expand #8f2a1c</code>, achieving a <strong>70%–90% token reduction</strong> on file inspections.
+          </p>
+
+          <!-- ── 3.3 Smart JSON Crusher & Stack Trace Elider ────────── -->
+          <h3 id="v2-json-crusher">3. Smart JSON Crusher &amp; Stack Trace Elider</h3>
+
+          <p>
+            <strong>Smart JSON Crusher:</strong> Detects repetitive JSON objects (e.g. database query results or API lists) and flattens them into compact Markdown tables. Repeated keys that waste thousands of tokens are collapsed into table headers, slashing token consumption by up to 80%.
+          </p>
+
+          <p>
+            <strong>Stack Trace Elider:</strong> Strips internal framework and standard library stack frames from test failures and panics, preserving the root-cause assertion and user-code lines without context waste.
+          </p>
+
+          <!-- ── 3.4 Zero-Cloud DLP ─────────────────────────────────── -->
+          <h3 id="v2-security-dlp">4. Zero-Cloud Data Loss Prevention (DLP)</h3>
+          <div id="security"></div>
+
+          <p>
+            Configured in <code>.tzro/privacy.json</code>, TZRO's on-device DLP policy engine protects sensitive credentials:
+          </p>
+
+          <div class="docs-feature-grid">
+            <div class="docs-feature-card">
+              <div class="docs-feature-card-icon">🔒</div>
+              <h4>Automatic Secret Masking</h4>
+              <p>Shannon entropy analysis and regex detectors identify API keys (<code>sk-</code>, <code>ghp_</code>, <code>AKIA...</code>), private keys, passwords, and private IP addresses before request egress.</p>
+            </div>
+            <div class="docs-feature-card">
+              <div class="docs-feature-card-icon">🔄</div>
+              <h4>Local Re-hydration</h4>
+              <p>Masked placeholders are mapped in memory and re-hydrated locally into returned code diffs without exposure to third-party model providers.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 4. LOCAL DISCOVERY & RETRIEVAL                               -->
+        <!-- ============================================================ -->
+        <div class="docs-section" id="v2-discovery">
+          <h2>Local Codebase Discovery &amp; Retrieval</h2>
+
+          <!-- ── 4.1 tzro probe ────────────────────────────────────── -->
+          <h3 id="v2-probe">Sub-Millisecond Symbol Discovery (<code>tzro probe</code>)</h3>
+
+          <p>
+            Standard agents burn 5–10 turns and 250k+ cloud tokens scanning directories, reading files, and running greps to locate symbols.
+            <code>tzro probe</code> replaces this with a single on-device call using embedded ripgrep and Tree-sitter AST queries in <strong>&lt;5ms</strong>:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-comment"># Locate symbols, methods, and line ranges in &lt;5ms:</span>
+<span class="tok-function">tzro</span> probe <span class="tok-string">"jwt token validation"</span></code></pre>
+          </div>
+
+          <p>Output returns exact line coordinates, symbol kinds, and body hashes:</p>
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Output</span>
+            </div>
+            <pre><code>Found 1 match for "jwt token validation":
+- ValidateToken (function in auth/jwt.go:45-78) [Hash: #8f2a1c]</code></pre>
+          </div>
+
+          <!-- ── 4.2 tzro expand ───────────────────────────────────── -->
+          <h3 id="v2-expand">Body Expansion &amp; Line Slicing (<code>tzro expand</code>)</h3>
+
+          <p>
+            Retrieve only the specific function body or stored artifact lines needed:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-comment"># Expand an elided function body by hash:</span>
+<span class="tok-function">tzro</span> expand 8f2a1c
+
+<span class="tok-comment"># Slice specific line ranges from stored artifacts:</span>
+<span class="tok-function">tzro</span> expand art_9503e3ba620ad4bf <span class="tok-flag">--lines</span> 10-40</code></pre>
+          </div>
+
+          <!-- ── 4.3 tzro search ───────────────────────────────────── -->
+          <h3 id="v2-search">Unified Local Evidence Search (<code>tzro search</code>)</h3>
+
+          <p>
+            Search across code, architectural decision records (ADRs), product specs, design documents, logs, and stored artifacts in a single query with content-hash deduplication:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-function">tzro</span> search <span class="tok-string">"rate limit token bucket"</span></code></pre>
+          </div>
+
+          <!-- ── 4.4 Tabular Data Engine ───────────────────────────── -->
+          <h3 id="v2-tabular">Tabular Data &amp; SQL Engine (<code>tzro ingest</code> / <code>tzro query</code>)</h3>
+
+          <p>
+            Dumping full CSV, TSV, or JSON data files into prompt context is an anti-pattern that burns tens of thousands of tokens.
+            Import data into embedded SQLite and run targeted SQL queries:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-comment"># Import CSV file or pipe stdin:</span>
+<span class="tok-function">tzro</span> ingest metrics.csv <span class="tok-flag">--name</span> daily_metrics
+<span class="tok-function">cat</span> report.json <span class="tok-operator">|</span> <span class="tok-function">tzro</span> ingest -
+
+<span class="tok-comment"># Query data with read-only SQL:</span>
+<span class="tok-function">tzro</span> query daily_metrics <span class="tok-string">"SELECT endpoint, COUNT(*), AVG(CAST(latency_ms AS REAL)) FROM daily_metrics GROUP BY endpoint"</span></code></pre>
+          </div>
+          <p>Delivers <strong>97%+ token reduction</strong> on tabular workloads by returning only computed query results.</p>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 5. TASK CONTEXT & IMPACT GRAPH                               -->
+        <!-- ============================================================ -->
+        <div class="docs-section" id="v2-context-pack">
+          <div id="context-pack"></div>
+          <h2>Task Context &amp; Change Impact</h2>
+
+          <!-- ── 5.1 tzro context ──────────────────────────────────── -->
+          <h3>Task Context Assembly (<code>tzro context</code>)</h3>
+
+          <p>
+            Assembles a ranked, token-budgeted context pack containing relevant symbol definitions, AST call graphs, TypeScript path alias resolutions (<code>tsconfig.json</code>), and nearby test coverage in a single turn:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-function">tzro</span> context <span class="tok-string">"implement rate limiting middleware"</span> <span class="tok-flag">--budget</span> 2000</code></pre>
+          </div>
+
+          <!-- ── 5.2 tzro impact ───────────────────────────────────── -->
+          <h3 id="v2-impact-analysis">Pre-Edit Change Impact Graph (<code>tzro impact</code>)</h3>
+          <div id="impact-analysis"></div>
+
+          <p>
+            Before modifying shared utilities, interfaces, or types, analyze the structural blast radius:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-comment"># Analyze blast radius of specific files before editing:</span>
+<span class="tok-function">tzro</span> impact pkg/kvlock/kvlock.go
+
+<span class="tok-comment"># Or analyze uncommitted git changes automatically:</span>
+<span class="tok-function">tzro</span> impact</code></pre>
+          </div>
+
+          <p>
+            Outputs direct callers, downstream dependent modules, and existing test suites that cover the affected call paths.
+          </p>
+
+          <!-- ── 5.3 tzro session ──────────────────────────────────── -->
+          <h3 id="v2-session-continuity">Agent Session Continuity (<code>tzro session</code>)</h3>
+          <div id="session-continuity"></div>
+
+          <p>
+            Eliminates transcript re-reading when handing off tasks across agents or resuming work after interruptions.
+            Saves state to a portable, git-aware Schema v2 manifest:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-comment"># Save current agent task state:</span>
+<span class="tok-function">tzro</span> session save <span class="tok-flag">--objective</span> <span class="tok-string">"refactor proxy"</span> <span class="tok-flag">--constraints</span> <span class="tok-string">"zero external deps"</span>
+
+<span class="tok-comment"># Check session freshness against git tree:</span>
+<span class="tok-function">tzro</span> session status
+
+<span class="tok-comment"># Load session manifest in a new turn:</span>
+<span class="tok-function">tzro</span> session load .tzro/session.json</code></pre>
+          </div>
+
+          <!-- ── 5.4 tzro compact ──────────────────────────────────── -->
+          <h3 id="v2-evidence-compact">Evidence Contract Compactor (<code>tzro compact --run</code>)</h3>
+          <div id="evidence-compact"></div>
+
+          <p>
+            Execute test and build commands through the compactor to enforce strict evidence contracts:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-comment"># Direct command execution with verified exit-code capture and 10-line inline cap:</span>
+<span class="tok-function">tzro</span> compact <span class="tok-flag">--run</span> <span class="tok-string">"go test -v ./..."</span>
+
+<span class="tok-comment"># Or pipe stdout directly:</span>
+go test ./... 2&gt;&amp;1 | <span class="tok-function">tzro</span> compact</code></pre>
+          </div>
+
+          <p>
+            Guarantees exit-code confidence, surfaces root-cause diagnostics within a 10-line inline cap, and stores complete failure logs in SQLite with an expansion hash.
+          </p>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 6. DIAGNOSTICS & CLI REFERENCE                               -->
+        <!-- ============================================================ -->
+        <div class="docs-section" id="v2-doctor">
+          <div id="doctor-diagnostics"></div>
+          <h2>Diagnostics &amp; CLI Reference</h2>
+
+          <!-- ── 6.1 tzro doctor ───────────────────────────────────── -->
+          <h3>System Doctor (<code>tzro doctor</code>)</h3>
+
+          <p>
+            Runs synthetic health checks across the proxy, upstream provider latency, SQLite FTS5 capability, and agent lifecycle hooks:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-function">tzro</span> doctor</code></pre>
+          </div>
+
+          <!-- ── 6.2 tzro bench ────────────────────────────────────── -->
+          <h3 id="v2-signal-density">Signal Density Benchmarking (<code>tzro bench signal-density</code>)</h3>
+          <div id="signal-density"></div>
+
+          <p>
+            Empirically benchmark task signal density per token across optimization strategies with hard spend limit circuit breakers:
+          </p>
+
+          <div class="docs-code-block">
+            <div class="docs-code-header">
+              <span class="docs-code-lang">Shell</span>
+              <button class="docs-code-copy" aria-label="Copy code">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+                <span class="copy-label">Copy</span>
+              </button>
+            </div>
+            <pre><code><span class="tok-function">tzro</span> bench signal-density <span class="tok-flag">--max-cost</span> 1.50</code></pre>
+          </div>
+
+          <!-- ── 6.3 CLI Reference Table ───────────────────────────── -->
+          <h3 id="v2-cli-reference">CLI Command Matrix</h3>
+          <div id="cli-reference"></div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Purpose</th>
+                <th>Token Impact</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>tzro context "&lt;task&gt;" --budget &lt;n&gt;</code></td>
+                <td>Assembles ranked context pack with AST &amp; call graph</td>
+                <td class="comparison-new"><strong>Replaces 5–10 exploration turns (&lt;2k tokens)</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro impact [files...]</code></td>
+                <td>Computes change-impact graph, callers, and tests before edits</td>
+                <td class="comparison-new"><strong>Prevents broken refactors and missing test runs</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro probe "&lt;query&gt;"</code></td>
+                <td>Fast local symbol discovery via ripgrep + Tree-sitter</td>
+                <td class="comparison-new"><strong>0 cloud tokens (&lt;500 tokens output)</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro search "&lt;query&gt;"</code></td>
+                <td>Unified search across code, specs, ADRs, logs, artifacts</td>
+                <td class="comparison-new"><strong>&lt;500 tokens across heterogeneous sources</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro skeleton &lt;file&gt;</code></td>
+                <td>Skeletons code file, eliding function bodies into hashes</td>
+                <td class="comparison-new"><strong>70%–90% token reduction</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro expand &lt;hash-or-art-id&gt;</code></td>
+                <td>Retrieves elided code body or stored artifact with line slices</td>
+                <td>Fetches only required ~20 lines</td>
+              </tr>
+              <tr>
+                <td><code>tzro compact [--run "&lt;cmd&gt;"]</code></td>
+                <td>Evidence compactor with exit code confidence, 10-line cap</td>
+                <td class="comparison-new"><strong>80% token reduction on test/build logs</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro session save / load</code></td>
+                <td>Git-aware agent session manifest with freshness validation</td>
+                <td class="comparison-new"><strong>Eliminates full transcript re-reads</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro ingest &lt;file&gt;</code></td>
+                <td>Import CSV/TSV/JSON into SQLite, returns table pointer</td>
+                <td class="comparison-new"><strong>97%+ token reduction on tabular data</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro query &lt;table&gt; "&lt;sql&gt;"</code></td>
+                <td>Execute read-only SQL against imported tabular data</td>
+                <td>Fetches only query results</td>
+              </tr>
+              <tr>
+                <td><code>tzro start --port 7878</code></td>
+                <td>Launches transparent loopback reverse proxy</td>
+                <td class="comparison-new"><strong>Locks KV-cache prefix (70–99% hit rate)</strong></td>
+              </tr>
+              <tr>
+                <td><code>tzro status</code></td>
+                <td>Displays real-time shielded tokens, memory, and proxy metrics</td>
+                <td>Diagnostic monitoring</td>
+              </tr>
+              <tr>
+                <td><code>tzro doctor</code></td>
+                <td>Synthetic health check for proxy, routes, FTS5, and hooks</td>
+                <td>Instant diagnostic verification</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+      <!-- END V2 CONTENT CONTAINER -->
+
+      <!-- ============================================================ -->
+      <!-- TZRO v1 DOCUMENTATION (LEGACY / ARCHIVED)                    -->
+      <!-- ============================================================ -->
+      <div id="docs-content-v1" class="docs-version-section">
+
+
+      <!-- ============================================================ -->
       <!-- 1. INTRODUCTION & CORE PARADIGM SHIFT                        -->
       <!-- ============================================================ -->
-      <div class="docs-section" id="introduction">
-        <h1>What's TZRO</h1>
+      <!-- V1 ARCHIVE BANNER -->
+      <div class="docs-archive-banner">
+        <div class="docs-archive-icon">⚠️</div>
+        <div class="docs-archive-body">
+          <div class="docs-archive-title">
+            <span>Archived v1.0 Documentation</span>
+            <span class="docs-archive-badge">Legacy Build</span>
+          </div>
+          <p>
+            You are viewing archived documentation for <strong>TZRO v1</strong>, which focused on local model inference arbitrage (quantized 4B/1B GGUF models) and containerized task execution. For the modern, zero-dependency native Go Token Shield &amp; Context Optimization Engine, switch to <a href="#" id="switch-to-v2-link">TZRO v2 Documentation</a>.
+          </p>
+        </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 1. INTRODUCTION (v1)                                         -->
+      <!-- ============================================================ -->
+      <div class="docs-section" id="v1-introduction">
+        <h1>TZRO v1: Local Inference Arbitrage <span class="version-pill legacy">v1.0 ARCHIVED</span></h1>
         <p class="docs-subtitle">
-          An ultra-lightweight, native token shield and context optimization engine (&lt;50 MB RAM, zero ML dependencies).
-          It eliminates cloud API rate limits, locks KV-cache prompt prefixes (benchmarked at 70–99% cache read hit rates across 8 models), and provides sub-millisecond local codebase discovery.
-        </p>
-
-        <p>
-          Traditional AI coding agent workflows (like Claude Code, Cursor, Antigravity, and Aider) suffer from <strong>Quadratic Context Explosion</strong>.
-          Every time an agent reads large files, scans directories, or parses test logs, it re-transmits massive transient context back and forth to expensive cloud APIs.
-          Worse, when prompt prefixes change unpredictably, major providers penalize cache misses by charging <strong>12.5x more</strong> than cache reads ($1.25 vs $0.10).
-        </p>
-
-        <p>
-          <strong>TZRO v2 solves this at the native infrastructure layer.</strong> Running a local loopback proxy on <code>http://127.0.0.1:7878</code>, TZRO deterministically locks prompt cache prefixes, skeletonizes code using Tree-sitter, compacts logs and JSON tables, and executes instant local discovery queries (<code>tzro probe</code>) in &lt;5ms.
+          The original local task routing prototype. Offload execution-level agent work (file traversal, parsing, and execution) to a grammar-locked local GGUF engine to preserve cloud token budgets.
         </p>
       </div>
         <h2 id="inference-arbitrage">Intelligent Task Offloading</h2>
@@ -474,7 +1369,7 @@
       <!-- ============================================================ -->
       <!-- 2. THE 5-MINUTE PLUG-AND-PLAY QUICKSTART                     -->
       <!-- ============================================================ -->
-      <div class="docs-section" id="quickstart">
+      <div class="docs-section" id="v1-quickstart">
         <h2>The 5-Minute Plug-and-Play Quickstart</h2>
 
         <p>
@@ -640,7 +1535,7 @@
       <!-- ============================================================ -->
       <!-- 3. LOCAL SECURITY & SANDBOX TRANSPARENCY                     -->
       <!-- ============================================================ -->
-      <div class="docs-section" id="security">
+      <div class="docs-section" id="v1-security">
         <h2>Local Security &amp; Sandbox Transparency</h2>
 
         <p>
@@ -1115,207 +2010,9 @@ Cost savings: <span class="tok-number">$0.5250</span> → <span class="tok-numbe
         </div>
       </div>
 
-      <!-- ============================================================ -->
-      <!-- 6. v2.1.0 — CONTEXT & EVIDENCE CAPABILITIES                  -->
-      <!-- ============================================================ -->
-      <div class="docs-section" id="v210">
-        <h2>v2.1.0 — Context, Evidence &amp; Continuity Capabilities</h2>
-
-        <p>
-          The v2.1.0 release expands Tzro beyond proxy-level KV-cache prefix locking and AST skeletonization into a comprehensive local Context &amp; Evidence layer.
-          Autonomous coding agents can now assemble ranked, token-budgeted context packs, calculate blast radius before editing shared code, search across heterogeneous project sources, hand off session state without context re-reading, and measure signal density empirically.
-        </p>
-
-        <!-- ── 6.1 Task Context Assembly ────────────────────────── -->
-        <h3 id="context-pack">Task Context Assembly (<code>tzro context</code>)</h3>
-
-        <p>
-          When an agent begins work on a task, traditional workflows spend 5–10 exploratory turns reading directories and files, burning tens of thousands of tokens before writing a single line of code.
-          <code>tzro context</code> replaces this with a single on-device call that generates a ranked, token-budgeted context pack:
-        </p>
-
-        <div class="docs-code-block">
-          <div class="docs-code-header">
-            <span class="docs-code-lang">Shell</span>
-            <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              <span class="copy-label">Copy</span>
-            </button>
-          </div>
-          <pre><code><span class="tok-comment"># Assemble a ranked context pack under 2,000 tokens:</span>
-<span class="tok-function">tzro</span> context <span class="tok-string">"implement rate limiting in token shield proxy"</span> <span class="tok-flag">--budget</span> 2000</code></pre>
-        </div>
-
-        <div class="docs-feature-grid">
-          <div class="docs-feature-card">
-            <div class="docs-feature-card-icon">🌲</div>
-            <h4>AST Call Graph &amp; TS Imports</h4>
-            <p>
-              Extracts precise function signatures, types, and structs. Resolves TypeScript path aliases (<code>@/*</code>, <code>~/*</code> from <code>tsconfig.json</code>) into absolute filesystem paths.
-            </p>
-          </div>
-          <div class="docs-feature-card">
-            <div class="docs-feature-card-icon">⚖️</div>
-            <h4>Strict Token Budgeting</h4>
-            <p>
-              Uses BM25 relevance ranking and Tree-sitter skeletons to fit the highest-signal context into your requested budget. Omitted items are tracked for offline explanation.
-            </p>
-          </div>
-        </div>
-
-        <!-- ── 6.2 Pre-Edit Impact Graph ───────────────────────── -->
-        <h3 id="impact-analysis">Pre-Edit Change Impact Graph (<code>tzro impact</code>)</h3>
-
-        <p>
-          Before modifying shared utilities, interfaces, or types, an agent must know what might break. <code>tzro impact</code> analyzes the call graph and module dependencies:
-        </p>
-
-        <div class="docs-code-block">
-          <div class="docs-code-header">
-            <span class="docs-code-lang">Shell</span>
-            <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              <span class="copy-label">Copy</span>
-            </button>
-          </div>
-          <pre><code><span class="tok-comment"># Analyze blast radius of specific files or uncommitted git changes:</span>
-<span class="tok-function">tzro</span> impact pkg/context/context.go
-<span class="tok-function">tzro</span> impact <span class="tok-comment"># automatically inspects uncommitted git diff</span></code></pre>
-        </div>
-
-        <ul>
-          <li><strong>Direct Callers</strong> — Identifies every function and method referencing the modified symbols.</li>
-          <li><strong>Downstream Consumers</strong> — Traces transitive imports across packages.</li>
-          <li><strong>Test Coverage Mapping</strong> — Surfaces existing unit and integration test targets to run before and after making edits.</li>
-        </ul>
-
-        <!-- ── 6.3 Unified Evidence Search ─────────────────────── -->
-        <h3 id="evidence-search">Unified Local Evidence Search (<code>tzro search</code>)</h3>
-
-        <p>
-          Critical project knowledge is rarely in code alone — it lives in Architecture Decision Records (ADRs), specs, logs, and stored artifacts. <code>tzro search</code> executes across all heterogeneous sources in &lt;10ms:
-        </p>
-
-        <div class="docs-code-block">
-          <div class="docs-code-header">
-            <span class="docs-code-lang">Shell</span>
-            <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              <span class="copy-label">Copy</span>
-            </button>
-          </div>
-          <pre><code><span class="tok-comment"># Search across code, docs, specs, logs, and artifacts:</span>
-<span class="tok-function">tzro</span> search <span class="tok-string">"cache eviction policy"</span></code></pre>
-        </div>
-
-        <!-- ── 6.4 Session Continuity & Handoffs ───────────────── -->
-        <h3 id="session-continuity">Agent Session Continuity (<code>tzro session</code>)</h3>
-
-        <p>
-          When an agent pauses work or hands off an objective to another session, full transcript re-reads burn tokens and cause instruction drift. Tzro preserves distilled session state via versioned Schema v2 manifests:
-        </p>
-
-        <div class="docs-code-block">
-          <div class="docs-code-header">
-            <span class="docs-code-lang">Shell</span>
-            <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              <span class="copy-label">Copy</span>
-            </button>
-          </div>
-          <pre><code><span class="tok-comment"># Save active objectives, architectural decisions, and constraints:</span>
-<span class="tok-function">tzro</span> session save <span class="tok-flag">--objective</span> <span class="tok-string">"refactor cache layer"</span> <span class="tok-flag">--constraints</span> <span class="tok-string">"maintain zero cgo"</span>
-
-<span class="tok-comment"># Validate freshness against current git tree:</span>
-<span class="tok-function">tzro</span> session status
-
-<span class="tok-comment"># Resume session in a fresh agent turn:</span>
-<span class="tok-function">tzro</span> session load session_manifest.json</code></pre>
-        </div>
-
-        <!-- ── 6.5 Evidence Contract Compactor ─────────────────── -->
-        <h3 id="evidence-compact">Evidence Contract Compactor (<code>tzro compact --run</code>)</h3>
-
-        <p>
-          Running test suites and build tools produces thousands of lines of verbose logs that flood context windows.
-          <code>tzro compact --run</code> wraps command execution, captures observed exit codes, enforces a strict <strong>10-line inline diagnostic cap</strong>, and archives the full failure output in local SQLite:
-        </p>
-
-        <div class="docs-code-block">
-          <div class="docs-code-header">
-            <span class="docs-code-lang">Shell</span>
-            <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              <span class="copy-label">Copy</span>
-            </button>
-          </div>
-          <pre><code><span class="tok-comment"># Run test suite with evidence guarantees:</span>
-<span class="tok-function">tzro</span> compact <span class="tok-flag">--run</span> <span class="tok-string">"go test ./..."</span>
-
-<span class="tok-comment"># Retrieve full stored artifact with optional line ranges:</span>
-<span class="tok-function">tzro</span> expand art_9503e3ba <span class="tok-flag">--lines</span> 1-50</code></pre>
-        </div>
-
-        <!-- ── 6.6 System Doctor ───────────────────────────────── -->
-        <h3 id="doctor-diagnostics">System Doctor (<code>tzro doctor</code>)</h3>
-
-        <p>
-          Instant synthetic health check verifying proxy route reachability, upstream provider connectivity, SQLite FTS5 extension support, and 5-harness agent hook registration:
-        </p>
-
-        <div class="docs-code-block">
-          <div class="docs-code-header">
-            <span class="docs-code-lang">Shell</span>
-            <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              <span class="copy-label">Copy</span>
-            </button>
-          </div>
-          <pre><code><span class="tok-function">tzro</span> doctor</code></pre>
-        </div>
-
-        <!-- ── 6.7 Signal Density Benchmarking ─────────────────── -->
-        <h3 id="signal-density">Signal Density Benchmarking (<code>tzro bench signal-density</code>)</h3>
-
-        <p>
-          Empirically benchmark task signal density per token across optimization strategies with hard spend limit circuit breakers:
-        </p>
-
-        <div class="docs-code-block">
-          <div class="docs-code-header">
-            <span class="docs-code-lang">Shell</span>
-            <button class="docs-code-copy" aria-label="Copy code">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-              </svg>
-              <span class="copy-label">Copy</span>
-            </button>
-          </div>
-          <pre><code><span class="tok-comment"># Run signal density benchmark with a $1.50 hard spending ceiling:</span>
-<span class="tok-function">tzro</span> bench signal-density <span class="tok-flag">--max-cost</span> 1.50</code></pre>
-        </div>
-
+      
       </div>
-
+      <!-- END V1 CONTENT CONTAINER -->
     </main>
 
     <!-- ============================================================== -->
@@ -1323,40 +2020,72 @@ Cost savings: <span class="tok-number">$0.5250</span> → <span class="tok-numbe
     <!-- ============================================================== -->
     <aside class="docs-toc">
       <div class="docs-toc-title">On This Page</div>
-      <ul class="docs-toc-list">
-        <li><a href="#inference-arbitrage" class="docs-toc-link">Intelligent Task Offloading</a></li>
-        <li><a href="#cloud-vs-local" class="docs-toc-link toc-h3">Cloud Plans, Local Executes</a></li>
 
-        <li><a href="#quickstart" class="docs-toc-link">5-Minute Quickstart</a></li>
-        <li><a href="#step-bootstrap" class="docs-toc-link toc-h3">Single-Line Bootstrap</a></li>
-        <li><a href="#step-registration" class="docs-toc-link toc-h3">Client Registration</a></li>
-        <li><a href="#step-first-run" class="docs-toc-link toc-h3">First Offline Run</a></li>
+      <!-- V2 TOC (Default / Active) -->
+      <div id="toc-v2" class="docs-toc-version active">
+        <ul class="docs-toc-list">
+          <li><a href="#v2-overview" class="docs-toc-link">What's TZRO v2</a></li>
+          <li><a href="#v2-problem" class="docs-toc-link toc-h3">12.5x Cache Miss Penalty</a></li>
+          <li><a href="#v2-architecture" class="docs-toc-link toc-h3">Two-Plane Architecture</a></li>
+          <li><a href="#v2-comparison" class="docs-toc-link toc-h3">Performance &amp; Footprint</a></li>
 
-        <li><a href="#security" class="docs-toc-link">Security &amp; Sandbox</a></li>
-        <li><a href="#data-sovereignty" class="docs-toc-link toc-h3">Data Sovereignty</a></li>
-        <li><a href="#containerized-execution" class="docs-toc-link toc-h3">Containerized Execution</a></li>
-        <li><a href="#grammar-gating" class="docs-toc-link toc-h3">Grammar Gating</a></li>
-        <li><a href="#network-isolation" class="docs-toc-link toc-h3">Network Isolation</a></li>
+          <li><a href="#v2-install" class="docs-toc-link">Quickstart &amp; Setup</a></li>
+          <li><a href="#v2-proxy" class="docs-toc-link toc-h3">Start Proxy Daemon</a></li>
+          <li><a href="#v2-claude-code" class="docs-toc-link toc-h3">Claude Code</a></li>
+          <li><a href="#v2-cursor" class="docs-toc-link toc-h3">Cursor &amp; OpenAI</a></li>
+          <li><a href="#v2-antigravity" class="docs-toc-link toc-h3">Antigravity Native Hooks</a></li>
 
-        <li><a href="#hardware" class="docs-toc-link">Hardware Optimization</a></li>
-        <li><a href="#speculative-decoding" class="docs-toc-link toc-h3">Speculative Decoding</a></li>
-        <li><a href="#kv-prefix-sharing" class="docs-toc-link toc-h3">KV Prefix Sharing</a></li>
-        <li><a href="#attention-preemption" class="docs-toc-link toc-h3">Attention Preemption</a></li>
+          <li><a href="#v2-shield" class="docs-toc-link">Core Token Shield</a></li>
+          <li><a href="#v2-kv-cache-lock" class="docs-toc-link toc-h3">KV-Cache Prefix Lock</a></li>
+          <li><a href="#v2-ast-skeletonizer" class="docs-toc-link toc-h3">Tree-Sitter Skeletonizer</a></li>
+          <li><a href="#v2-json-crusher" class="docs-toc-link toc-h3">JSON Crusher &amp; Elider</a></li>
+          <li><a href="#v2-security-dlp" class="docs-toc-link toc-h3">Zero-Cloud DLP Policy</a></li>
 
-        <li><a href="#debugging" class="docs-toc-link">Debugging &amp; Visibility</a></li>
-        <li><a href="#tui-dashboard" class="docs-toc-link toc-h3">TUI Dashboard</a></li>
-        <li><a href="#cost-attestation" class="docs-toc-link toc-h3">Token Tracking &amp; Benchmarks</a></li>
-        <li><a href="#log-audit" class="docs-toc-link toc-h3">Logs &amp; Audit</a></li>
+          <li><a href="#v2-discovery" class="docs-toc-link">Discovery &amp; Retrieval</a></li>
+          <li><a href="#v2-probe" class="docs-toc-link toc-h3">Sub-ms Probe</a></li>
+          <li><a href="#v2-expand" class="docs-toc-link toc-h3">Body Expansion</a></li>
+          <li><a href="#v2-search" class="docs-toc-link toc-h3">Unified Evidence Search</a></li>
+          <li><a href="#v2-tabular" class="docs-toc-link toc-h3">Tabular Data &amp; SQL</a></li>
 
-        <li><a href="#v210" class="docs-toc-link">v2.1.0 Capabilities</a></li>
-        <li><a href="#context-pack" class="docs-toc-link toc-h3">Task Context Assembly</a></li>
-        <li><a href="#impact-analysis" class="docs-toc-link toc-h3">Pre-Edit Impact Graph</a></li>
-        <li><a href="#evidence-search" class="docs-toc-link toc-h3">Unified Evidence Search</a></li>
-        <li><a href="#session-continuity" class="docs-toc-link toc-h3">Session Continuity</a></li>
-        <li><a href="#evidence-compact" class="docs-toc-link toc-h3">Evidence Compactor</a></li>
-        <li><a href="#doctor-diagnostics" class="docs-toc-link toc-h3">System Doctor</a></li>
-        <li><a href="#signal-density" class="docs-toc-link toc-h3">Signal Density Bench</a></li>
-      </ul>
+          <li><a href="#v2-context-pack" class="docs-toc-link">Context &amp; Impact</a></li>
+          <li><a href="#v2-impact-analysis" class="docs-toc-link toc-h3">Change Impact Graph</a></li>
+          <li><a href="#v2-session-continuity" class="docs-toc-link toc-h3">Session Continuity</a></li>
+          <li><a href="#v2-evidence-compact" class="docs-toc-link toc-h3">Evidence Compactor</a></li>
+
+          <li><a href="#v2-doctor" class="docs-toc-link">Diagnostics &amp; Reference</a></li>
+          <li><a href="#v2-signal-density" class="docs-toc-link toc-h3">Signal Density Bench</a></li>
+          <li><a href="#v2-cli-reference" class="docs-toc-link toc-h3">CLI Command Matrix</a></li>
+        </ul>
+      </div>
+
+      <!-- V1 TOC (Archived) -->
+      <div id="toc-v1" class="docs-toc-version">
+        <ul class="docs-toc-list">
+          <li><a href="#v1-introduction" class="docs-toc-link">Intelligent Task Offloading</a></li>
+          <li><a href="#cloud-vs-local" class="docs-toc-link toc-h3">Cloud Plans, Local Executes</a></li>
+
+          <li><a href="#v1-quickstart" class="docs-toc-link">5-Minute Quickstart</a></li>
+          <li><a href="#step-bootstrap" class="docs-toc-link toc-h3">Single-Line Bootstrap</a></li>
+          <li><a href="#step-registration" class="docs-toc-link toc-h3">Client Registration</a></li>
+          <li><a href="#step-first-run" class="docs-toc-link toc-h3">First Offline Run</a></li>
+
+          <li><a href="#v1-security" class="docs-toc-link">Security &amp; Sandbox</a></li>
+          <li><a href="#data-sovereignty" class="docs-toc-link toc-h3">Data Sovereignty</a></li>
+          <li><a href="#containerized-execution" class="docs-toc-link toc-h3">Containerized Execution</a></li>
+          <li><a href="#grammar-gating" class="docs-toc-link toc-h3">Grammar Gating</a></li>
+          <li><a href="#network-isolation" class="docs-toc-link toc-h3">Network Isolation</a></li>
+
+          <li><a href="#hardware" class="docs-toc-link">Hardware Optimization</a></li>
+          <li><a href="#speculative-decoding" class="docs-toc-link toc-h3">Speculative Decoding</a></li>
+          <li><a href="#kv-prefix-sharing" class="docs-toc-link toc-h3">KV Prefix Sharing</a></li>
+          <li><a href="#attention-preemption" class="docs-toc-link toc-h3">Attention Preemption</a></li>
+
+          <li><a href="#debugging" class="docs-toc-link">Debugging &amp; Visibility</a></li>
+          <li><a href="#tui-dashboard" class="docs-toc-link toc-h3">TUI Dashboard</a></li>
+          <li><a href="#cost-attestation" class="docs-toc-link toc-h3">Token Tracking &amp; Benchmarks</a></li>
+          <li><a href="#log-audit" class="docs-toc-link toc-h3">Logs &amp; Audit</a></li>
+        </ul>
+      </div>
     </aside>
   </div>
 
