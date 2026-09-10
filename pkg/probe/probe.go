@@ -153,7 +153,7 @@ func Probe(workspaceRoot, query string, maxResults int, s *store.Store) (*ProbeR
 		}
 
 		// Attempt AST symbol resolution for richer context
-		skel, _ := ast.Skeletonize(path, content, s)
+		skel, _ := ast.Skeletonize(path, content, s, workspaceRoot)
 
 		match := MatchResult{
 			FilePath:     relPath,
@@ -168,7 +168,7 @@ func Probe(workspaceRoot, query string, maxResults int, s *store.Store) (*ProbeR
 
 		// Try to query symbols from store for this file
 		if s != nil {
-			syms, _ := s.SearchSymbols(query, 5)
+			syms, _ := s.SearchSymbols(workspaceRoot, query, 5)
 			for _, sym := range syms {
 				if sym.FilePath == path || sym.FilePath == relPath {
 					match.SymbolName = sym.Symbol

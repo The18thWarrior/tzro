@@ -76,4 +76,3 @@ func getListener(startPort int) (net.Listener, int, error) {
 	}
 	return ln, ln.Addr().(*net.TCPAddr).Port, nil
 }
-

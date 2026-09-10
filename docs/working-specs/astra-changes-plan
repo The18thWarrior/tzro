@@ -1,0 +1,90 @@
+# Plan: Five High-Impact Tzro Capabilities
+
+## Request and Status
+- User asks for an evaluation of tzro's project, history, inspirations, and challenges, followed by exactly five high-impact additions for end users. Exclude monetization.
+- Planning/recommendations only. No repository edits, implementation, installations, or commits authorized or performed.
+- Discovery complete; recommendations ready for review, not approved for implementation. No requirements interview needed for this comparative evaluation. Detailed per-feature specs should follow user selection.
+- Research checklist: [x] current architecture; [x] implementation gaps; [x] historical sources; [x] documented inspirations; [x] compare design references; [x] rank exactly five capabilities and outline independent verification. Visual companion not applicable.
+
+## Evidence and Limits
+- Read current README.md, CONTEXT.md, SOLUTION_APPROACH.md. v2 explicitly retires the DAG/local-model/Graph-RAG/MCP-server/observer architecture. Old .github/instructions still mandate nonexistent legacy tools. Treat those as historical instructions, not current runtime evidence.
+- Read initial 90 entries in .git/logs/HEAD: initial durable-engine release, MCP/pluggable backends, Probe Nodes, dynamic routing/OpenUI/workflow orchestration, multiple installer/daemon fixes, benchmark and code-generation work. This is partial reflog evidence, NOT a complete git history or commit-diff audit.
+- docs/release-notes/v2.0.0.md dated 2026-08-27 explicitly records ground-up rewrite and removal of internal execution, MCP, daemon/dashboard, and inference sidecars. Large deletion/LOC counts and memory/savings figures are release claims, not independently measured.
+- docs/adr/0015-pristal-architecture-alignment.md explicitly attributes v1's Strategist-Compiler-Translator architecture and database/executor changes to Pristal v2.
+- docs/wiki/log.md around lines 100-145 records August 2026 benchmark-integrity cleanup, removal of task-specific scaffolding, 4B micro-optimization concerns, Probe-loop underperformance at multiple model sizes, and a move to verbatim extraction/structural compaction. Lines 121 onward name bit-exact KV compression, symbolic dictionaries, LCM carrier streams, and RadixAttention as research inspirations.
+- README.md and docs/PRD_TZRO_V2.md position v2 against heavyweight ML context compressors such as Headroom. Do not repeat its resource comparisons as independently established facts.
+- External references fetched: https://aider.chat/docs/repomap.html confirms dependency-graph ranking under a context token budget. This is a proposed design reference, NOT a proven historical influence on tzro. https://platform.claude.com/docs/en/build-with-claude/prompt-caching confirms exact-prefix constraints and actual cache metrics in response usage/message_start SSE events. OpenAI Responses docs returned redirect only; do not claim their contents were reviewed.
+- No terminal, tzro_run, or git-execution tool exposed. Read-only Explore agents and file reads were used. No tests, benchmarks, latency, or success rates were measured. Some delegated reports contradicted code and were corrected directly; discard their unsupported percentages and claims of missing SQL.
+
+## Verified Current Implementation
+- /Users/jp/Desktop/Repos/tzro/pkg/probe/probe.go: Probe uses filepath.WalkDir and case-folded bytes.Contains for the entire literal query; first match per file, directory-order limit. Skeletonize is called on matched files. Do not describe this as semantic discovery, ripgrep-backed, or measured sub-millisecond performance.
+- /Users/jp/Desktop/Repos/tzro/pkg/store/store.go: initSchema creates ordinary symbol tables, not an FTS5 virtual index; SearchSymbols uses LIKE. IndexSymbol appends entries. ComputeHash truncates SHA256 to eight hex characters. PutBlob hashes source coordinates plus body. No versioned artifact/session model in examined schema.
+- /Users/jp/Desktop/Repos/tzro/cmd/tzro/main.go: ingest and query both exist and are registered; query uses Store.QuerySQL. Do NOT propose adding SQL as new. Ingest identity uses columns and only first three rows.
+- /Users/jp/Desktop/Repos/tzro/pkg/hooks/hooks.go: CompactOrIntercept already imports tabular outputs and returns envelopes; generateTableName hashes first three rows. HandlePostToolUse returns empty Antigravity response; hook capability must be tested per harness. Do not infer all five harnesses can replace tool output merely from installer support.
+- /Users/jp/Desktop/Repos/tzro/pkg/compactor/compactor.go: SmartJSONCrusher decodes generic objects and prints Markdown with fmt.Sprintf; StackTraceElider removes matching lines without storing removed data here. These transforms are not generally reversible exact serialization.
+- /Users/jp/Desktop/Repos/tzro/pkg/proxy/proxy.go: routes only /v1/messages and /v1/chat/completions plus health/metrics. forwardRequest accepts dlpMap but copies response bytes unchanged; no rehydration wired there. Metrics count requests/input bytes/redactions/memory, not actual token/cache usage.
+- /Users/jp/Desktop/Repos/tzro/pkg/dlp/dlp.go: regex patterns and request-local restoration map; Rehydrate exists. No entropy scanner in inspected code. Detection is not a security guarantee.
+- /Users/jp/Desktop/Repos/tzro/pkg/kvlock/kvlock.go: NormalizeOpenAI/NormalizeAnthropic decode into narrow typed payloads and marshal, dropping unknown fields. Tool sorting and limited hashing exist; general static-prefix locking/volatile-tail isolation does not. This is a prerequisite compatibility risk, not a claimed runtime test result.
+
+## Recommendation and Alternatives
+Recommended: deepen a lightweight, local, deterministic context layer used by existing agents. Rank by end-user leverage, not revenue.
+Alternatives considered: revive a full autonomous local execution framework (reject as contradictory to v2 and historical lessons); add independent convenience commands (useful but less impact than shared context capabilities). Do not introduce inference dependencies, autonomous observers, or a new dashboard by default.
+
+## Five Capabilities (Value Ranking)
+
+### 1. Task-Aware Context Packs
+User outcome: a prompt such as 'change token validation' yields relevant implementations, signatures, callers/importers, nearby tests, docs, and change context under a chosen budget, not just literal phrase matches.
+First vertical slice: exact symbol/file and tokenized query retrieval, transactional incremental symbol indexing, source freshness checks, and ranked Go context bundles with explainable inclusion reasons. Add TypeScript/import relationships next. Clearly label approximate reference edges; Tree-sitter alone is not cross-language semantic resolution. Optional LSP integration later, not a mandatory dependency.
+Reuse Probe, Skeletonize, Store.IndexSymbol/SearchSymbols; introduce a bounded context-selection owner, rather than embedding policy in every caller. Use deterministic lexical ranking/FTS5 and structural relationships before considering embeddings. Maintain opt-out exact lookup, workspace boundaries, dirty-file hashes, ignored files, and stable ordering. Preserve already-sent conversation content; this feature selects future retrieval context.
+Verify: holdout task-to-symbol cases and fixture repos covering multiword queries, edits/deletions/renames, duplicate symbols, ignore rules, worktrees; compare relevant-source recall and completed-task correctness against current probe at equal context budgets. Measure cold/warm p50/p95 and peak RSS without claiming a target was achieved.
+
+### 2. Reversible Compaction and Artifact Retrieval
+User outcome: compact logs/API results/JSON without losing access to a decisive omitted line or exact original; query large data locally and recover historical versions reliably.
+First vertical slice: store permitted full original tool output before compaction, emit an immutable artifact ID plus compact view, allow expand by range or structured query, retain command/exit status/source hash/transform version. Extend existing expand, ImportTabular, and envelopes rather than adding another data engine.
+Use full-content collision-resistant identity and versioned artifact references, not first-three-row identity; exact source vs derived table must remain distinguishable. Add project isolation, quotas/TTL/pinning/GC, atomic persistence, and explicit stale-source status. Compression failure must preserve input. Unknown formats pass through. Never transform executable protocol payloads into Markdown.
+Sensitive original retention requires explicit policy, owner-only access, and encrypted storage where retained. Raw secrets must not silently enter an ordinary artifact DB or diagnostic logs; label redacted-only artifacts as non-byte-exact originals.
+Verify: exact recovery of retained originals; nested JSON, large integers, missing/null, delimiter/newline cases; two datasets with identical first three rows and different tails coexist; source edits, stale IDs, restart, storage failure, quotas, and permission isolation. Continue using existing SQL read-only protections and add bounded output/paging as needed.
+
+### 3. Portable Session Handoffs
+User outcome: pause or switch agents and resume with the objective, user-approved constraints, decisions, changed files, executed checks, outstanding work, and linked evidence, without re-reading the entire repo/transcript.
+Depends on artifact IDs/provenance from capability 2; optionally uses selection from 1. First slice: explicit save/export/import between two harnesses using a versioned JSON manifest plus a compact Markdown representation. Objective/decisions come from explicit user/agent fields; command results, exit status, timestamps, and file hashes come from observed events. Distinguish declared beliefs from verified evidence and freshness. Store task state, not hidden reasoning or inferred preferences.
+Scope by workspace/worktree/branch; snapshots don't become current truth after source changes. Keep imports user-authorized and never elevate imported text to system instructions. No cloud sync, autonomous memory synthesis, KG, or execution scheduler.
+Verify: pause/edit/switch/resume scenario preserves constraints, detects stale evidence and unavailable tools, prevents repeated failed work, and reduces redundant reads relative to transcript-only restart. Reject cross-workspace references and incompatible manifest versions.
+
+### 4. Enforceable Local Privacy Policies
+User outcome: choose which files, paths, fields, and secret classes may leave the machine; preview redactions and get clear blocks instead of relying solely on several key regexes.
+First slice: structured redaction of supported request content fields, workspace allow/deny and redact/block policies, then explicitly authorized local restoration of placeholders in non-streaming code outputs. Streaming support only after provider event framing and fragmented text/tool-argument tests. Keep authentication headers functioning; do not inject restored secrets into cloud-bound history, logs, or other sessions.
+Reuse Redactor.Redact/Rehydrate with collision-safe session identity. Apply policy at actual intercepted egress and supported hook boundaries; show uncovered paths. On policy failure block egress, unlike optional optimization failure which passes through. Explicit unknown/binary content rules; do not claim regex DLP protects screenshots/PDFs or all secret types. Custom detectors with bounded runtime and redacted audit records. Process-private restoration maps; encrypted opt-in persistence if required.
+Verify: seeded secret detection, false positives, JSON escapes/multiline keys, duplicate placeholders, concurrency, streaming splits, tool arguments, redirects, and no secrets on denied upstream/mock logs. Document that application-level interception is not an OS-wide firewall.
+
+### 5. Compatibility-Aware Automatic Shielding
+User outcome: existing agents gain the features without repeatedly remembering tzro-specific commands, and can confirm exactly which requests/outputs are protected.
+First slice and prerequisite for broader automation: preserve unknown JSON fields, tool-call IDs, roles, cache controls, reasoning/structured-output settings, and untouched event streams in existing provider routes. Fail open for optional normalization errors only when privacy policy allows it. Establish allowlisted safe transforms and provider/harness capability contracts.
+Next: add OpenAI Responses and Gemini-native support in separate tested adapters where actual user harnesses support interception; recognize local OpenAI-compatible endpoints without introducing an inference host. Extend init with doctor/inspect: synthetic handshake verifies output substitution rather than just config-file presence; unsupported paths are explicit. Observe real provider usage in JSON bodies/SSE events and report measured versus estimated token counts, latency, and prefix changes, not revenue/cost dashboards. No arbitrary compression of assistant response SSE JSON.
+Verify: protocol fixture matrix, unknown fields, structured output, multimodal pass-through, tool calls, cache markers, response framing/cancellation/errors, and actual hook smoke tests. Mock usage metrics must match events and missing fields must display unknown, not zero savings. Preserve instruction priority and conversation chronology. Separate native caching baseline from tzro improvement.
+
+## Proposed Delivery Dependencies
+1. Foundation: capability 5's payload-fidelity tests/fixes and capability 4's minimum privacy boundary. These are release prerequisites for expanding automatic interception. Can run in parallel with capability 1's offline retrieval work once contracts are set.
+2. First visible capability: capability 1 context packs, with holdout quality checks and measured performance.
+3. Build capability 2 artifact store after retention/access policy contract is fixed; context pack integration can then reuse artifact provenance.
+4. Capability 3 handoffs depends on 2; do not build a second storage/memory subsystem.
+5. Broaden capability 5 provider/harness adapters after safe policy/artifact contracts. Most adapter work can proceed independently after shared contracts, but each integration must pass its own gate.
+
+## Critical Existing Files
+- /Users/jp/Desktop/Repos/tzro/cmd/tzro/main.go: CLI wiring, ingest/query/expand integration.
+- /Users/jp/Desktop/Repos/tzro/pkg/probe/probe.go: Probe retrieval/ranking integration.
+- /Users/jp/Desktop/Repos/tzro/pkg/ast/skeleton.go: Skeletonize and symbol extraction reuse.
+- /Users/jp/Desktop/Repos/tzro/pkg/store/store.go: schema migrations, immutable artifact persistence, index freshness, session manifests; retain existing tabular API.
+- /Users/jp/Desktop/Repos/tzro/pkg/compactor/compactor.go and /Users/jp/Desktop/Repos/tzro/pkg/compactor/tabular.go: derived views and provenance-aware envelopes.
+- /Users/jp/Desktop/Repos/tzro/pkg/hooks/hooks.go: CompactOrIntercept and capability-specific integration.
+- /Users/jp/Desktop/Repos/tzro/pkg/proxy/proxy.go: routes, forwardRequest, transformation boundaries and actual usage observation.
+- /Users/jp/Desktop/Repos/tzro/pkg/kvlock/kvlock.go: NormalizeOpenAI/NormalizeAnthropic fidelity.
+- /Users/jp/Desktop/Repos/tzro/pkg/dlp/dlp.go: Redact/Rehydrate and policy enforcement.
+- /Users/jp/Desktop/Repos/tzro/CONTEXT.md, /Users/jp/Desktop/Repos/tzro/SOLUTION_APPROACH.md, /Users/jp/Desktop/Repos/tzro/docs/adr/: update approved domain decisions during actual implementation, not this evaluation.
+
+## Verification Gates for Future Implementation
+- Establish baseline with go test ./pkg/... ./cmd/tzro and focused existing package suites before each slice; retain actual exit codes when compacting logs.
+- Run scoped tests for probe/ast/store, compactor/store/hooks, proxy/kvlock/dlp as affected. Run go test -race on concurrent store/proxy/dlp changes and go vet ./... before completion.
+- Add independent task-quality holdouts; no task-ID special casing. Report failures/judge unavailability separately from quality. Equal-budget baseline, correctness first, then tokens and latency.
+- Manual smoke: context pack for a real code change; recover an omitted log line; distinct near-identical datasets; resume across two supported agents after a source edit; deny a seeded secret; doctor exposes an unsupported route.
+- Keep offline operation and lightweight resource goals explicit. Disk-backed indexes/artifacts have bounded RAM and configurable disk budgets. Benchmark resource claims rather than inheriting README numbers.

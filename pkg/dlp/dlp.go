@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -15,26 +16,64 @@ var (
 	privKeyRe   = regexp.MustCompile(`-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----`)
 )
 
+// CustomDetector defines a user-configured regex pattern with an identifier and description.
+type CustomDetector struct {
+	Name        string
+	Pattern     *regexp.Regexp
+	Placeholder string
+}
+
 // Redactor handles on-device secret masking and bidirectional rehydration.
 type Redactor struct {
-	mu sync.RWMutex
+	mu              sync.RWMutex
+	customDetectors []CustomDetector
+	detectorTimeout time.Duration
+	sessionCounter  uint64
 }
 
 // NewRedactor initializes a new DLP Redactor.
 func NewRedactor() *Redactor {
-	return &Redactor{}
+	return &Redactor{
+		detectorTimeout: 50 * time.Millisecond,
+	}
+}
+
+// AddDetector registers a custom regex pattern to be checked during redactions.
+func (r *Redactor) AddDetector(name, patternStr, placeholder string) error {
+	re, err := regexp.Compile(patternStr)
+	if err != nil {
+		return fmt.Errorf("invalid detector regex %q: %w", patternStr, err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.customDetectors = append(r.customDetectors, CustomDetector{
+		Name:        name,
+		Pattern:     re,
+		Placeholder: placeholder,
+	})
+	return nil
 }
 
 // Redact scans the text for secrets, masks them, and returns the redacted text along with the restoration map.
 func (r *Redactor) Redact(text string) (string, map[string]string) {
+	return r.RedactWithSession(text, "")
+}
+
+// RedactWithSession masks secrets using collision-resistant session IDs to prevent cross-process placeholder collisions.
+func (r *Redactor) RedactWithSession(text string, sessionID string) (string, map[string]string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	mapping := make(map[string]string) // placeholder -> original
 	counter := 1
 
+	if sessionID == "" {
+		r.sessionCounter++
+		sessionID = fmt.Sprintf("s%d", r.sessionCounter)
+	}
+
 	replaceFunc := func(orig, prefix string) string {
-		placeholder := fmt.Sprintf("[%s_%d]", prefix, counter)
+		placeholder := fmt.Sprintf("[%s_%s_%d]", prefix, sessionID, counter)
 		counter++
 		mapping[placeholder] = orig
 		return placeholder
@@ -64,6 +103,28 @@ func (r *Redactor) Redact(text string) (string, map[string]string) {
 	text = jwtRe.ReplaceAllStringFunc(text, func(m string) string {
 		return replaceFunc(m, "REDACTED_JWT_TOKEN")
 	})
+
+	// 6. Bounded-runtime custom detectors
+	for _, cd := range r.customDetectors {
+		done := make(chan string, 1)
+		go func(detector CustomDetector) {
+			res := detector.Pattern.ReplaceAllStringFunc(text, func(m string) string {
+				p := detector.Placeholder
+				if p == "" {
+					p = "REDACTED_CUSTOM"
+				}
+				return replaceFunc(m, p)
+			})
+			done <- res
+		}(cd)
+
+		select {
+		case res := <-done:
+			text = res
+		case <-time.After(r.detectorTimeout):
+			// Timeout exceeded: skip this detector safely without hanging or crashing
+		}
+	}
 
 	return text, mapping
 }

@@ -35,7 +35,7 @@ type SkeletonResult struct {
 
 // Skeletonize parses a source file with Tree-sitter, stubs function bodies with hash markers,
 // saves the elided bodies into the provided Store, and returns the SkeletonResult.
-func Skeletonize(filePath string, source []byte, s *store.Store) (*SkeletonResult, error) {
+func Skeletonize(filePath string, source []byte, s *store.Store, workspace string) (*SkeletonResult, error) {
 	originalLen := len(source)
 	if originalLen == 0 {
 		return &SkeletonResult{
@@ -299,7 +299,7 @@ func Skeletonize(filePath string, source []byte, s *store.Store) (*SkeletonResul
 		if s != nil {
 			_, _ = s.PutBlob(filePath, rep.startLine, rep.endLine, rep.original)
 			if rep.symbolName != "" {
-				_ = s.IndexSymbol(rep.symbolName, rep.kind, filePath, rep.startLine, rep.hash)
+				_ = s.IndexSymbol(workspace, rep.symbolName, rep.kind, filePath, rep.startLine, rep.hash)
 			}
 		}
 	}

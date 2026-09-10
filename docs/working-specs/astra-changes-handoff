@@ -1,0 +1,78 @@
+# Tzro Implementation Handoff
+
+Date: 2026-09-08
+Next session: implement the proposed end-user capabilities.
+
+## Latest User Intent
+
+The conversation began with a request to evaluate tzro and recommend five high-impact improvements. Monetization was explicitly excluded.
+
+The user now requests a handoff for the next agent to implement these plans. The next session must progress toward implementation, not repeat the project evaluation.
+
+This turn only creates this handoff. No feature implementation, test execution, installation, or Git commit occurred during this work.
+
+## Primary Artifact
+
+All repository references below resolve from the tzro workspace root, not this temporary directory.
+
+Read [docs/working-specs/astra-changes-plan](docs/working-specs/astra-changes-plan) first. The filename has no extension.
+
+That artifact contains the evidence, five capability proposals, implementation boundaries, dependency order, affected files, and verification gates. This handoff does not duplicate them.
+
+Use these sections as the continuation map:
+
+| Need | Plan section |
+| --- | --- |
+| Requirements and first useful slices | Five Capabilities (Value Ranking) |
+| Execution order and prerequisites | Proposed Delivery Dependencies |
+| Existing code and reusable APIs | Critical Existing Files |
+| Tests and completion criteria | Verification Gates for Future Implementation |
+| Historical evidence and research limits | Evidence and Limits |
+
+## Status Corrections
+
+The plan's initial status predates the latest request. Its statements about recommendations awaiting selection no longer describe the requested next-session focus.
+
+The user selected implementation as the next activity. Detailed choices inside each capability remain proposals, not separately approved interface contracts.
+
+Resolve material interface, migration, privacy, and retention choices when their first implementation slice requires them. Do not reopen the entire recommendation exercise.
+
+The plan also records earlier tool limitations. A terminal is available during this handoff turn. Check current tool availability instead of treating that note as a permanent blocker.
+
+The source observations are a research snapshot, not fresh test results. No baseline or advertised performance figure was measured in this conversation.
+
+No worktree status or current branch was checked during handoff preparation. Existing repository changes can belong to the user or another session.
+
+## Start Here
+
+1. Read the primary artifact and applicable repository instructions.
+2. Check the current branch and worktree status without changing either.
+3. Follow the plan's dependency order, not its value ranking, when choosing the first implementation slice.
+4. Convert that slice into a short executable checklist with its acceptance test.
+5. Resolve only the design choices that block that slice.
+6. Run the baseline and focused tests specified by the plan.
+7. Implement through small test-first changes and record actual results.
+
+Do not treat this handoff as approval to create branches, commit changes, publish releases, or make unrelated edits.
+
+## Suggested Skills
+
+- `executing-plans`: execute the existing plan with review checkpoints. Locate it in the installed skills list.
+- `plan`: use [.agents/skills/plan/SKILL.md](.agents/skills/plan/SKILL.md) to detail the next slice without replacing the roadmap.
+- `brainstorming`: use [.agents/skills/brainstorming/SKILL.md](.agents/skills/brainstorming/SKILL.md) for unresolved design choices and required approval gates.
+- `tdd`: use [.agents/skills/tdd/SKILL.md](.agents/skills/tdd/SKILL.md) for focused regression and acceptance tests.
+- `verification-before-completion`: require fresh test evidence before reporting success. Locate it in the installed skills list.
+- `tzro`: use [.github/skills/tzro/SKILL.md](.github/skills/tzro/SKILL.md) for available local discovery and output compaction.
+- `simple-english`: use [.agents/skills/simple-english/SKILL.md](.agents/skills/simple-english/SKILL.md) when updating user-facing documentation.
+
+Invoke skills when their work begins. Do not load every implementation workflow at once.
+
+## Continuity Notes
+
+The repository plan is the durable reference. The next agent does not need access to this conversation's memory files or delegated research reports.
+
+Some delegated research claims conflicted with source code. The primary artifact records the corrected observations and limitations.
+
+No implementation task is active, no background command requires follow-up, and no test failure awaits repair from this conversation.
+
+This handoff omits personal identifiers and sensitive values. Referenced repository artifacts retain their original content and were not modified or sanitized here.

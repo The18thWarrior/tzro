@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"tzro/pkg/store"
 )
 
 // SmartJSONCrusher compresses JSON arrays of uniform objects into compact tabular format.
@@ -107,16 +108,55 @@ func StackTraceElider(input string) string {
 	return strings.Join(pruned, "\n")
 }
 
+// IsSSEPayload returns true if the text begins with Server-Sent Events markers.
+func IsSSEPayload(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	return strings.HasPrefix(trimmed, "event:") || strings.HasPrefix(trimmed, "data:")
+}
+
 // CompactLog applies log and test output pruning.
 func CompactLog(input string) string {
+	return CompactWithArtifact(input, "", nil)
+}
+
+// CompactWithArtifact saves full uncompressed original to Store and returns compacted view with artifact ID.
+func CompactWithArtifact(input, workspace string, s *store.Store) string {
+	// Guard: Executable protocol payloads (SSE stream chunks) must never be converted or mutated
+	if IsSSEPayload(input) {
+		return input
+	}
+
+	var artifactID string
+	if s != nil {
+		id, err := s.PutArtifact(&store.Artifact{
+			Type:             "log",
+			Workspace:        workspace,
+			TransformVersion: "v2.0",
+			Body:             input,
+		})
+		if err == nil {
+			artifactID = id
+		}
+	}
+
+	var compacted string
 	// First check if it is raw JSON
 	if strings.HasPrefix(strings.TrimSpace(input), "[") {
 		crushed := SmartJSONCrusher(input)
 		if len(crushed) < len(input) {
-			return crushed
+			compacted = crushed
 		}
 	}
 
-	// Apply stack trace elision
-	return StackTraceElider(input)
+	if compacted == "" {
+		// Apply stack trace elision
+		compacted = StackTraceElider(input)
+	}
+
+	if artifactID != "" {
+		header := fmt.Sprintf("// [Tzro Artifact: %s | Full original retained (run `tzro expand %s` to retrieve)]\n", artifactID, artifactID)
+		return header + compacted
+	}
+
+	return compacted
 }

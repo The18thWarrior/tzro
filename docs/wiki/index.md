@@ -22,6 +22,7 @@ _Map of system features, product requirements, and specs._
 - [Response Resolver](features/response-resolver.md) - Three-tier output resolution cascade (recursive key search + KV-line + semantic fallback) for DynamicBindings. Output-side counterpart to the Semantic Validator. (Sources: 1 | Last Updated: 2026-06-10)
 - [Dual-Audience Hardening](features/dual-audience-hardening.md) - Secure local-first loopback, MCP-to-daemon delegation proxy, and complete Package Manager CLI/MCP integration. (Sources: 1 | Last Updated: 2026-06-15)
 - [Data Profiler & Cache Bridge Node](../working-specs/data-profiler-and-cache-bridge-node.md) - Content-aware tabular file profiling in read_file with deterministic Cache Bridge Node injection for CSV, TSV, Excel, and large JSON. (Sources: 1 | Last Updated: 2026-07-13)
+- [Astra Context Capabilities](features/astra-context-capabilities.md) - Five high-impact additions: task-aware context packs, reversible compaction, portable session handoffs, enforceable privacy policies, and compatibility-aware automatic shielding. (Sources: 3 | Last Updated: 2026-09-08)
 
 ## Bugs & Post-Mortems
 
@@ -50,6 +51,10 @@ _Analyses of critical bugs, diagnostic loops, and prevention measures._
 ## Architecture & Concepts
 
 _Glossary terms, data models, ADR summaries, and architectural diagrams._
+
+- [Tzro Capability Evaluation — September 8, 2026](architecture/tzro-next-capabilities-evaluation-2026-09-08.md) - Branch assessment, historical lessons, and five proposed additions beyond Astra context capabilities. (Reviewed: `4820318` | Status: proposals)
+- [Context Foundation Hardening Wayfinder Map](../../.scratch/context-foundation-hardening/MAP.md) - Wayfinder shared decision map for hardening the 6 core context boundaries in astra-changes (workspace isolation, context budgeting, session capture, artifact retention, uniform privacy, doctor diagnostics). (Status: `wayfinder:map` (6/6 tickets resolved) | Started: 2026-09-09)
+- [Context and Evidence Workflows](architecture/context-and-evidence-workflows.md) - Successor map covering five use cases and first-release selection. Links each scenario to its decision ticket. (Status: planning | Started: 2026-09-09)
 
 - [Repository Domain Context](../../CONTEXT.md) - Durable local-first agentic execution language glossary.
 - [Technical Design](../technical-design.md) - Overview of the tzro durable local execution system.

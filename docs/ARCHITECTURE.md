@@ -118,20 +118,28 @@ graph TD
 
 ## 3. Package Architecture
 
-tzro v2 is organized into 8 public packages under `pkg/`, one CLI entrypoint, and a website server:
+tzro v2 is organized into 15 public packages under `pkg/`, one CLI entrypoint, and a website server:
 
 ```
 cmd/
   tzro/main.go          # CLI entrypoint — cobra commands for all operations
 pkg/
-  ast/                   # Tree-sitter AST skeletonizer
-  compactor/             # Log compaction + tabular data detection/formatting
-  dlp/                   # Zero-cloud DLP secret masking
-  hooks/                 # Multi-harness agent lifecycle hook bridge
+  ast/                   # Tree-sitter AST skeletonizer and span extraction
+  benchmark/
+    signaldensity/       # Signal density per token benchmark suite and cost guard
+  compactor/             # Evidence-contract log compaction and tabular data formatting
+  context/               # Task context pack assembler, impact graph, tsconfig path resolution
+  dlp/                   # Zero-cloud DLP secret masking & workspace privacy policies
+  doctor/                # Synthetic health checks, provider route diagnostics, hook probes
+  evidence/              # Typed evidence provenance envelopes and freshness markers
+  hooks/                 # Multi-harness agent lifecycle hook bridge (5 harnesses)
+  inspector/             # Offline context assembly explainability & ranking inspector
   kvlock/                # KV-cache prefix normalization and locking
-  probe/                 # Local codebase discovery (ripgrep + AST)
-  proxy/                 # Transparent reverse proxy server
-  store/                 # SQLite content-hash store + tabular import
+  probe/                 # Fast local codebase discovery (ripgrep + AST)
+  proxy/                 # Transparent reverse proxy server and usage tracking
+  search/                # Unified local evidence search across code, docs, logs, and artifacts
+  session/               # Portable, git-aware agent session manifest & continuity engine
+  store/                 # SQLite Schema v2 content-hash store, workspace isolation & LRU eviction
 website/
   main.go                # Marketing/docs website server
 ```
@@ -146,6 +154,27 @@ graph TD
     CLI --> compactor
     CLI --> hooks
     CLI --> store
+    CLI --> context
+    CLI --> search
+    CLI --> session
+    CLI --> doctor
+    CLI --> inspector
+    CLI --> benchmark
+
+    context --> store
+    context --> ast
+    context --> dlp
+
+    search --> store
+    search --> ast
+
+    session --> store
+
+    inspector --> store
+    inspector --> dlp
+
+    benchmark --> proxy
+    benchmark --> context
 
     proxy --> store
     proxy --> kvlock
@@ -157,7 +186,6 @@ graph TD
 
     ast --> store
     probe --> store
-
     compactor -.-> store
 ```
 
@@ -302,15 +330,91 @@ Multi-harness hook bridge that intercepts pre-tool and post-tool events from 5 s
 - Generates hook configuration files for each detected harness
 - Supports workspace-scoped (`--workspace`) and global installation
 
-### 4.9. SQLite Content-Hash Store (`pkg/store`)
+### 4.9. SQLite Content-Hash Store & Schema v2 (`pkg/store`)
 
-Embedded SQLite FTS5 database for storing elided code bodies, symbol indices, and tabular data.
+Embedded SQLite database in WAL mode with FTS5 full-text indexing, multi-workspace isolation, and LRU artifact lifecycle management.
 
-**Key Operations:**
-- `GetBlob(hash)` / `PutBlob(hash, body)`: Content-addressed code body storage
-- `ImportTabular(table, columns, rows)`: Tabular data import
-- `QuerySQL(sql)`: Read-only SQL execution
-- `ComputeHash(content)`: Deterministic SHA-256 hash generation
+**Key Capabilities:**
+- **Schema v2 Migration:** Seamlessly upgrades v1 databases to v2 with isolated workspace partitioning.
+- **LRU Artifact Eviction:** Enforces configurable quota limits with `last_accessed_at` LRU tracking.
+- **Traces Storage:** Persists 6-stage context assembly diagnostic traces for offline analysis.
+- **Content Addressing:** Deduplicates source snippets, skeletons, and command failure outputs.
+
+### 4.10. Task Context Pack Assembler (`pkg/context`)
+
+Assembles ranked, token-budgeted context packs for an agent task query in a single sub-second turn.
+
+**Process:**
+1. Evaluates query against SQLite FTS5 symbol index and lexical search fallback.
+2. Traverses Tree-sitter AST to extract relevant functions, types, structs, and interfaces.
+3. Resolves TypeScript path aliases (`@/*`, `~/*`) from `tsconfig.json` into canonical workspace filepaths.
+4. Identifies co-located and corresponding unit/integration test suites.
+5. Skeletons large file bodies, replacing them with cryptographic hashes.
+6. Enforces strict token budgeting with deterministic ranking and explainable provenance.
+
+### 4.11. Pre-Edit Change Impact Graph (`pkg/context/impact.go`)
+
+Calculates the blast radius of proposed code edits before modifying shared code or types.
+
+**Features:**
+- Computes structural call graphs from AST definitions and import graphs.
+- Maps direct callers and downstream dependent modules across the entire repository.
+- Identifies existing test coverage for modified files and their callers.
+- Accepts explicit file paths or inspects uncommitted git changes (`git diff`).
+
+### 4.12. Unified Local Evidence Search (`pkg/search`)
+
+Heterogeneous local search engine executing across diverse project artifacts in <10ms.
+
+**Search Domains:**
+- Source code files with precise AST span extraction.
+- Markdown documentation, READMEs, and Architecture Decision Records (ADRs).
+- Product specs and working notes.
+- Stored execution logs and failure artifacts.
+- Agent session manifests.
+
+### 4.13. Agent Session Continuity & Handoffs (`pkg/session`)
+
+Provides git-aware session state capture and restoration across agent turns and handoffs.
+
+**Features:**
+- Serializes active objectives, decisions, executed checks, and constraints into Schema v2 manifests.
+- Computes git tree state hashes and detects workspace drift between agent handoffs.
+- Surfaces stale evidence markers when underlying files are modified out-of-band.
+
+### 4.14. Diagnostic Doctor (`pkg/doctor`)
+
+Comprehensive synthetic diagnostic tool for troubleshooting proxy routing and local environment issues.
+
+**Diagnostic Checks:**
+- Probes local loopback proxy routes (`/v1/messages`, `/v1/chat/completions`, `/v1/responses`).
+- Validates upstream provider connectivity (DNS resolution, TLS handshake, latency).
+- Checks agent lifecycle hook configurations across 5 harnesses.
+- Executes synthetic KV-lock normalization and DLP secret redaction.
+- Validates SQLite FTS5 extension availability and database health.
+
+### 4.15. Context Inspector & Explainability (`pkg/inspector`)
+
+Provides offline explainability for context assembly decisions with zero cloud token consumption.
+
+**Capabilities:**
+- Replays context pack generation from saved trace IDs.
+- Explains candidate inclusion, ranking, and stage-by-stage omission reasons.
+- Evaluates candidate selection against workspace privacy policies.
+
+### 4.16. Signal Density Benchmark Suite (`pkg/benchmark/signaldensity`)
+
+Empirical benchmarking framework measuring task signal density per token across optimization strategies.
+
+**Features:**
+- Runs standardized test batteries across code discovery, refactoring, and execution tasks.
+- Calculates Signal Density Metrics ($S = \text{Recall} / \text{Tokens}$).
+- Enforces a hard spending circuit breaker (`--max-cost`) to prevent runaway cloud evaluation costs.
+- Generates structured Markdown and JSON comparison reports.
+
+### 4.17. Evidence Provenance Envelope (`pkg/evidence`)
+
+Typed container tagging all context artifacts with origin metadata, line coordinates, and verification confidence.
 
 ---
 
@@ -319,13 +423,20 @@ Embedded SQLite FTS5 database for storing elided code bodies, symbol indices, an
 | Command | Package | Description |
 |:---|:---|:---|
 | `tzro start` | `pkg/proxy` | Start the transparent reverse proxy daemon |
+| `tzro context "<task>" --budget <n>` | `pkg/context` | Assemble ranked, token-budgeted context pack |
+| `tzro impact [files...]` | `pkg/context` | Compute change-impact graph and test coverage |
 | `tzro probe "<query>"` | `pkg/probe` | Fast local codebase discovery |
+| `tzro search "<query>"` | `pkg/search` | Unified local evidence search across code, docs, artifacts |
 | `tzro skeleton <file>` | `pkg/ast` | Generate AST skeleton with body hashes |
-| `tzro expand <hash>` | `pkg/store` | Retrieve original code body by hash |
-| `tzro compact` | `pkg/compactor` | Compress stdin log/JSON output |
-| `tzro hook [harness] [event]` | `pkg/hooks` | Agent lifecycle hook bridge |
+| `tzro expand <hash-or-id>` | `pkg/store` | Retrieve original code body or stored artifact |
+| `tzro compact [--run "<cmd>"]` | `pkg/compactor` | Compress logs with evidence contracts & inline diagnostic cap |
+| `tzro session save / load / status` | `pkg/session` | Portable git-aware agent session handoffs |
+| `tzro inspect explain <trace-id>` | `pkg/inspector` | Offline context pack ranking explainability |
+| `tzro doctor` | `pkg/doctor` | Synthetic health checks and provider route diagnostics |
+| `tzro bench signal-density` | `pkg/benchmark/signaldensity` | Empirical signal density benchmarking with cost guard |
+| `tzro hook [harness] [event]` | `pkg/hooks` | Agent lifecycle hook bridge (5 harnesses) |
 | `tzro init` | `pkg/hooks` | Auto-configure agent hooks |
-| `tzro status` | `pkg/proxy` | Check proxy metrics and memory |
+| `tzro status` | `pkg/proxy` | Check proxy metrics, cache hits, and memory |
 | `tzro ingest <file>` | `pkg/compactor` + `pkg/store` | Import tabular data into SQLite |
 | `tzro query <table> "<sql>"` | `pkg/store` | Execute SQL against imported data |
 

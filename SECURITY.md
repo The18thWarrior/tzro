@@ -43,7 +43,7 @@ tzro follows a **Security-by-Design** posture across every architectural layer:
 |:---|:---|
 | **Zero telemetry** | `tzrod` makes zero outbound network requests during normal operation. Model weights are fetched once during bootstrap. Everything else is local. Verify: `sudo lsof -i -P \| grep tzrod`. |
 | **Local state storage** | All execution state, memory, and knowledge graph data persists in `~/.tzro/tzro.db` — a single SQLite file on your disk. No cloud sync. |
-| **Loopback binding** | The MCP server and HTTP/SSE daemon bind exclusively to `127.0.0.1`. Zero external network interfaces are exposed. |
+| **Loopback binding** | The transparent reverse proxy daemon binds exclusively to `127.0.0.1`. Zero external network interfaces are exposed. |
 | **Configurable privacy** | The `privacyLevel` setting provides three tiers: **strict-local** (blocks all cloud interactions), **hybrid** (default — escalates to cloud only when local capability is insufficient), and **cloud-preferred**. |
 
 ---
@@ -54,7 +54,7 @@ tzro employs three complementary isolation layers — containers for process iso
 
 ### 2.1 Container Isolation (Podman / Docker)
 
-When tasks require code execution beyond simple file operations, or when third-party MCP tool servers are untrusted, tzro orchestrates short-lived, task-scoped container sandboxes using rootless Podman or Docker.
+When tasks require code execution beyond simple file operations, tzro orchestrates short-lived, task-scoped container sandboxes using rootless Podman or Docker.
 
 **Container security properties:**
 
@@ -80,26 +80,7 @@ podman run --rm --read-only \
   sh -c "$TASK_COMMAND"
 ```
 
-**Containerized MCP Hosts:**
 
-MCP tool servers flagged with `useDocker: true` in configuration run inside isolated Docker containers. Only environment variables explicitly declared in the server's `env` configuration are resolved from the host and injected via `docker run -e` flags — the container never inherits the host's ambient environment.
-
-```json
-{
-  "mcpServers": {
-    "postgres": {
-      "command": "mcp-server-postgres",
-      "useDocker": true,
-      "dockerImage": "mcp/postgres:latest",
-      "env": {
-        "DATABASE_URL": "$DATABASE_URL"
-      }
-    }
-  }
-}
-```
-
-In this example, only `DATABASE_URL` is resolved from the host environment. All other host variables remain invisible to the containerized process.
 
 ### 2.2 WebAssembly Sandboxing (wazero)
 
@@ -120,7 +101,7 @@ This is the highest-security tool execution mode. The WASM module literally *can
 
 ### 2.3 Loopback-Only Network Binding
 
-The `tzrod` daemon and MCP server bind exclusively to `127.0.0.1:0` (dynamically assigned port on the loopback interface). This means:
+The transparent reverse proxy daemon (`tzro start`) binds exclusively to `127.0.0.1` on the configured port. This means:
 
 - **Zero external attack surface** — the service is unreachable from any other machine on the network.
 - **No TLS complexity** — loopback traffic is inherently protected from network-level interception.
@@ -263,7 +244,7 @@ tzro never stores raw API keys or secrets in configuration files. All sensitive 
 
 - **No secrets in config files** — configuration files contain only variable references, never actual credentials.
 - **Runtime resolution** — the `$` prefix triggers recursive resolution from the host shell environment at the moment of use.
-- **Container isolation** — for Docker-hosted MCP servers, only explicitly declared environment variables are resolved and passed via `docker run -e`. The container never inherits the host's full environment.
+- **Container isolation** — when executing tasks in Docker, only explicitly declared environment variables are resolved and passed via `docker run -e`. The container never inherits the host's full environment.
 - **CI/CD alignment** — this pattern works natively with cloud CI/CD systems, terminal profiles, and headless server pipelines without requiring proprietary credential storage.
 
 ---
@@ -321,7 +302,7 @@ We believe in honest security communication. Here is what tzro protects against,
 If you discover a security vulnerability in tzro, we want to hear about it. Please report vulnerabilities responsibly:
 
 - **Email**: security@tzro.dev
-- **Scope**: Vulnerabilities in the tzro engine, daemon, MCP server, container isolation, or grammar constraint enforcement.
+- **Scope**: Vulnerabilities in the tzro engine, transparent proxy daemon, container isolation, or grammar constraint enforcement.
 - **Response**: We aim to acknowledge reports within 48 hours and provide a fix timeline within 7 days.
 - **Recognition**: We credit researchers who responsibly disclose vulnerabilities (with their permission) in our release notes.
 
