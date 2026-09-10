@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"tzro/pkg/ast"
+	"tzro/pkg/benchmark/signaldensity"
 	"tzro/pkg/compactor"
 	tzroctx "tzro/pkg/context"
 	"tzro/pkg/dlp"
@@ -1604,7 +1605,74 @@ Examples:
 
 	artifactsCmd.AddCommand(artifactsListCmd, artifactsPruneCmd)
 
-	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd)
+	// BENCH COMMAND
+	benchCmd := &cobra.Command{
+		Use:   "bench",
+		Short: "Benchmark suite measuring signal density, latency, and cache efficiency",
+	}
+
+	var benchModel string
+	var benchTier string
+	var benchPrimitive string
+	var benchMaxCost float64
+	var benchTimeout time.Duration
+	var benchOutput string
+	var benchNoCache bool
+	var benchSamples int
+	var benchBaseURL string
+	var benchAPIKey string
+
+	signalDensityCmd := &cobra.Command{
+		Use:          "signal-density",
+		Short:        "Measure task-completion signal density per token across Tzro optimizations",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := signaldensity.BenchmarkConfig{
+				Model:      benchModel,
+				Tier:       benchTier,
+				Primitive:  benchPrimitive,
+				MaxCost:    benchMaxCost,
+				Timeout:    benchTimeout,
+				OutputPath: benchOutput,
+				NoCache:    benchNoCache,
+				Samples:    benchSamples,
+				BaseURL:    benchBaseURL,
+				APIKey:     benchAPIKey,
+				StorePath:  getDBPath(),
+			}
+
+			runner := signaldensity.NewRunner(cfg)
+			report, err := runner.Run(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			table := signaldensity.RenderTerminalReport(report, benchMaxCost)
+			fmt.Println(table)
+
+			savedPath, err := signaldensity.SaveJSONReport(report, benchOutput)
+			if err != nil {
+				return fmt.Errorf("failed to save JSON report: %w", err)
+			}
+			fmt.Printf("✓ Benchmark report saved to: %s\n\n", savedPath)
+			return nil
+		},
+	}
+
+	signalDensityCmd.Flags().StringVar(&benchModel, "model", "anthropic/claude-3.5-sonnet", "Target model (OpenRouter or direct provider ID)")
+	signalDensityCmd.Flags().StringVar(&benchTier, "tier", "all", "Filter by tier: all, micro, macro")
+	signalDensityCmd.Flags().StringVar(&benchPrimitive, "primitive", "all", "Filter micro primitive: all, skeleton, compactor, json, tabular")
+	signalDensityCmd.Flags().Float64Var(&benchMaxCost, "max-cost", 2.00, "Hard spending limit in USD; halts immediately if exceeded")
+	signalDensityCmd.Flags().DurationVar(&benchTimeout, "timeout", 180*time.Second, "Per-request timeout")
+	signalDensityCmd.Flags().StringVar(&benchOutput, "output", "", "Optional filepath to persist complete JSON execution trace")
+	signalDensityCmd.Flags().BoolVar(&benchNoCache, "no-cache", true, "Busts KV cache headers to measure raw input tokens cleanly")
+	signalDensityCmd.Flags().IntVar(&benchSamples, "samples", 1, "Number of evaluation samples per test case")
+	signalDensityCmd.Flags().StringVar(&benchBaseURL, "base-url", "", "Custom base URL for LLM API (defaults to OpenRouter)")
+	signalDensityCmd.Flags().StringVar(&benchAPIKey, "api-key", "", "API key for LLM provider (defaults to env vars)")
+
+	benchCmd.AddCommand(signalDensityCmd)
+
+	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd, benchCmd)
 
 	return rootCmd
 }
