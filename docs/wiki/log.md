@@ -2,7 +2,21 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-21T21:35:00-07:00] ideate-and-drill | System 1 Graph Calls & Non-Autoregressive Decision Engine (ADR-0095)
+
+- **Activity**: Ideate-and-drill session evaluating `merijjeyn/jive` and `mys/laya-GGUF` integration into `tzro` as a v3 architecture. Resolved 5 design sections and 5 adversarial drill questions covering operational models, graph language contracts, daemon supervision, context squashing, error/yield contracts, and E2E benchmark suites.
+- **Key Decisions**:
+  1. **Dual Frontend, Single Engine Core**: Expose execution via `tzro mcp` (with modal approval and real-time node progress streaming) for interactive IDE harnesses, and `tzro execute` for headless scripting and CI/CD.
+  2. **Tier 2 Local ML Stack (Non-Autoregressive)**: Supervise `mys/laya-GGUF` (ModernBERT-large, 421M params, ~450 MB RAM) for sub-30ms categorical decisions (`choice`, `score`, `noul`) and `GLiNER` (150M params, ~220 MB RAM) for zero-shot span parameter extraction over stdin/stdout IPC pipes.
+  3. **Drop Tier 3 (FIM Coder)**: Rejected local 0.5B generative models; elided function bodies are already retrievable losslessly from SQLite (`pkg/store`), and code patch generation strictly belongs to cloud System 2 planners on yield turns.
+  4. **Context Squashing Safety Valve**: Hard-cap Laya state assembly at <= 450 tokens using `pkg/ast` skeletons, `pkg/compactor` 10-line diagnostic caps, and `pkg/probe` top-5 candidates to mathematically avoid the 512-token ModernBERT ceiling.
+  5. **Auto-Ingest Query Tool**: `query` tool supports auto-ingestion of un-ingested files and piped command outputs into SQLite on-the-fly in <15ms.
+  6. **E2E Mini-Benchmark Suite**: Include A/B benchmark evaluation comparing `tzro v3` against raw PiCoder linear execution across large files, tabular datasets, and multi-step test/diagnosis workflows.
+- **Resolved Terms**: Added `System 1 Graph Call`, `System 1 Decision Daemon`, and `Zero-Shot Span Extractor` to `CONTEXT.md`.
+- **ADR**: Created [ADR-0095: System 1 Graph Calls and Non-Autoregressive Decision Engine](../adr/0095-system1-graph-calls-and-encoder-decision-engine.md). Updated `docs/wiki/index.md`.
+
 ## [2026-09-09T22:00:00-07:00] tdd | Implemented Context and Evidence Workflows (5 Workflows + Shared Infrastructure)
+
 
 - **Activity**: Implemented all 5 workflows and 5 shared infrastructure components from [context-and-evidence-workflows-handoff.md](../../.scratch/context-and-evidence-workflows/context-and-evidence-workflows-handoff.md) using TDD red→green→refactor across 6 vertical slices.
 - **Slice 1 (Shared Infrastructure: S1, S2, S3)**:

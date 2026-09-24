@@ -28,26 +28,30 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 
 ---
 
-## 🛡️ The Solution: Tzro v2 ("The Local Token Shield")
+## 🛡️ The Solution: Tzro v3 ("The Local Token Shield & System 1 Runtime")
 
-**Tzro v2** is an ultra-lightweight, compiled native Go binary (<50 MB RAM, zero Python/PyTorch dependencies) that operates across two synchronized planes:
+**Tzro v3** is an ultra-lightweight, compiled native Go binary (<50 MB RAM baseline) that operates across two synchronized planes, now extended with a **System 1 / System 2 dual-process architecture** for deterministic local execution:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Developer / Agent (Cursor, Claude Code, Antigravity, CLI)  │
 └──────────────────────────────┬──────────────────────────────┘
-                               │ (Transparent Loopback Proxy / CLI)
+                               │ (Transparent Proxy / CLI / MCP)
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 TZRO v2 LOCAL TOKEN SHIELD                  │
+│                 TZRO v3 LOCAL TOKEN SHIELD                  │
 │                                                             │
-│  1. KV-Cache Prefix Lock Guard (70-99% Cache Read Hit Rate)  │
-│  2. Tree-Sitter AST Skeletonizer (70-90% Token Reduction)   │
-│  3. Sub-Millisecond Local Discovery (`tzro probe`)          │
-│  4. Local SQLite FTS5 Content-Hash Store (`tzro expand`)    │
-│  5. Smart JSON Crusher & Stack Trace Elider                 │
-│  6. Zero-Cloud DLP / Secret Masking                         │
-│  7. Tabular Data Engine (`tzro ingest` / `tzro query`)      │
+│  1. KV-Cache Prefix Lock Guard (70-99% Cache Read Hit Rate) │
+│  2. Tree-Sitter AST Skeletonizer (70-90% Token Reduction)  │
+│  3. Sub-Millisecond Local Discovery (`tzro probe`)         │
+│  4. Local SQLite FTS5 Content-Hash Store (`tzro expand`)   │
+│  5. Smart JSON Crusher & Stack Trace Elider                │
+│  6. Zero-Cloud DLP / Secret Masking                        │
+│  7. Tabular Data Engine (`tzro ingest` / `tzro query`)     │
+│  8. System 1 Graph Call Executor (`tzro execute`)          │
+│  9. Laya Decision Daemon (ModernBERT-large, ~25ms)         │
+│ 10. GLiNER Span Extractor (ONNX, zero-shot)               │
+│ 11. MCP Server (`tzro mcp`, JSON-RPC 2.0 / stdio)         │
 └──────────────────────────────┬──────────────────────────────┘
                                │ (Dense, High-Signal, Cache-Locked Payload)
                                ▼
@@ -59,18 +63,15 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 
 ---
 
-## 🆕 v2.1.0 Highlights
+## 🆕 v3.0.0 Highlights
 
-- **Task Context Assembly (`tzro context`)**: Assembles ranked, token-budgeted context packs with AST definitions, TypeScript path alias resolution (`tsconfig.json`), and call graphs — replacing 5–10 exploration turns with a single <2k token pack.
-- **Pre-Edit Change Impact Analysis (`tzro impact`)**: Calculates structural blast radius, direct callers, downstream consumers, and existing test coverage before edits are made.
-- **Unified Local Evidence Search (`tzro search`)**: Searches across code, design specs, ADRs, documentation, logs, and stored artifacts with AST span extraction in <10ms.
-- **Agent Session Continuity (`tzro session`)**: Portable Schema v2 snapshot tracking objectives, decisions, executed checks, and git freshness across agent handoffs.
-- **Evidence Contract Compactor (`tzro compact --run`)**: Direct command wrapper capturing verified exit codes, capping inline diagnostics to 10 lines, and storing full logs in SQLite with expansion hashes.
-- **System Diagnostics (`tzro doctor`)**: Live synthetic health checks across proxy routes, upstream provider latency, SQLite FTS5 capability, and agent lifecycle hooks.
-- **Signal Density Benchmark Suite (`tzro bench signal-density`)**: Empirical measurement of task signal density per token ($S = \text{Recall} / \text{Tokens}$) with spending limit circuit breakers.
-- **Offline Context Explainability (`tzro inspect explain`)**: Zero-cloud-token replay explaining why candidates were included, ranked, or omitted.
-- **Zero-Cloud DLP Policy Engine**: Workspace policy engine (`.tzro/privacy.json`) enforcing redaction and egress blocking before payload transmission.
-- **Schema v2 Multi-Workspace Store**: Isolated workspace partitioning, quota enforcement, and LRU artifact eviction.
+- **System 1 Graph Call Executor (`tzro execute`)**: Deterministic DAG runtime engine scheduling tool, decision, extraction, and group nodes with Kahn's topological sort and bounded concurrency. Replaces v1's autonomous generative loops with ~25ms deterministic execution per node.
+- **Laya Decision Daemon (`pkg/laya`)**: ModernBERT-large (421M params) sidecar via `ggmlc` stdin/stdout IPC. Answers typed questions (yes/no, choice, score) in a single forward pass with automatic state compaction to ≤450 tokens.
+- **GLiNER Span Extraction (`pkg/extractor`)**: Zero-shot ONNX Runtime span extraction (150M params) for hallucination-free parameter extraction from unstructured text.
+- **MCP Server (`tzro mcp`)**: Model Context Protocol JSON-RPC 2.0 server over stdio for IDE integration (Claude Desktop, VS Code, Cursor) with real-time progress notifications and yield envelopes.
+- **Yield/Suspension Protocol**: When a decision node's confidence falls below threshold, execution suspends with a structured `YieldEnvelope` containing completed work and diagnostics — enabling human-in-the-loop or supervisor agent escalation without re-running completed nodes.
+- **Fan-Out Group Nodes**: Template-based parallel execution across item collections with configurable concurrency limits and automatic result aggregation.
+- **JSON Pointer Data Wiring**: Inter-node dataflow via `$ref` pointers following RFC 6901 syntax, supporting stdout, stderr, exit_code, status, and custom data fields.
 
 ---
 

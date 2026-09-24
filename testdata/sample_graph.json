@@ -1,0 +1,27 @@
+{
+  "version": "3.0",
+  "task_id": "sample-graph",
+  "nodes": [
+    {
+      "id": "discover",
+      "type": "tool",
+      "tool": "bash",
+      "args": {
+        "command": "echo 'handler.go:42:func HandleRequest'"
+      }
+    },
+    {
+      "id": "evaluate",
+      "type": "tool",
+      "tool": "bash",
+      "depends_on": ["discover"],
+      "args": {
+        "command": "echo 'evaluation complete'"
+      }
+    }
+  ],
+  "returns": [
+    "/nodes/discover/output/stdout",
+    "/nodes/evaluate/output/stdout"
+  ]
+}

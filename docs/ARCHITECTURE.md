@@ -1,12 +1,12 @@
-# tzro v2 Architectural Guide
+# tzro v3 Architectural Guide
 
-This document describes the high-level design, subsystems, and optimization mechanics of **tzro v2 — The Local Token Shield & Context Optimization Engine**.
+This document describes the high-level design, subsystems, and optimization mechanics of **tzro v3 — The Local Token Shield, Context Optimization Engine & System 1 Graph Call Runtime**.
 
 ---
 
 ## 1. High-Level Design & Philosophy
 
-`tzro v2` is an ultra-lightweight, compiled native Go binary (<50 MB RAM, zero Python/PyTorch dependencies) that eliminates cloud API rate limits and token waste for AI coding agents. It operates as a transparent middleware layer between coding agents and cloud LLM providers.
+`tzro v3` extends the ultra-lightweight compiled native Go binary with a deterministic System 1 Graph Call execution engine. It retains all v2 token optimization (transparent proxy, KV-cache prefix locking, AST skeletonization, tabular data engine) and adds a **System 1 / System 2 dual-process architecture**: cloud LLMs (System 2) compile declarative graph DAGs, while tzro executes them locally using non-autoregressive models for ~25ms decisions (Laya/ModernBERT-large) and zero-shot parameter extraction (GLiNER/ONNX). Exposed via CLI (`tzro execute`) and MCP server (`tzro mcp`) for IDE integration.
 
 ### Architecture Shift: v1 → v2
 
@@ -118,11 +118,13 @@ graph TD
 
 ## 3. Package Architecture
 
-tzro v2 is organized into 15 public packages under `pkg/`, one CLI entrypoint, and a website server:
+tzro v3 is organized into 18 public packages under `pkg/`, one CLI entrypoint, and a website server:
 
 ```
 cmd/
   tzro/main.go          # CLI entrypoint — cobra commands for all operations
+  tzro/execute.go       # System 1 Graph Call CLI execution
+  tzro/mcp.go           # MCP JSON-RPC 2.0 server over stdio for IDE integration
 pkg/
   ast/                   # Tree-sitter AST skeletonizer and span extraction
   benchmark/
@@ -132,9 +134,12 @@ pkg/
   dlp/                   # Zero-cloud DLP secret masking & workspace privacy policies
   doctor/                # Synthetic health checks, provider route diagnostics, hook probes
   evidence/              # Typed evidence provenance envelopes and freshness markers
+  executor/              # System 1 Graph Call DAG execution engine (Kahn's topological sort)
+  extractor/             # GLiNER zero-shot span extraction sidecar client & adapter
   hooks/                 # Multi-harness agent lifecycle hook bridge (5 harnesses)
   inspector/             # Offline context assembly explainability & ranking inspector
   kvlock/                # KV-cache prefix normalization and locking
+  laya/                  # Laya System 1 decision daemon client, adapter & state compaction
   probe/                 # Fast local codebase discovery (ripgrep + AST)
   proxy/                 # Transparent reverse proxy server and usage tracking
   search/                # Unified local evidence search across code, docs, logs, and artifacts
@@ -423,6 +428,8 @@ Typed container tagging all context artifacts with origin metadata, line coordin
 | Command | Package | Description |
 |:---|:---|:---|
 | `tzro start` | `pkg/proxy` | Start the transparent reverse proxy daemon |
+| `tzro execute [graph.json \| -]` | `pkg/executor` | Execute a System 1 Graph Call DAG |
+| `tzro mcp` | `pkg/executor` | Start the MCP JSON-RPC 2.0 server over stdio |
 | `tzro context "<task>" --budget <n>` | `pkg/context` | Assemble ranked, token-budgeted context pack |
 | `tzro impact [files...]` | `pkg/context` | Compute change-impact graph and test coverage |
 | `tzro probe "<query>"` | `pkg/probe` | Fast local codebase discovery |
@@ -461,20 +468,24 @@ A Go-based static website server for marketing and documentation. Serves the tzr
 
 ---
 
-## 8. Migration Notes from v1
+## 8. Migration Notes: v2 → v3
 
-The following v1 subsystems have been removed in v2:
+v3 re-introduces local execution capabilities that were removed in v2, but with a fundamentally different architecture:
 
-| v1 Subsystem | Status | Replacement |
+| Capability | v1 (Removed in v2) | v3 (Re-introduced) |
 |:---|:---|:---|
-| DAG Execution Engine | Removed | Agent-native execution (agents handle their own planning) |
-| Strategy Framework | Removed | Direct `pkg/` library calls |
-| Probe Nodes | Removed | `pkg/probe` (CLI-only, no execution graph) |
-| MCP Server (`cmd/tzro-mcp`) | Removed | Agent hooks (`pkg/hooks`) |
-| Daemon (`cmd/tzrod`) | Removed | Transparent proxy (`pkg/proxy`) |
-| Dashboard | Removed | `tzro status` CLI + `/metrics` endpoint |
-| Dual-Sidecar Inference | Removed | Agents use their own LLM providers |
-| Workspace Registry | Removed | Single `~/.tzro/store.db` |
-| 37 internal packages | Removed | 8 public `pkg/` packages |
+| DAG Execution | Autonomous generative loops (90% failure rate) | Deterministic topological sort with typed nodes |
+| Local Inference | 4B autoregressive Worker + 1B Router (~3.5s/step) | ModernBERT-large encoder (~25ms/decision) |
+| Parameter Extraction | LLM-generated (hallucination-prone) | GLiNER zero-shot span extraction (150M ONNX) |
+| MCP Server | In-process, tightly coupled | JSON-RPC 2.0 stdio, standards-compliant |
+| Execution Control | Open-ended agent loops | Bounded DAG with yield/suspension protocol |
+| Memory Footprint | Dynamic KV-cache growth | Static ~870 MB (no cache growth) |
 
-The v2 philosophy shifts tzro from an "agentic operating system" to a "transparent token optimization layer" — agents remain in control of their own execution while tzro silently reduces their cloud costs and improves cache hit rates.
+### Key Architectural Differences from v1
+
+1. **No local generative codegen** — All creative code synthesis remains on cloud LLMs. Local models only answer structured questions and extract spans.
+2. **Yield protocol** — When a decision node's confidence is below threshold, execution suspends with a structured `YieldEnvelope` rather than hallucinating forward.
+3. **Sidecar isolation** — Laya and GLiNER run as separate OS processes via stdin/stdout IPC, not in-process Cgo bindings.
+4. **State compaction** — Decision input is compressed to ≤450 tokens via progressive degradation before dispatch to ModernBERT's context window.
+
+The v3 philosophy adds a **System 1 fast-path** to the v2 token optimization layer — agents can now offload deterministic sub-tasks to local execution while retaining cloud-side creative reasoning.

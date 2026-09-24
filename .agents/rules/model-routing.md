@@ -1,0 +1,1 @@
+\When spawning subagents, always use `inherit` for the model unless the task is trivially simple (use `flash`) or requires extremely deep reasoning (use `pro`). Prefer `flash` for any code modification tasks.
