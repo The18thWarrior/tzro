@@ -1,0 +1,11 @@
+name,value,unit,category,timestamp
+cpu_usage,78.5,percent,system,2024-01-01T00:00:00Z
+mem_usage,62.3,percent,system,2024-01-01T00:00:00Z
+disk_read,1250,iops,storage,2024-01-01T00:00:00Z
+disk_write,980,iops,storage,2024-01-01T00:00:00Z
+net_rx,52.1,mbps,network,2024-01-01T00:00:00Z
+net_tx,31.4,mbps,network,2024-01-01T00:00:00Z
+cpu_usage,81.2,percent,system,2024-01-01T00:01:00Z
+mem_usage,63.1,percent,system,2024-01-01T00:01:00Z
+disk_read,1180,iops,storage,2024-01-01T00:01:00Z
+disk_write,1050,iops,storage,2024-01-01T00:01:00Z

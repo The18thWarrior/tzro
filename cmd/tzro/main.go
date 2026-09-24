@@ -1669,7 +1669,11 @@ Examples:
 
 	benchCmd.AddCommand(signalDensityCmd)
 
-	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd, benchCmd)
+	// System 1 Graph Execution commands (v3)
+	executeCmd := newExecuteCmd()
+	mcpCmd := newMCPCmd()
+
+	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd, benchCmd, executeCmd, mcpCmd)
 
 	return rootCmd
 }

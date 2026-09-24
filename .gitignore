@@ -84,6 +84,7 @@ mcp.lock
 
 workspaces/*
 models/*
+.venv-gliner/
 
 benchmark-results*
 benchmark-test-*
@@ -106,6 +107,6 @@ AGENTS.md
 CONTEXT.md
 DESIGN.md
 docs/superpowers/
-
+docs/working-specs/
 
 .sf

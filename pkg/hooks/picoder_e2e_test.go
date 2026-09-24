@@ -1554,6 +1554,11 @@ Remember: ONE tool call per turn. Be methodical.`
 	for turn := 0; turn < maxTurns; turn++ {
 		result.Turns = turn + 1
 
+		// Compact conversation to prevent context overflow.
+		// Keep: system prompt (msg 0), user prompt (msg 1), last 20 messages.
+		// Compress: older tool results into 1-line summaries.
+		messages = compactConversation(t, messages, 80000)
+
 		reqBody := orRequest{Model: model, Messages: messages, Tools: tools}
 		reqJSON, err := json.Marshal(reqBody)
 		if err != nil {
@@ -1643,6 +1648,28 @@ Remember: ONE tool call per turn. Be methodical.`
 		t.Logf("turn %d: %d tool calls executed (hooked=%v)", turn, len(assistantMsg.ToolCalls), hooked)
 	}
 
+	// If no final answer was captured, recover from message history
+	if result.FinalAnswer == "" {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "assistant" && messages[i].Content != "" {
+				result.FinalAnswer = messages[i].Content
+				t.Logf("recovered final answer from message %d (len=%d)", i, len(result.FinalAnswer))
+				break
+			}
+		}
+	}
+
+	// Log a snippet of the final answer for quality debugging
+	if result.FinalAnswer != "" {
+		snippet := result.FinalAnswer
+		if len(snippet) > 500 {
+			snippet = snippet[:500] + "..."
+		}
+		t.Logf("final answer snippet (%d chars): %s", len(result.FinalAnswer), snippet)
+	} else {
+		t.Logf("WARNING: no final answer captured — quality scoring will report 0%%")
+	}
+
 	result.WallClockMs = time.Since(start).Milliseconds()
 	return result
 }
@@ -1726,6 +1753,13 @@ func executeLocalToolWithTzro(tzroBin, workspaceDir, toolName, argsJSON string) 
 
 // agentLoopWithTzro runs an agent loop with tzro discovery tools available.
 func agentLoopWithTzro(t *testing.T, apiKey, model, tzroBin, workspaceDir string) RunResult {
+	return agentLoopWithTzroAndPack(t, apiKey, model, tzroBin, workspaceDir, nil)
+}
+
+// agentLoopWithTzroAndPack runs an agent loop with tzro discovery tools available.
+// If pack is non-nil, the pre-analyzed context pack is injected so the LLM starts
+// with skeletons, probe results, and extracted error spans already in context.
+func agentLoopWithTzroAndPack(t *testing.T, apiKey, model, tzroBin, workspaceDir string, pack *contextPack) RunResult {
 	t.Helper()
 
 	tools := []orTool{
@@ -1766,7 +1800,33 @@ func agentLoopWithTzro(t *testing.T, apiKey, model, tzroBin, workspaceDir string
 		}},
 	}
 
-	systemPrompt := `You are a senior software engineer with efficient codebase exploration tools:
+	var systemPrompt string
+	var userMsg string
+
+	if pack != nil {
+		// System 1 mode: inject pre-analyzed context pack
+		packStr := formatContextPack(*pack)
+		systemPrompt = `You are a senior software engineer. A local System 1 engine has already pre-analyzed this codebase for you using graph execution, AST skeletonization, and GLiNER error extraction.
+
+The PRE-ANALYZED CONTEXT PACK below contains:
+- Codebase structure (probe results)
+- File skeletons (signatures with bodies elided as hashes)
+- Extracted error spans from log files (GLiNER)
+
+Your job: use this evidence to diagnose ALL bugs. You still have tools available:
+- tzro_expand: Retrieve a specific function body by hash to inspect suspicious code
+- read_file: Read full files (configs, READMEs, logs)
+- run_command: Run tests/builds to verify
+- tzro_probe: Search for additional patterns if needed
+- tzro_skeleton: Get skeleton of a file not in the pack
+
+IMPORTANT: ONE tool call per turn. Start by reviewing the context pack, then expand suspicious functions.
+
+` + packStr
+		userMsg = "Review the pre-analyzed context pack and diagnose all bugs. Expand function bodies to confirm suspicious findings. Produce a comprehensive diagnostic report."
+	} else {
+		// Legacy mode: LLM drives exploration
+		systemPrompt = `You are a senior software engineer with efficient codebase exploration tools:
 
 - tzro_probe: Search the entire codebase for symbols/patterns. USE THIS FIRST.
 - tzro_skeleton: Compressed file overview (signatures only, bodies elided). 70-90% smaller.
@@ -1783,10 +1843,12 @@ Task: Efficiently diagnose all issues in this codebase.
 4. read_file for READMEs and logs
 5. run_command for tests/builds
 6. Final diagnostic report`
+		userMsg = "Efficiently diagnose this codebase using the tzro discovery tools. One tool call per turn."
+	}
 
 	messages := []orMessage{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: "Efficiently diagnose this codebase using the tzro discovery tools. One tool call per turn."},
+		{Role: "user", Content: userMsg},
 	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
@@ -1796,6 +1858,10 @@ Task: Efficiently diagnose all issues in this codebase.
 
 	for turn := 0; turn < maxTurns; turn++ {
 		result.Turns = turn + 1
+
+		// Compact conversation to prevent context overflow
+		messages = compactConversation(t, messages, 80000)
+
 		reqBody := orRequest{Model: model, Messages: messages, Tools: tools}
 		reqJSON, _ := json.Marshal(reqBody)
 
@@ -1820,7 +1886,8 @@ Task: Efficiently diagnose all issues in this codebase.
 
 		var orResp orResponse
 		if err := json.Unmarshal(respBody, &orResp); err != nil {
-			t.Logf("turn %d: unparseable (ending)", turn)
+			t.Logf("turn %d: unparseable (ending): %s", turn, string(respBody[:min(len(respBody), 200)]))
+			// Try to use the last assistant content we collected as the final answer
 			break
 		}
 
@@ -1873,8 +1940,160 @@ Task: Efficiently diagnose all issues in this codebase.
 		t.Logf("turn %d: [%s] (cost=$%.6f)", turn, assistantMsg.ToolCalls[0].Function.Name, orResp.Usage.Cost)
 	}
 
+	// If no final answer was captured (unparseable or context overflow ended the loop),
+	// scan the message history for the last assistant message with content.
+	if result.FinalAnswer == "" {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "assistant" && messages[i].Content != "" {
+				result.FinalAnswer = messages[i].Content
+				t.Logf("recovered final answer from message %d (len=%d)", i, len(result.FinalAnswer))
+				break
+			}
+		}
+	}
+
+	// Log a snippet of the final answer for quality debugging
+	if result.FinalAnswer != "" {
+		snippet := result.FinalAnswer
+		if len(snippet) > 500 {
+			snippet = snippet[:500] + "..."
+		}
+		t.Logf("final answer snippet (%d chars): %s", len(result.FinalAnswer), snippet)
+	} else {
+		t.Logf("WARNING: no final answer captured — quality scoring will report 0%%")
+	}
+
 	result.WallClockMs = time.Since(start).Milliseconds()
 	return result
+}
+
+// compactConversation prevents context overflow by summarizing old tool results.
+// It keeps: system prompt (msg 0), user prompt (msg 1), and the last `keepRecent` messages.
+// Older tool results (role="tool") are compressed to 1-line summaries.
+// Assistant messages with tool_calls have their content preserved but tool results are compacted.
+func compactConversation(t *testing.T, messages []orMessage, maxEstTokens int) []orMessage {
+	t.Helper()
+
+	// Estimate current token count (chars/3.5 is a rough approximation)
+	totalChars := 0
+	for _, m := range messages {
+		totalChars += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			totalChars += len(tc.Function.Arguments)
+		}
+	}
+	estTokens := totalChars * 10 / 35 // chars / 3.5
+
+	if estTokens <= maxEstTokens || len(messages) <= 6 {
+		return messages // Under budget, no compaction needed
+	}
+
+	// Keep first 2 messages (system + user) and last 20 messages
+	const keepRecent = 20
+	if len(messages) <= keepRecent+2 {
+		return messages
+	}
+
+	compactStart := 2                        // after system + user
+	compactEnd := len(messages) - keepRecent // before recent window
+
+	var compacted []orMessage
+	// Keep system + user
+	compacted = append(compacted, messages[0], messages[1])
+
+	// Summarize the middle section
+	var summaryParts []string
+	toolsSeen := 0
+	for i := compactStart; i < compactEnd; i++ {
+		m := messages[i]
+		if m.Role == "tool" {
+			toolsSeen++
+			// Extract a 1-line summary from tool output
+			summary := compactToolOutput(m.Content)
+			summaryParts = append(summaryParts, summary)
+		} else if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			// Keep tool call names but drop arguments
+			for _, tc := range m.ToolCalls {
+				var args map[string]interface{}
+				json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				if path, ok := args["path"]; ok {
+					summaryParts = append(summaryParts, fmt.Sprintf("[called %s(%v)]", tc.Function.Name, path))
+				} else if cmd, ok := args["command"]; ok {
+					cmdStr := fmt.Sprintf("%v", cmd)
+					if len(cmdStr) > 60 {
+						cmdStr = cmdStr[:60] + "..."
+					}
+					summaryParts = append(summaryParts, fmt.Sprintf("[called %s(%s)]", tc.Function.Name, cmdStr))
+				} else {
+					summaryParts = append(summaryParts, fmt.Sprintf("[called %s]", tc.Function.Name))
+				}
+			}
+		}
+		// Drop assistant messages without tool calls (intermediate reasoning)
+	}
+
+	if len(summaryParts) > 0 {
+		summary := fmt.Sprintf("[COMPACTED: %d earlier tool interactions]\n%s",
+			toolsSeen, strings.Join(summaryParts, "\n"))
+		compacted = append(compacted, orMessage{
+			Role:    "user",
+			Content: summary,
+		})
+		t.Logf("compacted %d messages (%d tool results) into summary (%d chars)",
+			compactEnd-compactStart, toolsSeen, len(summary))
+	}
+
+	// Append recent messages
+	compacted = append(compacted, messages[compactEnd:]...)
+	return compacted
+}
+
+// compactToolOutput produces a 1-line summary of a tool result.
+func compactToolOutput(content string) string {
+	if len(content) == 0 {
+		return "(empty)"
+	}
+
+	lines := strings.Split(content, "\n")
+
+	// For short outputs, keep as-is
+	if len(content) < 200 {
+		oneLine := strings.Join(lines, " | ")
+		if len(oneLine) > 150 {
+			return oneLine[:150] + "..."
+		}
+		return oneLine
+	}
+
+	// For longer outputs, extract key signals
+	var signals []string
+
+	// Look for error/fail lines
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "fail") ||
+			strings.Contains(lower, "panic") || strings.Contains(lower, "warning") {
+			trimmed := strings.TrimSpace(line)
+			if len(trimmed) > 100 {
+				trimmed = trimmed[:100] + "..."
+			}
+			signals = append(signals, trimmed)
+			if len(signals) >= 3 {
+				break
+			}
+		}
+	}
+
+	if len(signals) > 0 {
+		return fmt.Sprintf("(%d lines) key: %s", len(lines), strings.Join(signals, " | "))
+	}
+
+	// No error signals — just show first line and size
+	first := strings.TrimSpace(lines[0])
+	if len(first) > 80 {
+		first = first[:80] + "..."
+	}
+	return fmt.Sprintf("(%d lines) %s", len(lines), first)
 }
 
 func min(a, b int) int {
@@ -1932,9 +2151,10 @@ func TestPiCoderE2E(t *testing.T) {
 	t.Log("=== Run B: Tzro-Hooked (Pi-Coder post-tool compaction) ===")
 	hooked := agentLoop(t, apiKey, model, workspace, true)
 
-	// --- Run C: Full Tzro (probe + skeleton + expand + hooks) ---
-	t.Log("=== Run C: Full Tzro (probe + skeleton + expand + hooks) ===")
-	fullTzro := agentLoopWithTzro(t, apiKey, model, tzroBin, workspace)
+	// --- Run C: Full Tzro + System 1 (graph executor + GLiNER + probe + skeleton + expand + hooks) ---
+	t.Log("=== Run C: Full Tzro + System 1 (graph executor + GLiNER context pack) ===")
+	pack := buildContextPack(t, tzroBin, workspace, []string{"*.go"})
+	fullTzro := agentLoopWithTzroAndPack(t, apiKey, model, tzroBin, workspace, &pack)
 
 	// --- Savings calculations ---
 	pct := func(base, val int) float64 {
@@ -1992,5 +2212,20 @@ func TestPiCoderE2E(t *testing.T) {
 		} else {
 			t.Logf("WARNING: %s did not produce final answer (%d turns)", name, r.Turns)
 		}
+	}
+
+	// --- Quality scoring ---
+	qBase := scoreQuality(baseline.FinalAnswer, goInventorySignals)
+	qHook := scoreQuality(hooked.FinalAnswer, goInventorySignals)
+	qTzro := scoreQuality(fullTzro.FinalAnswer, goInventorySignals)
+
+	logQualityComparison(t, "Go Inventory", goInventorySignals, qBase, qHook, qTzro)
+
+	if qTzro.Found < qBase.Found {
+		t.Logf("⚠️  WARNING: Full Tzro found %d/%d bugs vs Baseline %d/%d — quality regression!",
+			qTzro.Found, qTzro.Total, qBase.Found, qBase.Total)
+	} else {
+		t.Logf("✓ Full Tzro found %d/%d bugs (Baseline: %d/%d) — quality preserved or improved",
+			qTzro.Found, qTzro.Total, qBase.Found, qBase.Total)
 	}
 }

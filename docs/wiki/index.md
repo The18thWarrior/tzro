@@ -144,6 +144,9 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0090: List Node — Extraction Without Synthesis](../adr/0090-list-node-extraction-without-synthesis.md) - Introduces a List Node type for extraction tasks where the model points at line ranges via GBNF-constrained arrays and the Go harness copies verbatim source, eliminating synthesis corruption for enumeration/cataloging goals.
 - [ADR-0091: Probe Node Removal and list-and-write Topology](../adr/0091-probe-removal-list-and-write-topology.md) - Deletes the Probe Node, replaces with list-and-write topology archetype in the Plan Template Registry, and establishes Budget-Overflow Recall Injection.
 - [ADR-0092: Lossless Context Prefill Optimization and Prefix-Slot Architecture](../adr/0092-lossless-prefill-optimization-and-prefix-slotting.md) - Implements static 4-turn prefix slotting for KV cache reuse, symbolic in-context dictionary encoding, 2-tier AST stubbing, and role-differentiated KV quantization.
+- [ADR-0093: Benchmark Harness Hardening and Architecture Invariant Enforcement](../adr/0093-benchmark-harness-hardening-and-invariant-enforcement.md) - Robust error handling, non-zero judge failure detection, and architectural invariant enforcement in the benchmark harness.
+- [ADR-0094: RecallPolicy Field and Embedding-Based Chunk Dedup in Sectioned Synthesis](../adr/0094-recall-policy-and-embedding-prune.md) - Declarative RecallPolicy field on GraphNode, embedding-based semantic chunk deduplication, and removal of illegal LLM compaction loops from the Recall Node.
+- [ADR-0095: System 1 Graph Calls and Non-Autoregressive Decision Engine](../adr/0095-system1-graph-calls-and-encoder-decision-engine.md) - Replaces autonomous generative loops with deterministic System 1 Graph Calls, supervising ModernBERT (`mys/laya-GGUF`) for sub-30ms decisions and GLiNER for zero-shot span extraction with zero KV-cache overhead.
 
 ## Ingested Sources
 
