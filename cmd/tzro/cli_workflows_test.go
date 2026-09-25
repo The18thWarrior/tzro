@@ -70,3 +70,34 @@ func TestCLI_WorkflowsEndToEnd(t *testing.T) {
 		t.Errorf("compact --help missing --run flag: %s", cmdCompact.String())
 	}
 }
+
+func TestCLI_ContextCommand_Issue10(t *testing.T) {
+	// 1. Test tzro context --help
+	cmdContext := &bytes.Buffer{}
+	root := newRootCmd()
+	root.SetOut(cmdContext)
+	root.SetArgs([]string{"context", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("tzro context --help failed: %v", err)
+	}
+	out := cmdContext.String()
+	for _, flag := range []string{"--symbol", "--file", "--format", "--output", "--force", "--budget"} {
+		if !strings.Contains(out, flag) {
+			t.Errorf("context --help missing flag %s:\n%s", flag, out)
+		}
+	}
+}
+
+func TestCLI_InitConfig_Issue11(t *testing.T) {
+	// 1. Verify init --help contains --config
+	cmdInit := &bytes.Buffer{}
+	root := newRootCmd()
+	root.SetOut(cmdInit)
+	root.SetArgs([]string{"init", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init --help failed: %v", err)
+	}
+	if !strings.Contains(cmdInit.String(), "--config") {
+		t.Errorf("init --help missing --config flag: %s", cmdInit.String())
+	}
+}

@@ -20,6 +20,8 @@ import "fmt"
 // Add computes the sum of two integers.
 func Add(a, b int) int {
 	fmt.Println("Adding numbers")
+	fmt.Println("Validating inputs and state")
+	fmt.Println("Performing 64-bit integer addition")
 	res := a + b
 	return res
 }

@@ -7,13 +7,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	term "github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"tzro/pkg/ast"
 	"tzro/pkg/benchmark/signaldensity"
@@ -43,6 +43,9 @@ var (
 )
 
 func getDBPath() string {
+	if p := os.Getenv("TZRO_DB_PATH"); p != "" {
+		return p
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".tzro", "token_shield.db")
 }
@@ -366,10 +369,53 @@ func newRootCmd() *cobra.Command {
 	// 7. INIT COMMAND (Configure hooks & environments)
 	var hookTargets []string
 	var isWorkspace bool
+	var gitHookName string
+	var gitHookForce bool
+	var gitHookUninstall bool
+	var initConfig bool
+
 	initCmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize and configure lifecycle hooks for AI coding agents",
+		Short: "Initialize and configure lifecycle hooks for AI coding agents or Git repositories",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Check if repository config template creation is requested
+			if initConfig {
+				cwd, _ := os.Getwd()
+				path, err := tzroctx.CreateConfigTemplate(cwd, gitHookForce)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%s Created repository context configuration at %s\n", infoStyle.Render("✔"), path)
+				return nil
+			}
+
+			// Check if singular Git hook mode is requested
+			if cmd.Flags().Changed("hook") && gitHookName != "" {
+				cwd, _ := os.Getwd()
+				if gitHookUninstall {
+					res, err := hooks.UninstallGitHook(cwd, gitHookName)
+					if err != nil {
+						return err
+					}
+					fmt.Printf("%s Git hook %s: %s\n", infoStyle.Render("✔"), res.HookName, res.Message)
+					return nil
+				}
+
+				res, err := hooks.InstallGitHook(cwd, gitHookName, gitHookForce)
+				if err != nil {
+					return err
+				}
+				if res.Status == "skipped" {
+					fmt.Printf("%s %s (%s)\n", warnStyle.Render("!"), res.Message, res.HookPath)
+					if res.ManualAdvice != "" {
+						fmt.Println(res.ManualAdvice)
+					}
+					return nil
+				}
+				fmt.Printf("%s Git hook %s (%s): %s\n", infoStyle.Render("✔"), res.HookName, res.Status, res.Message)
+				return nil
+			}
+
 			fmt.Println(titleStyle.Render("⚡ Tzro Agent Lifecycle Hook Initializer"))
 			results, err := hooks.DetectAndInstallHooks(hookTargets, isWorkspace)
 			if err != nil {
@@ -395,6 +441,10 @@ func newRootCmd() *cobra.Command {
 	}
 	initCmd.Flags().StringSliceVar(&hookTargets, "hooks", []string{"auto"}, "Agent hook targets to configure: auto, all, antigravity, claude, hermes, copilot, pi-coder")
 	initCmd.Flags().BoolVarP(&isWorkspace, "workspace", "w", false, "Configure hooks in current workspace instead of user home directory")
+	initCmd.Flags().StringVar(&gitHookName, "hook", "", "Git hook to install or configure: pre-commit")
+	initCmd.Flags().BoolVar(&gitHookForce, "force", false, "Backup and replace existing non-tzro hook")
+	initCmd.Flags().BoolVar(&gitHookUninstall, "uninstall", false, "Uninstall tzro Git hook and restore any backup")
+	initCmd.Flags().BoolVar(&initConfig, "config", false, "Create initial .tzro/context.yaml repository context configuration template")
 
 	// 8. STATUS COMMAND
 	statusCmd := &cobra.Command{
@@ -827,6 +877,7 @@ Examples:
 	var impactUnstaged bool
 	var impactAll bool
 	var impactSymbol string
+	var impactFile string
 	var impactIncludeGenerated bool
 	var impactFormat string
 	var impactRevision string
@@ -845,53 +896,74 @@ Examples:
 
 			analyzer := tzroctx.NewImpactAnalyzer(s, policy)
 
+			var report *tzroctx.ImpactReport
 			var pack *tzroctx.ContextPack
 			var err error
 
 			if impactSymbol != "" {
-				pack, err = analyzer.AnalyzeSymbol(cwd, impactSymbol, impactBudget, impactIncludeGenerated)
+				report, pack, err = analyzer.AnalyzeSymbolWithFile(cwd, impactSymbol, impactFile, impactBudget, impactIncludeGenerated)
 			} else {
-				var gitArgs []string
+				// Check conflicting scope flags
+				stagedCount := 0
 				if impactStaged {
-					gitArgs = []string{"diff", "--cached"}
+					stagedCount++
+				}
+				if impactUnstaged {
+					stagedCount++
+				}
+				if stagedCount > 1 {
+					return fmt.Errorf("conflicting scope flags: cannot specify both --staged and --unstaged")
+				}
+				if impactRevision != "" {
+					return fmt.Errorf("--revision is reserved and unsupported; use --staged, --unstaged, or --all")
+				}
+
+				scope := tzroctx.GitScopeAll
+				if impactStaged {
+					scope = tzroctx.GitScopeStaged
 				} else if impactUnstaged {
-					gitArgs = []string{"diff"}
-				} else {
-					gitArgs = []string{"diff", "HEAD"}
+					scope = tzroctx.GitScopeUnstaged
 				}
 
-				gitCmd := exec.Command("git", gitArgs...)
-				gitCmd.Dir = cwd
-				diffBytes, gitErr := gitCmd.Output()
-				diffText := string(diffBytes)
-
-				if gitErr != nil || strings.TrimSpace(diffText) == "" {
-					gitCmd2 := exec.Command("git", "diff")
-					gitCmd2.Dir = cwd
-					diffBytes2, _ := gitCmd2.Output()
-					diffText = string(diffBytes2)
+				report, pack, err = analyzer.AnalyzeDiffScope(cmd.Context(), cwd, scope, impactBudget, impactIncludeGenerated)
+				if err != nil {
+					return err
 				}
 
-				if strings.TrimSpace(diffText) == "" {
-					fmt.Println(warnStyle.Render("No working-tree diff detected. Use --symbol <name> to analyze a specific symbol."))
+				if pack.Coverage != nil && pack.Coverage.NoChanges {
+					fmt.Println(warnStyle.Render(fmt.Sprintf("No %s diff detected. Use --symbol <name> to analyze a specific symbol.", scope)))
 					return nil
 				}
-
-				pack, err = analyzer.AnalyzeDiff(cwd, diffText, impactBudget, impactIncludeGenerated)
 			}
 
 			if err != nil {
 				return err
 			}
 
-			if impactFormat == "json" {
+			format := strings.ToLower(impactFormat)
+			if !cmd.Flags().Changed("format") {
+				if isTTY(os.Stdout) {
+					format = "tree"
+				} else {
+					format = "markdown"
+				}
+			}
+
+			switch format {
+			case "json":
 				b, err := json.MarshalIndent(pack, "", "  ")
 				if err != nil {
 					return err
 				}
 				fmt.Println(string(b))
-			} else {
+			case "tree":
+				noColor := isNoColor()
+				treeStr := tzroctx.RenderImpactTree(report, getTerminalWidth(), noColor)
+				fmt.Print(treeStr)
+			case "markdown":
 				fmt.Print(pack.FormatMarkdown())
+			default:
+				return fmt.Errorf("unknown format %q; supported: tree, markdown, json", format)
 			}
 
 			return nil
@@ -902,9 +974,92 @@ Examples:
 	impactCmd.Flags().BoolVar(&impactUnstaged, "unstaged", false, "Analyze unstaged changes only")
 	impactCmd.Flags().BoolVar(&impactAll, "all", true, "Analyze all working tree changes (staged + unstaged)")
 	impactCmd.Flags().StringVar(&impactSymbol, "symbol", "", "Symbol fallback to analyze")
+	impactCmd.Flags().StringVar(&impactFile, "file", "", "File path to disambiguate symbol declarations")
 	impactCmd.Flags().BoolVar(&impactIncludeGenerated, "include-generated", false, "Include generated code files")
-	impactCmd.Flags().StringVar(&impactFormat, "format", "markdown", "Output format: markdown|json")
+	impactCmd.Flags().StringVar(&impactFormat, "format", "tree", "Output format: tree|markdown|json (default: tree on TTY, markdown when piped)")
 	impactCmd.Flags().StringVar(&impactRevision, "revision", "", "Revision range (reserved)")
+
+	// TEST COMMAND (Predictive Test Selection Engine)
+	var testImpact bool
+	var testStaged bool
+	var testUnstaged bool
+	var testAll bool
+	var testDryRun bool
+	var testFormat string
+
+	testCmd := &cobra.Command{
+		Use:   "test",
+		Short: "Select and run predictive tests based on impact analysis",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !testImpact {
+				return fmt.Errorf("specify --impact to run predictive test selection")
+			}
+
+			// Validate scope flags
+			scopeCount := 0
+			if cmd.Flags().Changed("staged") && testStaged {
+				scopeCount++
+			}
+			if cmd.Flags().Changed("unstaged") && testUnstaged {
+				scopeCount++
+			}
+			if cmd.Flags().Changed("all") && testAll {
+				scopeCount++
+			}
+			if scopeCount > 1 {
+				return fmt.Errorf("mutually exclusive scope flags: pass at most one of --staged, --unstaged, --all")
+			}
+
+			scope := tzroctx.GitScopeStaged
+			if testUnstaged {
+				scope = tzroctx.GitScopeUnstaged
+			} else if testAll {
+				scope = tzroctx.GitScopeAll
+			}
+
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+
+			s, _ := store.OpenStore(getDBPath())
+			if s != nil {
+				defer s.Close()
+			}
+			wp, _ := dlp.LoadWorkspacePolicy(cwd)
+			policy := dlp.NewPolicyEngine(wp)
+			registry := tzroctx.NewAdapterRegistry(s, policy)
+			analyzer := tzroctx.NewImpactAnalyzerWithRegistry(s, policy, registry)
+			selector := tzroctx.NewTestSelector(s, policy, analyzer)
+
+			report, err := selector.SelectAndRun(cmd.Context(), cwd, scope, testDryRun)
+			if err != nil {
+				return err
+			}
+
+			if testFormat == "json" {
+				data, err := json.MarshalIndent(report, "", "  ")
+				if err != nil {
+					return err
+				}
+				fmt.Println(string(data))
+			} else {
+				fmt.Print(report.FormatSummary())
+			}
+
+			if report.ExitCode != 0 {
+				os.Exit(report.ExitCode)
+			}
+			return nil
+		},
+	}
+
+	testCmd.Flags().BoolVar(&testImpact, "impact", true, "Select and run tests using change-impact analysis")
+	testCmd.Flags().BoolVar(&testStaged, "staged", false, "Analyze staged changes (default)")
+	testCmd.Flags().BoolVar(&testUnstaged, "unstaged", false, "Analyze unstaged changes only")
+	testCmd.Flags().BoolVar(&testAll, "all", false, "Analyze all working tree changes (staged + unstaged)")
+	testCmd.Flags().BoolVar(&testDryRun, "dry-run", false, "Inspect test selection without execution")
+	testCmd.Flags().StringVar(&testFormat, "format", "text", "Output format: text|json")
 
 	// SEARCH COMMAND (Unified Local Evidence Search)
 	var searchBudget int
@@ -945,30 +1100,69 @@ Examples:
 	searchCmd.Flags().StringVar(&searchFormat, "format", "markdown", "Output format: markdown|json")
 
 	// 13. CONTEXT COMMAND
-	var contextBudget int
+	var (
+		contextBudget int
+		contextSymbol string
+		contextFile   string
+		contextFormat string
+		contextOutput string
+		contextForce  bool
+	)
 	contextCmd := &cobra.Command{
 		Use:   "context [query]",
-		Short: "Assemble a ranked, token-budgeted context pack for a task query",
-		Args:  cobra.ExactArgs(1),
+		Short: "Assemble a ranked, token-budgeted context pack for a task query or symbol",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			query := args[0]
+			var query string
+			if len(args) > 0 {
+				query = args[0]
+			}
 			cwd, _ := os.Getwd()
 			s, _ := store.OpenStore(getDBPath())
 			if s != nil {
 				defer s.Close()
 			}
 
-			assembler := tzroctx.NewAssembler(s, nil)
-			pack, err := assembler.Assemble(cwd, query, contextBudget)
+			wp, _ := dlp.LoadWorkspacePolicy(cwd)
+			var policyEngine *dlp.PolicyEngine
+			if wp != nil {
+				policyEngine = dlp.NewPolicyEngine(wp)
+			}
+
+			budgetToUse := 0
+			if cmd.Flags().Changed("budget") {
+				budgetToUse = contextBudget
+			}
+
+			req := tzroctx.ContextRequest{
+				WorkspaceRoot: cwd,
+				Query:         query,
+				Symbol:        contextSymbol,
+				File:          contextFile,
+				Budget:        budgetToUse,
+				Format:        contextFormat,
+				Output:        contextOutput,
+				Force:         contextForce,
+			}
+
+			service := tzroctx.NewContextService(s, policyEngine)
+			res, err := service.Execute(cmd.Context(), req)
 			if err != nil {
 				return err
 			}
 
-			fmt.Print(pack.FormatMarkdown())
+			if res.OutputPath == "" {
+				fmt.Print(res.Formatted)
+			}
 			return nil
 		},
 	}
 	contextCmd.Flags().IntVar(&contextBudget, "budget", 4000, "Token budget for the context pack")
+	contextCmd.Flags().StringVar(&contextSymbol, "symbol", "", "Targeted symbol anchor name")
+	contextCmd.Flags().StringVar(&contextFile, "file", "", "File path to disambiguate symbol anchor (requires --symbol)")
+	contextCmd.Flags().StringVar(&contextFormat, "format", "markdown", "Output format (markdown|json)")
+	contextCmd.Flags().StringVar(&contextOutput, "output", "", "Write output to file atomically")
+	contextCmd.Flags().BoolVar(&contextForce, "force", false, "Overwrite existing output file")
 
 	// 14. INSPECT COMMAND GROUP
 	inspectCmd := &cobra.Command{
@@ -1462,7 +1656,11 @@ Examples:
 		},
 	}
 
-	sessionCmd.AddCommand(sessionCommitCmd, sessionSaveCmd, sessionExportCmd, sessionLoadCmd, sessionStatusCmd)
+	pauseCmd := newPauseCmd()
+	resumeCmd := newResumeCmd()
+	sessionPauseCmd := newPauseCmd()
+	sessionResumeCmd := newResumeCmd()
+	sessionCmd.AddCommand(sessionCommitCmd, sessionSaveCmd, sessionExportCmd, sessionLoadCmd, sessionStatusCmd, sessionPauseCmd, sessionResumeCmd)
 
 	// ARTIFACTS COMMAND GROUP
 	artifactsCmd := &cobra.Command{
@@ -1672,8 +1870,9 @@ Examples:
 	// System 1 Graph Execution commands (v3)
 	executeCmd := newExecuteCmd()
 	mcpCmd := newMCPCmd()
+	shellCmd := newShellCmd()
 
-	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd, benchCmd, executeCmd, mcpCmd)
+	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, testCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd, benchCmd, executeCmd, mcpCmd, pauseCmd, resumeCmd, shellCmd)
 
 	return rootCmd
 }
@@ -1702,4 +1901,535 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+func isTTY(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func isNoColor() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return true
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return true
+	}
+	return false
+}
+
+func getTerminalWidth() int {
+	fd := uintptr(os.Stdout.Fd())
+	if w, _, err := term.GetSize(fd); err == nil && w > 0 {
+		return w
+	}
+	return 80
+}
+
+func newPauseCmd() *cobra.Command {
+	var pauseFiles []string
+	pauseCmd := &cobra.Command{
+		Use:   "pause [description]",
+		Short: "Pause current active task or snapshot workspace intent and evidence",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			canonicalRoot, err := tzroctx.ResolveWorkspaceRoot(cwd)
+			if err != nil {
+				canonicalRoot = cwd
+			}
+
+			var description string
+			if len(args) > 0 {
+				description = args[0]
+			}
+
+			gitState := session.SenseGitState(context.Background(), canonicalRoot)
+			shellID := os.Getenv("TZRO_SHELL_ID")
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			// Check for active session
+			var sm *session.SessionManifest
+			activeID, _ := s.GetActiveTask(canonicalRoot, shellID)
+			if activeID != "" {
+				manifestJSON, err := s.GetSession(activeID, canonicalRoot)
+				if err == nil {
+					loaded, err := session.FromJSON(manifestJSON)
+					if err == nil && loaded.Branch == gitState.Branch {
+						sm = loaded
+					}
+				}
+			}
+
+			now := time.Now().UTC()
+			if sm != nil {
+				// Snapshot existing active task
+				if description != "" {
+					sm.Objective = description
+				}
+				sm.PausedAt = &now
+				sm.SchemaVersion = 3
+				sm.Workspace = canonicalRoot
+				sm.Worktree = gitState.Worktree
+				sm.Branch = gitState.Branch
+				sm.IsDetached = gitState.IsDetached
+				sm.HeadCommit = gitState.HeadCommit
+			} else {
+				// Create new task with collision-resistant ID
+				sessionID := session.GenerateSessionID()
+				obj := description
+				if obj == "" {
+					obj = "Paused task"
+				}
+				sm = session.NewSessionManifestV3(sessionID, canonicalRoot, gitState.Branch, obj)
+				sm.PausedAt = &now
+				sm.Worktree = gitState.Worktree
+				sm.IsDetached = gitState.IsDetached
+				sm.HeadCommit = gitState.HeadCommit
+			}
+
+			// Capture changed files with separate staged and worktree hashes/status
+			if gitState.IsGit {
+				changes, err := session.SenseChanges(context.Background(), canonicalRoot)
+				if err == nil && len(changes) > 0 {
+					sm.ChangedFiles = changes
+				}
+			}
+
+			// Add any manual files
+			for _, f := range pauseFiles {
+				fullPath := filepath.Join(canonicalRoot, f)
+				hash, hashErr := session.StreamSHA256(fullPath)
+				if hashErr != nil {
+					continue
+				}
+				sm.ChangedFiles = append(sm.ChangedFiles, session.FileSnapshot{
+					Path:         f,
+					Hash:         hash,
+					WorktreeHash: hash,
+					Status:       "modified",
+				})
+			}
+
+			// Derive active symbols from issue 03 AST diff extraction
+			if gitState.IsGit {
+				diffResult, diffErr := tzroctx.AcquireGitDiff(context.Background(), canonicalRoot, tzroctx.GitScopeAll)
+				if diffErr == nil && diffResult != nil {
+					symbols, _, symErr := tzroctx.ExtractSymbolsFromSnapshotDiff(context.Background(), canonicalRoot, diffResult)
+					if symErr == nil && len(symbols) > 0 {
+						var activeSyms []session.ActiveSymbol
+						for _, sym := range symbols {
+							activeSyms = append(activeSyms, session.ActiveSymbol{
+								Name:           sym.Name,
+								Kind:           sym.Kind,
+								FilePath:       sym.FilePath,
+								Line:           sym.StartLine,
+								EndLine:        sym.EndLine,
+								Package:        sym.Package,
+								SourceSnapshot: sym.SourceSnapshot,
+								Precision:      "precise",
+							})
+						}
+						sm.ActiveSymbols = activeSyms
+					}
+				}
+			}
+
+			// Splice recent unexpired artifact IDs
+			artifactIDs, err := s.GetRecentUnexpiredArtifactIDs(canonicalRoot, 20)
+			if err == nil && len(artifactIDs) > 0 {
+				artMap := make(map[string]bool)
+				for _, id := range sm.ArtifactIDs {
+					artMap[id] = true
+				}
+				for _, id := range artifactIDs {
+					if !artMap[id] {
+						sm.ArtifactIDs = append(sm.ArtifactIDs, id)
+						artMap[id] = true
+					}
+				}
+			}
+
+			// Splice recent command events from Content-Hash Store
+			storedCmds, err := s.GetCommandEvents(canonicalRoot, sm.ID, 50)
+			if err == nil && len(storedCmds) > 0 {
+				var cmdEvents []session.CommandEvent
+				for _, sc := range storedCmds {
+					cmdEvents = append(cmdEvents, session.ConvertStoredEvent(sc))
+				}
+				sm.RecentCommands = cmdEvents
+			}
+
+			// Disclose any capture gaps
+			gaps, _ := s.GetCaptureGapCount(canonicalRoot)
+			if gaps > 0 {
+				gapMsg := fmt.Sprintf("Observed %d shell command capture gap(s) due to storage contention or shell interruption", gaps)
+				hasGap := false
+				for _, c := range sm.Constraints {
+					if strings.Contains(c, "capture gap") {
+						hasGap = true
+						break
+					}
+				}
+				if !hasGap {
+					sm.Constraints = append(sm.Constraints, gapMsg)
+				}
+			}
+
+			manifestJSON, err := sm.ToJSON()
+			if err != nil {
+				return fmt.Errorf("failed to serialize session manifest: %w", err)
+			}
+
+			// Commit the pause snapshot atomically
+			if err := s.PutSession(sm.ID, canonicalRoot, sm.Branch, sm.SchemaVersion, manifestJSON); err != nil {
+				return fmt.Errorf("failed to save paused session: %w", err)
+			}
+
+			// Mark task active
+			_ = s.SetActiveTask(canonicalRoot, shellID, sm.ID)
+
+			// Print ID only after durable success
+			cmd.Printf("✓ Paused session %s\n", sm.ID)
+			return nil
+		},
+	}
+	pauseCmd.Flags().StringArrayVarP(&pauseFiles, "file", "F", nil, "Manual file to snapshot")
+	return pauseCmd
+}
+
+func newResumeCmd() *cobra.Command {
+	var resumeFormat string
+	var resumeJSON bool
+
+	resumeCmd := &cobra.Command{
+		Use:   "resume [session-id]",
+		Short: "Resume task context and inspect drift and evidence",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			canonicalRoot, err := tzroctx.ResolveWorkspaceRoot(cwd)
+			if err != nil {
+				canonicalRoot = cwd
+			}
+
+			gitState := session.SenseGitState(context.Background(), canonicalRoot)
+			shellID := os.Getenv("TZRO_SHELL_ID")
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+			defer s.Close()
+
+			var sm *session.SessionManifest
+			if len(args) > 0 {
+				explicitID := args[0]
+				manifestJSON, err := s.GetSession(explicitID, canonicalRoot)
+				if err != nil {
+					return fmt.Errorf("session %q not found in workspace %q", explicitID, canonicalRoot)
+				}
+				sm, err = session.FromJSON(manifestJSON)
+				if err != nil {
+					return err
+				}
+			} else {
+				manifestJSON, err := s.GetLatestPausedSession(canonicalRoot, gitState.Branch)
+				if err != nil {
+					cmd.Printf("No paused session found for workspace %q on branch %q.\n", canonicalRoot, gitState.Branch)
+					return nil
+				}
+				sm, err = session.FromJSON(manifestJSON)
+				if err != nil {
+					return err
+				}
+			}
+
+			// Successful resume marks chosen task active
+			_ = s.SetActiveTask(canonicalRoot, shellID, sm.ID)
+
+			// Augment RecentCommands from store if available
+			storedCmds, err := s.GetCommandEvents(canonicalRoot, sm.ID, 50)
+			if err == nil && len(storedCmds) > len(sm.RecentCommands) {
+				var cmdEvents []session.CommandEvent
+				for _, sc := range storedCmds {
+					cmdEvents = append(cmdEvents, session.ConvertStoredEvent(sc))
+				}
+				sm.RecentCommands = cmdEvents
+			}
+
+			// Hydrator via Assembler
+			hydrator := func(ctx context.Context, wsRoot, query string, budget int) (string, error) {
+				wp, _ := dlp.LoadWorkspacePolicy(wsRoot)
+				policy := dlp.NewPolicyEngine(wp)
+				assembler := tzroctx.NewAssembler(s, policy)
+				pack, err := assembler.Assemble(wsRoot, query, budget)
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("Assembled %d items (%d tokens)", len(pack.Items), pack.UsedTokens), nil
+			}
+
+			report := session.GenerateResumeReport(context.Background(), sm, canonicalRoot, gitState, s, hydrator)
+
+			format := "plain"
+			if resumeJSON || strings.ToLower(resumeFormat) == "json" {
+				format = "json"
+			} else if isTTY(os.Stdout) && strings.ToLower(resumeFormat) != "plain" {
+				format = "tty"
+			}
+
+			vm := session.BuildDashboardViewModel(report, canonicalRoot, s, nil)
+			rendered := session.RenderDashboard(vm, format, getTerminalWidth(), isNoColor())
+			cmd.Println(rendered)
+			return nil
+		},
+	}
+
+	resumeCmd.Flags().StringVar(&resumeFormat, "format", "plain", "Output format: plain or json")
+	resumeCmd.Flags().BoolVar(&resumeJSON, "json", false, "Output resume report as JSON")
+	return resumeCmd
+}
+
+func newShellCmd() *cobra.Command {
+	shellCmd := &cobra.Command{
+		Use:   "shell",
+		Short: "Manage shell integration and command history capture",
+	}
+
+	shellCmd.AddCommand(newShellInitCmd())
+	shellCmd.AddCommand(newShellRecordCmd())
+	shellCmd.AddCommand(newShellClearCmd())
+	shellCmd.AddCommand(newShellStatusCmd())
+
+	return shellCmd
+}
+
+func newShellInitCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "init [zsh|bash]",
+		Short: "Emit opt-in shell integration hook script",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			shellType := args[0]
+			script, err := session.GenerateShellInit(shellType)
+			if err != nil {
+				return err
+			}
+			cmd.Print(script)
+			return nil
+		},
+	}
+}
+
+func newShellRecordCmd() *cobra.Command {
+	recordCmd := &cobra.Command{
+		Use:   "record",
+		Short: "Record shell execution events (internal hook)",
+	}
+
+	var shellID string
+	var eventID string
+	var cmdText string
+	var status int
+
+	preexecCmd := &cobra.Command{
+		Use:   "preexec",
+		Short: "Record command start event",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmdText == "" || eventID == "" {
+				return nil
+			}
+
+			cwd, _ := os.Getwd()
+			wsRoot, err := tzroctx.ResolveWorkspaceRoot(cwd)
+			if err != nil || wsRoot == "" {
+				return nil
+			}
+
+			// Load custom allowlist from repo config if present
+			var customPatterns []string
+			repoCfg, _ := tzroctx.LoadConfig(wsRoot)
+			if repoCfg != nil {
+				customPatterns = repoCfg.CommandAllowlist
+			}
+
+			if !session.IsCommandAllowlisted(cmdText, customPatterns) {
+				return nil
+			}
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return nil
+			}
+			defer s.Close()
+
+			activeSessID, err := s.GetActiveTask(wsRoot, shellID)
+			if err != nil || activeSessID == "" {
+				return nil
+			}
+
+			manifestJSON, err := s.GetSession(activeSessID, wsRoot)
+			if err != nil {
+				return nil
+			}
+			sm, err := session.FromJSON(manifestJSON)
+			if err != nil {
+				return nil
+			}
+
+			// Branch switch check
+			gitState := session.SenseGitState(context.Background(), wsRoot)
+			if gitState.Branch != sm.Branch {
+				return nil
+			}
+
+			redacted := session.RedactCommand(cmdText)
+			now := time.Now().UTC()
+			if err := s.RecordCommandStart(eventID, wsRoot, sm.ID, shellID, redacted, cwd, now); err != nil {
+				_ = s.RecordCaptureGap(wsRoot, 1)
+				return nil
+			}
+
+			_ = s.PruneCommandEvents(wsRoot, 1000, 30*24*time.Hour)
+			return nil
+		},
+	}
+	preexecCmd.Flags().StringVar(&shellID, "shell-id", "", "Shell session ID")
+	preexecCmd.Flags().StringVar(&eventID, "id", "", "Event ID")
+	preexecCmd.Flags().StringVar(&cmdText, "cmd", "", "Command display text")
+
+	precmdCmd := &cobra.Command{
+		Use:   "precmd",
+		Short: "Record command completion event",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if eventID == "" {
+				return nil
+			}
+
+			cwd, _ := os.Getwd()
+			wsRoot, err := tzroctx.ResolveWorkspaceRoot(cwd)
+			if err != nil || wsRoot == "" {
+				return nil
+			}
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return nil
+			}
+			defer s.Close()
+
+			now := time.Now().UTC()
+			if err := s.RecordCommandComplete(eventID, status, now); err != nil {
+				_ = s.RecordCaptureGap(wsRoot, 1)
+				return nil
+			}
+			return nil
+		},
+	}
+	precmdCmd.Flags().StringVar(&shellID, "shell-id", "", "Shell session ID")
+	precmdCmd.Flags().StringVar(&eventID, "id", "", "Event ID")
+	precmdCmd.Flags().IntVar(&status, "status", 0, "Observed exit status")
+
+	recordCmd.AddCommand(preexecCmd)
+	recordCmd.AddCommand(precmdCmd)
+
+	return recordCmd
+}
+
+func newShellClearCmd() *cobra.Command {
+	var wsFlag string
+	clearCmd := &cobra.Command{
+		Use:   "clear",
+		Short: "Clear recorded command history and capture gaps for the workspace",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			wsRoot := wsFlag
+			if wsRoot == "" {
+				root, err := tzroctx.ResolveWorkspaceRoot(cwd)
+				if err != nil {
+					wsRoot = cwd
+				} else {
+					wsRoot = root
+				}
+			}
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open store: %w", err)
+			}
+			defer s.Close()
+
+			if err := s.ClearCommandEvents(wsRoot); err != nil {
+				return fmt.Errorf("failed to clear command events: %w", err)
+			}
+
+			cmd.Printf("✓ Cleared command history and capture gaps for workspace %s\n", wsRoot)
+			return nil
+		},
+	}
+	clearCmd.Flags().StringVar(&wsFlag, "workspace", "", "Workspace path to clear")
+	return clearCmd
+}
+
+func newShellStatusCmd() *cobra.Command {
+	var jsonOutput bool
+	statusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Display shell integration diagnostics, metrics, and binding status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			wsRoot, err := tzroctx.ResolveWorkspaceRoot(cwd)
+			if err != nil {
+				wsRoot = cwd
+			}
+			shellID := os.Getenv("TZRO_SHELL_ID")
+
+			s, err := store.OpenStore(getDBPath())
+			if err != nil {
+				return fmt.Errorf("failed to open store: %w", err)
+			}
+			defer s.Close()
+
+			metrics := session.MeasureShellMetrics(wsRoot, shellID, s)
+
+			if jsonOutput {
+				bytes, err := json.MarshalIndent(metrics, "", "  ")
+				if err != nil {
+					return err
+				}
+				cmd.Println(string(bytes))
+				return nil
+			}
+
+			cmd.Println("tzro Shell Integration Status:")
+			if metrics.ShellID != "" {
+				cmd.Printf("  Shell ID:              %s\n", metrics.ShellID)
+			} else {
+				cmd.Println("  Shell ID:              (not installed / not active)")
+			}
+			cmd.Printf("  Workspace:             %s\n", metrics.Workspace)
+			if metrics.ActiveTaskBound {
+				cmd.Printf("  Active Task Binding:   %s\n", metrics.ActiveSessionID)
+			} else {
+				cmd.Println("  Active Task Binding:   (none)")
+			}
+			cmd.Printf("  Event Loss / Gaps:     %d\n", metrics.EventLossCount)
+			cmd.Printf("  Queue Retention Cap:   %d events (max %d days)\n", metrics.QueueMaxCount, metrics.QueueMaxAgeDays)
+			cmd.Printf("  Cold Startup:          %.2f ms\n", metrics.ColdStartupMs)
+			cmd.Printf("  Enqueue Check Latency: %.3f ms\n", metrics.EnqueueLatencyMs)
+			cmd.Printf("  Persistence Latency:   %.3f ms\n", metrics.PersistenceLatencyMs)
+			return nil
+		},
+	}
+	statusCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output metrics in JSON format")
+	return statusCmd
 }

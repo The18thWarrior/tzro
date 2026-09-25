@@ -39,6 +39,7 @@
         <span class="logo-text">TZRO</span>
       </a>
       <nav class="header-nav">
+        <a href="#whats-new" class="nav-link">What's New</a>
         <a href="docs.html" class="nav-link">Docs</a>
         <a href="#architecture" class="nav-link">Architecture</a>
         <a href="#benchmarks" class="nav-link">Benchmarks</a>
@@ -124,12 +125,99 @@
     </section>
 
     <!-- ============================================================ -->
+    <!-- WHAT'S NEW IN v3.1 SECTION -->
+    <!-- ============================================================ -->
+    <section class="whats-new-section" id="whats-new">
+      <div class="hero-container">
+        <span class="section-eyebrow">Latest Release</span>
+        <h2 class="section-title text-balance">What's New in v3.1</h2>
+        <p class="section-desc text-pretty">
+          Multi-language context intelligence, predictive test selection, session pause/resume, and developer workflow integration.
+        </p>
+
+        <div class="phase-grid" style="grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin-top: 2.5rem;">
+          <!-- Feature 1: Multi-Language Context -->
+          <div class="phase-card group">
+            <div class="phase-card-header">
+              <span class="phase-label">CONTEXT INTELLIGENCE</span>
+              <span class="phase-badge phase-badge-emerald">NEW</span>
+            </div>
+            <h3 class="phase-title">Multi-Language Adapters</h3>
+            <p class="phase-subtitle">Go · TypeScript · Python · Rust</p>
+            <ul class="phase-points">
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>Tree-sitter AST adapters resolve references across 4 languages: TS barrel re-exports, Python relative imports, Rust <code>crate::</code> paths.</span>
+              </li>
+              <li>
+                <span class="phase-bullet">›</span>
+                <span><code>tzro context --symbol</code> provides surgical, symbol-anchored context assembly with <code>--file</code> disambiguation.</span>
+              </li>
+            </ul>
+            <div class="phase-footer">
+              <span class="phase-footer-action">[ 4 Language Adapters ]</span>
+              <span class="phase-footer-impact">(Bidirectional Call Graph)</span>
+            </div>
+          </div>
+
+          <!-- Feature 2: Predictive Test Selection -->
+          <div class="phase-card group active">
+            <div class="phase-card-header">
+              <span class="phase-label">TEST INTELLIGENCE</span>
+              <span class="phase-badge phase-badge-cyan">NEW</span>
+            </div>
+            <h3 class="phase-title">Predictive Test Selection</h3>
+            <p class="phase-subtitle">tzro test --impact</p>
+            <ul class="phase-points">
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>Analyzes blast radius of staged/unstaged changes and runs only affected tests across Go, Jest, Vitest, and pytest.</span>
+              </li>
+              <li>
+                <span class="phase-bullet">›</span>
+                <span>Comment-only hunks filtered. Config changes trigger fallback to broader suites. Output is compacted automatically.</span>
+              </li>
+            </ul>
+            <div class="phase-footer">
+              <span class="phase-footer-action">[ Run Only What Changed ]</span>
+              <span class="phase-footer-impact">(Multi-Runner Dispatch)</span>
+            </div>
+          </div>
+
+          <!-- Feature 3: Developer Workflow -->
+          <div class="phase-card group">
+            <div class="phase-card-header">
+              <span class="phase-label">WORKFLOW INTEGRATION</span>
+              <span class="phase-badge phase-badge-amber">NEW</span>
+            </div>
+            <h3 class="phase-title">Pause, Resume &amp; Hooks</h3>
+            <p class="phase-subtitle">Session · Shell · Git</p>
+            <ul class="phase-points">
+              <li>
+                <span class="phase-bullet">›</span>
+                <span><code>tzro pause / resume</code> snapshots agent work with git drift detection and a resumption dashboard.</span>
+              </li>
+              <li>
+                <span class="phase-bullet">›</span>
+                <span><code>tzro shell init</code> captures terminal history. <code>tzro hook install</code> adds advisory pre-commit impact analysis.</span>
+              </li>
+            </ul>
+            <div class="phase-footer">
+              <span class="phase-footer-action">[ Developer-Native Hooks ]</span>
+              <span class="phase-footer-impact">(Sub-ms Overhead)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
     <!-- ARCHITECTURE SECTION -->
     <!-- ============================================================ -->
     <section class="architecture-flow-section" id="architecture">
       <div class="hero-container">
         <span class="section-eyebrow">Zero-Overhead Local Token Shield</span>
-        <h2 class="section-title text-balance">How Tzro v2 Works</h2>
+        <h2 class="section-title text-balance">How Tzro v3.1 Works</h2>
         <p class="section-desc text-pretty">
           Tzro sits transparently between your AI coding agent and cloud providers, intercepting heavy context and locking prompt cache prefixes.
         </p>
@@ -507,6 +595,31 @@
                   <span class="exec-feature-icon">🔁</span>
                   <span class="exec-feature-label">Tabular Data Ingest &amp; Query</span>
                   <span class="exec-badge exec-badge-live">LIVE</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🧪</span>
+                  <span class="exec-feature-label">Predictive Test Selection (tzro test --impact)</span>
+                  <span class="exec-badge exec-badge-live">NEW</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">⏸️</span>
+                  <span class="exec-feature-label">Session Pause/Resume (tzro pause / resume)</span>
+                  <span class="exec-badge exec-badge-live">NEW</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🐚</span>
+                  <span class="exec-feature-label">Shell Integration (tzro shell init)</span>
+                  <span class="exec-badge exec-badge-live">NEW</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🪝</span>
+                  <span class="exec-feature-label">Git Hook Manager (tzro hook install)</span>
+                  <span class="exec-badge exec-badge-live">NEW</span>
+                </div>
+                <div class="exec-feature">
+                  <span class="exec-feature-icon">🌐</span>
+                  <span class="exec-feature-label">Multi-Language Context (Go/TS/Python/Rust)</span>
+                  <span class="exec-badge exec-badge-live">NEW</span>
                 </div>
               </div>
             </div>

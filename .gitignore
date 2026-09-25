@@ -5,6 +5,7 @@ bin/
 /tzrod
 /tzro_engine
 /tzro_cli
+/tzro_plugin
 cmd/tzro/tzro
 cmd/tzro-mcp/tzro-mcp
 cmd/tzrod/tzrod

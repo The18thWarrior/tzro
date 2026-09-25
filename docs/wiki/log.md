@@ -2,6 +2,71 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-25T14:35:00-07:00] killer-use-cases | Issue 14: Shell Integration for Command History Capture (Roadmap Complete)
+
+- **Activity**: Implemented `tzro shell init [zsh|bash]`, `tzro shell record [preexec|precmd]`, `tzro shell clear`, and `tzro shell status` commands along with SQLite storage for command events and capture gaps.
+- **Key Enhancements**:
+  1. **Opt-in Shell Integration**: `tzro shell init zsh` and `tzro shell init bash` emit lightweight, idempotent hook scripts that preserve `$?`, prompt behavior, existing user hooks, and `PROMPT_COMMAND` string/array formats.
+  2. **Start/Completion Correlation**: Captures start in `preexec` and completion in `precmd` using unique execution IDs and observed `$?` exit codes without ever assuming success for missing completion records (`[unknown]`).
+  3. **Strict Allowlist & Safety Filtering**: Fast in-memory filtering captures only allowlisted test, build, and git tools (plus declarative patterns from `.tzro/context.yaml`), automatically rejecting ambiguous compound/background/piped commands without quadratic evaluation.
+  4. **Zero-Leak Secret Redaction**: Sanitizes environment variable assignments (`API_KEY=...`) and sensitive argument flags (`--password`, `--token`, `--api-key`, bearer tokens, OpenAI/GitHub tokens) prior to any persistent write.
+  5. **Branch & Terminal Isolation**: Shell commands are bound to canonical workspace, branch, and terminal instance (`TZRO_SHELL_ID`). Branch switches or unbound shells produce zero persistent records.
+  6. **Resilience & Honest Capture Gaps**: SQLite contention or missing tzro never blocks shell prompt interaction; failures are counted in `command_capture_gaps` and disclosed on pause/resume.
+  7. **Sub-millisecond Performance**: Measured enqueue latency < 0.01 ms and persistence latency < 0.2 ms (well below 1 ms target).
+  8. **Full 14-Issue Roadmap Milestone**: All 14 issues from `.scratch/killer-use-cases/PRD.md` are now fully implemented, tested, and closed with zero test failures across all 21 packages.
+
+## [2026-09-25T13:49:00-07:00] killer-use-cases | Issue 13: Terminal Resumption Dashboard
+
+- **Activity**: Implemented `DashboardViewModel` and `RenderDashboard` in `pkg/session/dashboard.go`, integrated with `tzro resume`.
+- **Key Enhancements**:
+  1. **Clean View Model Separation**: Presentation transforms `ResumeReport` into `DashboardViewModel` without inventing facts absent from the manifest or live evidence.
+  2. **Multi-Format Rendering**: Supports `"tty"` (rich Lipgloss ANSI styles when running on interactive TTY), `"plain"` (clean ASCII/markdown formatting for pipes, `NO_COLOR`, and `TERM=dumb`), and `"json"` (unadulterated JSON representation for automated harnesses).
+  3. **Accessible Explicit State Labels**: Preserves explicit plain-text status indicators (`[STAGED]`, `[UNSTAGED]`, `[STAGED+UNSTAGED]`, `[UNTRACKED]`, `[DELETED]`, `[RENAMED]`, `[FRESH]`, `[STALE]`, `[UNKNOWN]`, `[PASS]`, `[FAIL]`, `[BRANCH MISMATCH]`) so color is never the only semantic signal.
+  4. **Bounded Lists with Omission Tracking**: Enforces max caps for files, symbols, and commands with clear omission counts (e.g. `... and 15 more modified files omitted`).
+  5. **Local Git Upstream Divergence**: Resolves divergence using local git `@{u}` without remote fetching or assuming `main` is the comparison branch.
+  6. **Security & Sanitization**: Strips terminal control sequences and escape codes via `SanitizeTerminalText` across objectives, tasks, paths, and commands.
+  7. **Test Coverage**: Created `pkg/session/dashboard_issue13_test.go` verifying all synthetic states, honest placeholders, edge-case determinism, and sanitization. All 21 packages pass.
+
+
+## [2026-09-25T13:46:00-07:00] killer-use-cases | Issue 12: `tzro pause` & `tzro resume` Schema v3 CLI Commands
+
+- **Activity**: Implemented `tzro pause [description]` and `tzro resume [id]` CLI commands along with Session Manifest Schema v3.
+- **Key Enhancements**:
+  1. **Schema v3 Session Manifest**: Extended `SessionManifest` with `PausedAt`, `Worktree`, `IsDetached`, `HeadCommit`, `IndexState`, `ActiveSymbols`, `RecentCommands`, and execution-time `ScopeHashes` on checks.
+  2. **Collision-Resistant Task IDs**: Implemented `GenerateSessionID()` using nanosecond timestamps and cryptographically secure random bytes preventing collision even under concurrent clock ticks.
+  3. **Ordering by Recent Pause**: Added `paused_at` column migration to SQLite `sessions` table and implemented query ordering by `paused_at DESC, created_at DESC`, guaranteeing the most recently paused task wins.
+  4. **Strict Branch & Workspace Isolation**: `tzro resume` exclusively selects sessions matching the active workspace and branch without silent fallback to other branches.
+  5. **Explicit Resume Mismatch Reporting**: `tzro resume <id>` reports branch mismatch warnings without switching branches or modifying developer files.
+  6. **Separated Staged/Unstaged & Expected Deletions**: Implemented `SenseChanges` tracking both index status/hash and working tree status/hash, untracked files, and renames. Expected deletions are verified as intact/fresh instead of missing drift.
+  7. **Honest Freshness Contract**: Check executions lacking execution-time scope hashes report `unknown` freshness, while edits following test runs report `stale` based on scope hash divergence from disk.
+  8. **Active Symbols Re-Resolution & Context Hydration**: Evaluates whether active symbols remain intact, moved, or missing on disk, and gracefully reports hydration errors as explicit limitations without losing saved intent.
+  9. **Active Task Tracking**: Stores active task binding in `active_tasks` table keyed by workspace and shell ID (`TZRO_SHELL_ID`).
+  10. **Test Coverage**: Created `pkg/session/session_issue12_test.go` and `cmd/tzro/cli_issue12_test.go` covering all 10 acceptance criteria; all 21 packages pass.
+
+
+## [2026-09-25T12:05:00-07:00] to-issues | Killer Use Cases — 14 Issues Across 3 Phases
+
+- **Activity**: Broke the "Killer Use Cases" product roadmap into 14 vertical tracer-bullet issues in `.scratch/killer-use-cases/issues/`.
+- **Source**: Research agent competitive analysis + gap analysis against existing tzro infrastructure.
+- **Phase 1 — `tzro impact` Blast-Radius Engine (7 issues)**:
+  - `01-fast-reference-adapter-ripgrep.md` (HITL) — Replace filepath.WalkDir with ripgrep, target <300ms
+  - `02-typescript-js-reference-adapter.md` (HITL) — TSGrepAdapter using ts_imports.go infrastructure
+  - `03-ast-validated-diff-symbol-extraction.md` (AFK) — Tree-sitter validation of diff symbols
+  - `04-predictive-test-selection-engine.md` (AFK) — Map changed symbols → minimal test suites. Blocked by 01.
+  - `05-ansi-terminal-tree-renderer.md` (AFK) — Lipgloss blast-radius tree visualization
+  - `06-pre-commit-hook-installer.md` (AFK) — `tzro init --hook pre-commit`. Blocked by 05.
+  - `07-python-rust-reference-adapters.md` (HITL) — Python/Rust ReferenceAdapter implementations. Blocked by 01.
+- **Phase 2 — `tzro context` AI Grounding Fabric (4 issues)**:
+  - `08-mcp-context-impact-tools.md` (AFK) — MCP `get_context_pack` and `get_impact_report` tools
+  - `09-bpe-token-counting.md` (HITL) — Pure Go BPE tokenizer replacing len/4 heuristic
+  - `10-symbol-context-format-flags.md` (AFK) — `--symbol`, `--format`, `--output` flags
+  - `11-repository-context-config.md` (AFK) — `.tzro/context.yaml` team config. Blocked by 09, 10.
+- **Phase 3 — `tzro resume` Task Continuity (3 issues)**:
+  - `12-pause-resume-commands.md` (AFK) — `tzro pause` / `tzro resume` with Schema v3
+  - `13-terminal-resumption-dashboard.md` (AFK) — Lipgloss restoration dashboard. Blocked by 12.
+  - `14-shell-integration-command-history.md` (AFK) — Shell preexec hook for command capture. Blocked by 12.
+- **Dependency graph**: 01 → {04, 07}; 05 → 06; {09, 10} → 11; 12 → {13, 14}. Issues 01, 02, 03, 05, 08, 09, 10, 12 can start immediately.
+
 ## [2026-09-21T21:35:00-07:00] ideate-and-drill | System 1 Graph Calls & Non-Autoregressive Decision Engine (ADR-0095)
 
 - **Activity**: Ideate-and-drill session evaluating `merijjeyn/jive` and `mys/laya-GGUF` integration into `tzro` as a v3 architecture. Resolved 5 design sections and 5 adversarial drill questions covering operational models, graph language contracts, daemon supervision, context squashing, error/yield contracts, and E2E benchmark suites.

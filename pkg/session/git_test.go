@@ -42,7 +42,7 @@ func TestStreamSHA256_ErrorOnMissingFile(t *testing.T) {
 	}
 }
 
-func TestSenseBranch_FallbackToMainInNonGitDir(t *testing.T) {
+func TestSenseBranch_NonGitDirReturnsDistinctIdentity(t *testing.T) {
 	tmpDir := t.TempDir() // not a git repo
 	// Clear any CI env vars that would interfere
 	for _, key := range []string{"GIT_BRANCH", "BRANCH_NAME", "CI_COMMIT_BRANCH"} {
@@ -50,8 +50,8 @@ func TestSenseBranch_FallbackToMainInNonGitDir(t *testing.T) {
 	}
 
 	branch := SenseBranch(context.Background(), tmpDir)
-	if branch != "main" {
-		t.Errorf("expected fallback to \"main\" in non-git dir, got %q", branch)
+	if branch != "(non-git)" {
+		t.Errorf("expected distinct \"(non-git)\" identity in non-git dir, got %q", branch)
 	}
 }
 

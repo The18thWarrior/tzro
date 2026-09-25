@@ -28,9 +28,9 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 
 ---
 
-## 🛡️ The Solution: Tzro v3 ("The Local Token Shield & System 1 Runtime")
+## 🛡️ The Solution: Tzro v3.1 ("The Local Token Shield & System 1 Runtime")
 
-**Tzro v3** is an ultra-lightweight, compiled native Go binary (<50 MB RAM baseline) that operates across two synchronized planes, now extended with a **System 1 / System 2 dual-process architecture** for deterministic local execution:
+**Tzro v3.1** is an ultra-lightweight, compiled native Go binary (<50 MB RAM baseline) that operates across two synchronized planes, with a **System 1 / System 2 dual-process architecture** for deterministic local execution and **multi-language context intelligence** across Go, TypeScript, Python, and Rust:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -63,15 +63,18 @@ Autonomous coding agents (Claude Code, Cursor, Antigravity, Aider, Cline) consum
 
 ---
 
-## 🆕 v3.0.0 Highlights
+## 🆕 v3.1.0 Highlights
 
-- **System 1 Graph Call Executor (`tzro execute`)**: Deterministic DAG runtime engine scheduling tool, decision, extraction, and group nodes with Kahn's topological sort and bounded concurrency. Replaces v1's autonomous generative loops with ~25ms deterministic execution per node.
-- **Laya Decision Daemon (`pkg/laya`)**: ModernBERT-large (421M params) sidecar via `ggmlc` stdin/stdout IPC. Answers typed questions (yes/no, choice, score) in a single forward pass with automatic state compaction to ≤450 tokens.
-- **GLiNER Span Extraction (`pkg/extractor`)**: Zero-shot ONNX Runtime span extraction (150M params) for hallucination-free parameter extraction from unstructured text.
-- **MCP Server (`tzro mcp`)**: Model Context Protocol JSON-RPC 2.0 server over stdio for IDE integration (Claude Desktop, VS Code, Cursor) with real-time progress notifications and yield envelopes.
-- **Yield/Suspension Protocol**: When a decision node's confidence falls below threshold, execution suspends with a structured `YieldEnvelope` containing completed work and diagnostics — enabling human-in-the-loop or supervisor agent escalation without re-running completed nodes.
-- **Fan-Out Group Nodes**: Template-based parallel execution across item collections with configurable concurrency limits and automatic result aggregation.
-- **JSON Pointer Data Wiring**: Inter-node dataflow via `$ref` pointers following RFC 6901 syntax, supporting stdout, stderr, exit_code, status, and custom data fields.
+- **Multi-Language Context Packs**: `tzro context` now resolves references across Go, TypeScript/JavaScript, Python, and Rust using Tree-sitter AST adapters. TypeScript barrel re-exports, Python relative imports, and Rust `crate::`/`super::` paths are fully traced.
+- **Symbol-Anchored Context** (`tzro context --symbol`): Surgically assemble context around a specific symbol declaration with automatic disambiguation via `--file`.
+- **Predictive Test Selection** (`tzro test --impact`): Analyzes the blast radius of staged/unstaged changes, identifies affected test files across Go, Jest/Vitest, and pytest, and runs only the relevant tests with compacted output.
+- **Session Pause/Resume** (`tzro pause` / `tzro resume`): Snapshot agent work with drift detection. The resumption dashboard surfaces git divergence, modified files, stale evidence, and shifted symbol lines.
+- **Shell Integration** (`tzro shell init`): Low-overhead `zsh`/`bash` hooks that capture development commands into SQLite with credential redaction and allowlist filtering.
+- **Git Hook Manager** (`tzro hook install pre-commit`): Advisory pre-commit hooks that display staged impact analysis without blocking commits. Existing hooks are backed up and chained.
+- **Exact BPE Tokenizer**: Thread-safe `cl100k_base` and `o200k_base` token counting via `tiktoken-go` with UTF-8-safe truncation for precise budget enforcement.
+- **Repository Config** (`.tzro/context.yaml`): Per-repo defaults for token budgets, traversal depth, tokenizer selection, and language priorities.
+- **Enhanced Impact Analysis**: `--staged`/`--unstaged`/`--all` scopes, `--format tree|json|markdown` output, comment-only hunk filtering, and ANSI tree rendering.
+- **MCP Protocol v2025-06-18**: Added `tzro_get_context_pack` and `tzro_get_impact_report` tools with structured output schemas.
 
 ---
 
@@ -189,9 +192,17 @@ tzro probe "auth middleware jwt"
 # Task Context Assembly: assemble ranked, token-budgeted context packs
 tzro context "implement rate limiting" --budget 2000
 
+# Symbol-anchored context assembly
+tzro context --symbol ValidateToken --file pkg/auth/jwt.go
+
 # Pre-edit blast radius: compute direct callers, consumers, and test coverage
 tzro impact pkg/context/context.go
-tzro impact # analyze uncommitted git changes
+tzro impact                       # analyze uncommitted git changes
+tzro impact --staged --format tree # ANSI tree rendering of staged changes
+
+# Predictive test selection: run only affected tests
+tzro test --impact --staged       # tests affected by staged changes
+tzro test --impact --dry-run      # list affected tests without running
 
 # Unified local evidence search across code, docs, ADRs, logs, and artifacts
 tzro search "token bucket algorithm"
@@ -211,6 +222,21 @@ go test ./... 2>&1 | tzro compact
 tzro session save --objective "add ratelimit" --constraints "no third-party deps"
 tzro session status
 tzro session load session_manifest.json
+
+# Session pause/resume with drift detection
+tzro pause "finishing rate limit implementation"
+tzro resume                       # resume most recent session
+tzro resume <id> --format json    # resume specific session with JSON output
+
+# Shell integration: capture terminal commands for agent context
+tzro shell init zsh               # install shell hooks
+tzro shell status                 # check capture status
+tzro shell clear                  # purge command history
+
+# Git hook management: advisory pre-commit impact analysis
+tzro hook install pre-commit      # install advisory hook
+tzro hook status                  # check hook health
+tzro hook uninstall pre-commit    # remove and restore backup
 
 # Offline context assembly explainability (0 cloud tokens)
 tzro inspect explain <trace_id> <file_path>

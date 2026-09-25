@@ -2,7 +2,7 @@
 
 **Actor**: AI coding agent initiating a feature implementation, bug fix, or refactor
 **Route**: CLI — `tzro context "<task description>" --budget <n>`
-**Backend**: Task Context Pack Engine (`pkg/context/context.go`), TS import resolver, Tree-sitter AST, and BM25 ranking
+**Backend**: Task Context Pack Engine (`pkg/context/`), multi-language adapters (Go, TypeScript, Python, Rust), Tree-sitter AST, and BM25 ranking
 **Priority**: P0
 
 ---
@@ -28,14 +28,23 @@ An agent needs to gather all necessary code definitions, TypeScript import alias
 - [ ] Output includes an assembly trace ID allowing offline inspection via `tzro inspect explain <trace_id>`
 - [ ] Large files are automatically skeletonized with elided bodies indexed to cryptographic hashes
 - [ ] Redundant files and lower-ranked symbols are gracefully omitted when approaching budget limits
+- [ ] `tzro context --symbol <name>` assembles context anchored to a specific symbol declaration
+- [ ] `tzro context --symbol <name> --file <path>` disambiguates when multiple symbols share the same name
+- [ ] Python imports (`from ... import`, relative imports, `__init__.py` re-exports) are resolved
+- [ ] Rust `use` declarations (`crate::`, `super::`, `self::`, grouped paths) across Cargo workspaces are resolved
+- [ ] When budget is tight, references degrade to signature stubs rather than being dropped entirely
+- [ ] `--format json` outputs a machine-readable context pack
+- [ ] `--output <path>` writes the context pack to a file atomically
+- [ ] `.tzro/context.yaml` configuration overrides default budget, tokenizer, and language priorities
 
 ## Edge Cases to Probe
 
 - Very small budget (e.g. `--budget 200`) where only the top-ranked symbol signature can fit
 - Unmatched queries where no obvious symbol matches exist in the codebase
 - Monorepos with multiple nested `tsconfig.json` files and complex path mappings
-- Codebases containing non-standard or mixed languages (Go, TypeScript, Python)
+- Codebases containing non-standard or mixed languages (Go, TypeScript, Python, Rust)
 - Query containing syntax keywords or punctuation (e.g. `ValidateToken(ctx, token) error`)
+- Symbol name exists in multiple languages (e.g., `Config` in Go and TypeScript) — should prompt for disambiguation or use `--file`
 
 ## Anti-Patterns to Watch For
 
@@ -44,3 +53,5 @@ An agent needs to gather all necessary code definitions, TypeScript import alias
 - [ ] Unresolved TypeScript `@/` import aliases that leave the agent with broken module paths
 - [ ] Output lacks provenance or file coordinate headers, leaving the agent confused about where code lives
 - [ ] Irrelevant files dominate the top budget slots due to raw string matching rather than BM25 + AST relevance
+- [ ] Python relative imports fail to resolve against `src/` layout conventions
+- [ ] Rust `crate::` paths fail when the module tree doesn't match filesystem layout

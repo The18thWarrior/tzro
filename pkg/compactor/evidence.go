@@ -2,6 +2,7 @@ package compactor
 
 import (
 	"bufio"
+	stdctx "context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -564,4 +565,27 @@ func RunAndCompact(command, workspace string, s *store.Store, policy *dlp.Policy
 	}
 
 	return CompactEvidence(outputStr, workspace, s, policy, &observedExit)
+}
+
+// RunArgsAndCompact executes an executable with exact argument array and working directory,
+// capturing stdout/stderr, context cancellation, and exact exit code without shell interpolation.
+func RunArgsAndCompact(ctx stdctx.Context, executable string, args []string, cwd string, s *store.Store, policy *dlp.PolicyEngine) (*CompactedEvidence, error) {
+	cmd := exec.CommandContext(ctx, executable, args...)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+
+	outputBytes, err := cmd.CombinedOutput()
+	outputStr := string(outputBytes)
+
+	observedExit := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			observedExit = exitErr.ExitCode()
+		} else {
+			observedExit = 1
+		}
+	}
+
+	return CompactEvidence(outputStr, cwd, s, policy, &observedExit)
 }

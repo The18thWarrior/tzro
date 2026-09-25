@@ -2,6 +2,7 @@ package context
 
 import (
 	"bufio"
+	stdctx "context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,11 +34,16 @@ const (
 
 // Symbol represents a code declaration symbol to find impact for.
 type Symbol struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind,omitempty"`
-	FilePath  string `json:"file_path,omitempty"`
-	StartLine int    `json:"start_line,omitempty"`
-	Package   string `json:"package,omitempty"`
+	Name           string `json:"name"`
+	Kind           string `json:"kind,omitempty"`
+	FilePath       string `json:"file_path,omitempty"`
+	StartLine      int    `json:"start_line,omitempty"`
+	EndLine        int    `json:"end_line,omitempty"`
+	Package        string `json:"package,omitempty"`
+	Workspace      string `json:"workspace,omitempty"`
+	SourceSnapshot string `json:"source_snapshot,omitempty"`
+	Language       string `json:"language,omitempty"`
+	Module         string `json:"module,omitempty"`
 }
 
 // RawReference represents an unbudgeted reference to a symbol.
@@ -50,6 +56,23 @@ type RawReference struct {
 	Content      string  `json:"content"`
 	SymbolName   string  `json:"symbol_name"`
 	Score        float64 `json:"score"`
+	SourceSymbol *Symbol `json:"source_symbol,omitempty"`
+	TargetSymbol *Symbol `json:"target_symbol,omitempty"`
+	Snapshot     string  `json:"snapshot,omitempty"`
+}
+
+// ImpactReport represents the complete, unbudgeted blast radius analysis metadata.
+type ImpactReport struct {
+	WorkspaceRoot         string          `json:"workspace_root"`
+	SnapshotProvenance    string          `json:"snapshot_provenance,omitempty"`
+	ChangedSymbols        []Symbol        `json:"changed_symbols"`
+	ReferenceEdges        []RawReference  `json:"reference_edges"`
+	UniqueReferencesCount int             `json:"unique_references_count"`
+	TotalEdgesCount       int             `json:"total_edges_count"`
+	CandidateTestFiles    []string        `json:"candidate_test_files"`
+	AffectedModules       []string        `json:"affected_modules"`
+	Coverage              *CoverageReport `json:"coverage"`
+	GeneratedAt           time.Time       `json:"generated_at"`
 }
 
 // ReferenceAdapter is the language-specific interface for locating symbol references.
@@ -157,6 +180,7 @@ func (a *GoGrepAdapter) FindReferences(workspaceRoot string, sym Symbol, exclude
 			}
 
 			if isNameMatch {
+				symCopy := sym
 				refs = append(refs, RawReference{
 					FilePath:     relPath,
 					StartLine:    1,
@@ -166,10 +190,13 @@ func (a *GoGrepAdapter) FindReferences(workspaceRoot string, sym Symbol, exclude
 					Content:      contentStr,
 					SymbolName:   sym.Name,
 					Score:        40.0,
+					SourceSymbol: &symCopy,
 				})
 			}
 			return nil
 		}
+
+		symCopy := sym
 
 		// Handle config file reference
 		if isConfig {
@@ -188,8 +215,8 @@ func (a *GoGrepAdapter) FindReferences(workspaceRoot string, sym Symbol, exclude
 						Content:      snippet,
 						SymbolName:   sym.Name,
 						Score:        50.0,
+						SourceSymbol: &symCopy,
 					})
-					break
 				}
 			}
 			return nil
@@ -203,7 +230,7 @@ func (a *GoGrepAdapter) FindReferences(workspaceRoot string, sym Symbol, exclude
 			if callPattern.MatchString(line) {
 				lineNum := i + 1
 				rel := RelCaller
-				prec := PrecisionPrecise
+				prec := PrecisionSyntactic
 				score := 80.0
 
 				if isTestFile {
@@ -212,7 +239,7 @@ func (a *GoGrepAdapter) FindReferences(workspaceRoot string, sym Symbol, exclude
 					score = 70.0
 				} else if embedPattern.MatchString(line) {
 					rel = RelEmbedder
-					prec = PrecisionPrecise
+					prec = PrecisionSyntactic
 					score = 90.0
 				} else if strings.Contains(line, "func ") && strings.Contains(line, "("+sym.Name+")") {
 					rel = RelImplementor
@@ -234,8 +261,8 @@ func (a *GoGrepAdapter) FindReferences(workspaceRoot string, sym Symbol, exclude
 					Content:      snippet,
 					SymbolName:   sym.Name,
 					Score:        score,
+					SourceSymbol: &symCopy,
 				})
-				break
 			}
 		}
 
@@ -254,81 +281,61 @@ type ImpactAnalyzer struct {
 	store    *store.Store
 	policy   *dlp.PolicyEngine
 	adapter  ReferenceAdapter
+	registry *AdapterRegistry
 	assembly *Assembler
 }
 
-// NewImpactAnalyzer creates an ImpactAnalyzer with default GoGrepAdapter.
+// NewImpactAnalyzer creates an ImpactAnalyzer with default GoRipgrepAdapter.
 func NewImpactAnalyzer(s *store.Store, policy *dlp.PolicyEngine) *ImpactAnalyzer {
+	reg := NewAdapterRegistry(s, policy)
+	goAdapter, _ := reg.Get("go")
 	return &ImpactAnalyzer{
 		store:    s,
 		policy:   policy,
-		adapter:  NewGoGrepAdapter(s, policy),
+		adapter:  goAdapter,
+		registry: reg,
 		assembly: NewAssembler(s, policy),
 	}
 }
 
-// AnalyzeSymbol discovers references to a symbol and packs them into a ContextPack.
-func (ia *ImpactAnalyzer) AnalyzeSymbol(workspaceRoot, symbolName string, budget int, includeGenerated bool) (*ContextPack, error) {
-	sym := Symbol{Name: symbolName}
-	return ia.packReferences(workspaceRoot, fmt.Sprintf("impact:%s", symbolName), []Symbol{sym}, budget, includeGenerated)
-}
-
-// AnalyzeDiff extracts changed symbols from diff text and packs their references into a ContextPack.
-func (ia *ImpactAnalyzer) AnalyzeDiff(workspaceRoot, diffText string, budget int, includeGenerated bool) (*ContextPack, error) {
-	symbols := ExtractSymbolsFromDiff(diffText)
-	if len(symbols) == 0 {
-		return &ContextPack{
-			Query:       "impact:diff",
-			Budget:      budget,
-			GeneratedAt: time.Now().UTC(),
-			Coverage: &CoverageReport{
-				TotalCandidates:    0,
-				IncludedCandidates: 0,
-				TruncatedCount:     0,
-				TruncatedManifest:  []string{},
-			},
-		}, nil
+// NewImpactAnalyzerWithRegistry creates an ImpactAnalyzer with an explicit AdapterRegistry.
+func NewImpactAnalyzerWithRegistry(s *store.Store, policy *dlp.PolicyEngine, reg *AdapterRegistry) *ImpactAnalyzer {
+	goAdapter, _ := reg.Get("go")
+	if goAdapter == nil {
+		goAdapter = NewGoRipgrepAdapter(s, policy)
 	}
-
-	query := fmt.Sprintf("impact:diff (%d symbols)", len(symbols))
-	return ia.packReferences(workspaceRoot, query, symbols, budget, includeGenerated)
-}
-
-// ExtractSymbolsFromDiff parses a unified git diff and extracts identifiers near changed lines.
-func ExtractSymbolsFromDiff(diffText string) []Symbol {
-	identRe := regexp.MustCompile(`\b[A-Z][a-zA-Z0-9_]+\b`)
-	var symbols []Symbol
-	seen := make(map[string]bool)
-
-	scanner := bufio.NewScanner(strings.NewReader(diffText))
-	currFile := ""
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "+++ b/") {
-			currFile = strings.TrimPrefix(line, "+++ b/")
-			continue
-		}
-
-		if (strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-")) &&
-			!strings.HasPrefix(line, "+++") && !strings.HasPrefix(line, "---") {
-			matches := identRe.FindAllString(line, -1)
-			for _, m := range matches {
-				if !seen[m] && len(m) > 2 {
-					seen[m] = true
-					symbols = append(symbols, Symbol{
-						Name:     m,
-						FilePath: currFile,
-					})
-				}
-			}
-		}
+	return &ImpactAnalyzer{
+		store:    s,
+		policy:   policy,
+		adapter:  goAdapter,
+		registry: reg,
+		assembly: NewAssembler(s, policy),
 	}
-
-	return symbols
 }
 
-func (ia *ImpactAnalyzer) packReferences(workspaceRoot, query string, symbols []Symbol, budget int, includeGenerated bool) (*ContextPack, error) {
+// SetAdapter overrides the default adapter (for testing).
+func (ia *ImpactAnalyzer) SetAdapter(adapter ReferenceAdapter) {
+	ia.adapter = adapter
+	if ia.registry != nil {
+		ia.registry.Register("go", adapter)
+	}
+}
+
+// Registry returns the underlying AdapterRegistry.
+func (ia *ImpactAnalyzer) Registry() *AdapterRegistry {
+	return ia.registry
+}
+
+// AnalyzeReport performs complete unbudgeted impact discovery, returning both full analysis metadata
+// in ImpactReport and the token-budgeted ContextPack.
+func (ia *ImpactAnalyzer) AnalyzeReport(
+	ctx stdctx.Context,
+	workspaceRoot string,
+	symbols []Symbol,
+	budget int,
+	includeGenerated bool,
+	snapshot string,
+) (*ImpactReport, *ContextPack, error) {
 	if budget <= 0 {
 		budget = 4000
 	}
@@ -340,29 +347,133 @@ func (ia *ImpactAnalyzer) packReferences(workspaceRoot, query string, symbols []
 		ign = ignore.CompileIgnoreLines(lines...)
 	}
 
-	var allRefs []RawReference
-	seenKeys := make(map[string]bool)
+	cov := &CoverageReport{}
+	if len(symbols) == 0 {
+		cov.NoChanges = true
+		pack := &ContextPack{
+			Query:       "impact:diff",
+			Budget:      budget,
+			GeneratedAt: time.Now().UTC(),
+			Coverage:    cov,
+		}
+		report := &ImpactReport{
+			WorkspaceRoot:      workspaceRoot,
+			SnapshotProvenance: snapshot,
+			Coverage:           cov,
+			GeneratedAt:        time.Now().UTC(),
+		}
+		return report, pack, nil
+	}
 
+	// Group symbols by language
+	symbolsByLang := make(map[string][]Symbol)
 	for _, sym := range symbols {
-		refs, err := ia.adapter.FindReferences(workspaceRoot, sym, ign, includeGenerated)
-		if err != nil {
+		lang := sym.Language
+		if lang == "" && sym.FilePath != "" {
+			lang = DetectLanguage(sym.FilePath)
+		}
+		if lang == "" {
+			lang = "go"
+		}
+		symbolsByLang[lang] = append(symbolsByLang[lang], sym)
+	}
+
+	var allRefs []RawReference
+
+	for lang, langSyms := range symbolsByLang {
+		var adapter ReferenceAdapter
+		if ia.registry != nil {
+			adapter, _ = ia.registry.Get(lang)
+		}
+		if adapter == nil {
+			adapter = ia.adapter
+		}
+
+		if adapter == nil {
+			cov.UnsupportedSyntax = append(cov.UnsupportedSyntax, fmt.Sprintf("no adapter registered for language %q", lang))
+			cov.IncompleteDiscovery = true
 			continue
 		}
-		for _, ref := range refs {
-			key := fmt.Sprintf("%s:%d:%s", ref.FilePath, ref.StartLine, ref.Relationship)
-			if !seenKeys[key] {
-				seenKeys[key] = true
-				allRefs = append(allRefs, ref)
+
+		if batched, ok := adapter.(BatchedReferenceAdapter); ok {
+			bRefs, bCov, err := batched.FindReferencesBatch(ctx, workspaceRoot, langSyms, ign, includeGenerated)
+			if err != nil {
+				cov.AdapterErrors = append(cov.AdapterErrors, fmt.Sprintf("%s adapter error: %v", lang, err))
+			}
+			if bCov != nil {
+				if bCov.FallbackUsed {
+					cov.FallbackUsed = true
+					cov.FallbackReason = bCov.FallbackReason
+				}
+				cov.AdapterErrors = append(cov.AdapterErrors, bCov.AdapterErrors...)
+				cov.UnsupportedSyntax = append(cov.UnsupportedSyntax, bCov.UnsupportedSyntax...)
+				cov.UnresolvedImports = append(cov.UnresolvedImports, bCov.UnresolvedImports...)
+				cov.ResourceLimits = append(cov.ResourceLimits, bCov.ResourceLimits...)
+				if bCov.IncompleteDiscovery {
+					cov.IncompleteDiscovery = true
+				}
+			}
+			allRefs = append(allRefs, bRefs...)
+		} else {
+			for _, sym := range langSyms {
+				refs, err := adapter.FindReferences(workspaceRoot, sym, ign, includeGenerated)
+				if err != nil {
+					cov.AdapterErrors = append(cov.AdapterErrors, fmt.Sprintf("%s adapter error for %s: %v", lang, sym.Name, err))
+					continue
+				}
+				allRefs = append(allRefs, refs...)
 			}
 		}
 	}
 
-	totalCandidates := len(allRefs)
+	if len(allRefs) == 0 {
+		cov.NoReferences = true
+	}
 
-	// Sort candidates:
-	// 1. Precision tier: precise > syntactic > inferred
-	// 2. Score DESC
-	// 3. FilePath ASC, StartLine ASC
+	// Calculate unique reference sites and affected files/modules
+	uniqueRefSites := make(map[string]bool)
+	uniqueTestFiles := make(map[string]bool)
+	uniqueModules := make(map[string]bool)
+
+	for _, ref := range allRefs {
+		siteKey := fmt.Sprintf("%s:%d:%d", ref.FilePath, ref.StartLine, ref.EndLine)
+		uniqueRefSites[siteKey] = true
+		if ref.Relationship == RelTest {
+			uniqueTestFiles[ref.FilePath] = true
+		}
+		dir := filepath.Dir(ref.FilePath)
+		if dir == "." {
+			dir = "/"
+		}
+		uniqueModules[dir] = true
+	}
+
+	var candidateTestFiles []string
+	for tf := range uniqueTestFiles {
+		candidateTestFiles = append(candidateTestFiles, tf)
+	}
+	sort.Strings(candidateTestFiles)
+
+	var affectedModules []string
+	for m := range uniqueModules {
+		affectedModules = append(affectedModules, m)
+	}
+	sort.Strings(affectedModules)
+
+	// Deduplicate references for packing display
+	var displayCandidates []RawReference
+	seenDisplayKeys := make(map[string]bool)
+	for _, ref := range allRefs {
+		key := fmt.Sprintf("%s:%d:%s:%s", ref.FilePath, ref.StartLine, ref.Relationship, ref.SymbolName)
+		if !seenDisplayKeys[key] {
+			seenDisplayKeys[key] = true
+			displayCandidates = append(displayCandidates, ref)
+		}
+	}
+
+	cov.TotalCandidates = len(displayCandidates)
+
+	// Precision ranking: precise > syntactic > inferred
 	precisionRank := func(p string) int {
 		switch p {
 		case PrecisionPrecise:
@@ -376,20 +487,25 @@ func (ia *ImpactAnalyzer) packReferences(workspaceRoot, query string, symbols []
 		}
 	}
 
-	sort.SliceStable(allRefs, func(i, j int) bool {
-		rI := precisionRank(allRefs[i].Precision)
-		rJ := precisionRank(allRefs[j].Precision)
+	sort.SliceStable(displayCandidates, func(i, j int) bool {
+		rI := precisionRank(displayCandidates[i].Precision)
+		rJ := precisionRank(displayCandidates[j].Precision)
 		if rI != rJ {
 			return rI < rJ
 		}
-		if allRefs[i].Score != allRefs[j].Score {
-			return allRefs[i].Score > allRefs[j].Score
+		if displayCandidates[i].Score != displayCandidates[j].Score {
+			return displayCandidates[i].Score > displayCandidates[j].Score
 		}
-		if allRefs[i].FilePath != allRefs[j].FilePath {
-			return allRefs[i].FilePath < allRefs[j].FilePath
+		if displayCandidates[i].FilePath != displayCandidates[j].FilePath {
+			return displayCandidates[i].FilePath < displayCandidates[j].FilePath
 		}
-		return allRefs[i].StartLine < allRefs[j].StartLine
+		return displayCandidates[i].StartLine < displayCandidates[j].StartLine
 	})
+
+	query := fmt.Sprintf("impact (%d symbols)", len(symbols))
+	if len(symbols) == 1 {
+		query = fmt.Sprintf("impact:%s", symbols[0].Name)
+	}
 
 	pack := &ContextPack{
 		Query:       query,
@@ -400,7 +516,7 @@ func (ia *ImpactAnalyzer) packReferences(workspaceRoot, query string, symbols []
 	used := 0
 	var truncatedManifest []string
 
-	for _, ref := range allRefs {
+	for _, ref := range displayCandidates {
 		content := ref.Content
 		if ia.policy != nil {
 			redactor := dlp.NewRedactor()
@@ -441,13 +557,125 @@ func (ia *ImpactAnalyzer) packReferences(workspaceRoot, query string, symbols []
 	}
 
 	pack.UsedTokens = used
-	pack.Coverage = &CoverageReport{
-		TotalCandidates:    totalCandidates,
-		IncludedCandidates: len(pack.Items),
-		TruncatedCount:     len(truncatedManifest),
-		TruncatedManifest:  truncatedManifest,
-		FallbackUsed:       false,
+	cov.IncludedCandidates = len(pack.Items)
+	cov.TruncatedCount = len(truncatedManifest)
+	cov.TruncatedManifest = truncatedManifest
+	pack.Coverage = cov
+
+	report := &ImpactReport{
+		WorkspaceRoot:         workspaceRoot,
+		SnapshotProvenance:    snapshot,
+		ChangedSymbols:        symbols,
+		ReferenceEdges:        allRefs,
+		UniqueReferencesCount: len(uniqueRefSites),
+		TotalEdgesCount:       len(allRefs),
+		CandidateTestFiles:    candidateTestFiles,
+		AffectedModules:       affectedModules,
+		Coverage:              cov,
+		GeneratedAt:           pack.GeneratedAt,
 	}
 
-	return pack, nil
+	pack.Impact = report
+	return report, pack, nil
+}
+
+// AnalyzeSymbol discovers references to a symbol and packs them into a ContextPack.
+func (ia *ImpactAnalyzer) AnalyzeSymbol(workspaceRoot, symbolName string, budget int, includeGenerated bool) (*ContextPack, error) {
+	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+	defer cancel()
+	sym := Symbol{Name: symbolName}
+	_, pack, err := ia.AnalyzeReport(ctx, workspaceRoot, []Symbol{sym}, budget, includeGenerated, "working_tree")
+	return pack, err
+}
+
+// AnalyzeSymbolWithFile discovers references to a symbol disambiguated by file.
+func (ia *ImpactAnalyzer) AnalyzeSymbolWithFile(workspaceRoot, symbolName, filePath string, budget int, includeGenerated bool) (*ImpactReport, *ContextPack, error) {
+	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+	defer cancel()
+	symbols, err := ResolveSymbolAnchor(workspaceRoot, symbolName, filePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ia.AnalyzeReport(ctx, workspaceRoot, symbols, budget, includeGenerated, "working_tree")
+}
+
+// AnalyzeDiff extracts changed symbols from diff text and packs their references into a ContextPack.
+func (ia *ImpactAnalyzer) AnalyzeDiff(workspaceRoot, diffText string, budget int, includeGenerated bool) (*ContextPack, error) {
+	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
+	defer cancel()
+	symbols := ExtractSymbolsFromDiff(diffText)
+	_, pack, err := ia.AnalyzeReport(ctx, workspaceRoot, symbols, budget, includeGenerated, "working_tree")
+	return pack, err
+}
+
+// AnalyzeDiffScope analyzes the requested Git scope (staged, unstaged, all) using snapshot-aware AST extraction.
+func (ia *ImpactAnalyzer) AnalyzeDiffScope(
+	ctx stdctx.Context,
+	workspaceRoot string,
+	scope GitScope,
+	budget int,
+	includeGenerated bool,
+) (*ImpactReport, *ContextPack, error) {
+	diffResult, err := AcquireGitDiff(ctx, workspaceRoot, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	symbols, cov, err := ExtractSymbolsFromSnapshotDiff(ctx, workspaceRoot, diffResult)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	report, pack, err := ia.AnalyzeReport(ctx, workspaceRoot, symbols, budget, includeGenerated, string(scope))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if cov != nil {
+		report.Coverage.UnsupportedSyntax = append(report.Coverage.UnsupportedSyntax, cov.UnsupportedSyntax...)
+		if cov.NoChanges {
+			report.Coverage.NoChanges = true
+			pack.Coverage.NoChanges = true
+		}
+		if cov.IncompleteDiscovery {
+			report.Coverage.IncompleteDiscovery = true
+			pack.Coverage.IncompleteDiscovery = true
+		}
+	}
+
+	return report, pack, nil
+}
+
+// ExtractSymbolsFromDiff parses a unified git diff and extracts identifiers near changed lines.
+func ExtractSymbolsFromDiff(diffText string) []Symbol {
+	identRe := regexp.MustCompile(`\b[A-Z][a-zA-Z0-9_]+\b`)
+	var symbols []Symbol
+	seen := make(map[string]bool)
+
+	scanner := bufio.NewScanner(strings.NewReader(diffText))
+	currFile := ""
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "+++ b/") {
+			currFile = strings.TrimPrefix(line, "+++ b/")
+			continue
+		}
+
+		if (strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-")) &&
+			!strings.HasPrefix(line, "+++") && !strings.HasPrefix(line, "---") {
+			matches := identRe.FindAllString(line, -1)
+			for _, m := range matches {
+				if !seen[m] && len(m) > 2 {
+					seen[m] = true
+					symbols = append(symbols, Symbol{
+						Name:     m,
+						FilePath: currFile,
+					})
+				}
+			}
+		}
+	}
+
+	return symbols
 }

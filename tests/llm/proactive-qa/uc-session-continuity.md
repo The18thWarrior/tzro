@@ -1,8 +1,8 @@
 # Use Case: Agent Session Continuity and Handoff
 
 **Actor**: AI coding agent pausing work or handing off an objective to a subsequent agent session
-**Route**: CLI — `tzro session save / load / status`
-**Backend**: Session continuity engine (`pkg/session/session.go`, `git.go`) and Schema v2 store
+**Route**: CLI — `tzro session save / load / status` and `tzro pause [description]` / `tzro resume [id] [--format tty|plain|json]`
+**Backend**: Session continuity engine (`pkg/session/session.go`, `git.go`, `resume.go`, `dashboard.go`) and Schema v2 store
 **Priority**: P1
 
 ---
@@ -26,6 +26,13 @@ When an agent reaches context limits, completes a milestone, or hands off work t
 - [ ] If files were modified externally since session save, stale evidence markers are surfaced
 - [ ] `tzro session load <manifest.json>` restores working context and constraints into the local store
 - [ ] Output provides a compact summary (<400 tokens) ready for immediate agent consumption
+- [ ] `tzro pause "<description>"` creates a session snapshot with the given pause description
+- [ ] `tzro resume` without arguments loads the most recent paused session and displays a resumption dashboard
+- [ ] `tzro resume <id>` loads a specific session by ID
+- [ ] Resumption dashboard displays git branch divergence (ahead/behind upstream)
+- [ ] Dashboard shows file drift detection — files modified since pause
+- [ ] Dashboard shows stale evidence markers for executed checks that are no longer fresh
+- [ ] `--format tty|plain|json` controls resumption dashboard output format
 
 ## Edge Cases to Probe
 
@@ -34,6 +41,9 @@ When an agent reaches context limits, completes a milestone, or hands off work t
 - Restoring a session where files referenced in decisions have been deleted
 - Saving a session with empty constraints or multi-line objectives
 - Inspecting session status in a detached HEAD state
+- Pausing with no description — should use a default timestamp-based label
+- Resuming when the git branch has been rebased since pause
+- Resuming a session from a different machine or workspace root
 
 ## Anti-Patterns to Watch For
 
@@ -41,3 +51,5 @@ When an agent reaches context limits, completes a milestone, or hands off work t
 - [ ] Session files contain unbounded chat logs instead of distilled objectives, decisions, and checks
 - [ ] Git commit SHA is missing or recorded as dirty when tree is clean
 - [ ] Manifest restore overwrites local uncommitted changes without warning
+- [ ] Resume dashboard shows stale evidence as fresh without checking git tree state
+- [ ] Pause overwrites a previous session snapshot without confirmation

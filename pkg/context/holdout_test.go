@@ -111,6 +111,7 @@ func ValidateUserToken() {}
 	coldRecall := checkRecall(coldPack)
 	warmRecall := checkRecall(warmPack)
 
+	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 

@@ -148,6 +148,7 @@ func TestLatency_EvidenceSearch_5kFiles(t *testing.T) {
 	}
 
 	var m runtime.MemStats
+	runtime.GC()
 	runtime.ReadMemStats(&m)
 	allocMB := float64(m.Alloc) / (1024 * 1024)
 

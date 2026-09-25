@@ -28,10 +28,10 @@ v1 was a durable local-first agentic runtime with a DAG execution engine, strate
 ┌─────────────────────────────────────────────────────────────┐
 │  Developer / Agent (Cursor, Claude Code, Antigravity, CLI)  │
 └──────────────────────────────┬──────────────────────────────┘
-                               │ (Transparent Loopback Proxy / CLI)
+                               │ (Transparent Proxy / CLI / MCP)
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 TZRO v2 LOCAL TOKEN SHIELD                  │
+│                 TZRO v3.1 LOCAL TOKEN SHIELD                │
 │                                                             │
 │  1. KV-Cache Prefix Lock Guard (70-99% Cache Read Hit Rate) │
 │  2. Tree-Sitter AST Skeletonizer (70-90% Token Reduction)  │
@@ -40,6 +40,15 @@ v1 was a durable local-first agentic runtime with a DAG execution engine, strate
 │  5. Smart JSON Crusher & Stack Trace Elider                │
 │  6. Zero-Cloud DLP / Secret Masking                        │
 │  7. Tabular Data Engine (`tzro ingest` / `tzro query`)     │
+│  8. System 1 Graph Call Executor (`tzro execute`)          │
+│  9. Laya Decision Daemon (ModernBERT-large, ~25ms)         │
+│ 10. GLiNER Span Extractor (ONNX, zero-shot)               │
+│ 11. MCP Server (`tzro mcp`, JSON-RPC 2.0 / stdio)         │
+│ 12. Multi-Language Context Packs (Go/TS/Python/Rust)       │
+│ 13. Predictive Test Selection (`tzro test --impact`)       │
+│ 14. Git Hook Manager (`tzro hook install`)                 │
+│ 15. Shell Integration (`tzro shell init`)                  │
+│ 16. Session Pause/Resume (`tzro pause` / `tzro resume`)   │
 └──────────────────────────────┬──────────────────────────────┘
                                │ (Dense, High-Signal, Cache-Locked Payload)
                                ▼
@@ -118,7 +127,7 @@ graph TD
 
 ## 3. Package Architecture
 
-tzro v3 is organized into 18 public packages under `pkg/`, one CLI entrypoint, and a website server:
+tzro v3.1 is organized into 19 public packages under `pkg/`, one CLI entrypoint, and a website server:
 
 ```
 cmd/
@@ -130,21 +139,23 @@ pkg/
   benchmark/
     signaldensity/       # Signal density per token benchmark suite and cost guard
   compactor/             # Evidence-contract log compaction and tabular data formatting
-  context/               # Task context pack assembler, impact graph, tsconfig path resolution
+  context/               # Task context pack assembler, multi-language adapters (Go/TS/Python/Rust),
+                         #   impact graph, predictive test selection, diff analysis, tree rendering
   dlp/                   # Zero-cloud DLP secret masking & workspace privacy policies
   doctor/                # Synthetic health checks, provider route diagnostics, hook probes
   evidence/              # Typed evidence provenance envelopes and freshness markers
   executor/              # System 1 Graph Call DAG execution engine (Kahn's topological sort)
   extractor/             # GLiNER zero-shot span extraction sidecar client & adapter
-  hooks/                 # Multi-harness agent lifecycle hook bridge (5 harnesses)
+  hooks/                 # Multi-harness agent lifecycle hook bridge (5 harnesses) + git hook manager
   inspector/             # Offline context assembly explainability & ranking inspector
   kvlock/                # KV-cache prefix normalization and locking
   laya/                  # Laya System 1 decision daemon client, adapter & state compaction
   probe/                 # Fast local codebase discovery (ripgrep + AST)
   proxy/                 # Transparent reverse proxy server and usage tracking
   search/                # Unified local evidence search across code, docs, logs, and artifacts
-  session/               # Portable, git-aware agent session manifest & continuity engine
-  store/                 # SQLite Schema v2 content-hash store, workspace isolation & LRU eviction
+  session/               # Portable, git-aware agent session manifest, pause/resume, shell integration
+  store/                 # SQLite Schema v2 content-hash store, workspace isolation, command events & LRU eviction
+  tokenizer/             # BPE token counting (tiktoken-go) and budget-constrained truncation
 website/
   main.go                # Marketing/docs website server
 ```
@@ -165,10 +176,12 @@ graph TD
     CLI --> doctor
     CLI --> inspector
     CLI --> benchmark
+    CLI --> tokenizer
 
     context --> store
     context --> ast
     context --> dlp
+    context --> tokenizer
 
     search --> store
     search --> ast
@@ -347,27 +360,81 @@ Embedded SQLite database in WAL mode with FTS5 full-text indexing, multi-workspa
 
 ### 4.10. Task Context Pack Assembler (`pkg/context`)
 
-Assembles ranked, token-budgeted context packs for an agent task query in a single sub-second turn.
+Assembles ranked, token-budgeted context packs for an agent task query in a single sub-second turn. v3.1 adds multi-language reference discovery, symbol anchoring, and predictive test selection.
 
 **Process:**
 1. Evaluates query against SQLite FTS5 symbol index and lexical search fallback.
 2. Traverses Tree-sitter AST to extract relevant functions, types, structs, and interfaces.
-3. Resolves TypeScript path aliases (`@/*`, `~/*`) from `tsconfig.json` into canonical workspace filepaths.
+3. Resolves language-specific import paths via pluggable adapters:
+   - **Go**: ripgrep + AST with JSON-streamed results
+   - **TypeScript/JavaScript**: `tsconfig.json`/`jsconfig.json` path alias resolution, barrel re-exports, namespace imports
+   - **Python**: `from ... import` chains, relative imports, `__init__.py` re-exports, `src/` layouts
+   - **Rust**: `use` declarations, `crate::`/`super::`/`self::` resolution, Cargo workspace awareness
 4. Identifies co-located and corresponding unit/integration test suites.
 5. Skeletons large file bodies, replacing them with cryptographic hashes.
-6. Enforces strict token budgeting with deterministic ranking and explainable provenance.
+6. Enforces strict token budgeting via knapsack packing — references degrade to signature stubs when budget is tight rather than being dropped entirely.
+7. Supports symbol-anchored mode (`--symbol <name> [--file <path>]`) for surgical context around a specific declaration.
+8. Outputs as Markdown or JSON with atomic file writing (`--output <path>`).
+9. Configurable via `.tzro/context.yaml` for default budgets, tokenizer selection, and language priorities.
 
 ### 4.11. Pre-Edit Change Impact Graph (`pkg/context/impact.go`)
 
-Calculates the blast radius of proposed code edits before modifying shared code or types.
+Calculates the blast radius of proposed code edits before modifying shared code or types. v3.1 adds scoped analysis modes and multi-language support.
 
 **Features:**
-- Computes structural call graphs from AST definitions and import graphs.
+- Computes structural call graphs from AST definitions and import graphs across Go, TypeScript, Python, and Rust.
 - Maps direct callers and downstream dependent modules across the entire repository.
 - Identifies existing test coverage for modified files and their callers.
-- Accepts explicit file paths or inspects uncommitted git changes (`git diff`).
+- Accepts explicit file paths, `--staged`, `--unstaged`, or `--all` scopes for granular control.
+- Filters comment-only diff hunks to avoid false positives.
+- Renders blast radius as ANSI hierarchical trees, JSON, or Markdown (`--format tree|json|markdown`).
 
-### 4.12. Unified Local Evidence Search (`pkg/search`)
+### 4.12. Predictive Test Selection (`pkg/context/test_selection.go`)
+
+Identifies and executes only the tests affected by code changes, avoiding full-suite overhead.
+
+**Features:**
+- Parses git diffs to map changed lines to enclosing AST declarations.
+- Traces transitive callers from changed symbols to test files.
+- Auto-dispatches to the correct test runner: `go test`, `vitest`, `jest`, or `pytest`.
+- Falls back to broader suite when build configs or shared fixtures change.
+- Compacts test output through the evidence compactor.
+
+### 4.13. Git Hook Manager (`pkg/hooks/git_hook.go`)
+
+Automates installation and management of tzro's advisory `pre-commit` Git hook.
+
+**Features:**
+- Installs a non-blocking pre-commit hook that displays staged impact analysis.
+- Discovers git hooks directories across standard repos, linked worktrees, and submodules.
+- Preserves existing pre-commit hooks via `.tzro.backup` chaining.
+- Provides `install`, `uninstall`, and `status` subcommands.
+
+### 4.14. Session Pause/Resume & Shell Integration (`pkg/session`)
+
+Extends session continuity with task pause/resume and developer command capture.
+
+**Pause/Resume (`pkg/session/resume.go`, `dashboard.go`):**
+- `tzro pause [description]` creates a session snapshot for later resumption.
+- `tzro resume [id]` loads a session and renders an interactive resumption dashboard.
+- Dashboard displays git divergence, file drift, stale evidence, and shifted symbol lines.
+- Supports `tty`, `plain`, and `json` output formats.
+
+**Shell Integration (`pkg/session/shell.go`):**
+- `tzro shell init [zsh|bash]` installs lightweight preexec/precmd hooks.
+- Captures development commands into SQLite with sub-millisecond overhead.
+- Strict allowlist filtering, credential redaction, and retention pruning.
+
+### 4.15. BPE Tokenizer (`pkg/tokenizer`)
+
+Exact BPE token counting and budget-constrained truncation using `tiktoken-go`.
+
+**Features:**
+- Supports `cl100k_base` and `o200k_base` encodings with singleton codec caching.
+- Thread-safe exact counting with character fallback heuristics.
+- UTF-8-safe truncation that prevents multi-byte rune corruption.
+
+### 4.16. Unified Local Evidence Search (`pkg/search`)
 
 Heterogeneous local search engine executing across diverse project artifacts in <10ms.
 
@@ -378,7 +445,7 @@ Heterogeneous local search engine executing across diverse project artifacts in 
 - Stored execution logs and failure artifacts.
 - Agent session manifests.
 
-### 4.13. Agent Session Continuity & Handoffs (`pkg/session`)
+### 4.17. Agent Session Continuity & Handoffs (`pkg/session`)
 
 Provides git-aware session state capture and restoration across agent turns and handoffs.
 
@@ -387,7 +454,7 @@ Provides git-aware session state capture and restoration across agent turns and 
 - Computes git tree state hashes and detects workspace drift between agent handoffs.
 - Surfaces stale evidence markers when underlying files are modified out-of-band.
 
-### 4.14. Diagnostic Doctor (`pkg/doctor`)
+### 4.18. Diagnostic Doctor (`pkg/doctor`)
 
 Comprehensive synthetic diagnostic tool for troubleshooting proxy routing and local environment issues.
 
@@ -398,7 +465,7 @@ Comprehensive synthetic diagnostic tool for troubleshooting proxy routing and lo
 - Executes synthetic KV-lock normalization and DLP secret redaction.
 - Validates SQLite FTS5 extension availability and database health.
 
-### 4.15. Context Inspector & Explainability (`pkg/inspector`)
+### 4.19. Context Inspector & Explainability (`pkg/inspector`)
 
 Provides offline explainability for context assembly decisions with zero cloud token consumption.
 
@@ -407,7 +474,7 @@ Provides offline explainability for context assembly decisions with zero cloud t
 - Explains candidate inclusion, ranking, and stage-by-stage omission reasons.
 - Evaluates candidate selection against workspace privacy policies.
 
-### 4.16. Signal Density Benchmark Suite (`pkg/benchmark/signaldensity`)
+### 4.20. Signal Density Benchmark Suite (`pkg/benchmark/signaldensity`)
 
 Empirical benchmarking framework measuring task signal density per token across optimization strategies.
 
@@ -417,7 +484,7 @@ Empirical benchmarking framework measuring task signal density per token across 
 - Enforces a hard spending circuit breaker (`--max-cost`) to prevent runaway cloud evaluation costs.
 - Generates structured Markdown and JSON comparison reports.
 
-### 4.17. Evidence Provenance Envelope (`pkg/evidence`)
+### 4.21. Evidence Provenance Envelope (`pkg/evidence`)
 
 Typed container tagging all context artifacts with origin metadata, line coordinates, and verification confidence.
 
@@ -431,7 +498,14 @@ Typed container tagging all context artifacts with origin metadata, line coordin
 | `tzro execute [graph.json \| -]` | `pkg/executor` | Execute a System 1 Graph Call DAG |
 | `tzro mcp` | `pkg/executor` | Start the MCP JSON-RPC 2.0 server over stdio |
 | `tzro context "<task>" --budget <n>` | `pkg/context` | Assemble ranked, token-budgeted context pack |
+| `tzro context --symbol <name>` | `pkg/context` | Symbol-anchored context assembly |
 | `tzro impact [files...]` | `pkg/context` | Compute change-impact graph and test coverage |
+| `tzro impact --staged\|--unstaged\|--all` | `pkg/context` | Scoped impact analysis with format options |
+| `tzro test --impact [--dry-run]` | `pkg/context` | Predictive test selection and execution |
+| `tzro pause [description]` | `pkg/session` | Pause current session with snapshot |
+| `tzro resume [id] [--format]` | `pkg/session` | Resume session with drift dashboard |
+| `tzro shell init [zsh\|bash]` | `pkg/session` | Install shell command capture hooks |
+| `tzro hook install\|uninstall\|status` | `pkg/hooks` | Manage advisory git pre-commit hooks |
 | `tzro probe "<query>"` | `pkg/probe` | Fast local codebase discovery |
 | `tzro search "<query>"` | `pkg/search` | Unified local evidence search across code, docs, artifacts |
 | `tzro skeleton <file>` | `pkg/ast` | Generate AST skeleton with body hashes |
