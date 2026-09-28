@@ -52,7 +52,7 @@ _Analyses of critical bugs, diagnostic loops, and prevention measures._
 
 ## Architecture & Concepts
 
-- [Adoption readiness](architecture/adoption-readiness.md) - CLI-first README, local CI validation, and remaining installation, vocabulary, and hosted verification work. (Status: in progress | Last Updated: 2026-09-28)
+- [Adoption readiness](architecture/adoption-readiness.md) - CLI-first README, automatic Standard setup, local checks, and remaining benchmark and publication work. (Status: in progress | Last Updated: 2026-09-28)
 
 _Glossary terms, data models, ADR summaries, and architectural diagrams._
 
@@ -153,9 +153,15 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0095: System 1 Graph Calls and Non-Autoregressive Decision Engine](../adr/0095-system1-graph-calls-and-encoder-decision-engine.md) - Replaces autonomous generative loops with deterministic System 1 Graph Calls, supervising ModernBERT (`mys/laya-GGUF`) for sub-30ms decisions and GLiNER for zero-shot span extraction with zero KV-cache overhead.
 - [ADR-0096: Migration to Jev-Style-0.8B and libllama Decision Engine](../adr/0096-migration-to-jev-style-and-libllama-decision-engine.md) - Replaces Laya/ModernBERT with Jev-Style-0.8B (Qwen3.5) running on native libllama (bin/jev-score), expanding context to 2,048 tokens and introducing pluggable dual-provider support.
 
+## Local implementation guides
+
+- [Installation-profile benchmarks](../benchmark-workflows.md) — Native Pi recipes, optional runtime setup, and evidence boundaries.
+- [JEV decision worker](../../cmd/jev-score/README.md) — Native verdict scoring, typed JSONL protocol, calibration, and real-model checks.
+
 ## Ingested Sources
 
 _Immutable third-party references, notes, and raw inputs._
 
+- [Native agent installation contracts](sources/agent-installation-contracts.md) - Primary client schemas, native approval boundaries, and activation checks still pending. (Reviewed: 2026-09-28)
 - [LLM Wiki Reference (Karpathy)](../agents/wiki.md) - Design guidelines and templates for local wiki maintenance.
 - [Edge-Cloud LLM Task Offloading Research](sources/edge-cloud-task-offloading.md) - Bleeding-edge architectures for edge-cloud LLM task offloading beyond Directed Acyclic Graphs.

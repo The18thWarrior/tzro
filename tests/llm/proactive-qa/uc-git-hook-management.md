@@ -1,7 +1,7 @@
 # Use Case: Git Hook Management
 
 **Actor**: Developer who wants advisory pre-commit impact analysis on every commit
-**Route**: CLI — `tzro hook [install|uninstall|status] pre-commit`
+**Route**: CLI — `tzro init --hook pre-commit [--uninstall] [--force]`
 **Backend**: Git hook manager (`pkg/hooks/git_hook.go`)
 **Priority**: P1
 
@@ -19,12 +19,12 @@ A developer wants an advisory pre-commit hook that automatically shows the blast
 
 ## Success Criteria
 
-- [ ] `tzro hook install pre-commit` installs a pre-commit hook in the repository's `.git/hooks/`
+- [ ] `tzro init --hook pre-commit` installs a pre-commit hook in the repository's `.git/hooks/`
 - [ ] The hook runs `tzro impact --staged` and displays a formatted blast radius summary
 - [ ] The hook is advisory-only — it never blocks or rejects a commit
 - [ ] Existing pre-commit hooks are backed up to `.tzro.backup` and chained in execution order
-- [ ] `tzro hook uninstall pre-commit` removes the hook and restores the original backup
-- [ ] `tzro hook status` reports which hooks are installed and their health
+- [ ] `tzro init --hook pre-commit --uninstall` removes the hook and restores the original backup
+- [ ] `tzro init --hook pre-commit --force` backs up and replaces existing non-tzro hooks
 - [ ] Hook works correctly in linked git worktrees and submodules
 - [ ] Hook output uses TTY formatting when connected to a terminal
 

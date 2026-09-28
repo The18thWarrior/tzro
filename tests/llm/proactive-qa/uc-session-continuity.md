@@ -19,7 +19,7 @@ When an agent reaches context limits, completes a milestone, or hands off work t
 
 ## Success Criteria
 
-- [ ] `tzro session save --objective "<goal>" --constraints "<rules>"` serializes state to Schema v2 manifest
+- [ ] `tzro session save <session-id> --objective "<goal>" --constraint "<rule>"` serializes state to Schema v2 manifest (constraints are repeatable via `-c`)
 - [ ] Manifest records current git commit SHA, tree dirty state, and modified file hashes
 - [ ] Decisions made, verified checks passed, and pending next steps are captured in structured fields
 - [ ] `tzro session status` detects whether the repository state has drifted since the session was saved

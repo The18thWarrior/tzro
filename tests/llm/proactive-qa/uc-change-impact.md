@@ -20,7 +20,8 @@ Before modifying code, an agent needs to determine the blast radius of changes: 
 ## Success Criteria
 
 - [ ] Running `tzro impact` with no arguments detects uncommitted git modifications and computes blast radius
-- [ ] Running `tzro impact <path/to/file>` analyzes target file and reports direct callers and consumers
+- [ ] Running `tzro impact --symbol <name>` analyzes a target symbol and reports direct callers and consumers
+- [ ] Running `tzro impact --symbol <name> --file <path>` disambiguates when multiple files define the same symbol
 - [ ] Direct callers across the repository are accurately mapped with file path and line numbers
 - [ ] Dependent downstream files are enumerated with dependency depth
 - [ ] Existing test suites covering the modified files or their callers are surfaced as recommended test runs
@@ -32,7 +33,6 @@ Before modifying code, an agent needs to determine the blast radius of changes: 
 - [ ] `tzro impact --all` combines staged and unstaged analysis
 - [ ] `tzro impact --format tree` renders blast radius as an ANSI hierarchical tree
 - [ ] `tzro impact --format json` outputs structured JSON for machine consumption
-- [ ] `tzro impact --dry-run` lists affected files without computing full dependency graph
 - [ ] Impact analysis works across Python, Rust, and TypeScript files in addition to Go
 - [ ] Comment-only changes are filtered out from impact computation
 

@@ -37,7 +37,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
 
       - name: Build tzro CLI
         env:
@@ -68,12 +68,27 @@ jobs:
 
       - name: Determine tag
         id: tag
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            RELEASE_TAG="$REQUESTED_TAG"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            RELEASE_TAG="$GITHUB_REF_NAME"
           fi
+          case "$RELEASE_TAG" in
+            v[0-9]*) ;;
+            *) echo "Expected a version tag starting with v and a digit" >&2; exit 1 ;;
+          esac
+          case "$RELEASE_TAG" in *[!a-zA-Z0-9._-]*) exit 1 ;; esac
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create release checksums
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          sha256sum tzro-darwin-arm64 tzro-darwin-amd64 tzro-linux-amd64 > SHA256SUMS
+          printf '%s\n' "$RELEASE_TAG" > version.txt
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -85,14 +100,17 @@ jobs:
       - name: Upload to S3
         env:
           S3_BUCKET: tzro-app
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          TAG=${{ steps.tag.outputs.tag }}
-          
-          # Upload binaries to tagged release and latest
+          # The installer resolves latest/version.txt, then uses the pinned release.
           for file in tzro-*; do
-            aws s3 cp "$file" "s3://$S3_BUCKET/releases/$TAG/"
+            aws s3 cp "$file" "s3://$S3_BUCKET/releases/$RELEASE_TAG/"
             aws s3 cp "$file" "s3://$S3_BUCKET/releases/latest/"
           done
+          aws s3 cp SHA256SUMS "s3://$S3_BUCKET/releases/$RELEASE_TAG/SHA256SUMS"
+          aws s3 cp SHA256SUMS "s3://$S3_BUCKET/releases/latest/SHA256SUMS"
+          aws s3 cp version.txt "s3://$S3_BUCKET/releases/$RELEASE_TAG/version.txt"
+          aws s3 cp version.txt "s3://$S3_BUCKET/releases/latest/version.txt" --cache-control no-cache
           
           # Upload install script
           aws s3 cp install.sh "s3://$S3_BUCKET/install.sh"

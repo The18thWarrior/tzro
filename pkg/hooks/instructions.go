@@ -51,6 +51,22 @@ Never make 10–20 sequential cloud tool calls to locate symbols or understand a
 
 ## CLI Reference for Agents
 
+### Optional System 1 Graph Calls
+
+When TZRO_EXPERIMENTAL_RUNTIMES=1 is configured, JEV decisions and GLiNER extraction
+are available through the public graph command. Use them when they help the task.
+Write a graph file, then run:
+
+    tzro execute graph.json
+
+A graph contains version "3.0", task_id, and nodes. Each node has an id and type.
+Tool nodes use tool and args; supported tools include probe, skeleton, search, and bash.
+Decision nodes use question with type "choice", prompt, and options, plus an input object.
+Extract nodes use input with a text field, and labels such as "file_path".
+Use depends_on and JSON pointers such as {"$ref":"/nodes/node-id/output/stdout"} for dependencies.
+Inspect node status and graph status. Report failed or yielded nodes before choosing another approach.
+Runtimes are optional: do not assume they are installed merely because this skill is present.
+
 | Command | Purpose | Token Impact |
 | :--- | :--- | :--- |
 | ` + "`tzro probe \"<query>\"`" + ` | Fast local symbol and file discovery using ripgrep + Tree-sitter AST | **0 cloud tokens (<500 tokens output)** |

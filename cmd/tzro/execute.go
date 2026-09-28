@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,7 +34,7 @@ Examples:
 			var err error
 
 			if len(args) == 0 || args[0] == "-" {
-				graphData, err = io.ReadAll(os.Stdin)
+				graphData, err = io.ReadAll(cmd.InOrStdin())
 			} else {
 				graphData, err = os.ReadFile(args[0])
 			}
@@ -58,21 +57,21 @@ Examples:
 			defer s.Close()
 
 			workspaceRoot, _ := os.Getwd()
-			toolDisp := executor.NewBuiltinDispatcher(workspaceRoot, s)
-
-			engine := executor.NewEngine(
-				executor.WithMaxConcurrency(maxConcurrency),
-				executor.WithToolDispatcher(toolDisp),
-			)
+			engine, closeWorkers, err := configuredEngine(workspaceRoot, s, maxConcurrency)
+			if err != nil {
+				return err
+			}
+			defer closeWorkers()
 
 			// Execute the graph
-			result, err := engine.Execute(context.Background(), &g)
+			result, err := engine.Execute(cmd.Context(), &g)
 			if err != nil {
 				return fmt.Errorf("execution failed: %w", err)
 			}
+			recordActivity("graph", result.Status, 0)
 
 			// Output the result
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(cmd.OutOrStdout())
 			if outputFormat == "pretty" {
 				enc.SetIndent("", "  ")
 			}

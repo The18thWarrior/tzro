@@ -1,33 +1,37 @@
 #!/usr/bin/env bash
-# Build jev-score binary against libllama (macOS Metal / Linux CUDA/CPU)
+# Build the optional native decision worker against an installed libllama.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-"${HERE}/bin/jev-score"}"
 
+if [ -z "${LLAMA_DIR:-}" ]; then
+    for prefix in /opt/homebrew /usr/local; do
+        if [ -f "${prefix}/opt/llama.cpp/include/llama.h" ]; then
+            LLAMA_DIR="${prefix}/opt/llama.cpp"
+            break
+        fi
+    done
+fi
+if [ -z "${LLAMA_DIR:-}" ] || [ ! -f "${LLAMA_DIR}/include/llama.h" ]; then
+    echo "Error: libllama headers not found. Install llama.cpp or set LLAMA_DIR to its installed prefix." >&2
+    exit 1
+fi
+
+flags=(-I"${LLAMA_DIR}/include" -L"${LLAMA_DIR}/lib" -Wl,-rpath,"${LLAMA_DIR}/lib")
+# Homebrew packages ggml separately. Custom installs can specify GGML_DIR.
+for prefix in /opt/homebrew /usr/local; do
+    if [[ "$LLAMA_DIR" == "$prefix/"* ]]; then
+        flags+=(-I"${prefix}/include" -L"${prefix}/lib" -Wl,-rpath,"${prefix}/lib")
+    fi
+done
+if [ -n "${GGML_DIR:-}" ]; then
+    flags+=(-I"${GGML_DIR}/include" -L"${GGML_DIR}/lib" -Wl,-rpath,"${GGML_DIR}/lib")
+fi
 mkdir -p "$(dirname "$OUT")"
-
-# Check for Homebrew llama.cpp on macOS
-if [ -d "/opt/homebrew/Cellar/llama.cpp" ]; then
-    LLAMA_DIR="$(find /opt/homebrew/Cellar/llama.cpp -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)"
-    echo "Found Homebrew llama.cpp at ${LLAMA_DIR}"
-    c++ -std=c++17 -O3 -Wall \
-        -I"${LLAMA_DIR}/include" -I/opt/homebrew/include \
-        "${HERE}/cmd/jev-score/main.cpp" -o "$OUT" \
-        -L"${LLAMA_DIR}/lib" -L/opt/homebrew/lib -lllama -Wl,-rpath,"${LLAMA_DIR}/lib" -Wl,-rpath,"/opt/homebrew/lib"
-    echo "Successfully built ${OUT}"
-    exit 0
-fi
-
-# Fallback: check LLAMA_DIR from environment
-if [ -n "${LLAMA_DIR:-}" ] && [ -f "${LLAMA_DIR}/include/llama.h" ]; then
-    c++ -std=c++17 -O3 -Wall \
-        -I"${LLAMA_DIR}/include" \
-        "${HERE}/cmd/jev-score/main.cpp" -o "$OUT" \
-        -L"${LLAMA_DIR}/lib" -lllama -Wl,-rpath,"${LLAMA_DIR}/lib"
-    echo "Successfully built ${OUT}"
-    exit 0
-fi
-
-echo "Error: llama.cpp not found. Install via 'brew install llama.cpp' or set LLAMA_DIR."
-exit 1
+build_output="${OUT}.tmp.$$"
+trap 'rm -f "$build_output"' EXIT
+"${CXX:-c++}" -std=c++17 -O3 -Wall -Wextra "${flags[@]}" \
+    "${HERE}/cmd/jev-score/main.cpp" -o "$build_output" -lllama
+mv "$build_output" "$OUT"
+echo "Built ${OUT} against ${LLAMA_DIR}"

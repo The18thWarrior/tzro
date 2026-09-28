@@ -581,10 +581,7 @@ func (ia *ImpactAnalyzer) AnalyzeReport(
 
 // AnalyzeSymbol discovers references to a symbol and packs them into a ContextPack.
 func (ia *ImpactAnalyzer) AnalyzeSymbol(workspaceRoot, symbolName string, budget int, includeGenerated bool) (*ContextPack, error) {
-	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
-	defer cancel()
-	sym := Symbol{Name: symbolName}
-	_, pack, err := ia.AnalyzeReport(ctx, workspaceRoot, []Symbol{sym}, budget, includeGenerated, "working_tree")
+	_, pack, err := ia.AnalyzeSymbolWithFile(workspaceRoot, symbolName, "", budget, includeGenerated)
 	return pack, err
 }
 
@@ -592,7 +589,7 @@ func (ia *ImpactAnalyzer) AnalyzeSymbol(workspaceRoot, symbolName string, budget
 func (ia *ImpactAnalyzer) AnalyzeSymbolWithFile(workspaceRoot, symbolName, filePath string, budget int, includeGenerated bool) (*ImpactReport, *ContextPack, error) {
 	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), 30*time.Second)
 	defer cancel()
-	symbols, err := ResolveSymbolAnchor(workspaceRoot, symbolName, filePath)
+	symbols, err := ResolveSymbolAnchor(ctx, workspaceRoot, symbolName, filePath)
 	if err != nil {
 		return nil, nil, err
 	}

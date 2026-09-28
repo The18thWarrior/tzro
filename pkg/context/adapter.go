@@ -421,20 +421,52 @@ func (a *GoRipgrepAdapter) fallbackFindReferencesBatch(
 	return allRefs, nil
 }
 
+// maxDeclCandidates caps the number of declaration candidates returned to prevent
+// quadratic blowup on high-fanout symbols (e.g., Error, String, Close).
+const maxDeclCandidates = 50
+
 // FindDeclarations finds candidate declaration locations for a symbol in workspace.
-func FindDeclarations(workspaceRoot, symbolName string) ([]Symbol, error) {
+// The provided context is checked between files so callers can enforce timeouts.
+// Directories and files matched by the workspace .gitignore are skipped.
+func FindDeclarations(ctx stdctx.Context, workspaceRoot, symbolName string) ([]Symbol, error) {
 	var results []Symbol
 	declRe := regexp.MustCompile(`(?m)^type\s+` + regexp.QuoteMeta(symbolName) + `\b|^func\s+(\([^)]+\)\s+)?` + regexp.QuoteMeta(symbolName) + `\b|^var\s+` + regexp.QuoteMeta(symbolName) + `\b|^const\s+` + regexp.QuoteMeta(symbolName) + `\b`)
 
-	_ = filepath.WalkDir(workspaceRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			if d != nil && d.IsDir() {
-				name := d.Name()
-				if name == ".git" || name == ".tzro" || name == "vendor" || name == "node_modules" ||
-					name == "__pycache__" || name == ".venv" || name == "venv" || name == "target" {
-					return filepath.SkipDir
-				}
+	// Load .gitignore for workspace-aware filtering.
+	var ign *ignore.GitIgnore
+	if gitIgnoreContent, err := os.ReadFile(filepath.Join(workspaceRoot, ".gitignore")); err == nil {
+		lines := strings.Split(string(gitIgnoreContent), "\n")
+		ign = ignore.CompileIgnoreLines(lines...)
+	}
+
+	walkErr := filepath.WalkDir(workspaceRoot, func(path string, d os.DirEntry, err error) error {
+		// Check context cancellation between files.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if err != nil {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(workspaceRoot, path)
+
+		if d.IsDir() {
+			// Always skip .git (never listed in .gitignore itself).
+			if d.Name() == ".git" {
+				return filepath.SkipDir
 			}
+			// Skip any directory matched by .gitignore.
+			if ign != nil && relPath != "." && ign.MatchesPath(relPath+"/") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip files matched by .gitignore.
+		if ign != nil && ign.MatchesPath(relPath) {
 			return nil
 		}
 
@@ -443,9 +475,13 @@ func FindDeclarations(workspaceRoot, symbolName string) ([]Symbol, error) {
 			return nil
 		}
 
-		relPath, _ := filepath.Rel(workspaceRoot, path)
 		contentBytes, err := os.ReadFile(path)
 		if err != nil {
+			return nil
+		}
+		// Declaration names are extracted verbatim from source. Files without the
+		// requested name cannot contain a match and do not need AST parsing.
+		if !bytes.Contains(contentBytes, []byte(symbolName)) {
 			return nil
 		}
 
@@ -456,6 +492,9 @@ func FindDeclarations(workspaceRoot, symbolName string) ([]Symbol, error) {
 				if d.Name == symbolName {
 					results = append(results, d)
 				}
+			}
+			if len(results) >= maxDeclCandidates {
+				return fmt.Errorf("cap reached")
 			}
 			return nil
 		}
@@ -480,19 +519,28 @@ func FindDeclarations(workspaceRoot, symbolName string) ([]Symbol, error) {
 						StartLine: i + 1,
 						Language:  "go",
 					})
+					if len(results) >= maxDeclCandidates {
+						return fmt.Errorf("cap reached")
+					}
 				}
 			}
 		}
 		return nil
 	})
 
+	// Swallow the sentinel "cap reached" error — results are valid.
+	if walkErr != nil && walkErr.Error() != "cap reached" && walkErr != stdctx.Canceled && walkErr != stdctx.DeadlineExceeded {
+		return results, walkErr
+	}
+
 	return results, nil
 }
 
 // ResolveSymbolAnchor disambiguates a symbol name. If filePath is empty and multiple declarations
 // exist across different files, it returns an ambiguity error with candidates.
-func ResolveSymbolAnchor(workspaceRoot, symbolName, filePath string) ([]Symbol, error) {
-	decls, err := FindDeclarations(workspaceRoot, symbolName)
+// The context is forwarded to FindDeclarations so timeouts are enforced during the walk.
+func ResolveSymbolAnchor(ctx stdctx.Context, workspaceRoot, symbolName, filePath string) ([]Symbol, error) {
+	decls, err := FindDeclarations(ctx, workspaceRoot, symbolName)
 	if err != nil {
 		return nil, err
 	}

@@ -312,6 +312,9 @@ func (s *MCPServer) handleExecuteGraph(ctx context.Context, req *jsonRPCRequest,
 
 	// Execute the graph
 	result, err := s.engine.Execute(ctx, &g)
+	if result != nil {
+		recordActivity("graph", result.Status, 0)
+	}
 	if err != nil {
 		return errorResult(req.ID, fmt.Sprintf("Execution error: %v", err))
 	}
@@ -596,7 +599,11 @@ func newMCPCmd() *cobra.Command {
 				defer s.Close()
 			}
 
-			engine := executor.NewEngine()
+			engine, closeWorkers, err := configuredEngine(mcpWorkspace, s, 4)
+			if err != nil {
+				return err
+			}
+			defer closeWorkers()
 			server := NewMCPServer(engine, s, mcpWorkspace)
 			return server.ServeStdio(cmd.Context())
 		},

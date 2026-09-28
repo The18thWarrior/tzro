@@ -1,0 +1,35 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Go tests (race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with race detection
+        run: go test -race -count=1 ./...
+
+      - name: Check performance limits without race instrumentation
+        run: go test -count=1 ./cmd/tzro -run '^TestLatency_'

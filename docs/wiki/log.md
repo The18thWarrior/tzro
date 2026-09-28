@@ -2,6 +2,24 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-28T13:46:00-07:00] adoption-readiness | Issue 06: CONTEXT.md Glossary Update
+
+- **Activity**: Resolved `06-context-glossary-update.md` under `.scratch/adoption-readiness/` via interactive `/grill-with-docs` session, updating [CONTEXT.md](../../CONTEXT.md) inline.
+- **Key Enhancements**:
+  1. **Decoupled Architecture Terms**: Reframed **Token Shield** as the high-level umbrella term, and established **CLI Toolkit** (active, zero-trust CLI toolchain) and **Proxy Shield** (opt-in loopback proxy) as distinct canonical glossary entries.
+  2. **Decision Engine & Deprecations**: Updated **System 1 Decision Daemon** to specify `bin/jev-score` powered by `chaoliangUNSW/Jev-Style-0.8B-Decision-v3` linking against `libllama` (ADR-0096) with a 2,048-token decision context. Added `Laya Encoder / ModernBERT Daemon (pkg/laya)` and `Proxy-First Architecture` to §2 Deprecated Legacy Terms.
+  3. **Context Pack & Impact Definitions**: Added canonical definition for **Context Pack Assembler (`tzro context`)** and sharpened **Impact Analyzer (`tzro impact`)** to emphasize git diff reverse-reference resolution and context budget packing without cloud egress.
+  4. **Unblocked Downstream Ticket**: Unblocked [07-agents-md-update.md](../../.scratch/adoption-readiness/issues/07-agents-md-update.md) for agent execution.
+
+## [2026-09-28T13:33:00-07:00] adoption-readiness | Issue 05: Contributing Guide (CONTRIBUTING.md)
+
+- **Activity**: Resolved `05-contributing-guide.md` under `.scratch/adoption-readiness/` by authoring comprehensive root `CONTRIBUTING.md`.
+- **Key Enhancements**:
+  1. **Community & Bus-Factor Remediation**: Directly addresses adoption barrier #1 (single-author / bus factor) by establishing open, welcoming contributor pathways, clear PR guidelines, and high-impact contribution areas.
+  2. **Codebase Overview & Package Map**: Quantified ~27k SLOC Go and ~22k SLOC Go tests (~1:1 test ratio) and documented the architectural role of all 21 packages across `pkg/` and `cmd/`.
+  3. **Development & Testing Setup**: Documented prerequisites (Go 1.26+, CGO, C/C++ compiler), build steps for `bin/tzro` and optional `cmd/jev-score`, unit testing, race-enabled tests (`-race`), uninstrumented performance latency checks, and E2E / KV-cache benchmarks.
+  4. **Code Standards & Architecture Pointers**: Codified table-driven tests, hermetic testing guidelines (in-memory SQLite, `t.TempDir()`), allocation discipline, and linked directly to [ARCHITECTURE.md](../../ARCHITECTURE.md), [CONTEXT.md](../../CONTEXT.md), [docs/adr/](../../docs/adr/), and the local wiki.
+
 ## [2026-09-28T11:47:00-07:00] decision-engine | Jev-Style-0.8B & libllama Migration
 
 - **Activity**: Migrated System 1 Decision Subsystem from Laya (ModernBERT) to `chaoliangUNSW/Jev-Style-0.8B-Decision-v3` running via native `libllama` (`bin/jev-score`).
@@ -2921,3 +2939,34 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 - **Evidence**: Local CLI help confirms command-based MCP registration. Official documentation confirms skills, MCP, and hooks, with native trust required before non-managed hooks run. Sources are linked in the decision ticket.
 - **Frontier**: Added [Standard installer implementation](../../.scratch/adoption-readiness/issues/13-standard-installer-implementation.md). Benchmark profile work now depends on the implementation, rather than only the installation decision.
 - **Scope**: Updated planning documents. No installer code or live client configuration changed. No paid benchmarks ran.
+
+
+## [2026-09-28] wayfinder | Standard installer implemented and checked locally
+
+- **Outcome**: Closed [Standard installer implementation](../../.scratch/adoption-readiness/issues/13-standard-installer-implementation.md). Added verified release downloads, automatic native client configuration, preserved user settings, and explicit partial-failure and approval states.
+- **Runtime migration**: Full now references the JEV-style Qwen 0.8B decision runtime in `pkg/decision`, following ADR-0096. Standard initialization and MCP do not require model runtimes.
+- **Validation**: The complete race suite passed during implementation. Final affected-package race checks passed. All three CGO-disabled release builds passed. Fixtures cover downloads, shell setup, client configuration, pending trust, failure preservation, and MCP initialization.
+- **Sources**: [Native agent installation contracts](sources/agent-installation-contracts.md) records the primary client references. [Installation guidance](../installation.md) records the capability matrix, including Pi's unverified native MCP registration.
+- **Frontier**: Added [Published installation and client verification](../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md). Benchmark profile implementation is unblocked. Public download, actual client activation, and installation timing claims remain pending.
+- **Scope**: Changes remain local. No release, live agent configuration update, or paid benchmark ran.
+
+
+## [2026-09-28] wayfinder | Installation-profile benchmarks and native JEV scoring
+
+- **Outcome**: Closed [Benchmark installation profiles](../../.scratch/adoption-readiness/issues/12-benchmark-installation-profiles.md). Added isolated Baseline, Standard, and Full recipes using the installed Pi client and real installer. Existing component benchmarks remain diagnostics.
+- **JEV implementation**: Replaced the fixed response in `cmd/jev-score/main.cpp` with typed request validation, segmented tokenization, verdict-logit inference, calibrated probabilities, bounded input, and recoverable JSONL errors. Added build guidance, dependency notices, and real-model integration tests.
+- **Runtime integration**: CLI and MCP graph execution share opt-in decision/extractor wiring. Runtime traces contain invocation outcomes, without model inputs. Extractor startup now respects cancellation and surfaces worker errors.
+- **Validation**: The complete Go race suite passed. Pi 0.74.2 loaded the installed skill and hook in isolated profiles. Full routed through its proxy and invoked the real JEV model against a local response fixture. Native scorer tests passed with the Q4_K_M weights. Four publisher-reference comparisons produced identical token counts and margins.
+- **Evidence boundaries**: GLiNER was a fixture in the client smoke test. No paid requests, live client configuration changes, release, or savings claims occurred. [Workflow guidance](../benchmark-workflows.md) explains runtime provisioning, timing, estimated costs, and incomplete-result handling.
+- **Frontier**: Published installation and client verification remains open. Paid evaluation and publication remain in Publish benchmark artifacts.
+
+## [2026-09-28] wayfinder | Tier strategy: Single Apache 2.0 binary with Open Core commercial model
+
+- **Outcome**: Closed [Tier strategy](../../.scratch/adoption-readiness/issues/08-tier-strategy.md). Locked in the product tiering and licensing architecture.
+- **Architectural & Licensing Decisions**:
+  1. **Single Unified Binary**: The core `tzro` binary remains a single compiled native Go executable (<50 MB RAM) distributed under **Apache 2.0** without user-count restrictions, feature gates, or license key DRM.
+  2. **Tiering as Adoption Progression**: CLI Toolkit (default) and Proxy Shield (`tzro start`) are both included in the open-source binary. Enterprise Shield is positioned as compliance and policy governance (`.tzro/privacy.json`).
+  3. **Future Commercial Separation**: When team-level enterprise features (central proxy gateway, fleet policy distribution, SOC 2 audit exports, SSO/OIDC) are built, they will ship as an independent commercial binary (`tzro-enterprise` / `tzro-gateway`), preserving zero-trust, zero-friction developer adoption of core `tzro`.
+  4. **Command Invariants**: `tzro init` remains focused on agent hooks/skills/MCP setup without background daemons; `tzro start` remains the manual loopback proxy launcher.
+- **Files touched**: [.scratch/adoption-readiness/issues/08-tier-strategy.md](../../.scratch/adoption-readiness/issues/08-tier-strategy.md), [.scratch/adoption-readiness/MAP.md](../../.scratch/adoption-readiness/MAP.md), [Adoption readiness overview](architecture/adoption-readiness.md), and this log.
+

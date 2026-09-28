@@ -77,6 +77,7 @@ type ContextPack struct {
 	Coverage    *CoverageReport    `json:"coverage,omitempty"`
 	Impact      *ImpactReport      `json:"impact,omitempty"`
 	Tokenizer   *TokenizerMetadata `json:"tokenizer,omitempty"`
+	TraceID     string             `json:"trace_id,omitempty"`
 }
 
 // EstimateTokens calculates exact BPE token count using the centralized tokenizer.
@@ -88,6 +89,10 @@ func EstimateTokens(text string) int {
 func (cp *ContextPack) FormatMarkdown() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Context Pack: %q (Budget: %d tokens, Used: ~%d tokens)\n\n", cp.Query, cp.Budget, cp.UsedTokens))
+
+	if cp.TraceID != "" {
+		sb.WriteString(fmt.Sprintf("**Trace ID:** `%s` — inspect via `tzro inspect explain %s`\n\n", cp.TraceID, cp.TraceID))
+	}
 
 	if cp.Coverage != nil {
 		sb.WriteString("### Coverage Report\n")
@@ -624,6 +629,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 			},
 		}
 		_ = inspector.NewEngine(a.store, a.policy).RecordTrace(tr)
+		pack.TraceID = traceID
 	}
 
 	return pack, nil

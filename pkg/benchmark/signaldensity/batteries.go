@@ -826,6 +826,9 @@ func buildTabularPrompt(tableName, rawData string, s *store.Store, query, expect
 // 5. Mini-Macro Coding Tasks (3 cases)
 // ---------------------------------------------------------------------------
 
+// LoadWorkflowCases returns pristine coding fixtures without running component transforms.
+func LoadWorkflowCases() ([]TaskCase, error) { return loadMiniMacroCases(nil) }
+
 func loadMiniMacroCases(s *store.Store) ([]TaskCase, error) {
 	// Task A: Interface Implementation
 	taskAScaffold := map[string]string{

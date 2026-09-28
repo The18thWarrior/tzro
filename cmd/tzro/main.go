@@ -56,6 +56,9 @@ func newRootCmd() *cobra.Command {
 		Use:   "tzro",
 		Short: "Tzro v2: The Local Token Shield & Context Optimization Engine",
 		Long:  `Tzro v2 eliminates cloud API rate limits and token waste on resource-constrained hardware.`,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			recordActivity("cli:"+cmd.CommandPath(), "invoked", 0)
+		},
 	}
 
 	// 1. START / PROXY COMMAND
@@ -288,10 +291,10 @@ func newRootCmd() *cobra.Command {
 	compactCmd.Flags().StringVar(&compactRunCmd, "run", "", "Command to execute and compact in wrapper mode")
 	compactCmd.Flags().StringVar(&compactFormat, "format", "markdown", "Output format: markdown|json")
 
-	// 6. HOOK COMMAND (Antigravity, Claude, Hermes, Copilot, Pi-Coder Bridge)
+	// 6. HOOK COMMAND (native agent adapters and legacy benchmark bridges)
 	hookCmd := &cobra.Command{
 		Use:   "hook [harness] [event]",
-		Short: "Agent lifecycle hook bridge for Antigravity, Claude Code, Hermes, Copilot, and Pi-Coder",
+		Short: "Agent lifecycle hook bridge for Antigravity, Claude Code, Hermes, Copilot, Pi-Coder, and Codex",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			harness := "antigravity"
@@ -306,6 +309,10 @@ func newRootCmd() *cobra.Command {
 			s, _ := store.OpenStore(getDBPath())
 			if s != nil {
 				defer s.Close()
+			}
+
+			if strings.HasPrefix(event, "native-") {
+				return hooks.HandleNativeHook(harness, strings.TrimPrefix(event, "native-"), os.Stdin, os.Stdout, s)
 			}
 
 			switch harness {
@@ -377,7 +384,7 @@ func newRootCmd() *cobra.Command {
 
 	initCmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize and configure lifecycle hooks for AI coding agents or Git repositories",
+		Short: "Configure agent skills, hooks, and MCP access, or initialize Git integration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Check if repository config template creation is requested
 			if initConfig {
@@ -417,31 +424,35 @@ func newRootCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Println(titleStyle.Render("⚡ Tzro Agent Lifecycle Hook Initializer"))
-			results, err := hooks.DetectAndInstallHooks(hookTargets, isWorkspace)
-			if err != nil {
-				return err
-			}
-
-			if len(results) == 0 {
-				fmt.Println(warnStyle.Render("No active agent environments detected."))
-				fmt.Println("Run with `--hooks all` or `--hooks claude,antigravity,hermes,copilot` to force configuration.")
-				return nil
-			}
-
-			for _, r := range results {
-				if strings.HasPrefix(r.Status, "failed") {
-					fmt.Printf("  %s %s: %s\n", warnStyle.Render("✗"), lipgloss.NewStyle().Bold(true).Render(string(r.Harness)), r.Status)
-				} else {
-					fmt.Printf("  %s %s: %s (%s)\n", infoStyle.Render("✔"), lipgloss.NewStyle().Bold(true).Render(string(r.Harness)), r.Status, r.ConfigPath)
+			fmt.Println(titleStyle.Render("Tzro agent setup"))
+			results, setupErr := hooks.DetectAndInstallHooks(hookTargets, isWorkspace)
+			for _, result := range results {
+				fmt.Printf("%s: %s\n", result.Harness, result.Status)
+				for _, integration := range result.Integrations {
+					fmt.Printf("  %s: %s", integration.Name, integration.Status)
+					if integration.Path != "" {
+						fmt.Printf(" (%s)", integration.Path)
+					}
+					fmt.Println()
+					if integration.Message != "" {
+						fmt.Printf("    %s\n", integration.Message)
+					}
 				}
 			}
-			fmt.Println(infoStyle.Render("\n✔ Lifecycle hooks successfully configured."))
+			if setupErr != nil {
+				return fmt.Errorf("agent setup incomplete: %w", setupErr)
+			}
+			if len(results) == 0 {
+				fmt.Println("No supported agent clients detected. The CLI is ready to use.")
+				fmt.Println("After installing a client, run tzro init --hooks auto.")
+			} else {
+				fmt.Println("Configuration checked. Restart clients and complete any native approvals shown above.")
+			}
 			return nil
 		},
 	}
-	initCmd.Flags().StringSliceVar(&hookTargets, "hooks", []string{"auto"}, "Agent hook targets to configure: auto, all, antigravity, claude, hermes, copilot, pi-coder")
-	initCmd.Flags().BoolVarP(&isWorkspace, "workspace", "w", false, "Configure hooks in current workspace instead of user home directory")
+	initCmd.Flags().StringSliceVar(&hookTargets, "hooks", []string{"auto"}, "Agent setup targets: auto, all, antigravity, claude, hermes, copilot, pi-coder, codex")
+	initCmd.Flags().BoolVarP(&isWorkspace, "workspace", "w", false, "Configure supported agent integrations in the current workspace")
 	initCmd.Flags().StringVar(&gitHookName, "hook", "", "Git hook to install or configure: pre-commit")
 	initCmd.Flags().BoolVar(&gitHookForce, "force", false, "Backup and replace existing non-tzro hook")
 	initCmd.Flags().BoolVar(&gitHookUninstall, "uninstall", false, "Uninstall tzro Git hook and restore any backup")
@@ -594,15 +605,15 @@ func newRootCmd() *cobra.Command {
 			}
 
 			// Check 4: Lifecycle Hooks Diagnostic
-			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n🪝 Agent Lifecycle Hook Verification:"))
-			results, err := hooks.DetectAndInstallHooks([]string{"auto"}, false)
+			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n🪝 Agent environment detection:"))
+			results, err := hooks.DetectAgents()
 			if err != nil {
 				fmt.Printf("  %s Hook detection error: %v\n", warnStyle.Render("✗"), err)
 			} else if len(results) == 0 {
 				fmt.Printf("  %s No agent environments auto-detected in default paths.\n", warnStyle.Render("!"))
 			} else {
 				for _, r := range results {
-					fmt.Printf("  %s %s: %s (%s)\n", infoStyle.Render("✔"), r.Harness, r.Status, r.ConfigPath)
+					fmt.Printf("  %s: detected (configuration and activation not checked)\n", r)
 				}
 			}
 
@@ -1886,7 +1897,7 @@ Examples:
 	signalDensityCmd.Flags().StringVar(&benchBaseURL, "base-url", "", "Custom base URL for LLM API (defaults to OpenRouter)")
 	signalDensityCmd.Flags().StringVar(&benchAPIKey, "api-key", "", "API key for LLM provider (defaults to env vars)")
 
-	benchCmd.AddCommand(signalDensityCmd)
+	benchCmd.AddCommand(signalDensityCmd, newWorkflowBenchCmd())
 
 	// System 1 Graph Execution commands (v3)
 	executeCmd := newExecuteCmd()
