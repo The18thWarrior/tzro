@@ -2,7 +2,27 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-28T14:50:00-07:00] adoption-readiness | Issue 04: Published Benchmark Artifacts (Map Complete)
+
+- **Activity**: Resolved `04-publish-benchmark-artifacts.md` under `.scratch/adoption-readiness/`, marking the entire 14-ticket Adoption Readiness Wayfinder map 100% complete!
+- **Key Enhancements**:
+  1. **Empirical Multi-Profile Workflow Evaluation**: Executed live 12-cell matrix benchmark using `tzro bench workflows` comparing **Baseline**, **Tzro Standard**, and **Tzro Full** across four representative Go developer tasks (`macro_1_cache_impl`, `macro_2_rate_bugfix`, `macro_3_schema_refactor`, `macro_4_auth_diagnosis`) with OpenRouter `minimax/minimax-m3` and verified native Pi-Coder v0.74.2.
+  2. **100% Task Success & Cost Guards**: All 12 cells passed automated test grading with clean Go code and module preservation. Total run cost was $0.05011 USD under the $2.00 cost limit. Full achieved the lowest completion tokens (3,033 tokens) and matched Baseline agent time (80.1s vs 78.2s).
+  3. **Structured Reports & Publication Artifacts**: Published raw structured results to `docs/benchmarks/workflows-20260928.json` and generated detailed markdown report at `docs/benchmarks/workflows-20260928.md` using `scripts/generate_benchmark_report.py`.
+  4. **Make Targets for Cost-Free Regeneration**: Added root `Makefile` supporting `make benchmark-publish` (generates report from saved JSON without paid calls), `make benchmark-preflight` (dry-run zero-cost verification), and `make benchmark-run` (guarded live runs).
+  5. **README Benchmark Section Updated**: Updated README `#benchmark` section to lead with the installation-profile comparison table, linking directly to the published report and JSON artifact.
+  6. **Adoption Readiness Complete**: All 10 adoption barriers resolved across README, CLI quickstart, CI pipeline, contributing guide, CONTEXT/AGENTS glossary, tier strategy, verified S3 binaries, one-line installer, and published benchmark evidence.
+
+## [2026-09-28T14:20:00-07:00] adoption-readiness | Issue 14: Published Installation & Client Verification
+
+- **Activity**: Resolved `14-published-installation-and-client-verification.md` under `.scratch/adoption-readiness/`.
+- **Key Enhancements**:
+  1. **S3 Release Automation & Bucket Policy**: Resolved public S3 read permissions; ran `Release Binaries` GitHub Actions workflow for tag `v3.1.0`. Verified public downloads for all 3 architecture binaries, `SHA256SUMS`, `version.txt`, and `install.sh`.
+  2. **One-Liner Verification**: Verified isolated installation via `curl -sSL https://get.tzro.ai | sh -s -- --cli-only` on macOS arm64. Verified `tzro --version` and hook installation across 6 detected coding agents.
+  3. **Quickstart Promotion**: Promoted verified `curl -sSL https://get.tzro.ai | sh` to [README.md](../../README.md) and [docs/installation.md](../../docs/installation.md).
+
 ## [2026-09-28T13:46:00-07:00] adoption-readiness | Issue 06: CONTEXT.md Glossary Update
+
 
 - **Activity**: Resolved `06-context-glossary-update.md` under `.scratch/adoption-readiness/` via interactive `/grill-with-docs` session, updating [CONTEXT.md](../../CONTEXT.md) inline.
 - **Key Enhancements**:

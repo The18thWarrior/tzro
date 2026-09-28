@@ -1,8 +1,8 @@
 # Adoption readiness
 
-Status: in progress. Last updated: September 28, 2026.
+Status: complete. Last updated: September 28, 2026.
 
-The [Adoption readiness map](../../../.scratch/adoption-readiness/MAP.md) tracks the shift to CLI-first documentation and optional proxy use.
+The [Adoption readiness map](../../../.scratch/adoption-readiness/MAP.md) tracks the shift to CLI-first documentation and optional proxy use. All 14 tickets on the map are fully closed.
 
 The [README structure decisions](../../../.scratch/adoption-readiness/issues/01-readme-structure-decisions.md) define the layout. The [README rewrite](../../../.scratch/adoption-readiness/issues/02-readme-rewrite.md) records its application, evidence corrections, and checks.
 
@@ -24,10 +24,11 @@ The [Benchmark categories and evidence](../../../.scratch/adoption-readiness/iss
 
 The [JEV worker](../../../cmd/jev-score/README.md) now performs real libllama inference. Its typed results and verdict margins pass real-model and reference-parity checks. Native Pi integration passed against a loopback response fixture, including installed hooks, Full proxy routing, and real JEV use. The extractor remained a fixture in that smoke test.
 
-[Publish benchmark artifacts](../../../.scratch/adoption-readiness/issues/04-publish-benchmark-artifacts.md) is now unblocked and is the final remaining task on the adoption-readiness map.
+[Publish benchmark artifacts](../../../.scratch/adoption-readiness/issues/04-publish-benchmark-artifacts.md) is closed. A full 12-cell developer workflow benchmark suite comparing Baseline, Tzro Standard, and Tzro Full across 4 Go tasks was executed live against OpenRouter `minimax/minimax-m3`. Published structured JSON results artifact to [`docs/benchmarks/workflows-20260928.json`](../../benchmarks/workflows-20260928.json) and detailed markdown report to [`docs/benchmarks/workflows-20260928.md`](../../benchmarks/workflows-20260928.md). Root `Makefile` provides `make benchmark-publish` for offline report regeneration. Updated README `#benchmark` section to lead with the installation-profile comparison table.
 
 The [Contributing guide](../../../.scratch/adoption-readiness/issues/05-contributing-guide.md) is resolved. The root [CONTRIBUTING.md](../../../CONTRIBUTING.md) defines onboarding pathways, the 21-package subsystem map, ~1:1 test ratio expectations, build/test workflows, and high-impact areas to reduce single-author bus factor.
 
 The [AGENTS.md update](../../../.scratch/adoption-readiness/issues/07-agents-md-update.md) is resolved. The repository's agent instructions lead with the CLI-first discovery and compaction workflows, split the agent CLI Reference table into dedicated CLI Toolkit and Proxy Shield sections, and synchronize the Domain Language Glossary with `CONTEXT.md`—mirroring the umbrella Token Shield concept, explicit CLI Toolkit and Proxy Shield definitions, AST declaration spans, and the native JEV-style / libllama scoring daemon.
 
 The [Tier strategy](../../../.scratch/adoption-readiness/issues/08-tier-strategy.md) decision is closed. The core engine remains a single unified binary distributed under permissive Apache 2.0 without user caps, telemetry, or artificial code gates. Tiers represent an adoption and positioning progression (CLI Toolkit as default, Proxy Shield as opt-in). Future enterprise fleet governance and centralized gateway features will be isolated to an independent commercial binary, preserving zero-friction adoption for individual developers.
+

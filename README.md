@@ -293,6 +293,20 @@ The [security policy](SECURITY.md) documents the threat model, credential handli
 
 ## Performance and benchmark evidence
 
+### Developer Workflows (Installation Profiles)
+
+`tzro bench workflows` evaluates real coding tasks using native client agent loops across three installation profiles: **Baseline**, **Tzro Standard** (default installer with CLI, skills, and hooks), and **Tzro Full** (Standard + loopback Proxy Shield, JEV decision engine, and GLiNER span extractor).
+
+| Profile | Task Success | Input Tokens | Output Tokens | Cache Read | Total Cost (USD) | Agent Wall Time | Evidence |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Baseline** | 4/4 (100%) | 20,259 | 3,352 | 56,960 | $0.01352 | 78.19s | [Report](docs/benchmarks/workflows-20260928.md) |
+| **Standard** | 4/4 (100%) | 34,746 | 5,842 | 76,928 | $0.02205 | 126.23s | [Report](docs/benchmarks/workflows-20260928.md) |
+| **Full** | 4/4 (100%) | 23,137 | 3,033 | 66,048 | $0.01454 | 80.07s | [Report](docs/benchmarks/workflows-20260928.md) |
+
+*Full benchmark run on September 28, 2026 using MiniMax M3 via OpenRouter with verified native Pi-Coder v0.74.2. View the full [Benchmark Report](docs/benchmarks/workflows-20260928.md) and raw [JSON artifact](docs/benchmarks/workflows-20260928.json). Reproduce or regenerate with `make benchmark-publish`.*
+
+### Supporting Component Measurements
+
 | Measurement | Scope | Evidence |
 | --- | --- | --- |
 | 70–90% code-read token reduction | Reported AST skeletonization range. Varies by file. | [Skeletonizer tests](pkg/ast/skeleton_test.go) |
@@ -300,9 +314,8 @@ The [security policy](SECURITY.md) documents the threat model, credential handli
 | 70–99% cache hit rate | Earlier reported workflow and controlled-run range. Includes native caching. | [Proxy tests](pkg/proxy/proxy_e2e_test.go), [KV-cache tests](pkg/hooks/kvcache_e2e_bench_test.go) |
 | 85.80% → 89.88% warm-cache hit ratio | Direct → proxied MiniMax M3, September 23, 2026 | [Saved run](pkg/hooks/testdata/kvcache_e2e_benchmark_results.json) |
 
-The saved run is one workload, not a guarantee of cost savings or latency. The [E2E instructions](#e2e-integration-tests) describe how to repeat provider comparisons. Provider calls incur costs.
+The [installation-profile recipe](docs/benchmark-workflows.md) documents native Pi integration, runtime preparation, timing, and result fields. The [E2E instructions](#e2e-integration-tests) describe how to repeat provider comparisons. Provider calls incur costs.
 
-`tzro bench workflows` compares **Baseline**, **Standard** after default installation, and **Full** with the proxy and experimental runtimes. It checks setup before making paid requests. The [installation-profile recipe](docs/benchmark-workflows.md) documents native Pi integration, runtime preparation, timing, and result fields. Integration checks pass locally; published task-quality and savings results are still pending. Existing component and proxy measurements remain diagnostics.
 
 ---
 

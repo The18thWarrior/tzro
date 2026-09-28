@@ -1,0 +1,816 @@
+{
+  "schema": "tzro.installation-profiles.v1",
+  "client_version": "",
+  "ready": true,
+  "metadata": {
+    "arch": "arm64",
+    "binary_vcs.modified": "false",
+    "binary_vcs.revision": "56694a5a9a5c9d29d4468baa53a9a9bf3fd7b533",
+    "binary_vcs.time": "2026-09-28T21:29:47Z",
+    "cache_policy": "fresh client, workspace, Go cache and tzro store per cell; readiness workers stop before tasks; OS and provider caches uncontrolled",
+    "client_binary_sha256": "0e4e408dac67af83dd4431a7780400712da6b9e083f862de568f04ef586c8501",
+    "cost_guard": "checked after each reported assistant message; in-flight usage can exceed the limit",
+    "cost_source": "estimate from native client token usage and caller-supplied prices; incomplete usage is flagged",
+    "cpu_model": "Apple M2 Pro",
+    "download_cost": "not measured; models must be provisioned before running this recipe",
+    "go_version": "go1.26.0",
+    "hardware_model": "Mac14,9",
+    "installation_source": "explicit local binary through install.sh",
+    "installer_sha256": "2bb243b92bfbf79e81b8fe1a10fc4a1189b525d1915b9449dede89b485e29ce6",
+    "logical_cpus": 10,
+    "max_turns": 20,
+    "memory_bytes": "34359738368",
+    "model": "minimax/minimax-m3",
+    "model_context_window": 128000,
+    "model_max_output_tokens": 8192,
+    "os": "darwin",
+    "prices": {
+      "input_per_million": 0.3,
+      "output_per_million": 1.2,
+      "cache_read_per_million": 0.06,
+      "cache_write_per_million": 0
+    },
+    "provider_base_url": "https://openrouter.ai/api/v1",
+    "recipe": "tzro.installation-profiles.v1",
+    "runtimes": {
+      "decision_binary_sha256": "37fcf9c5110d275a9b3ffda027ad1abe55b6bb21b0d1adc58ab01249eba0cdb0",
+      "decision_model_sha256": "0a19bc29bacc33e0d871146c8612b24dd14c2ed2e61cedeb7a928b0852628bac",
+      "decision_version": "JEV v3 (libllama 9770, Qwen3.5)",
+      "extractor_argument_files_sha256": {
+        "gliner_worker.py": "c9e0031b9ee2c48945cd47ce01c57fca31f020f71cf5eec7ca9fc54f984c1446"
+      },
+      "extractor_arguments_sha256": "6114d0c7ea766dafe1e22e292613bcd084dcae9ae0de5690e479bc3afa31c13a",
+      "extractor_binary_sha256": "15040e58b17b6417ce2a71a0de166f6bdf4e6e4e1ee61374413d61eb4e361b7f",
+      "extractor_model_sha256": "898ba838a048c7fa4599654405ddef54437e642875a5706613dcceea8cf2ea81",
+      "extractor_version": "GLiNER 2.5 (gliner2 2.0.0, torch 2.8.0)"
+    },
+    "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "source_revision": "56694a5a9a5c9d29d4468baa53a9a9bf3fd7b533",
+    "source_status": "",
+    "task_timeout_seconds": 180,
+    "timestamp": "2026-09-28T21:44:09Z",
+    "tzro_binary_sha256": "a729195b3f30afada59c8a8853775d65badea440956a0dbee82240daba96c8c3"
+  },
+  "results": [
+    {
+      "profile": "baseline",
+      "task": "macro_1_cache_impl",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/000-baseline/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/000-baseline/workspace",
+      "status": "completed",
+      "skill_loaded": false,
+      "hooks": "absent",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 3,
+      "preflight_ms": 465,
+      "usage": {
+        "requests": 8,
+        "input": 5005,
+        "output": 849,
+        "cache_read": 13056,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.0033036600000000004
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 22513,
+      "grade_ms": 345,
+      "final_response": "Clean. Here's a summary of what I did:\n\n**Added `memory.go`** — implements the `Driver` interface as a thread-safe in-memory key-value store:\n\n- **`MemoryDriver`** — struct holding a `map[string]string` guarded by a `sync.RWMutex` so concurrent `Get`/`Set`/`Delete` calls don't race.\n- **`NewMemoryDriver() Driver`** — returns a freshly-initialized driver. Returns the interface type, which is what the test expects (`var d Driver = NewMemoryDriver()`).\n- **`Get`** — read-locks, looks up the key, returns `ErrNotFound` when missing (matching the test's check `err != ErrNotFound`).\n- **`Set`** — write-locks, stores the value.\n- **`Delete`** — write-locks, removes the key. Uses `delete()` so it's safe even when the key isn't present (the test only deletes an existing key, but this avoids surprising callers).\n\n**Results:** `go test -v ./...` passes; `go vet` is clean. No existing files were modified.",
+      "tool_calls": 7,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": null,
+      "prompt_sha256": "09801a939f7eb387433e407a46a340c041178bf3e1b176fcf3ba025b59d1309f",
+      "fixture_sha256": "e8c7c795459c47c7dbbbb59d140ae92893a6e809de7f82714ad4aa2eedd27319",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "standard",
+      "task": "macro_1_cache_impl",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/001-standard/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/001-standard/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 841,
+      "preflight_ms": 493,
+      "usage": {
+        "requests": 8,
+        "input": 9139,
+        "output": 1021,
+        "cache_read": 15872,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.004919219999999999
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 22642,
+      "grade_ms": 359,
+      "final_response": "Tests pass. Summary:\n\n- **`memory.go`** (new): Implements `NewMemoryDriver()` returning a `Driver`. The backing struct uses a `sync.RWMutex` and `map[string]string`.\n  - `Get` returns `ErrNotFound` when the key is absent.\n  - `Set` and `Delete` are no-ops in terms of errors.\n  - A read-write mutex allows concurrent readers while safely serializing writes.\n- **`driver.go`** and **`memory_test.go`** preserved unchanged.\n- Tests pass: `go test -v ./...` → `PASS: TestMemoryDriver`.",
+      "tool_calls": 7,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "09801a939f7eb387433e407a46a340c041178bf3e1b176fcf3ba025b59d1309f",
+      "fixture_sha256": "e8c7c795459c47c7dbbbb59d140ae92893a6e809de7f82714ad4aa2eedd27319",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "d094593c70d82e4bd166cfe876a5ce375fb22facbf33e325ff53ce9228fe3200",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "full",
+      "task": "macro_1_cache_impl",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/002-full/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/002-full/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 829,
+      "preflight_ms": 7869,
+      "usage": {
+        "requests": 7,
+        "input": 6061,
+        "output": 716,
+        "cache_read": 12032,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.0033994200000000002
+      },
+      "runtime_ready": true,
+      "task_success": true,
+      "agent_ms": 19617,
+      "grade_ms": 367,
+      "final_response": "Tests pass. I added `memory.go` with a private `memoryDriver` type backed by a `map[string]string`, exposing `NewMemoryDriver() Driver`. `Get` returns `ErrNotFound` for missing keys; `Set` and `Delete` operate on the map.\n\n- `driver.go`, `memory_test.go`, and `go.mod` were left untouched.\n- `go test ./...` → `ok acme/cache`.",
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro start",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "09801a939f7eb387433e407a46a340c041178bf3e1b176fcf3ba025b59d1309f",
+      "fixture_sha256": "e8c7c795459c47c7dbbbb59d140ae92893a6e809de7f82714ad4aa2eedd27319",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "14f3771633f035a5145094b362f2eeb3b09b9619725738e1bdcdf6965a95e155",
+      "proxy_requests": 7
+    },
+    {
+      "profile": "baseline",
+      "task": "macro_2_rate_bugfix",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/003-baseline/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/003-baseline/workspace",
+      "status": "completed",
+      "skill_loaded": false,
+      "hooks": "absent",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 3,
+      "preflight_ms": 467,
+      "usage": {
+        "requests": 7,
+        "input": 4434,
+        "output": 772,
+        "cache_read": 11136,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.0029247599999999998
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 12675,
+      "grade_ms": 359,
+      "final_response": "Tests pass. The bug was an off-by-one check: `l.tokens \u003c= 1` blocked the last available token. The fix is `l.tokens \u003c= 0`, which only denies when there are no tokens remaining. With `burst=3`, all 3 tokens are now consumed, and the 4th call is correctly denied.\n\nFinal `limiter.go`:\n\n```go\npackage rate\n\ntype Limiter struct {\n\ttokens int\n\tburst  int\n}\n\nfunc NewLimiter(burst int) *Limiter {\n\treturn \u0026Limiter{burst: burst, tokens: burst}\n}\n\nfunc (l *Limiter) Allow() bool {\n\tif l.tokens \u003c= 0 {\n\t\treturn false\n\t}\n\tl.tokens--\n\treturn true\n}\n```",
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": null,
+      "prompt_sha256": "fa7b86ad0b3651d7ad19bd9da9fe1d00168ec4c8426c14100b097e3123500902",
+      "fixture_sha256": "37a8ee3494968c76c52162c946f04e634b7fe5d4495df3db68f0107846ffc384",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "standard",
+      "task": "macro_2_rate_bugfix",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/004-standard/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/004-standard/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 750,
+      "preflight_ms": 506,
+      "usage": {
+        "requests": 5,
+        "input": 5078,
+        "output": 542,
+        "cache_read": 7296,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.0026115599999999993
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 14843,
+      "grade_ms": 350,
+      "final_response": "Fixed. Changed the off-by-one check in `limiter.go` from `l.tokens \u003c= 1` to `l.tokens \u003c= 0`, so all `burst` tokens can be consumed before requests are denied.\n\n- With `burst=3`: allows 3 calls (tokens goes 3→2→1→0), denies the 4th\n- `TestLimiter_Burst` passes",
+      "tool_calls": 4,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "fa7b86ad0b3651d7ad19bd9da9fe1d00168ec4c8426c14100b097e3123500902",
+      "fixture_sha256": "37a8ee3494968c76c52162c946f04e634b7fe5d4495df3db68f0107846ffc384",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "108f7aa57dda4dba331c7711956a23ef8e7563bd278c3b5851099dd11efed9f2",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "full",
+      "task": "macro_2_rate_bugfix",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/005-full/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/005-full/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 734,
+      "preflight_ms": 7111,
+      "usage": {
+        "requests": 8,
+        "input": 4901,
+        "output": 839,
+        "cache_read": 16768,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.00348318
+      },
+      "runtime_ready": true,
+      "task_success": true,
+      "agent_ms": 16955,
+      "grade_ms": 366,
+      "final_response": "Tests pass. Summary:\n\n**Bug:** In `limiter.go`, `Allow()` used `if l.tokens \u003c= 1` to guard consumption, which denied access when exactly one token remained — wasting the final burst token.\n\n**Fix:** Changed the guard to `if l.tokens \u003c= 0`, so the bucket is only considered empty when `tokens == 0`, allowing all `burst` tokens to be consumed before refusing.\n\n**Verification:** `go test ./...` → `ok acme/rate`. The provided `TestLimiter_Burst` now passes (tokens 1, 2, 3 allowed; token 4 denied). `go.mod` and `limiter_test.go` were left untouched.",
+      "tool_calls": 7,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro start",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "fa7b86ad0b3651d7ad19bd9da9fe1d00168ec4c8426c14100b097e3123500902",
+      "fixture_sha256": "37a8ee3494968c76c52162c946f04e634b7fe5d4495df3db68f0107846ffc384",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "edaff2554483b2893761cc933e72bc882fa3c6f89eddb042400ec17bf26d1bbe",
+      "proxy_requests": 8
+    },
+    {
+      "profile": "baseline",
+      "task": "macro_3_schema_refactor",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/006-baseline/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/006-baseline/workspace",
+      "status": "completed",
+      "skill_loaded": false,
+      "hooks": "absent",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 3,
+      "preflight_ms": 464,
+      "usage": {
+        "requests": 7,
+        "input": 4364,
+        "output": 424,
+        "cache_read": 10240,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.0024324
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 15774,
+      "grade_ms": 361,
+      "final_response": "Tests pass. Added `Tags []string` to the `Item` struct in `item.go`.",
+      "tool_calls": 6,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": null,
+      "prompt_sha256": "3397e90de971570e83c3f39ae7eae9771c4a9927b2233c644e51958cc23ccbf5",
+      "fixture_sha256": "285edc5a9d80d9772fce078e0735cb537fa005b1d1189422c8954f432652bd89",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "standard",
+      "task": "macro_3_schema_refactor",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/007-standard/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/007-standard/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 761,
+      "preflight_ms": 494,
+      "usage": {
+        "requests": 11,
+        "input": 13820,
+        "output": 3379,
+        "cache_read": 35072,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.01030512
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 61967,
+      "grade_ms": 363,
+      "final_response": "All set. Summary of what I did:\n\n**`item.go`** — Added `Tags []string` field to the `Item` struct. `NewItem(id, title string)` is unchanged (still a 2-arg constructor that sets only `ID` and `Title`; `Tags` remains `nil` after construction, which the test then assigns to directly).\n\n**`item_test.go`** — Untouched. Still calls `NewItem(\"1\", \"Widget\")` and assigns `item.Tags = []string{\"sale\", \"featured\"}`, then checks `len == 2`.\n\n**`go.mod`** — Untouched. Still `module acme/model` with `go 1.22.0`.\n\n**Test result:**\n```\n=== RUN   TestItem_Tags\n--- PASS: TestItem_Tags (0.00s)\nPASS\nok      acme/model        0.773s\n```\n\nExisting behavior is preserved (2-arg `NewItem` signature and body unchanged), and the new `Tags` slice satisfies the test.",
+      "tool_calls": 15,
+      "tool_errors": 2,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro expand",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "3397e90de971570e83c3f39ae7eae9771c4a9927b2233c644e51958cc23ccbf5",
+      "fixture_sha256": "285edc5a9d80d9772fce078e0735cb537fa005b1d1189422c8954f432652bd89",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "d8d046643f7f18515a3a13c92af1d872b714ea09a38b62d1fb01d3fc6c392281",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "full",
+      "task": "macro_3_schema_refactor",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/008-full/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/008-full/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 770,
+      "preflight_ms": 7128,
+      "usage": {
+        "requests": 8,
+        "input": 5603,
+        "output": 523,
+        "cache_read": 14592,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.00318402
+      },
+      "runtime_ready": true,
+      "task_success": true,
+      "agent_ms": 20029,
+      "grade_ms": 390,
+      "final_response": "Done. Added `Tags []string` to the `Item` struct in `item.go`. The existing test (`TestItem_Tags`) now compiles and passes because it directly assigns to `item.Tags` and checks its length. `NewItem` is preserved, `go.mod` is untouched, and `go test ./...` reports `ok acme/model`.",
+      "tool_calls": 7,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro start",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "3397e90de971570e83c3f39ae7eae9771c4a9927b2233c644e51958cc23ccbf5",
+      "fixture_sha256": "285edc5a9d80d9772fce078e0735cb537fa005b1d1189422c8954f432652bd89",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "82aa4ad80736f5454a5e646d46255f4bf31a508ba045a084646db9f12b53af8e",
+      "proxy_requests": 8
+    },
+    {
+      "profile": "baseline",
+      "task": "macro_4_auth_diagnosis",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/009-baseline/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/009-baseline/workspace",
+      "status": "completed",
+      "skill_loaded": false,
+      "hooks": "absent",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 4,
+      "preflight_ms": 500,
+      "usage": {
+        "requests": 11,
+        "input": 6456,
+        "output": 1307,
+        "cache_read": 22528,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.00485688
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 27226,
+      "grade_ms": 349,
+      "final_response": "Tests pass.\n\n**Diagnosis:** In `claims.go`, `ValidateClaims` returned `!c.Valid`, which inverted the meaning of the `Valid` flag. As a result, `Authenticate` rejected genuinely valid claims (`Valid: true`) and accepted invalid ones.\n\n**Fix:** Changed `return !c.Valid` to `return c.Valid` in `claims.go` so the validator returns true when claims are marked valid. Updated the stale `// BUG:` comment to describe the corrected intent.\n\n**Result:** `go test -v ./...` → `TestAuthenticate PASS`.",
+      "tool_calls": 10,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": null,
+      "prompt_sha256": "699250120b26e71f7617fc36c9afca98f0617b2b12775724d814b02783ab20ba",
+      "fixture_sha256": "f9cd3c151c6566eca6a26169c26a52d424a899ae8e412ece0a149811884cd45b",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "standard",
+      "task": "macro_4_auth_diagnosis",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/010-standard/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/010-standard/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 750,
+      "preflight_ms": 499,
+      "usage": {
+        "requests": 9,
+        "input": 6709,
+        "output": 900,
+        "cache_read": 18688,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.00421398
+      },
+      "runtime_ready": false,
+      "task_success": true,
+      "agent_ms": 26775,
+      "grade_ms": 341,
+      "final_response": "Tests pass. Here's a summary of the diagnosis and fix:\n\n**Bug:** In `claims.go`, `ValidateClaims` was returning `!c.Valid` — the negation was inverted. As a result:\n- For valid claims (`Valid: true`), it returned `false` → `Authenticate` returned `ErrUnauthorized`.\n- For invalid claims (`Valid: false`), it returned `true` → `Authenticate` allowed them through.\n\n**Fix:** Changed `return !c.Valid` to `return c.Valid` so the function correctly reports whether the claims are valid.\n\n**Test result:** `TestAuthenticate` now passes — valid claims authenticate successfully and invalid claims return `ErrUnauthorized`.",
+      "tool_calls": 8,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "699250120b26e71f7617fc36c9afca98f0617b2b12775724d814b02783ab20ba",
+      "fixture_sha256": "f9cd3c151c6566eca6a26169c26a52d424a899ae8e412ece0a149811884cd45b",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "35eb89610a3db793355a55d390578b95d16385207d6b9f63e94813c58364d2e5",
+      "proxy_requests": 0
+    },
+    {
+      "profile": "full",
+      "task": "macro_4_auth_diagnosis",
+      "home": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/011-full/home",
+      "workspace": "/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1700070479/profiles/011-full/workspace",
+      "status": "completed",
+      "skill_loaded": true,
+      "hooks": "invocation observed",
+      "mcp": "unsupported by this Pi recipe",
+      "setup_ms": 746,
+      "preflight_ms": 7128,
+      "usage": {
+        "requests": 10,
+        "input": 6572,
+        "output": 955,
+        "cache_read": 22656,
+        "cache_write": 0,
+        "complete": true,
+        "estimated_cost_usd": 0.00447696
+      },
+      "runtime_ready": true,
+      "task_success": true,
+      "agent_ms": 23468,
+      "grade_ms": 348,
+      "final_response": "Tests pass. \n\n**Diagnosis:** `ValidateClaims` in `claims.go` was returning `!c.Valid` instead of `c.Valid` — the bug was literally flagged in the source comment. The negation caused valid claims (`Valid: true`) to evaluate to `false`, so `Authenticate` always returned `ErrUnauthorized` for them.\n\n**Fix:** Removed the inverted boolean and the now-stale comment, leaving `return c.Valid`. Tests pass; `go.mod` and `auth_test.go` are untouched.",
+      "tool_calls": 9,
+      "tool_errors": 0,
+      "agent_ended": true,
+      "activity": [
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro start",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        },
+        {
+          "duration_ms": 0,
+          "runtime": "cli:tzro hook",
+          "status": "invoked"
+        }
+      ],
+      "prompt_sha256": "699250120b26e71f7617fc36c9afca98f0617b2b12775724d814b02783ab20ba",
+      "fixture_sha256": "f9cd3c151c6566eca6a26169c26a52d424a899ae8e412ece0a149811884cd45b",
+      "skill_sha256": "144144d197c4aa85523e302bb5898da0557e0e3cff6a69f1cac622c0aaaf3cc4",
+      "hook_sha256": "340abd36a4d9799b18b5f767afd8c8347577591e10db78fea16a0d638e918f19",
+      "proxy_requests": 10
+    }
+  ]
+}
