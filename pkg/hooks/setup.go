@@ -55,7 +55,18 @@ func (a *agentSetup) step(name, path, pending string, apply func() (bool, error)
 }
 func (a *agentSetup) skill(dir string) {
 	path := filepath.Join(dir, "tzro", "SKILL.md")
-	a.step("skill", path, "", func() (bool, error) { return writeOwnedFile(path, []byte(tzroSkillMD), 0644) })
+	refPath := filepath.Join(dir, "tzro", "REFERENCE.md")
+	a.step("skill", path, "", func() (bool, error) {
+		refChanged, err := writeOwnedFile(refPath, []byte(tzroReferenceMD), 0644)
+		if err != nil {
+			return false, err
+		}
+		skillChanged, err := writeOwnedFile(path, []byte(tzroSkillMD), 0644)
+		if err != nil {
+			return false, err
+		}
+		return refChanged || skillChanged, nil
+	})
 }
 func (a *agentSetup) hookCommand(event string) string {
 	return shellQuote(a.opts.Binary) + " hook " + string(a.result.Harness) + " native-" + event

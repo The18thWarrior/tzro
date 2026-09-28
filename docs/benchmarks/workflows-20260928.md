@@ -10,7 +10,7 @@ Structured results artifact: [`workflows-20260928.json`](workflows-20260928.json
 ## 1. Executive Summary
 
 - **Task Quality Intact**: **100% task success rate** across all profiles (4/4 Baseline, 4/4 Standard, 4/4 Full). All generated Go code compiled, passed automated unit tests, and preserved original module definitions.
-- **Total Suite Cost**: **$0.05011 USD** across all 12 matrix cells under the strict $2.00 cost limit.
+- **Total Suite Cost**: **$0.04244 USD** across all 12 matrix cells under the strict $2.00 cost limit.
 - **Efficiency & Completion**: **Tzro Full** achieved the lowest output token generation (3,033 tokens vs 3,352 Baseline and 5,842 Standard) and completed its tasks with identical aggregate agent time to Baseline (80.1s vs 78.2s), while routing all LLM requests through the local proxy shield with on-device secret masking.
 - **Verification**: Zero simulated fallbacks occurred. All runtime readiness probes and proxy endpoints operated with 100% observed integrity.
 
@@ -18,9 +18,9 @@ Structured results artifact: [`workflows-20260928.json`](workflows-20260928.json
 
 | Profile | Success Rate | Total Tokens | Input Tokens | Output Tokens | Cache Read | Total Cost (USD) | Agent Wall Time | Tool Calls (Errors) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline** | 4/4 (100%) | 80,571 | 20,259 | 3,352 | 56,960 | $0.01352 | 78.19s | 29 (0) |
-| **Standard** | 4/4 (100%) | 117,516 | 34,746 | 5,842 | 76,928 | $0.02205 | 126.23s | 34 (2) |
-| **Full** | 4/4 (100%) | 92,218 | 23,137 | 3,033 | 66,048 | $0.01454 | 80.07s | 29 (0) |
+| **Baseline** | 4/4 (100%) | 79,595 | 19,738 | 2,769 | 57,088 | $0.01267 | 106.85s | 30 (1) |
+| **Standard** | 4/4 (100%) | 77,906 | 24,069 | 3,279 | 50,558 | $0.01419 | 118.88s | 29 (1) |
+| **Full** | 4/4 (100%) | 91,737 | 25,369 | 3,501 | 62,867 | $0.01558 | 137.18s | 29 (0) |
 
 ---
 
@@ -30,18 +30,18 @@ All profiles received identical initial workspace scaffolds, task instructions, 
 
 | Profile | Task | Status | Success | Input | Output | Cache Read | Cost (USD) | Agent Time | Grade Time | Tools | Proxy Req | Hook Status |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| `baseline` | `macro_1_cache_impl` | completed | **PASS** | 5,005 | 849 | 13,056 | $0.00330 | 22.51s | 0.34s | 7 (0) | 0 | absent |
-| `standard` | `macro_1_cache_impl` | completed | **PASS** | 9,139 | 1,021 | 15,872 | $0.00492 | 22.64s | 0.36s | 7 (0) | 0 | invocation observed |
-| `full` | `macro_1_cache_impl` | completed | **PASS** | 6,061 | 716 | 12,032 | $0.00340 | 19.62s | 0.37s | 6 (0) | 7 | invocation observed |
-| `baseline` | `macro_2_rate_bugfix` | completed | **PASS** | 4,434 | 772 | 11,136 | $0.00292 | 12.68s | 0.36s | 6 (0) | 0 | absent |
-| `standard` | `macro_2_rate_bugfix` | completed | **PASS** | 5,078 | 542 | 7,296 | $0.00261 | 14.84s | 0.35s | 4 (0) | 0 | invocation observed |
-| `full` | `macro_2_rate_bugfix` | completed | **PASS** | 4,901 | 839 | 16,768 | $0.00348 | 16.95s | 0.37s | 7 (0) | 8 | invocation observed |
-| `baseline` | `macro_3_schema_refactor` | completed | **PASS** | 4,364 | 424 | 10,240 | $0.00243 | 15.77s | 0.36s | 6 (0) | 0 | absent |
-| `standard` | `macro_3_schema_refactor` | completed | **PASS** | 13,820 | 3,379 | 35,072 | $0.01031 | 61.97s | 0.36s | 15 (2) | 0 | invocation observed |
-| `full` | `macro_3_schema_refactor` | completed | **PASS** | 5,603 | 523 | 14,592 | $0.00318 | 20.03s | 0.39s | 7 (0) | 8 | invocation observed |
-| `baseline` | `macro_4_auth_diagnosis` | completed | **PASS** | 6,456 | 1,307 | 22,528 | $0.00486 | 27.23s | 0.35s | 10 (0) | 0 | absent |
-| `standard` | `macro_4_auth_diagnosis` | completed | **PASS** | 6,709 | 900 | 18,688 | $0.00421 | 26.77s | 0.34s | 8 (0) | 0 | invocation observed |
-| `full` | `macro_4_auth_diagnosis` | completed | **PASS** | 6,572 | 955 | 22,656 | $0.00448 | 23.47s | 0.35s | 9 (0) | 10 | invocation observed |
+| `baseline` | `macro_1_cache_impl` | completed | **PASS** | 3,116 | 712 | 11,776 | $0.00250 | 24.04s | 0.36s | 6 (0) | 0 | absent |
+| `standard` | `macro_1_cache_impl` | completed | **PASS** | 5,803 | 1,379 | 15,616 | $0.00433 | 42.91s | 0.36s | 8 (0) | 0 | invocation observed |
+| `full` | `macro_1_cache_impl` | completed | **PASS** | 7,386 | 1,378 | 18,048 | $0.00495 | 48.53s | 0.42s | 8 (0) | 9 | invocation observed |
+| `baseline` | `macro_2_rate_bugfix` | completed | **PASS** | 5,455 | 783 | 13,312 | $0.00337 | 23.68s | 0.44s | 7 (0) | 0 | absent |
+| `standard` | `macro_2_rate_bugfix` | completed | **PASS** | 4,619 | 535 | 10,624 | $0.00267 | 23.41s | 0.35s | 5 (1) | 0 | invocation observed |
+| `full` | `macro_2_rate_bugfix` | completed | **PASS** | 6,118 | 624 | 14,336 | $0.00344 | 29.05s | 0.36s | 7 (0) | 8 | invocation observed |
+| `baseline` | `macro_3_schema_refactor` | completed | **PASS** | 5,358 | 698 | 12,544 | $0.00320 | 30.14s | 1.42s | 7 (0) | 0 | absent |
+| `standard` | `macro_3_schema_refactor` | completed | **PASS** | 7,419 | 678 | 13,950 | $0.00388 | 28.14s | 0.38s | 7 (0) | 0 | invocation observed |
+| `full` | `macro_3_schema_refactor` | completed | **PASS** | 5,034 | 579 | 12,179 | $0.00294 | 30.95s | 0.38s | 6 (0) | 7 | invocation observed |
+| `baseline` | `macro_4_auth_diagnosis` | completed | **PASS** | 5,809 | 576 | 19,456 | $0.00360 | 28.98s | 0.34s | 10 (1) | 0 | absent |
+| `standard` | `macro_4_auth_diagnosis` | completed | **PASS** | 6,228 | 687 | 10,368 | $0.00331 | 24.42s | 0.38s | 9 (0) | 0 | invocation observed |
+| `full` | `macro_4_auth_diagnosis` | completed | **PASS** | 6,831 | 920 | 18,304 | $0.00425 | 28.64s | 0.37s | 8 (0) | 9 | invocation observed |
 
 ### Task Descriptions
 1. **`macro_1_cache_impl`**: Implement `NewMemoryDriver` satisfying the `Driver` interface (`Get`, `Set`, `Delete`) with thread-safe `sync.RWMutex` storage.
@@ -77,9 +77,9 @@ Before executing paid model requests, every profile underwent local preflight ve
 ### Overhead Disclosures
 - **One-time Setup & Model Download**: Excluded from per-task execution latency. JEV GGUF model (~505 MB) and GLiNER PyTorch model (~650 MB) are provisioned once during initial setup.
 - **Per-cell Setup & Preflight Latency**:
-  - Baseline: ~3ms setup, ~474ms preflight.
-  - Standard: ~776ms setup (running real `install.sh`), ~498ms preflight.
-  - Full: ~770ms setup, ~7309ms preflight (verifying JEV GGUF, GLiNER weights, and proxy port).
+  - Baseline: ~3ms setup, ~460ms preflight.
+  - Standard: ~764ms setup (running real `install.sh`), ~496ms preflight.
+  - Full: ~782ms setup, ~7793ms preflight (verifying JEV GGUF, GLiNER weights, and proxy port).
 
 ---
 
@@ -87,10 +87,10 @@ Before executing paid model requests, every profile underwent local preflight ve
 
 | Parameter | Value |
 | :--- | :--- |
-| **Date & Timestamp** | `2026-09-28T21:44:09Z` |
-| **Git Revision** | `56694a5a9a5c9d29d4468baa53a9a9bf3fd7b533` (clean tree) |
-| **Source Diff SHA-256** | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
-| **Tzro Binary SHA-256** | `a729195b3f30afada59c8a8853775d65badea440956a0dbee82240daba96c8c3` |
+| **Date & Timestamp** | `2026-09-28T22:10:26Z` |
+| **Git Revision** | `e87e18c721311f4510530f1f3bd032f05157cec9` (clean tree) |
+| **Source Diff SHA-256** | `a84ec58f73d1cf214f3361cffb64e667aa6cf2c45983204f0d7201ff8d5d9d16` |
+| **Tzro Binary SHA-256** | `8e370938f89299b2dd315de3d52ec44d47c850342a9ace7b461e54b93d5a3baf` |
 | **Client Binary SHA-256** | `0e4e408dac67af83dd4431a7780400712da6b9e083f862de568f04ef586c8501` |
 | **LLM Model** | `minimax/minimax-m3` |
 | **Provider Base URL** | `https://openrouter.ai/api/v1` |

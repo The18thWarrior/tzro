@@ -299,11 +299,11 @@ The [security policy](SECURITY.md) documents the threat model, credential handli
 
 | Profile | Task Success | Input Tokens | Output Tokens | Cache Read | Total Cost (USD) | Agent Wall Time | Evidence |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Baseline** | 4/4 (100%) | 20,259 | 3,352 | 56,960 | $0.01352 | 78.19s | [Report](docs/benchmarks/workflows-20260928.md) |
-| **Standard** | 4/4 (100%) | 34,746 | 5,842 | 76,928 | $0.02205 | 126.23s | [Report](docs/benchmarks/workflows-20260928.md) |
-| **Full** | 4/4 (100%) | 23,137 | 3,033 | 66,048 | $0.01454 | 80.07s | [Report](docs/benchmarks/workflows-20260928.md) |
+| **Baseline** | 4/4 (100%) | 19,738 | 2,769 | 57,088 | $0.01267 | 106.85s | [Report](docs/benchmarks/workflows-20260928.md) |
+| **Standard** | 4/4 (100%) | 24,069 | 3,279 | 50,558 | $0.01419 | 118.88s | [Report](docs/benchmarks/workflows-20260928.md) |
+| **Full** | 4/4 (100%) | 25,369 | 3,501 | 62,867 | $0.01558 | 137.18s | [Report](docs/benchmarks/workflows-20260928.md) |
 
-*Full benchmark run on September 28, 2026 using MiniMax M3 via OpenRouter with verified native Pi-Coder v0.74.2. View the full [Benchmark Report](docs/benchmarks/workflows-20260928.md) and raw [JSON artifact](docs/benchmarks/workflows-20260928.json). Reproduce or regenerate with `make benchmark-publish`.*
+*Full benchmark run on September 28, 2026 using MiniMax M3 via OpenRouter with verified native Pi-Coder v0.74.2 and progressive disclosure skills. View the full [Benchmark Report](docs/benchmarks/workflows-20260928.md) and raw [JSON artifact](docs/benchmarks/workflows-20260928.json). Reproduce or regenerate with `make benchmark-publish`.*
 
 ### Supporting Component Measurements
 

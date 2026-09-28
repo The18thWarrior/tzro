@@ -34,6 +34,19 @@ func TestWriteTzroSkill_NewFile(t *testing.T) {
 	if !strings.Contains(content, "tzro expand") {
 		t.Error("expected expand command in CLI reference")
 	}
+
+	refFile := filepath.Join(skillsDir, "tzro", "REFERENCE.md")
+	refData, err := os.ReadFile(refFile)
+	if err != nil {
+		t.Fatalf("REFERENCE.md not created: %v", err)
+	}
+	refContent := string(refData)
+	if !strings.Contains(refContent, "CLI Command Reference") {
+		t.Error("expected CLI Command Reference in REFERENCE.md")
+	}
+	if !strings.Contains(refContent, "System 1 Graph Calls") {
+		t.Error("expected System 1 Graph Calls in REFERENCE.md")
+	}
 }
 
 func TestWriteTzroSkill_Idempotent(t *testing.T) {
@@ -43,15 +56,20 @@ func TestWriteTzroSkill_Idempotent(t *testing.T) {
 	if err := WriteTzroSkill(skillsDir); err != nil {
 		t.Fatalf("first write failed: %v", err)
 	}
-	first, _ := os.ReadFile(filepath.Join(skillsDir, "tzro", "SKILL.md"))
+	firstSkill, _ := os.ReadFile(filepath.Join(skillsDir, "tzro", "SKILL.md"))
+	firstRef, _ := os.ReadFile(filepath.Join(skillsDir, "tzro", "REFERENCE.md"))
 
 	if err := WriteTzroSkill(skillsDir); err != nil {
 		t.Fatalf("second write failed: %v", err)
 	}
-	second, _ := os.ReadFile(filepath.Join(skillsDir, "tzro", "SKILL.md"))
+	secondSkill, _ := os.ReadFile(filepath.Join(skillsDir, "tzro", "SKILL.md"))
+	secondRef, _ := os.ReadFile(filepath.Join(skillsDir, "tzro", "REFERENCE.md"))
 
-	if string(first) != string(second) {
-		t.Errorf("idempotency violated: content differs after second write")
+	if string(firstSkill) != string(secondSkill) {
+		t.Errorf("idempotency violated for SKILL.md: content differs after second write")
+	}
+	if string(firstRef) != string(secondRef) {
+		t.Errorf("idempotency violated for REFERENCE.md: content differs after second write")
 	}
 }
 

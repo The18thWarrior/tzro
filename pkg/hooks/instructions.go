@@ -6,86 +6,97 @@ import (
 	"strings"
 )
 
-// tzroSkillMD is the SKILL.md content for the tzro skill, following the
-// Agent Skills specification (agentskills.io). This is the canonical format
-// supported by Copilot, Pi-Coder, Antigravity, and Hermes via .agents/skills/.
+// tzroSkillMD is the lightweight SKILL.md content for the tzro skill, following the
+// Agent Skills specification (agentskills.io) progressive disclosure pattern.
+// Kept ultra-compact (~200 tokens) to minimize per-turn prompt token overhead.
 const tzroSkillMD = `---
 name: tzro
 description: >-
   Token optimization, codebase discovery, and tabular data analysis
   using the tzro CLI. Use when exploring a codebase, reading large files,
   compacting verbose test/build output, or analyzing CSV/TSV/JSON data.
-  Provides sub-millisecond local symbol search, AST-aware file
-  skeletonization, log compaction, and SQL-queryable tabular import.
 ---
 
-# tzro — The Local Token Shield & Context Optimization Engine
+# tzro — Local Context Engine
 
-` + "`tzro`" + ` is a compiled, zero-dependency native Go engine (<50 MB RAM) that eliminates cloud API rate limits, locks prompt cache prefixes (benchmarked at 70–99% cache read hit rates across 8 models), and provides sub-millisecond local codebase discovery (` + "`tzro probe`" + `).
+tzro is a fast, zero-dependency local CLI (<50 MB RAM) for token optimization, symbol discovery, and output compaction.
 
----
+## When to Use tzro
 
-## Token Optimization & Discovery Guidelines
+- **Codebase Exploration**: Run ` + "`tzro probe \"<symbol or query>\"`" + ` for sub-millisecond AST symbol discovery (<5ms, 0 cloud tokens).
+- **Large Files (>200 lines)**: Run ` + "`tzro skeleton <file>`" + ` to view structural declarations and signatures when a file is too large to read in full.
+- **Verbose Command & Test Output**: Run ` + "`tzro compact --run \"<cmd>\"`" + ` or pipe ` + "`... | tzro compact`" + ` to compact compiler diagnostics, test logs, or large JSON responses into high-signal summaries.
+- **Tabular Data (CSV, TSV, JSON)**: Ingest with ` + "`tzro ingest <file>`" + ` and query with ` + "`tzro query <table> \"<sql>\"`" + ` instead of dumping large files into context.
+- **Blast Radius Analysis**: Run ` + "`tzro impact [files...]`" + ` before modifying shared code to discover callers, dependents, and tests to run.
 
-When operating in this codebase, coding agents **must** use tzro's local discovery and compaction tools rather than burning quadratic cloud context.
+For complete CLI reference and options (including ` + "`tzro expand`" + `, ` + "`tzro context`" + `, and System 1 graph calls), see ` + "`REFERENCE.md`" + ` in this skill directory.
+`
 
-### 1. Codebase Exploration: Use ` + "`tzro probe`" + `
-Never make 10–20 sequential cloud tool calls to locate symbols or understand architecture.
-- Run ` + "`tzro probe \"<search goal>\"`" + ` via run_command to get exact line numbers, symbol signatures, and content hashes in <5ms with 0 cloud tokens.
+// tzroReferenceMD is the detailed reference manual stored alongside SKILL.md.
+// It is read on-demand by agents when detailed CLI flags or graph schemas are needed.
+const tzroReferenceMD = `# tzro CLI Reference Manual
 
-### 2. Large File Reads: Use ` + "`tzro skeleton`" + ` & ` + "`tzro expand`" + `
-- If you only need to understand the interface, imports, or method signatures of a large file, run ` + "`tzro skeleton <filepath>`" + `.
-- If you need to edit a specific method body that was elided (` + "`// [body elided: #hash]`" + `), retrieve only those lines using ` + "`tzro expand <hash>`" + `.
+Detailed reference for tzro commands, System 1 graph calls, and proxy administration.
 
-### 3. Log & Test Output Compaction: Pipe through ` + "`tzro compact`" + `
-- When running test suites, pipe verbose outputs through ` + "`tzro compact`" + ` to strip redundant runtime stack frames and flatten JSON arrays into compact Markdown tables.
-
-### 4. Tabular Data Analysis: Use ` + "`tzro ingest`" + ` & ` + "`tzro query`" + `
-- When you encounter large CSV, TSV, or JSON array data (from files or API responses), import it with ` + "`tzro ingest <file>`" + ` or pipe it via ` + "`cat data.csv | tzro ingest -`" + `.
-- This imports the data into a local SQLite table and returns a compact envelope with schema, sample rows, and a table pointer.
-- Query the data with SQL: ` + "`tzro query <table> \"SELECT col, COUNT(*) FROM <table> GROUP BY col\"`" + `.
-- All columns are stored as TEXT — use ` + "`CAST(col AS INTEGER)`" + ` or ` + "`CAST(col AS REAL)`" + ` for numeric operations.
-- **Never** dump a full large CSV into context. Ingest it and query instead — **97%+ prompt token reduction** on tabular workloads.
-
----
-
-## CLI Reference for Agents
-
-### Optional System 1 Graph Calls
-
-When TZRO_EXPERIMENTAL_RUNTIMES=1 is configured, JEV decisions and GLiNER extraction
-are available through the public graph command. Use them when they help the task.
-Write a graph file, then run:
-
-    tzro execute graph.json
-
-A graph contains version "3.0", task_id, and nodes. Each node has an id and type.
-Tool nodes use tool and args; supported tools include probe, skeleton, search, and bash.
-Decision nodes use question with type "choice", prompt, and options, plus an input object.
-Extract nodes use input with a text field, and labels such as "file_path".
-Use depends_on and JSON pointers such as {"$ref":"/nodes/node-id/output/stdout"} for dependencies.
-Inspect node status and graph status. Report failed or yielded nodes before choosing another approach.
-Runtimes are optional: do not assume they are installed merely because this skill is present.
+## CLI Command Reference
 
 | Command | Purpose | Token Impact |
 | :--- | :--- | :--- |
 | ` + "`tzro probe \"<query>\"`" + ` | Fast local symbol and file discovery using ripgrep + Tree-sitter AST | **0 cloud tokens (<500 tokens output)** |
+| ` + "`tzro context \"<task>\" --budget <n>`" + ` | Assembles ranked, token-budgeted context pack with AST & call graph | **Replaces 5–10 exploration turns** |
+| ` + "`tzro impact [files...]`" + ` | Computes change-impact graph, callers, and test coverage before edits | **Prevents broken refactors and missing test runs** |
 | ` + "`tzro skeleton <file>`" + ` | Skeletons a code file, eliding function bodies into SHA-256 hashes | **70%–90% token reduction** |
-| ` + "`tzro expand <hash>`" + ` | Retrieves the full original function body from local SQLite | Fetches only the required ~20 lines |
-| ` + "`tzro compact`" + ` | Stdin/stdout pipe for log, stack trace, and JSON array compaction | **80% token reduction on test/build logs** |
+| ` + "`tzro expand <hash>`" + ` | Retrieves elided code body or stored artifact with optional ` + "`--lines`" + ` | Fetches only the required ~20 lines |
+| ` + "`tzro compact [--run \"<cmd>\"]`" + ` | Compactor with evidence contract, exit code confidence, 10-line cap | **80% token reduction on test/build logs** |
+| ` + "`tzro session save / load`" + ` | Portable, git-aware agent session manifest with freshness validation | **Eliminates full transcript/repo re-reads** |
 | ` + "`tzro ingest <file>`" + ` | Import CSV/TSV/JSON into SQLite, returns envelope with table pointer | **97%+ token reduction on tabular data** |
 | ` + "`tzro query <table> \"<sql>\"`" + ` | Execute read-only SQL against imported tabular data | Fetches only the query results |
-| ` + "`tzro start --port 7878`" + `| Launches the transparent loopback reverse proxy | **Locks KV-cache prefix (70–99% hit rate)** |
+| ` + "`tzro doctor`" + ` | Synthetic health check for proxy, routes, FTS5 engine, and agent hooks | Instant diagnostic verification |
+| ` + "`tzro start --port 7878`" + ` | Launches the transparent loopback reverse proxy | **Locks KV-cache prefix (70–99% hit rate)** |
 | ` + "`tzro status`" + ` | Displays real-time shielded tokens, memory usage, and proxy metrics | Diagnostic monitoring |
+
+---
+
+## Tabular Data Querying (` + "`tzro query`" + `)
+
+When data is imported via ` + "`tzro ingest`" + `, all columns are stored as ` + "`TEXT`" + ` in local SQLite.
+- Numeric comparisons: ` + "`SELECT col, CAST(col AS INTEGER) FROM table WHERE CAST(col AS REAL) > 10.0`" + `
+- Aggregations: ` + "`SELECT category, COUNT(*), AVG(CAST(price AS REAL)) FROM table GROUP BY category`" + `
+- Results are returned in clean Markdown table format.
+
+---
+
+## System 1 Graph Calls (` + "`tzro execute`" + `)
+
+When ` + "`TZRO_EXPERIMENTAL_RUNTIMES=1`" + ` is configured, declarative graph DAGs can be executed locally without cloud API calls:
+
+` + "```sh" + `
+tzro execute graph.json
+echo '{"version":"3.0","task_id":"t1","nodes":[...]}' | tzro execute -
+` + "```" + `
+
+### Graph Structure
+- ` + "`version`" + `: "3.0"
+- ` + "`task_id`" + `: Identifier string
+- ` + "`nodes`" + `: Array of node objects, each containing ` + "`id`" + `, ` + "`type`" + `, and input/configuration:
+  - **` + "`tool`" + `**: Executes a tzro CLI or system tool (` + "`probe`" + `, ` + "`skeleton`" + `, ` + "`search`" + `, ` + "`bash`" + `).
+  - **` + "`decision`" + `**: Evaluates a question locally via ` + "`bin/jev-score`" + ` (` + "`choice`" + `, ` + "`score`" + `, ` + "`noul`" + `).
+  - **` + "`extract`" + `**: Extracts typed spans (e.g. ` + "`file_path`" + `) from text via GLiNER worker.
+  - **` + "`group`" + `**: Groups child nodes with fanout or conditional execution.
+- References between nodes use JSON pointers: ` + "`{\"$ref\": \"/nodes/node-id/output/stdout\"}`" + `.
 `
 
-// WriteTzroSkill writes the tzro SKILL.md to the given skills directory.
-// It creates <skillsDir>/tzro/SKILL.md following the Agent Skills specification.
-// If the file already exists, it is overwritten (idempotent re-runs).
+// WriteTzroSkill writes the tzro SKILL.md and REFERENCE.md to the given skills directory.
+// It creates <skillsDir>/tzro/SKILL.md and <skillsDir>/tzro/REFERENCE.md following the
+// Agent Skills specification (agentskills.io).
+// If files already exist, they are overwritten (idempotent re-runs).
 // Parent directories are created as needed.
 func WriteTzroSkill(skillsDir string) error {
 	targetDir := filepath.Join(skillsDir, "tzro")
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "REFERENCE.md"), []byte(tzroReferenceMD), 0644); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(targetDir, "SKILL.md"), []byte(tzroSkillMD), 0644)
