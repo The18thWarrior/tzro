@@ -16,7 +16,7 @@ The [First-install experience](../../../.scratch/adoption-readiness/issues/09-fi
 
 [Published installation and client verification](../../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md) owns public downloads, native activation, and installation timing. The current quickstart still uses source installation. Pi's native MCP registration remains unverified. Client configuration files alone do not prove activation.
 
-The [CI pipeline](../../../.scratch/adoption-readiness/issues/03-ci-pipeline.md) is implemented locally. The race-enabled suite and separate performance checks passed. Its [preflight post-mortem](../bugs/ci-race-and-impact-preflight.md) records the required corrections. [Hosted CI verification](../../../.scratch/adoption-readiness/issues/10-hosted-ci-verification.md) owns the first Ubuntu run and badge check.
+The [CI pipeline](../../../.scratch/adoption-readiness/issues/03-ci-pipeline.md) and [Hosted CI verification](../../../.scratch/adoption-readiness/issues/10-hosted-ci-verification.md) are closed. Commit `8e467d1` on branch `v3.1` passed all hosted Ubuntu checks in GitHub Actions (run 36484736347) with race detection across 22 packages and uninstrumented latency limits passing. The README workflow badge is verified green.
 
 The [Benchmark categories and evidence](../../../.scratch/adoption-readiness/issues/11-benchmark-categories-and-evidence.md) decision is closed. Public workflow results will compare the agent before installation, Tzro Standard after default installation, and Tzro Full after optional setup. Full includes experimental System 1, the JEV-style decision runtime, and GLiNER capabilities. Component and proxy measurements remain supporting diagnostics.
 

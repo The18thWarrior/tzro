@@ -2970,3 +2970,14 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
   4. **Command Invariants**: `tzro init` remains focused on agent hooks/skills/MCP setup without background daemons; `tzro start` remains the manual loopback proxy launcher.
 - **Files touched**: [.scratch/adoption-readiness/issues/08-tier-strategy.md](../../.scratch/adoption-readiness/issues/08-tier-strategy.md), [.scratch/adoption-readiness/MAP.md](../../.scratch/adoption-readiness/MAP.md), [Adoption readiness overview](architecture/adoption-readiness.md), and this log.
 
+## [2026-09-28] wayfinder | Hosted CI verification green on GitHub Ubuntu runner
+
+- **Outcome**: Closed [Hosted CI verification](../../.scratch/adoption-readiness/issues/10-hosted-ci-verification.md). Successfully observed the first green hosted test run on GitHub Actions.
+- **Validation Details**:
+  - **Commit & Branch**: `8e467d1` pushed to `origin/v3.1`.
+  - **Hosted Runner**: Ubuntu latest (GitHub Actions run `36484736347`, job `109138780317`).
+  - **Test Execution**: `go test -race -count=1 ./...` passed across all 22 packages with zero race errors. Uninstrumented performance limits (`TestLatency_`) passed in 2.7s. Total job time: 2m 21s.
+  - **Badge Verification**: Workflow badge at `https://github.com/The18thWarrior/tzro/actions/workflows/test.yml/badge.svg?branch=v3.1` verified serving live passing status.
+- **Frontier**: Unblocked [Published installation and client verification](../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md).
+- **Files touched**: [.scratch/adoption-readiness/issues/10-hosted-ci-verification.md](../../.scratch/adoption-readiness/issues/10-hosted-ci-verification.md), [.scratch/adoption-readiness/MAP.md](../../.scratch/adoption-readiness/MAP.md), [Adoption readiness overview](architecture/adoption-readiness.md), and this log.
+
