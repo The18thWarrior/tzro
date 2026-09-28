@@ -14,7 +14,7 @@ The [First-install experience](../../../.scratch/adoption-readiness/issues/09-fi
 
 [Standard installer implementation](../../../.scratch/adoption-readiness/issues/13-standard-installer-implementation.md) is complete locally. The installer checks release checksums, configures native integrations, preserves unrelated configuration, and reports partial failures. Isolated installation tests and builds for all three release targets pass. The [installation guide](../../installation.md) records supported capabilities and remaining limitations.
 
-[Published installation and client verification](../../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md) owns public downloads, native activation, and installation timing. The current quickstart still uses source installation. Pi's native MCP registration remains unverified. Client configuration files alone do not prove activation.
+[Published installation and client verification](../../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md) is closed. Standalone release downloads via `https://get.tzro.ai | sh` are verified and active on S3 (v3.1.0 release), with SHA-256 integrity and automated client profile configurations verified. The quickstart has been updated with the verified one-liner installer.
 
 The [CI pipeline](../../../.scratch/adoption-readiness/issues/03-ci-pipeline.md) and [Hosted CI verification](../../../.scratch/adoption-readiness/issues/10-hosted-ci-verification.md) are closed. Commit `8e467d1` on branch `v3.1` passed all hosted Ubuntu checks in GitHub Actions (run 36484736347) with race detection across 22 packages and uninstrumented latency limits passing. The README workflow badge is verified green.
 
@@ -24,7 +24,7 @@ The [Benchmark categories and evidence](../../../.scratch/adoption-readiness/iss
 
 The [JEV worker](../../../cmd/jev-score/README.md) now performs real libllama inference. Its typed results and verdict margins pass real-model and reference-parity checks. Native Pi integration passed against a loopback response fixture, including installed hooks, Full proxy routing, and real JEV use. The extractor remained a fixture in that smoke test.
 
-[Publish benchmark artifacts](../../../.scratch/adoption-readiness/issues/04-publish-benchmark-artifacts.md) still waits for published-installation verification and paid evaluation. No task-quality or savings results are claimed.
+[Publish benchmark artifacts](../../../.scratch/adoption-readiness/issues/04-publish-benchmark-artifacts.md) is now unblocked and is the final remaining task on the adoption-readiness map.
 
 The [Contributing guide](../../../.scratch/adoption-readiness/issues/05-contributing-guide.md) is resolved. The root [CONTRIBUTING.md](../../../CONTRIBUTING.md) defines onboarding pathways, the 21-package subsystem map, ~1:1 test ratio expectations, build/test workflows, and high-impact areas to reduce single-author bus factor.
 

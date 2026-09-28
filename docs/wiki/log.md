@@ -2981,3 +2981,15 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 - **Frontier**: Unblocked [Published installation and client verification](../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md).
 - **Files touched**: [.scratch/adoption-readiness/issues/10-hosted-ci-verification.md](../../.scratch/adoption-readiness/issues/10-hosted-ci-verification.md), [.scratch/adoption-readiness/MAP.md](../../.scratch/adoption-readiness/MAP.md), [Adoption readiness overview](architecture/adoption-readiness.md), and this log.
 
+## [2026-09-28] wayfinder | Published installation and client verification complete
+
+- **Outcome**: Closed [Published installation and client verification](../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md). Public S3 release and verified one-liner installer checked and active.
+- **Validation Details**:
+  - **Release Workflow**: Executed `Release Binaries` workflow for tag `v3.1.0` (Run ID: [36485967369](https://github.com/The18thWarrior/tzro/actions/runs/36485967369)).
+  - **Distribution Endpoints**: Verified HTTP 200 OK for `https://get.tzro.ai`, `https://tzro-app.s3.amazonaws.com/releases/latest/version.txt`, `SHA256SUMS`, and all three release binaries (`darwin-arm64`, `darwin-amd64`, `linux-amd64`).
+  - **Clean Installation Verification**: Executed `curl -sSL https://get.tzro.ai | sh -s -- --cli-only` in an isolated environment outside the checkout. Verified SHA-256 integrity validation, automatic PATH configuration, and clean execution of `tzro doctor`.
+  - **Multi-Client Adapters & Hooks**: Confirmed automated profile detection and configuration across Antigravity, Claude Code, Hermes, GitHub Copilot CLI, Pi-Coder, and Codex via `TestInstallClientProfiles`, `TestNativeHooksRetainClientPermissionChecks`, and `TestNativeHooksMapDeniedPaths`.
+  - **Quickstart Documentation**: Updated `README.md` and `docs/installation.md` to feature the verified one-liner installer `curl -sSL https://get.tzro.ai | sh`.
+- **Frontier**: Unblocked [Publish benchmark artifacts](../../.scratch/adoption-readiness/issues/04-publish-benchmark-artifacts.md) — the final ticket on the adoption-readiness map.
+- **Files touched**: [README.md](../../README.md), [docs/installation.md](../../docs/installation.md), [.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md](../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md), [.scratch/adoption-readiness/MAP.md](../../.scratch/adoption-readiness/MAP.md), [Adoption readiness overview](architecture/adoption-readiness.md), and this log.
+

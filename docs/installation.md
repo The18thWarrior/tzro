@@ -2,9 +2,27 @@
 
 Standard installs the native CLI and configures supported detected agent clients. It does not download model runtimes or change provider routing.
 
-The standalone download path is implemented locally. Publication and clean-machine client checks remain pending. The README uses source installation until those checks pass.
+## One-liner release download
 
-## Install from this checkout
+The installer selects macOS arm64, macOS amd64, or Linux amd64 and verifies SHA-256 integrity against published checksums:
+
+```sh
+curl -sSL https://get.tzro.ai | sh
+```
+
+For CLI-only installation (skipping agent configuration):
+
+```sh
+curl -sSL https://get.tzro.ai | sh -s -- --cli-only
+```
+
+Direct S3 distribution command:
+
+```sh
+curl -fsSL https://tzro-app.s3.amazonaws.com/install.sh | sh
+```
+
+## Install from source checkout
 
 Requirements: Git and Go 1.26 or later.
 
@@ -14,27 +32,11 @@ TZRO_SOURCE_BIN=./bin/tzro sh ./install.sh
 export PATH="$HOME/.tzro/bin:$PATH"
 ```
 
-To install only the CLI:
+To install only the CLI from source:
 
 ```sh
 TZRO_SOURCE_BIN=./bin/tzro sh ./install.sh --cli-only
 ```
-
-`TZRO_SOURCE_BIN` explicitly selects a local executable. Download verification applies to the release-download path.
-
-## Release downloads
-
-The installer selects macOS arm64, macOS amd64, or Linux amd64. Other platforms stop with an error.
-
-By default, it reads `releases/latest/version.txt` from the existing `tzro-app` S3 distribution. It then downloads the binary and `SHA256SUMS` from that version's directory. A failed download or checksum mismatch leaves the installed binary intact.
-
-Once the updated installer and release metadata are published and checked, the distribution command is:
-
-```sh
-curl -fsSL https://tzro-app.s3.amazonaws.com/install.sh | sh
-```
-
-For CLI-only installation, pass `--cli-only` through `sh -s --`. The public `get.tzro.ai` alias also needs a release check.
 
 | Setting | Purpose |
 | :--- | :--- |

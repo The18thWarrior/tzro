@@ -26,8 +26,15 @@ The CLI Toolkit runs without a proxy, API key, Python, PyTorch, or GPU. The opti
 
 ### 1. Install
 
-The source build requires Git and Go 1.26 or later. The new download installer still needs a published-release check. Use this source path for now.
+Install the native binary and automatically configure detected coding agents:
 
+```bash
+curl -sSL https://get.tzro.ai | sh
+```
+
+*(Optional: To install only the CLI without agent configuration, run `curl -sSL https://get.tzro.ai | sh -s -- --cli-only`).*
+
+Alternatively, build from source (requires Go 1.26+):
 ```bash
 git clone https://github.com/The18thWarrior/tzro.git
 cd tzro
@@ -36,7 +43,7 @@ TZRO_SOURCE_BIN=./bin/tzro sh ./install.sh
 export PATH="$HOME/.tzro/bin:$PATH"
 ```
 
-The installer automatically configures supported detected agents. Add `--cli-only` to install without agent configuration. Some clients require a restart or native approval. See [installation details](docs/installation.md).
+The installer automatically configures supported detected agents. Some clients require a restart or native approval. See [installation details](docs/installation.md).
 
 The CLI uses pure-Go SQLite and Tree-sitter packages. It does not require a C compiler or system SQLite headers.
 
