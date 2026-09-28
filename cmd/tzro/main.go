@@ -19,6 +19,7 @@ import (
 	"tzro/pkg/benchmark/signaldensity"
 	"tzro/pkg/compactor"
 	tzroctx "tzro/pkg/context"
+	"tzro/pkg/decision"
 	"tzro/pkg/dlp"
 	"tzro/pkg/doctor"
 	"tzro/pkg/hooks"
@@ -636,6 +637,26 @@ func newRootCmd() *cobra.Command {
 					fmt.Printf("  %s SQLite FTS5 Engine: UNAVAILABLE (falling back to standard lexical index. Ensure CGO_ENABLED=1 and SQLite 3.9+ with FTS5)\n", warnStyle.Render("!"))
 				}
 				fmt.Printf("  %s Database Path: %s\n", infoStyle.Render("✔"), getDBPath())
+			}
+
+			// Check 7: System 1 Decision Subsystem (Jev-Style-0.8B)
+			fmt.Println(lipgloss.NewStyle().Bold(true).Render("\n🧠 System 1 Decision Subsystem (Jev-Style-0.8B):"))
+			decCfg := decision.DefaultConfig()
+			decProvider, decErr := decision.NewProviderFromConfig(decCfg)
+			if decErr != nil {
+				fmt.Printf("  %s Provider Config: %v\n", warnStyle.Render("!"), decErr)
+			} else {
+				defer decProvider.Close()
+				decCtx, decCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer decCancel()
+				decReport := doctor.ProbeDecisionEngine(decCtx, decProvider, decCfg.ModelPath)
+				if decReport.Status == doctor.DecisionStatusReady {
+					fmt.Printf("  %s %s provider (%s) -> READY (%dms)\n",
+						infoStyle.Render("✔"), decCfg.Provider, decCfg.ModelPath, decReport.Latency.Milliseconds())
+				} else {
+					fmt.Printf("  %s %s provider (%s) -> %s (%s)\n",
+						warnStyle.Render("!"), decCfg.Provider, decCfg.ModelPath, decReport.Status, decReport.Error)
+				}
 			}
 
 			fmt.Println(infoStyle.Render("\n✔ Doctor inspection completed."))

@@ -69,14 +69,27 @@ if [ "${OS}" = "Darwin" ]; then
     xattr -d com.apple.quarantine "${INSTALL_DIR}/bin/tzro" 2>/dev/null || true
 fi
 
-# 4. Configure Agent Lifecycle Hooks
-echo -e "\n${BLUE}[4/5] Configuring Agent Lifecycle Hooks (Antigravity, Claude, Hermes, Copilot, Pi-Coder)...${NC}"
+# 4. Provision System 1 Decision Subsystem (Jev-Style-0.8B & jev-score)
+echo -e "\n${BLUE}[4/6] Configuring System 1 Decision Subsystem...${NC}"
+mkdir -p "${INSTALL_DIR}/models/decision"
+
+# Clean up legacy Laya assets if present
+rm -f "${INSTALL_DIR}/bin/laya"
+rm -rf "${INSTALL_DIR}/models/laya"
+
+if [ -f "./scripts/build_jev_score.sh" ] && command -v c++ &>/dev/null && [ -d "/opt/homebrew/Cellar/llama.cpp" ]; then
+    echo -e "  ${GREEN}✔ Compiling native jev-score binary against local llama.cpp...${NC}"
+    ./scripts/build_jev_score.sh "${INSTALL_DIR}/bin/jev-score" 2>/dev/null || true
+fi
+
+# 5. Configure Agent Lifecycle Hooks
+echo -e "\n${BLUE}[5/6] Configuring Agent Lifecycle Hooks (Antigravity, Claude, Hermes, Copilot, Pi-Coder)...${NC}"
 if [ -x "${INSTALL_DIR}/bin/tzro" ]; then
     "${INSTALL_DIR}/bin/tzro" init --hooks auto 2>/dev/null || true
 fi
 
-# 5. Check Path & Print Dashboard
-echo -e "\n${BLUE}[5/5] Checking Pathing Alignment...${NC}"
+# 6. Check Path & Print Dashboard
+echo -e "\n${BLUE}[6/6] Checking Pathing Alignment...${NC}"
 PATH_OK=false
 if [[ ":$PATH:" == *":${INSTALL_DIR}/bin:"* ]]; then
     PATH_OK=true

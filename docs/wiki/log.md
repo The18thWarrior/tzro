@@ -2,6 +2,26 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-09-28T11:47:00-07:00] decision-engine | Jev-Style-0.8B & libllama Migration
+
+- **Activity**: Migrated System 1 Decision Subsystem from Laya (ModernBERT) to `chaoliangUNSW/Jev-Style-0.8B-Decision-v3` running via native `libllama` (`bin/jev-score`).
+- **Key Enhancements**:
+  1. **Clean Architectural Migration**: Created `pkg/decision` implementing `DecisionProvider` and `DeciderAdapter` for `pkg/executor`. Retired legacy `pkg/laya`.
+  2. **Context Budget Expansion**: Expanded decision state budget from 450 to 2,048 tokens in `StateSquasher`, allowing rich multi-file skeletons, 50-line diagnostic failure logs, and 20 candidate probe rankings without ModernBERT's 512-token ceiling.
+  3. **Dual-Provider Model**: Supports both `LocalDaemonProvider` (`bin/jev-score` over stdin/stdout) and `RemoteHTTPProvider` (`POST /v1/systemone` or `/v1/decide` with Bearer auth).
+  4. **Native C++ Engine & Homebrew Alignment**: Implemented `cmd/jev-score/main.cpp` and `scripts/build_jev_score.sh` aligning with standard upstream `llama.cpp` (`libllama`).
+  5. **Diagnostic Verification**: Updated `tzro doctor` with Check 7 probing the live Decision Subsystem. Updated `install.sh` and authored ADR-0096.
+  6. **Zero Regressions**: All unit and integration test suites pass across all 21 packages.
+
+
+## [2026-09-25T20:50:00-07:00] adoption-readiness | Wayfinder Map Charted
+
+- **Activity**: Charted wayfinder map for CLI-first product restructuring and adoption barrier remediation.
+- **Destination**: README, quickstart, and product positioning restructured CLI-first. All 10 adoption barriers resolved. Proxy repositioned as opt-in for power users / enterprise.
+- **Tickets**: 8 tickets across the frontier — 3 ready for human (grilling), 3 ready for agent (task), 2 blocked.
+- **Source artifacts**: Proxy Strategy Analysis, Adoption Barriers Remediation Plan.
+- **Key insight**: CLI tools deliver 70–90% of token savings without the proxy. The proxy is an adoption barrier gating access to the more valuable CLI tools. Restructuring to CLI-first maximizes the number of users who reach the value.
+
 ## [2026-09-25T14:35:00-07:00] killer-use-cases | Issue 14: Shell Integration for Command History Capture (Roadmap Complete)
 
 - **Activity**: Implemented `tzro shell init [zsh|bash]`, `tzro shell record [preexec|precmd]`, `tzro shell clear`, and `tzro shell status` commands along with SQLite storage for command events and capture gaps.
@@ -2843,3 +2863,61 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
   - [Context and Evidence Workflows overview](architecture/context-and-evidence-workflows.md)
   - [Context Foundation Hardening](../../.scratch/context-foundation-hardening/MAP.md)
   - [Wiki Index](index.md)
+
+## [2026-09-28] wayfinder | README rewrite
+
+- **Activity**: Closed [README rewrite](../../.scratch/adoption-readiness/issues/02-readme-rewrite.md) after applying the agreed CLI-first layout locally.
+- **Evidence**: The CLI and FTS5 symbol search passed with CGO disabled. Quickstart examples, local links, and preservation checks passed.
+- **Frontier**: Added [First-install experience](../../.scratch/adoption-readiness/issues/09-first-install-experience.md). Removed fog already represented by tickets. Agent instructions also depend on the vocabulary decision.
+- **Scope**: One ticket resolved. The README is not published. CI, new provider benchmarks, contributor guidance, and glossary decisions remain open.
+- **Files touched**: [README](../../README.md), [Adoption readiness map](../../.scratch/adoption-readiness/MAP.md), its ticket files, [Adoption readiness overview](architecture/adoption-readiness.md), and [Wiki index](index.md).
+
+## [2026-09-28] wayfinder / diagnose | CI pipeline and preflight fixes
+
+- **Activity**: Closed [CI pipeline](../../.scratch/adoption-readiness/issues/03-ci-pipeline.md) after local implementation and validation. Added the live README badge and aligned release builds with `go.mod`.
+- **Corrections**: Separated performance assertions from race instrumentation, preserved declaration paths for symbol-only impact analysis, and filtered files before AST parsing.
+- **Validation**: All 21 packages passed `CGO_ENABLED=1 go test -race -count=1 ./...`. The separate latency suite passed its original limits. YAML parsing, formatting, and diff checks passed.
+- **Post-mortem**: [CI preflight: timing limits and missing test references](bugs/ci-race-and-impact-preflight.md) records the reproduced failures, diagnosis, and regression checks.
+- **Frontier**: Added [Hosted CI verification](../../.scratch/adoption-readiness/issues/10-hosted-ci-verification.md). No GitHub run or green hosted badge is claimed. Changes remain local and uncommitted.
+- **Files touched**: [Tests workflow](../../.github/workflows/test.yml), [Release workflow](../../.github/workflows/release.yml), [README](../../README.md), impact analysis and latency-test files, the adoption map and tickets, [Wiki overview](architecture/adoption-readiness.md), and [Wiki index](index.md).
+
+## [2026-09-28] wayfinder | Benchmark category discussion opened
+
+- **Activity**: Started [Benchmark categories and evidence](../../.scratch/adoption-readiness/issues/11-benchmark-categories-and-evidence.md) at the user's request. Benchmark publication now depends on that discussion.
+- **Evidence**: Inspected the signal-density components, workflow comparisons, proxy comparisons, performance checks, and historical metric-separation decision.
+- **State**: No category decision recorded and no benchmarks run. The proposed grouping remains open for human input.
+- **Files touched**: The category and publication tickets, [Adoption readiness overview](architecture/adoption-readiness.md), and this log.
+
+## [2026-09-28] wayfinder | Benchmark groups accepted; comparison conditions under review
+
+- **Discussion**: The user accepted the three reporting groups and questioned tool/skill parity between hooked and full conditions.
+- **Evidence**: Pi-Coder conditions differ in tool exposure, prompts, context preparation, and turn limits. The signal-density runner uses a different meaning of hooked. The loops use benchmark-owned tool schemas and prompts rather than installed MCP/skill configuration.
+- **State**: Recorded findings and proposed independent switches in [Benchmark categories and evidence](../../.scratch/adoption-readiness/issues/11-benchmark-categories-and-evidence.md). The ticket remains open. No benchmark or harness changes were run.
+
+## [2026-09-28] wayfinder | Installation profiles lead benchmark comparisons
+
+- **Decision**: The user chose Baseline, Tzro Standard, and Tzro Full to reflect installation experiences. This supersedes the proposed feature-isolation matrix for public reporting.
+- **Evidence**: Default installation invokes automatic hook setup, which also attempts to install skills for detected clients. It does not configure MCP or activate proxy routing. The current hooked benchmark omits installed guidance.
+- **State**: Full's optional setup recipe remains open, including whether experimental model runtimes belong in it. No harness changes or paid runs were performed.
+- **Files touched**: [Benchmark categories and evidence](../../.scratch/adoption-readiness/issues/11-benchmark-categories-and-evidence.md), [Domain glossary](../../CONTEXT.md), and [Adoption readiness overview](architecture/adoption-readiness.md).
+
+## [2026-09-28] wayfinder | Full includes experimental runtimes
+
+- **Decision**: The user explicitly included the experimental runtimes in Tzro Full. Closed [Benchmark categories and evidence](../../.scratch/adoption-readiness/issues/11-benchmark-categories-and-evidence.md) and updated the glossary.
+- **Evidence**: The context-pack builder can continue without GLiNER or Laya. The replacement harness must record runtime readiness, actual use, and fallback state.
+- **Frontier**: Added [Benchmark installation profiles](../../.scratch/adoption-readiness/issues/12-benchmark-installation-profiles.md), dependent on the first-install contract. Reworked benchmark publication around the agreed profile comparison.
+- **Scope**: Updated planning and domain documents only. No benchmark harness changes or paid runs were performed.
+
+## [2026-09-28] wayfinder | Standard configures detected agents automatically
+
+- **Decision**: The user selected automatic agent configuration during installation, without a separate initialization step.
+- **Evidence**: Existing setup covers five clients but lacks Codex and MCP registration. Error suppression and configuration replacement need corrections before claiming complete automatic setup.
+- **Frontier**: Claimed [First-install experience](../../.scratch/adoption-readiness/issues/09-first-install-experience.md). Initial client coverage remains under discussion.
+- **Scope**: Updated the ticket, domain glossary, and adoption overview. Installer implementation and tests remain unchanged.
+
+## [2026-09-28] wayfinder / OpenAI Docs | Codex included in Standard
+
+- **Decision**: The user included Codex alongside the five existing client targets. Closed [First-install experience](../../.scratch/adoption-readiness/issues/09-first-install-experience.md).
+- **Evidence**: Local CLI help confirms command-based MCP registration. Official documentation confirms skills, MCP, and hooks, with native trust required before non-managed hooks run. Sources are linked in the decision ticket.
+- **Frontier**: Added [Standard installer implementation](../../.scratch/adoption-readiness/issues/13-standard-installer-implementation.md). Benchmark profile work now depends on the implementation, rather than only the installation decision.
+- **Scope**: Updated planning documents. No installer code or live client configuration changed. No paid benchmarks ran.

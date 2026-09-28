@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"tzro/pkg/decision"
 )
 
 // RouteStatus indicates the live state of a proxy route.
@@ -231,3 +233,56 @@ func probeOneUpstream(ctx context.Context, ep UpstreamEndpoint) UpstreamReport {
 	tlsConn.Close()
 	return rpt
 }
+
+// DecisionStatus indicates the operational readiness of the System 1 Decision Subsystem.
+type DecisionStatus string
+
+const (
+	DecisionStatusReady   DecisionStatus = "READY"
+	DecisionStatusOffline DecisionStatus = "OFFLINE"
+	DecisionStatusMissing DecisionStatus = "MISSING"
+)
+
+// DecisionReport holds diagnostics for the System 1 Decision Subsystem.
+type DecisionReport struct {
+	Provider string         `json:"provider"`
+	Status   DecisionStatus `json:"status"`
+	Model    string         `json:"model"`
+	Latency  time.Duration  `json:"latency"`
+	Error    string         `json:"error,omitempty"`
+}
+
+// ProbeDecisionEngine checks the health of the local or remote decision engine.
+func ProbeDecisionEngine(ctx context.Context, provider decision.DecisionProvider, modelPath string) *DecisionReport {
+	rpt := &DecisionReport{
+		Status: DecisionStatusOffline,
+		Model:  modelPath,
+	}
+
+	if provider == nil {
+		rpt.Status = DecisionStatusMissing
+		rpt.Error = "no decision provider configured"
+		return rpt
+	}
+
+	start := time.Now()
+	testReq := &decision.DecisionRequest{
+		QuestionType: decision.QuestionTypeNoul,
+		Prompt:       "Is tzro decision engine operational?",
+		State:        map[string]interface{}{"ping": "pong"},
+	}
+
+	resp, err := provider.Evaluate(ctx, testReq)
+	rpt.Latency = time.Since(start)
+	if err != nil {
+		rpt.Status = DecisionStatusOffline
+		rpt.Error = err.Error()
+		return rpt
+	}
+
+	if resp.Answer != "" {
+		rpt.Status = DecisionStatusReady
+	}
+	return rpt
+}
+

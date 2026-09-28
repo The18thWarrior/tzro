@@ -26,6 +26,8 @@ _Map of system features, product requirements, and specs._
 
 ## Bugs & Post-Mortems
 
+- [CI preflight: timing limits and missing test references](bugs/ci-race-and-impact-preflight.md) - Separate performance limits from race instrumentation and preserve declaration paths for inferred test references. (Verified locally: 2026-09-28)
+
 _Analyses of critical bugs, diagnostic loops, and prevention measures._
 
 - [Benchmark Dataset Ground-Truth Corruption & Multi-Turn Label Shifting](bugs/benchmark-dataset-corruption-and-label-shifting.md) - Expose a systematic 1-turn lag in multi-turn test annotations and scrambled single-turn ground truths in the BFCL dataset. (Verified: 2026-05-25)
@@ -49,6 +51,8 @@ _Analyses of critical bugs, diagnostic loops, and prevention measures._
 - [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 15:15)](bugs/benchmark-analysis-2026-05-31-1515.md) - Full-scale 100-case diagnostic validation achieving 100.0% overall pass rate by resolving the "\_exec" suffix template mismatch and persistent sidecar daemon context orphanage bugs. (Verified: 2026-05-31)
 
 ## Architecture & Concepts
+
+- [Adoption readiness](architecture/adoption-readiness.md) - CLI-first README, local CI validation, and remaining installation, vocabulary, and hosted verification work. (Status: in progress | Last Updated: 2026-09-28)
 
 _Glossary terms, data models, ADR summaries, and architectural diagrams._
 
@@ -147,6 +151,7 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0093: Benchmark Harness Hardening and Architecture Invariant Enforcement](../adr/0093-benchmark-harness-hardening-and-invariant-enforcement.md) - Robust error handling, non-zero judge failure detection, and architectural invariant enforcement in the benchmark harness.
 - [ADR-0094: RecallPolicy Field and Embedding-Based Chunk Dedup in Sectioned Synthesis](../adr/0094-recall-policy-and-embedding-prune.md) - Declarative RecallPolicy field on GraphNode, embedding-based semantic chunk deduplication, and removal of illegal LLM compaction loops from the Recall Node.
 - [ADR-0095: System 1 Graph Calls and Non-Autoregressive Decision Engine](../adr/0095-system1-graph-calls-and-encoder-decision-engine.md) - Replaces autonomous generative loops with deterministic System 1 Graph Calls, supervising ModernBERT (`mys/laya-GGUF`) for sub-30ms decisions and GLiNER for zero-shot span extraction with zero KV-cache overhead.
+- [ADR-0096: Migration to Jev-Style-0.8B and libllama Decision Engine](../adr/0096-migration-to-jev-style-and-libllama-decision-engine.md) - Replaces Laya/ModernBERT with Jev-Style-0.8B (Qwen3.5) running on native libllama (bin/jev-score), expanding context to 2,048 tokens and introducing pluggable dual-provider support.
 
 ## Ingested Sources
 
