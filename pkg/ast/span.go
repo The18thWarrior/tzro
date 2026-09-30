@@ -33,7 +33,8 @@ func EstimateTokens(text string) int {
 }
 
 // ExtractDeclarationSpan extracts a concise AST declaration span for a symbol at targetLine.
-// It preserves the signature, docstring, and body elision tag, storing the full body in the store.
+// It preserves the signature and docstring, retaining a body if elision would not
+// save tokens. The full body is stored for recovery either way.
 // Falls back to a bounded 25-line window when Tree-sitter is unavailable.
 func ExtractDeclarationSpan(
 	filePath string,
@@ -130,6 +131,9 @@ func ExtractDeclarationSpan(
 			if nodeType == "method_declaration" || nodeType == "function_definition" {
 				bodyNode = bt.ChildByField(node, "body")
 				nameNode = bt.ChildByField(node, "name")
+				if nameNode == nil && (langName == "c" || langName == "cpp") {
+					nameNode = cCallableName(bt, node)
+				}
 			}
 		}
 
@@ -185,6 +189,9 @@ func ExtractDeclarationSpan(
 		elidedBody = fmt.Sprintf("%s [body elided: #%s]\n\tpass", commentPrefix, bodyHash)
 	} else {
 		elidedBody = fmt.Sprintf("{\n\t%s [body elided: #%s]\n}", commentPrefix, bodyHash)
+	}
+	if EstimateTokens(origBody) <= EstimateTokens(elidedBody) {
+		elidedBody = origBody
 	}
 
 	// Build rendered code

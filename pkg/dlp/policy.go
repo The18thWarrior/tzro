@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -168,17 +169,19 @@ func (pe *PolicyEngine) EvaluateContent(text string) PolicyEvaluation {
 	pe.mu.RLock()
 	defer pe.mu.RUnlock()
 
-	// Check each rule against content
+	// Path rules apply to path references, not arbitrary prose or identifiers.
+	// Credential data-class rules below still inspect the complete content.
+	paths := contentPaths(text)
 	for _, rule := range pe.policy.Rules {
 		if rule.PathPattern != "" {
-			cleanPattern := strings.Trim(rule.PathPattern, "*")
-			if cleanPattern != "" && strings.Contains(text, cleanPattern) {
-				if rule.Action == ActionBlock || rule.Action == ActionDeny {
+			for _, path := range paths {
+				if MatchPath(rule.PathPattern, path) && (rule.Action == ActionBlock || rule.Action == ActionDeny) {
 					return PolicyEvaluation{
 						Allowed:     false,
 						Action:      rule.Action,
 						MatchedRule: &rule,
-						Reason:      fmt.Sprintf("egress blocked: content contains blocked reference %q", cleanPattern),
+						Path:        path,
+						Reason:      fmt.Sprintf("egress blocked: content references path %q matching %q", path, rule.PathPattern),
 					}
 				}
 			}
@@ -219,4 +222,46 @@ func (pe *PolicyEngine) EvaluateContent(text string) PolicyEvaluation {
 		Action:  pe.policy.DefaultAction,
 		Reason:  "allowed by policy",
 	}
+}
+
+var contentPathToken = regexp.MustCompile(`[\pL\pN_./\\~:-]+`)
+
+// Decode native request/message JSON before looking for paths so escaped paths
+// and tool arguments use the same policy as plain text. Bare words are paths
+// only in explicit path fields; "secret" in prose is not a file reference.
+func contentPaths(text string) []string {
+	var paths []string
+	var visit func(any)
+	visit = func(value any) {
+		switch v := value.(type) {
+		case map[string]any:
+			for key, item := range v {
+				switch strings.ToLower(key) {
+				case "path", "file_path", "filepath", "filename":
+					if path, ok := item.(string); ok {
+						paths = append(paths, path)
+					}
+				}
+				visit(item)
+			}
+		case []any:
+			for _, item := range v {
+				visit(item)
+			}
+		case string:
+			var decoded any
+			if json.Unmarshal([]byte(v), &decoded) == nil {
+				visit(decoded)
+				return
+			}
+			for _, token := range contentPathToken.FindAllString(v, -1) {
+				token = strings.TrimRight(token, ".:")
+				if strings.ContainsAny(token, `/\\.`) && strings.Trim(token, ".") != "" {
+					paths = append(paths, token)
+				}
+			}
+		}
+	}
+	visit(text)
+	return paths
 }

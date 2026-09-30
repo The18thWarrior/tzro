@@ -3013,3 +3013,38 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 - **Frontier**: Unblocked [Publish benchmark artifacts](../../.scratch/adoption-readiness/issues/04-publish-benchmark-artifacts.md) — the final ticket on the adoption-readiness map.
 - **Files touched**: [README.md](../../README.md), [docs/installation.md](../../docs/installation.md), [.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md](../../.scratch/adoption-readiness/issues/14-published-installation-and-client-verification.md), [.scratch/adoption-readiness/MAP.md](../../.scratch/adoption-readiness/MAP.md), [Adoption readiness overview](architecture/adoption-readiness.md), and this log.
 
+
+## [2026-09-28] diagnosis | Workflow benchmark savings discontinuity
+
+- **Activity**: Recomputed current and historical metrics. Audited tool activity, copied SQLite stores, installed hook behavior, and report generation.
+- **Finding**: Earlier prepared-context benchmarks and current installation benchmarks measure different workflows. Current agents rarely use the CLI Toolkit. Extra turns outweigh measured compression.
+- **Evidence limits**: Native tool transcripts are absent. Retry accounting defects are visible in source, but their effect on this run is unknown.
+- **Files touched**: [Diagnosis](bugs/workflow-benchmark-savings-20260928.md), [Index](index.md), and this log. A numerical audit script is saved under `.scratch/reports/workflow-savings-audit-20260928.py`.
+- **Scope**: Offline analysis only. No paid model calls or implementation changes.
+
+- 2026-09-28: Implemented native Pi tools, recoverable source hooks, benchmark traces/repeats/private grading, and a fail-closed 40% Standard release gate. Retained two interrupted diagnostic attempts, fixed general privacy/path and store-recovery defects, and recorded a matched cache replay without claiming cache savings. Updated the workflow diagnosis and benchmark recipe. Release remains blocked pending completed matched validation.
+
+
+## [2026-09-28] diagnosis | Repeated validation complete; graph adoption gap
+
+- **Result**: All 63 task cells passed. Standard saved 13.9% total tokens overall; repetitions saved 33.4%, -20.1%, and 19.2%. Full used 19.6% more tokens. The 40% release gate failed.
+- **Behavior**: Zero task graph, decision, or extraction calls. Primitive recovery turns and repeated verification offset source-output reduction. A known six-node data workflow reproduced locally with zero cloud calls; natural graph adoption remains untested.
+- **Evidence**: Three interrupted attempts and the complete matrix retain portable source snapshots and native traces. All 965 recorded workflow generations have provider receipts; known workflow plus cache charges total $0.53436066. Unknown interrupted usage remains reserved within the $10 cap.
+- **Post-run correction**: Preflight now captures Pi's stderr version and rejects empty output. The regression failed before the fix and passed under the race detector afterward. Paid raw reports retain their original missing version field.
+- **Scope**: No release or push. See the [final report](../benchmarks/workflows-20260928-validation-v3.md) and [updated diagnosis](bugs/workflow-benchmark-savings-20260928.md). Graph interface design is the next hypothesis, not a measured improvement.
+
+- 2026-09-28: Updated [workflow savings diagnosis](bugs/workflow-benchmark-savings-20260928.md) with v4 zero graph adoption, invoice-fixture deadlock and regression, audited budget reserve, and Baseline/Standard-only validation scope.
+
+- 2026-09-28: Recorded the user’s revised 33% release target and $20 aggregate cap in the workflow diagnosis. Updated shared gate policy and command defaults; Python boundary, quality, and evidence checks passed.
+
+- 2026-09-29: Recorded completed Baseline/Standard validation-v5: 42/42 checks passed, 18.3% total-token savings, no repetition met 33%, and zero graph calls. Verified product source and native evidence; retained portable artifacts and held release.
+
+- 2026-09-29: Diagnosed context retrieval on pristine fixtures without provider calls. Fixed discarded search relevance order and sentence punctuation in filename matching; independent regressions and context/store/tokenizer race suites passed. The replay includes billing's missing README but retains broad or empty context elsewhere. Updated the [workflow diagnosis](bugs/workflow-benchmark-savings-20260928.md); no token-savings claim or paid rerun.
+
+- 2026-09-29: Fixed token inflation from eliding tiny bodies in skeletons and declaration spans, preserving indexing and recovery. AST/context/probe/search/hooks/executor and CLI race checks passed, plus actual Pi fixture integration. Recorded limited offline pack reductions and a retained-history counterfactual in the [workflow diagnosis](bugs/workflow-benchmark-savings-20260928.md). Clarified native CLI flag examples and proposed progressive tool exposure for user review. No provider calls.
+
+- 2026-09-29: Retained diagnostic-v6: 14/14 success, Standard 14.7% more tokens. First natural graph attempt failed because read was absent; whole-output pointers also failed. Independent regressions now pass after ordinary graph-read repair. All 120 provider receipts reconciled. See [benchmark diagnosis](bugs/workflow-benchmark-savings-20260928.md).
+
+- 2026-09-29: Diagnostic-v7 passed 14/14 checks but used 27.2% more Standard tokens. First successful natural graph batched six SQL queries; its data task saved 43.2%. Retained verified source/traces and reconciled all 134 receipts ($0.067973578). Release remains unvalidated. See [benchmark diagnosis](bugs/workflow-benchmark-savings-20260928.md).
+
+- 2026-09-29: Fixed registry tests that mixed the live campaign cap with a fixed fixture ledger. All 12 tests passed. See [post-mortem](bugs/hypothesis-budget-fixture-20260929.md).

@@ -1,133 +1,271 @@
-# Benchmark Report: Developer Workflows (2026-09-28)
+# Developer workflow benchmark: 2026-09-29T01:06:43Z
 
-Empirical evaluation of installation profiles using the **tzro.installation-profiles.v1** recipe.
-Compares **Baseline**, **Tzro Standard**, and **Tzro Full** on identical coding tasks with an installed agent client.
+Recipe: `tzro.installation-profiles.v1`. Model: `minimax/minimax-m3`.
 
-Structured results artifact: [`workflows-20260928.json`](workflows-20260928.json)
+Evidence: [workflows-20260928.json](workflows-20260928.json). All 24 cells are included.
 
----
+Total tokens include uncached input, cache reads, cache writes, and output. Costs use the recorded prices.
 
-## 1. Executive Summary
+## Standard installation release gate
 
-- **Task Quality Intact**: **100% task success rate** across all profiles (4/4 Baseline, 4/4 Standard, 4/4 Full). All generated Go code compiled, passed automated unit tests, and preserved original module definitions.
-- **Total Suite Cost**: **$0.04244 USD** across all 12 matrix cells under the strict $2.00 cost limit.
-- **Efficiency & Completion**: **Tzro Full** achieved the lowest output token generation (3,033 tokens vs 3,352 Baseline and 5,842 Standard) and completed its tasks with identical aggregate agent time to Baseline (80.1s vs 78.2s), while routing all LLM requests through the local proxy shield with on-device secret masking.
-- **Verification**: Zero simulated fallbacks occurred. All runtime readiness probes and proxy endpoints operated with 100% observed integrity.
+**not validated**
 
-### Aggregate Profile Comparison
+Required: 40% token savings in each of at least 3 complete repetitions, lower estimated cost, and no paired quality regression.
 
-| Profile | Success Rate | Total Tokens | Input Tokens | Output Tokens | Cache Read | Total Cost (USD) | Agent Wall Time | Tool Calls (Errors) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline** | 4/4 (100%) | 79,595 | 19,738 | 2,769 | 57,088 | $0.01267 | 106.85s | 30 (1) |
-| **Standard** | 4/4 (100%) | 77,906 | 24,069 | 3,279 | 50,558 | $0.01419 | 118.88s | 29 (1) |
-| **Full** | 4/4 (100%) | 91,737 | 25,369 | 3,501 | 62,867 | $0.01558 | 137.18s | 29 (0) |
+- Every declared repetition must be present, numbered from one.
+- At least 3 complete repetitions are required.
+- A declared, complete task matrix is required.
+- Client version and immutable source snapshot are required.
+- Unmatched grading_sha256: macro_1_cache_impl, repeat 1.
+- Incomplete usage or evidence: baseline/macro_1_cache_impl/1.
+- Incomplete usage or evidence: standard/macro_1_cache_impl/1.
+- Unmatched grading_sha256: macro_2_rate_bugfix, repeat 1.
+- Incomplete usage or evidence: baseline/macro_2_rate_bugfix/1.
+- Incomplete usage or evidence: standard/macro_2_rate_bugfix/1.
+- Unmatched grading_sha256: macro_3_schema_refactor, repeat 1.
+- Incomplete usage or evidence: baseline/macro_3_schema_refactor/1.
+- Incomplete usage or evidence: standard/macro_3_schema_refactor/1.
+- Unmatched grading_sha256: macro_4_auth_diagnosis, repeat 1.
+- Incomplete usage or evidence: baseline/macro_4_auth_diagnosis/1.
+- Incomplete usage or evidence: standard/macro_4_auth_diagnosis/1.
+- Unmatched grading_sha256: macro_5_large_file_skeleton, repeat 1.
+- Incomplete usage or evidence: baseline/macro_5_large_file_skeleton/1.
+- Incomplete usage or evidence: standard/macro_5_large_file_skeleton/1.
+- Unmatched grading_sha256: macro_6_verbose_log_compact, repeat 1.
+- Incomplete usage or evidence: baseline/macro_6_verbose_log_compact/1.
+- Incomplete usage or evidence: standard/macro_6_verbose_log_compact/1.
+- Unmatched grading_sha256: macro_7_tabular_analysis, repeat 1.
+- Incomplete usage or evidence: baseline/macro_7_tabular_analysis/1.
+- Incomplete usage or evidence: standard/macro_7_tabular_analysis/1.
+- Unmatched grading_sha256: macro_8_multi_pkg_discovery, repeat 1.
+- Incomplete usage or evidence: baseline/macro_8_multi_pkg_discovery/1.
+- Incomplete usage or evidence: standard/macro_8_multi_pkg_discovery/1.
+- Repeat 1 does not reach 40% token savings.
+- Repeat 1 does not reduce estimated cost.
 
----
+## Aggregate results
 
-## 2. Matched Task Results
+| Profile | Success | Requests | Total tokens | Uncached | Output | Cache read | Estimated cost | Agent time | Usage |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Baseline | 6/8 (75.0%) | 49 | 145,951 | 42,912 | 5,503 | 97,536 | $0.02532936 | 235.784s | complete |
+| Standard | 8/8 (100.0%) | 68 | 219,783 | 54,925 | 7,546 | 157,312 | $0.03497142 | 250.815s | complete |
+| Full | 8/8 (100.0%) | 69 | 239,843 | 53,218 | 8,065 | 178,560 | $0.03635700 | 276.107s | complete |
 
-All profiles received identical initial workspace scaffolds, task instructions, and execution boundaries. All 12 runs are reported without cherry-picking.
+## Matched successful tasks
 
-| Profile | Task | Status | Success | Input | Output | Cache Read | Cost (USD) | Agent Time | Grade Time | Tools | Proxy Req | Hook Status |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| `baseline` | `macro_1_cache_impl` | completed | **PASS** | 3,116 | 712 | 11,776 | $0.00250 | 24.04s | 0.36s | 6 (0) | 0 | absent |
-| `standard` | `macro_1_cache_impl` | completed | **PASS** | 5,803 | 1,379 | 15,616 | $0.00433 | 42.91s | 0.36s | 8 (0) | 0 | invocation observed |
-| `full` | `macro_1_cache_impl` | completed | **PASS** | 7,386 | 1,378 | 18,048 | $0.00495 | 48.53s | 0.42s | 8 (0) | 9 | invocation observed |
-| `baseline` | `macro_2_rate_bugfix` | completed | **PASS** | 5,455 | 783 | 13,312 | $0.00337 | 23.68s | 0.44s | 7 (0) | 0 | absent |
-| `standard` | `macro_2_rate_bugfix` | completed | **PASS** | 4,619 | 535 | 10,624 | $0.00267 | 23.41s | 0.35s | 5 (1) | 0 | invocation observed |
-| `full` | `macro_2_rate_bugfix` | completed | **PASS** | 6,118 | 624 | 14,336 | $0.00344 | 29.05s | 0.36s | 7 (0) | 8 | invocation observed |
-| `baseline` | `macro_3_schema_refactor` | completed | **PASS** | 5,358 | 698 | 12,544 | $0.00320 | 30.14s | 1.42s | 7 (0) | 0 | absent |
-| `standard` | `macro_3_schema_refactor` | completed | **PASS** | 7,419 | 678 | 13,950 | $0.00388 | 28.14s | 0.38s | 7 (0) | 0 | invocation observed |
-| `full` | `macro_3_schema_refactor` | completed | **PASS** | 5,034 | 579 | 12,179 | $0.00294 | 30.95s | 0.38s | 6 (0) | 7 | invocation observed |
-| `baseline` | `macro_4_auth_diagnosis` | completed | **PASS** | 5,809 | 576 | 19,456 | $0.00360 | 28.98s | 0.34s | 10 (1) | 0 | absent |
-| `standard` | `macro_4_auth_diagnosis` | completed | **PASS** | 6,228 | 687 | 10,368 | $0.00331 | 24.42s | 0.38s | 9 (0) | 0 | invocation observed |
-| `full` | `macro_4_auth_diagnosis` | completed | **PASS** | 6,831 | 920 | 18,304 | $0.00425 | 28.64s | 0.37s | 8 (0) | 9 | invocation observed |
+This descriptive subset excludes failed pairs. The complete matrix remains authoritative for quality and the release gate.
 
-### Task Descriptions
-1. **`macro_1_cache_impl`**: Implement `NewMemoryDriver` satisfying the `Driver` interface (`Get`, `Set`, `Delete`) with thread-safe `sync.RWMutex` storage.
-2. **`macro_2_rate_bugfix`**: Diagnose and repair token-bucket rate limiter logic so burst capacity can be fully utilized.
-3. **`macro_3_schema_refactor`**: Extend core `Item` data structure with a `Tags []string` field while retaining backward compatibility and passing serialization tests.
-4. **`macro_4_auth_diagnosis`**: Diagnose and resolve authentication token signature/claims parsing failure for valid credentials.
+| Profile | Successful pairs | Token savings | Cost savings |
+| --- | --- | --- | --- |
+| standard | 6 | -40.8% | -24.5% |
+| full | 6 | -44.5% | -20.4% |
 
----
+## Repetition and variation
 
-## 3. Installation Profiles & Runtime Configuration
+| Profile | Repetitions | Mean suite tokens | Range | Sample standard deviation | Cell latency p50 | Cell latency p90 |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline | 1 | 145,951 | 145,951–145,951 | unknown (one repetition) | 34.165s | 62.190s |
+| standard | 1 | 219,783 | 219,783–219,783 | unknown (one repetition) | 27.725s | 61.261s |
+| full | 1 | 239,843 | 239,843–239,843 | unknown (one repetition) | 31.726s | 67.865s |
 
-The evaluation strictly adheres to the definitions decided in ADRs and Wayfinder tickets:
+## Per-task comparison
 
-### Profile Definitions
-- **Baseline**: The native client (`Pi-Coder v0.74.2`) running in an isolated environment with standard tools and no `tzro` binary on `PATH` or agent configuration.
-- **Tzro Standard**: The native client configured via the standard one-line installer (`install.sh`), provisioning the `tzro` CLI Toolkit binary, installed agent skill (`SKILL.md`), and post-tool compaction hook (`tzro-hook.ts`).
-- **Tzro Full**: Standard configuration plus local loopback Proxy Shield (`tzro start`), JEV-style Decision Runtime (`bin/jev-score`), and GLiNER Zero-Shot Span Extractor (`bin/gliner_worker.py`).
+Token totals include all attempts, including failures. Savings are meaningful only alongside success and complete usage.
 
-### Runtime Readiness Evidence
-Before executing paid model requests, every profile underwent local preflight verification:
+| Task | Profile | Success | Requests | Total tokens | Savings vs Baseline |
+| --- | --- | --- | --- | --- | --- |
+| macro_1_cache_impl | baseline | 1/1 | 7 | 16,816 | 0.0% |
+| macro_1_cache_impl | standard | 1/1 | 6 | 18,902 | -12.4% |
+| macro_1_cache_impl | full | 1/1 | 7 | 17,078 | -1.6% |
+| macro_2_rate_bugfix | baseline | 1/1 | 6 | 16,238 | 0.0% |
+| macro_2_rate_bugfix | standard | 1/1 | 9 | 25,133 | -54.8% |
+| macro_2_rate_bugfix | full | 1/1 | 9 | 24,277 | -49.5% |
+| macro_3_schema_refactor | baseline | 0/1 | 3 | 5,779 | 0.0% |
+| macro_3_schema_refactor | standard | 1/1 | 7 | 16,301 | -182.1% |
+| macro_3_schema_refactor | full | 1/1 | 8 | 20,895 | -261.6% |
+| macro_4_auth_diagnosis | baseline | 1/1 | 6 | 16,848 | 0.0% |
+| macro_4_auth_diagnosis | standard | 1/1 | 9 | 24,553 | -45.7% |
+| macro_4_auth_diagnosis | full | 1/1 | 10 | 28,165 | -67.2% |
+| macro_5_large_file_skeleton | baseline | 1/1 | 5 | 25,961 | 0.0% |
+| macro_5_large_file_skeleton | standard | 1/1 | 8 | 40,095 | -54.4% |
+| macro_5_large_file_skeleton | full | 1/1 | 7 | 42,253 | -62.8% |
+| macro_6_verbose_log_compact | baseline | 0/1 | 3 | 5,647 | 0.0% |
+| macro_6_verbose_log_compact | standard | 1/1 | 5 | 14,091 | -149.5% |
+| macro_6_verbose_log_compact | full | 1/1 | 7 | 24,619 | -336.0% |
+| macro_7_tabular_analysis | baseline | 1/1 | 8 | 30,702 | 0.0% |
+| macro_7_tabular_analysis | standard | 1/1 | 14 | 54,138 | -76.3% |
+| macro_7_tabular_analysis | full | 1/1 | 13 | 53,993 | -75.9% |
+| macro_8_multi_pkg_discovery | baseline | 1/1 | 11 | 27,960 | 0.0% |
+| macro_8_multi_pkg_discovery | standard | 1/1 | 10 | 26,570 | 5.0% |
+| macro_8_multi_pkg_discovery | full | 1/1 | 8 | 28,563 | -2.2% |
 
-- **JEV Decision Scorer**: Version `JEV v3 (libllama 9770, Qwen3.5)`
-  - Model SHA-256: `0a19bc29bacc33e0d871146c8612b24dd14c2ed2e61cedeb7a928b0852628bac`
-  - Scorer Binary SHA-256: `37fcf9c5110d275a9b3ffda027ad1abe55b6bb21b0d1adc58ab01249eba0cdb0`
-  - Probe check: Local choice probe (`Which word is a programming language? [Go, banana]`) answered `Go` with >0.80 calibrated confidence.
-- **GLiNER Extractor**: Version `GLiNER 2.5 (gliner2 2.0.0, torch 2.8.0)`
-  - Model SHA-256: `898ba838a048c7fa4599654405ddef54437e642875a5706613dcceea8cf2ea81`
-  - Worker Binary SHA-256: `15040e58b17b6417ce2a71a0de166f6bdf4e6e4e1ee61374413d61eb4e361b7f`
-  - Probe check: Local span extraction correctly recovered labeled entity `main.go` from unstructured text in 90ms.
-- **Proxy Shield**: Verified local HTTP loopback endpoint `/v1/chat/completions` readiness before forwarding requests upstream.
-- **Fallback Disclosure**: Zero fallbacks occurred during task execution. All proxy requests in Full were processed directly through the loopback proxy.
+No causal cache claim follows from different tool sequences. OS and provider caches remain uncontrolled.
 
-### Overhead Disclosures
-- **One-time Setup & Model Download**: Excluded from per-task execution latency. JEV GGUF model (~505 MB) and GLiNER PyTorch model (~650 MB) are provisioned once during initial setup.
-- **Per-cell Setup & Preflight Latency**:
-  - Baseline: ~3ms setup, ~460ms preflight.
-  - Standard: ~764ms setup (running real `install.sh`), ~496ms preflight.
-  - Full: ~782ms setup, ~7793ms preflight (verifying JEV GGUF, GLiNER weights, and proxy port).
+## Per-cell evidence
 
----
+| Profile | Task | Repeat | Status | Success | Tokens | Requests | Cost | Tools/errors | Skill read | Trace |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline | macro_1_cache_impl | 1 | completed | PASS | 16816 | 7 | 0.00342252 | 6/0 | unknown | not recorded |
+| standard | macro_1_cache_impl | 1 | completed | PASS | 18902 | 6 | 0.0038365199999999995 | 7/0 | unknown | not recorded |
+| full | macro_1_cache_impl | 1 | completed | PASS | 17078 | 7 | 0.00292818 | 6/0 | unknown | not recorded |
+| baseline | macro_2_rate_bugfix | 1 | completed | PASS | 16238 | 6 | 0.00352602 | 7/0 | unknown | not recorded |
+| standard | macro_2_rate_bugfix | 1 | completed | PASS | 25133 | 9 | 0.004262879999999999 | 8/0 | unknown | not recorded |
+| full | macro_2_rate_bugfix | 1 | completed | PASS | 24277 | 9 | 0.00401004 | 8/0 | unknown | not recorded |
+| baseline | macro_3_schema_refactor | 1 | failed | FAIL | 5779 | 3 | 0.0009272999999999999 | 4/0 | unknown | not recorded |
+| standard | macro_3_schema_refactor | 1 | completed | PASS | 16301 | 7 | 0.0026353799999999997 | 6/0 | unknown | not recorded |
+| full | macro_3_schema_refactor | 1 | completed | PASS | 20895 | 8 | 0.0034637999999999995 | 7/0 | unknown | not recorded |
+| baseline | macro_4_auth_diagnosis | 1 | completed | PASS | 16848 | 6 | 0.00339318 | 9/1 | unknown | not recorded |
+| standard | macro_4_auth_diagnosis | 1 | completed | PASS | 24553 | 9 | 0.0038653199999999998 | 8/0 | unknown | not recorded |
+| full | macro_4_auth_diagnosis | 1 | completed | PASS | 28165 | 10 | 0.0043698 | 9/0 | unknown | not recorded |
+| baseline | macro_5_large_file_skeleton | 1 | completed | PASS | 25961 | 5 | 0.0042798 | 6/0 | unknown | not recorded |
+| standard | macro_5_large_file_skeleton | 1 | completed | PASS | 40095 | 8 | 0.00688056 | 7/0 | unknown | not recorded |
+| full | macro_5_large_file_skeleton | 1 | completed | PASS | 42253 | 7 | 0.005101560000000001 | 8/0 | unknown | not recorded |
+| baseline | macro_6_verbose_log_compact | 1 | failed | FAIL | 5647 | 3 | 0.00089502 | 2/0 | unknown | not recorded |
+| standard | macro_6_verbose_log_compact | 1 | completed | PASS | 14091 | 5 | 0.0030672000000000004 | 6/0 | unknown | not recorded |
+| full | macro_6_verbose_log_compact | 1 | completed | PASS | 24619 | 7 | 0.004582439999999999 | 8/0 | unknown | not recorded |
+| baseline | macro_7_tabular_analysis | 1 | completed | PASS | 30702 | 8 | 0.00474996 | 9/0 | unknown | not recorded |
+| standard | macro_7_tabular_analysis | 1 | completed | PASS | 54138 | 14 | 0.00667494 | 13/1 | unknown | not recorded |
+| full | macro_7_tabular_analysis | 1 | completed | PASS | 53993 | 13 | 0.0069603 | 12/0 | unknown | not recorded |
+| baseline | macro_8_multi_pkg_discovery | 1 | completed | PASS | 27960 | 11 | 0.004135560000000001 | 10/0 | unknown | not recorded |
+| standard | macro_8_multi_pkg_discovery | 1 | completed | PASS | 26570 | 10 | 0.0037486199999999994 | 9/0 | unknown | not recorded |
+| full | macro_8_multi_pkg_discovery | 1 | completed | PASS | 28563 | 8 | 0.00494088 | 10/0 | unknown | not recorded |
 
-## 4. Reproducibility & Environment Metadata
+## Tool selection and hook transformations
 
-| Parameter | Value |
-| :--- | :--- |
-| **Date & Timestamp** | `2026-09-28T22:10:26Z` |
-| **Git Revision** | `e87e18c721311f4510530f1f3bd032f05157cec9` (clean tree) |
-| **Source Diff SHA-256** | `a84ec58f73d1cf214f3361cffb64e667aa6cf2c45983204f0d7201ff8d5d9d16` |
-| **Tzro Binary SHA-256** | `8e370938f89299b2dd315de3d52ec44d47c850342a9ace7b461e54b93d5a3baf` |
-| **Client Binary SHA-256** | `0e4e408dac67af83dd4431a7780400712da6b9e083f862de568f04ef586c8501` |
-| **LLM Model** | `minimax/minimax-m3` |
-| **Provider Base URL** | `https://openrouter.ai/api/v1` |
-| **Token Pricing** | Input: $0.30/M, Output: $1.20/M, Cache Read: $0.06/M |
-| **Hardware** | Mac14,9 (Apple M2 Pro), 10 cores, 32 GB RAM |
-| **Operating System** | `darwin` `arm64` |
-| **Go Version** | `go1.26.0` |
-| **Cache & Isolation Policy** | fresh client, workspace, Go cache and tzro store per cell; readiness workers stop before tasks; OS and provider caches uncontrolled |
-| **Cost Guard** | Limit $2.00 USD; enforced after each reported assistant turn |
+### Baseline
 
----
+Native tools: not recorded
 
-## 5. Supporting Diagnostics & Component Measurements
+Local activity: none recorded
 
-While installation-profile developer workflows lead public reporting, isolated component measurements provide underlying technical evidence:
+Native tzro commands: none recorded
 
-1. **AST Skeletonizer**: Delivers **70%–90% token reduction** when eliding function bodies into cryptographic hashes across 10 supported programming languages (`pkg/ast/skeleton_test.go`).
-2. **Compaction Evidence Contract**: Emits structured failure summaries with exit-code confidence within a strict 10-line inline cap, yielding **~80% token reduction** on test/build diagnostic logs (`pkg/compact/`).
-3. **KV-Cache Prefix Lock Guard**: In direct vs. proxied benchmark comparisons under repeated turns, locks the prefix byte-for-byte, delivering **85.80% → 89.88% cache read hit ratios** (+4.08 percentage points) on MiniMax M3 (`pkg/hooks/testdata/kvcache_e2e_benchmark_results.json`).
-4. **Tabular SQL Ingestion**: Converts multi-megabyte CSV/TSV/JSON files into queried SQLite tables, delivering **>97% token reduction** on tabular exploration workloads (`pkg/ingest/`).
+Observed skill reads: 0/8 cells. Resource discovery alone does not count as a read.
 
----
+Hook transformation sizes and outcomes: not recorded.
 
-## 6. How to Reproduce
+### Standard
 
-To regenerate this report from the saved structured results without incurring provider costs:
+Native tools: not recorded
 
-```bash
-make benchmark-publish
+Local activity: `cli:tzro hook` × 64, `cli:tzro ingest` × 1, `cli:tzro query` × 2
+
+Native tzro commands: none recorded
+
+Observed skill reads: 0/8 cells. Resource discovery alone does not count as a read.
+
+Hook transformation sizes and outcomes: not recorded.
+
+### Full
+
+Native tools: not recorded
+
+Local activity: `cli:tzro hook` × 68, `cli:tzro ingest` × 1, `cli:tzro query` × 1, `cli:tzro start` × 8
+
+Native tzro commands: none recorded
+
+Observed skill reads: 0/8 cells. Resource discovery alone does not count as a read.
+
+Hook transformation sizes and outcomes: not recorded.
+
+## Failures
+
+### baseline / macro_3_schema_refactor / repeat 1
+
+```text
+task tests failed: exit status 1: # acme/model [acme/model.test]
+./item_test.go:7:7: item.Tags undefined (type *Item has no field or method Tags)
+./item_test.go:8:14: item.Tags undefined (type *Item has no field or method Tags)
+./item_test.go:9:48: item.Tags undefined (type *Item has no field or method Tags)
+FAIL	acme/model [build failed]
+FAIL
+
 ```
 
-To rerun the live benchmark with provider requests within explicit cost guards:
+### baseline / macro_6_verbose_log_compact / repeat 1
 
-```bash
-TZRO_BENCH_API_KEY="$OPENROUTER_API_KEY" bin/tzro bench workflows \
-  --model minimax/minimax-m3 \
-  --profiles baseline,standard,full \
-  --run --max-cost 2.0 \
-  --input-price 0.30 --output-price 1.20 --cache-read-price 0.06 --cache-write-price 0
+```text
+task tests failed: exit status 1: --- FAIL: TestProcessBatch (0.00s)
+panic: empty item encountered in pipeline stage 10: index out of bounds [recovered, repanicked]
+
+goroutine 20 [running]:
+testing.tRunner.func1.2({0x1004b9a40, 0x1004ec960})
+	/usr/local/go/src/testing/testing.go:1974 +0x1a0
+testing.tRunner.func1()
+	/usr/local/go/src/testing/testing.go:1977 +0x318
+panic({0x1004b9a40?, 0x1004ec960?})
+	/usr/local/go/src/runtime/panic.go:860 +0x12c
+acme/pipeline.stage10(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:30
+acme/pipeline.stage9(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:26
+acme/pipeline.stage8(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:25
+acme/pipeline.stage7(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:24
+acme/pipeline.stage6({0x0?, 0x100468a40?})
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:23 +0x50
+acme/pipeline.stage5(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:22
+acme/pipeline.stage4(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:21
+acme/pipeline.stage3(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:20
+acme/pipeline.stage2(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:19
+acme/pipeline.stage1(...)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:18
+acme/pipeline.ProcessBatch({0x36ace0f23f08?, 0x100518120?, 0x36ace0f23f08?})
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline.go:12 +0xa4
+acme/pipeline.TestProcessBatch(0x36ace0f60248)
+	/private/var/folders/sy/zbm6jhg96cg4dl2_9sxv6f8m0000gn/T/tzro-workflows-1590039907/profiles/015-baseline/workspace/pipeline_test.go:7 +0x68
+testing.tRunner(0x36ace0f60248, 0x1004ebdf8)
+	/usr/local/go/src/testing/testing.go:2036 +0xc4
+created by testing.(*T).Run in goroutine 1
+	/usr/local/go/src/testing/testing.go:2101 +0x3a8
+FAIL	acme/pipeline	0.312s
+FAIL
+
 ```
+
+## Reproducibility
+
+| Field | Recorded value |
+| --- | --- |
+| Client version | unknown |
+| Source state | dirty |
+| arch | arm64 |
+| binary_vcs.modified | true |
+| binary_vcs.revision | e8c16aeac8a03b70f6e78250e4190998492b7ca5 |
+| binary_vcs.time | 2026-09-28T22:18:13Z |
+| cache_policy | fresh client, workspace, Go cache and tzro store per cell; readiness workers stop before tasks; OS and provider caches uncontrolled |
+| client_binary_sha256 | 0e4e408dac67af83dd4431a7780400712da6b9e083f862de568f04ef586c8501 |
+| cost_guard | checked after each reported assistant message; in-flight usage can exceed the limit |
+| cost_source | estimate from native client token usage and caller-supplied prices; incomplete usage is flagged |
+| cpu_model | Apple M2 Pro |
+| download_cost | not measured; models must be provisioned before running this recipe |
+| go_version | go1.26.0 |
+| hardware_model | Mac14,9 |
+| installation_source | explicit local binary through install.sh |
+| installer_sha256 | 2bb243b92bfbf79e81b8fe1a10fc4a1189b525d1915b9449dede89b485e29ce6 |
+| logical_cpus | 10 |
+| max_turns | 20 |
+| memory_bytes | 34359738368 |
+| model | minimax/minimax-m3 |
+| model_context_window | 128000 |
+| model_max_output_tokens | 8192 |
+| os | darwin |
+| prices | {"cache_read_per_million": 0.06, "cache_write_per_million": 0, "input_per_million": 0.3, "output_per_million": 1.2} |
+| provider_base_url | https://openrouter.ai/api/v1 |
+| recipe | tzro.installation-profiles.v1 |
+| runtimes | {"decision_binary_sha256": "37fcf9c5110d275a9b3ffda027ad1abe55b6bb21b0d1adc58ab01249eba0cdb0", "decision_model_sha256": "0a19bc29bacc33e0d871146c8612b24dd14c2ed2e61cedeb7a928b0852628bac", "decision_version": "JEV v3 (libllama 9770, Qwen3.5)", "extractor_argument_files_sha256": {"gliner_worker.py": "c9e0031b9ee2c48945cd47ce01c57fca31f020f71cf5eec7ca9fc54f984c1446"}, "extractor_arguments_sha256": "6114d0c7ea766dafe1e22e292613bcd084dcae9ae0de5690e479bc3afa31c13a", "extractor_binary_sha256": "15040e58b17b6417ce2a71a0de166f6bdf4e6e4e1ee61374413d61eb4e361b7f", "extractor_model_sha256": "898ba838a048c7fa4599654405ddef54437e642875a5706613dcceea8cf2ea81", "extractor_version": "GLiNER 2.5 (gliner2 2.0.0, torch 2.8.0)"} |
+| source_diff_sha256 | a13a1fe08e0cbcb79aac338054cfdadd7a4dfe8b5df8ea578411a95ad3c443dd |
+| source_revision | e8c16aeac8a03b70f6e78250e4190998492b7ca5 |
+| source_status | M Makefile<br> M cmd/tzro/bench_workflows.go<br> M docs/benchmarks/workflows-20260928.json<br> M docs/benchmarks/workflows-20260928.md<br> M pkg/benchmark/workflow/execute.go<br> M pkg/benchmark/workflow/runner.go<br> M pkg/benchmark/workflow/tasks.go<br> M pkg/benchmark/workflow/types.go<br> M pkg/compactor/compactor.go<br> M pkg/compactor/compactor_test.go<br> M pkg/dlp/policy.go<br> M pkg/hooks/instructions.go<br> M scripts/generate_benchmark_report.py<br>?? pkg/benchmark/workflow/tasks_realistic.go<br>?? pkg/benchmark/workflow/tasks_realistic_test.go |
+| task_timeout_seconds | 180 |
+| timestamp | 2026-09-29T01:06:43Z |
+| tzro_binary_sha256 | 39694f38671c8d018f2e0bfd309bc3783d3254bfb945d80e85cf30f991bf663e |
+
+Runtime readiness and task invocation are separate measurements. Setup and preflight are recorded separately from agent time.
+
+The cost guard acts after reported usage. In-flight requests can exceed it. Missing usage is not zero cost.

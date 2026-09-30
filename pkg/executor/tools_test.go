@@ -37,6 +37,34 @@ func TestBuiltinDispatcher_BashExecution(t *testing.T) {
 	}
 }
 
+func TestGraphExpandsStoredEvidence(t *testing.T) {
+	s, err := store.OpenStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	hash, err := s.PutBlob("source.go", 5, 6, "return 42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := s.PutArtifact(&store.Artifact{Workspace: "fixture", Type: "log", Body: "retained log"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := NewBuiltinDispatcher("fixture", s)
+	g := &Graph{Version: "3.0", TaskID: "expand", Nodes: []Node{
+		{ID: "body", Type: NodeTypeTool, Tool: "expand", Args: map[string]any{"id": "#" + hash}},
+		{ID: "log", Type: NodeTypeTool, Tool: "expand", Args: map[string]any{"id": artifact}},
+	}, Returns: []string{"/nodes/body/output/body", "/nodes/log/output/body"}}
+	result, err := NewEngine(WithToolDispatcher(dispatcher)).Execute(context.Background(), g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" || result.Returns["nodes/body/output/body"] != "return 42" || result.Returns["nodes/log/output/body"] != "retained log" {
+		t.Fatalf("graph could not recover stored evidence: %+v", result)
+	}
+}
+
 func TestBuiltinDispatcher_Probe(t *testing.T) {
 	// Create a temporary workspace with a Go file containing known symbols
 	workspace := t.TempDir()
@@ -94,7 +122,9 @@ func TestBuiltinDispatcher_Skeleton(t *testing.T) {
 import "fmt"
 
 func Hello() {
-	fmt.Println("Hello, World!")
+	for i := 0; i < 10; i++ {
+		fmt.Println("Hello, World!", i)
+	}
 }
 
 func Goodbye() {
@@ -125,12 +155,15 @@ func Goodbye() {
 		t.Fatal("expected 'skeleton' string in result")
 	}
 
-	// Skeleton should contain the function signatures but with elided bodies
+	// Large bodies are elided; small bodies remain cheaper than their markers.
 	if !strings.Contains(skeleton, "func Hello()") {
 		t.Error("skeleton should contain Hello function signature")
 	}
 	if !strings.Contains(skeleton, "body elided") {
 		t.Error("skeleton should contain body elision markers")
+	}
+	if strings.Contains(skeleton, "Hello, World!") || !strings.Contains(skeleton, "Goodbye!") {
+		t.Error("expected large Hello body elided and small Goodbye body retained")
 	}
 
 	// Check compaction metrics

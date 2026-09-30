@@ -1,10 +1,36 @@
 package dlp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestDefaultPathPolicyDoesNotTreatProseAsFilePaths(t *testing.T) {
+	policy, err := LoadWorkspacePolicy(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := NewPolicyEngine(policy)
+	for _, content := range []string{"Discuss secret masking and secret rotation.", "This is a secret.", "func Hash(secret string) string { return secret }", `{"messages":[{"content":"The secret parameter is an ordinary variable name."}]}`} {
+		if result := engine.EvaluateContent(content); !result.Allowed {
+			t.Errorf("ordinary content blocked: %s", result.Reason)
+		}
+	}
+	for _, content := range []string{"Read .env.local", "from /workspace/secrets/config", "Read secret.json.", `{"path":"secret"}`, "file C:\\project\\id_rsa"} {
+		for _, encoded := range []bool{false, true} {
+			text := content
+			if encoded {
+				body, _ := json.Marshal(map[string]string{"content": content})
+				text = string(body)
+			}
+			if result := engine.EvaluateContent(text); result.Allowed {
+				t.Errorf("blocked path allowed: %s", text)
+			}
+		}
+	}
+}
 
 func TestPolicyEngine_RulesAndEnforcement(t *testing.T) {
 	policy := &WorkspacePolicy{

@@ -12,7 +12,7 @@
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a>
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.26+-00ADD8.svg" alt="Go Version" /></a>
   <a href="#benchmark"><img src="https://img.shields.io/badge/Memory%20Footprint-%3C50MB%20RAM-success.svg" alt="Memory" /></a>
-  <a href="#benchmark"><img src="https://img.shields.io/badge/Token%20Savings-70%25--90%25-purple.svg" alt="Token Savings" /></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/Code%20Read%20Reduction-70%25--90%25-purple.svg" alt="Code read reduction" /></a>
   <a href="https://github.com/The18thWarrior/tzro/actions/workflows/test.yml"><img src="https://github.com/The18thWarrior/tzro/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
 </p>
 
@@ -99,7 +99,7 @@ For another repository, replace the file, test command, and task description wit
           70-90% smaller code reads [1]       +4.1 cache points [2]
 ```
 
-[1] Code-read reduction depends on the source file. [2] The saved MiniMax run shows a 4.1-percentage-point improvement in warm-cache hit ratio. [Measurement details](#benchmark).
+[1] Code-read reduction depends on the source file. [2] The earlier MiniMax run shows a 4.1-percentage-point difference in warm-cache hit ratio across different tool sequences. [Measurement details](#benchmark).
 
 ## CLI Toolkit
 
@@ -266,7 +266,7 @@ The KV-Cache Prefix Lock Guard normalizes prompts and tool definitions into a st
 
 Earlier benchmark reports cite 70–85% cache hit rates in agent workflows and up to 99% under controlled conditions. These rates include native provider caching. The [proxy E2E tests](pkg/proxy/proxy_e2e_test.go) and [KV-cache benchmarks](pkg/hooks/kvcache_e2e_bench_test.go) compare direct and proxied calls.
 
-The saved MiniMax run records warm-cache hit ratios of 85.80% direct and 89.88% proxied: an improvement of 4.08 percentage points. [Saved results](pkg/hooks/testdata/kvcache_e2e_benchmark_results.json).
+The saved MiniMax run records warm-cache hit ratios of 85.80% direct and 89.88% proxied, a difference of 4.08 percentage points. The runs used different tool sequences, so this does not isolate the proxy effect. [Saved results](pkg/hooks/testdata/kvcache_e2e_benchmark_results.json).
 
 Cache pricing varies by provider, model, and cache duration. At example multipliers of 1.25× for writes and 0.10× for reads, a write costs 12.5× a read. This ratio is an illustration, not a universal provider price. Local compaction and discovery provide value independently of cache pricing.
 
@@ -297,13 +297,23 @@ The [security policy](SECURITY.md) documents the threat model, credential handli
 
 `tzro bench workflows` evaluates real coding tasks using native client agent loops across three installation profiles: **Baseline**, **Tzro Standard** (default installer with CLI, skills, and hooks), and **Tzro Full** (Standard + loopback Proxy Shield, JEV decision engine, and GLiNER span extractor).
 
-| Profile | Task Success | Input Tokens | Output Tokens | Cache Read | Total Cost (USD) | Agent Wall Time | Evidence |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Baseline** | 4/4 (100%) | 19,738 | 2,769 | 57,088 | $0.01267 | 106.85s | [Report](docs/benchmarks/workflows-20260928.md) |
-| **Standard** | 4/4 (100%) | 24,069 | 3,279 | 50,558 | $0.01419 | 118.88s | [Report](docs/benchmarks/workflows-20260928.md) |
-| **Full** | 4/4 (100%) | 25,369 | 3,501 | 62,867 | $0.01558 | 137.18s | [Report](docs/benchmarks/workflows-20260928.md) |
+The [Baseline/Standard validation](docs/benchmarks/workflows-20260928-validation-v5.md) passed all 42 task checks across three repetitions.
+Standard saved 18.3% of total tokens and 17.4% of estimated cost overall, with 185 model requests versus Baseline's 190.
+Per-repetition token savings were 31.8%, 6.8%, and 3.1%. None reaches the current 33% gate; release remains blocked.
+No task invoked graph execution. Product-source checks, native traces, and token accounting passed verification.
 
-*Full benchmark run on September 28, 2026 using MiniMax M3 via OpenRouter with verified native Pi-Coder v0.74.2 and progressive disclosure skills. View the full [Benchmark Report](docs/benchmarks/workflows-20260928.md) and raw [JSON artifact](docs/benchmarks/workflows-20260928.json). Reproduce or regenerate with `make benchmark-publish`.*
+The later [v7 diagnostic](docs/benchmarks/workflows-20260929-diagnostic-v7.md) passed all 14 checks but used 27.2% more Standard tokens.
+One task naturally batched six SQL queries into a successful local graph and saved 43.2% tokens.
+That task-level gain does not satisfy the complete-battery release gate.
+
+The [diagnosis](docs/wiki/bugs/workflow-benchmark-savings-20260928.md) explains why older prepared-context results are not comparable.
+Earlier validation also exposed a billing-fixture deadlock missed by helper-only checks. The corrected run includes invoice-level grading.
+Paid validation and Make targets now default to Baseline versus Standard; Full remains an explicit option.
+
+The current release gate requires at least 33% lower Standard total tokens in each of three complete repetitions, lower estimated cost, and no paired quality regression.
+Task quality, tool choices, recovery turns, and cached tokens all count.
+Use the [installation-profile recipe](docs/benchmark-workflows.md) to run and verify the evidence.
+Render an existing report with `make benchmark-publish REPORT_JSON=path/to/run.json`.
 
 ### Supporting Component Measurements
 

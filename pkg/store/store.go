@@ -1460,14 +1460,10 @@ func (s *Store) ImportTabular(tableName string, columns []string, rows [][]strin
 		return fmt.Errorf("cannot import into system table: %s", tableName)
 	}
 
-	// Sanitize column names
-	safeCols := make([]string, len(columns))
-	for i, col := range columns {
-		safe := sanitizeIdentifier(col)
-		if safe == "" {
-			safe = fmt.Sprintf("col_%d", i)
-		}
-		safeCols[i] = safe
+	// Use the same query identifiers advertised by every ingestion surface.
+	safeCols, err := NormalizeTabularColumns(columns)
+	if err != nil {
+		return err
 	}
 
 	// Build CREATE TABLE
@@ -1537,12 +1533,10 @@ func (s *Store) QuerySQL(sql string) ([]map[string]string, []string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Validate: must be SELECT
-	trimmed := strings.TrimSpace(sql)
-	upper := strings.ToUpper(trimmed)
-	if !strings.HasPrefix(upper, "SELECT") {
-		return nil, nil, fmt.Errorf("only SELECT queries are allowed, got: %s", trimmed[:min(len(trimmed), 20)])
+	if err := validateSingleSelect(sql); err != nil {
+		return nil, nil, err
 	}
+	trimmed := strings.TrimSpace(sql)
 
 	// Reject queries that reference system tables
 	lowerSQL := strings.ToLower(trimmed)
@@ -1561,6 +1555,14 @@ func (s *Store) QuerySQL(sql string) ([]map[string]string, []string, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, nil, err
+	}
+
+	seen := make(map[string]struct{}, len(cols))
+	for _, col := range cols {
+		if _, exists := seen[col]; exists {
+			return nil, nil, fmt.Errorf("duplicate result column %q: use distinct AS aliases", col)
+		}
+		seen[col] = struct{}{}
 	}
 
 	var results []map[string]string
@@ -1585,6 +1587,26 @@ func (s *Store) QuerySQL(sql string) ([]map[string]string, []string, error) {
 	}
 
 	return results, cols, rows.Err()
+}
+
+// NormalizeTabularColumns returns exact SQL identifiers without changing input.
+// Ambiguous names are rejected before an import can replace existing rows.
+func NormalizeTabularColumns(columns []string) ([]string, error) {
+	names := make([]string, len(columns))
+	seen := make(map[string]bool, len(columns))
+	for i, column := range columns {
+		name := sanitizeIdentifier(column)
+		if name == "" {
+			name = fmt.Sprintf("col_%d", i)
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return nil, fmt.Errorf("ambiguous tabular column %q normalizes to duplicate %q", column, name)
+		}
+		seen[key] = true
+		names[i] = name
+	}
+	return names, nil
 }
 
 // sanitizeIdentifier strips non-alphanumeric chars (except underscore) from a SQL identifier.

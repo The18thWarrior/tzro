@@ -169,7 +169,7 @@ func newRootCmd() *cobra.Command {
 		Short: "Retrieve original code body or stored artifact content with optional line ranges",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			idOrHash := args[0]
+			idOrHash := strings.TrimPrefix(args[0], "#")
 			s, err := store.OpenStore(getDBPath())
 			if err != nil {
 				return err
@@ -727,17 +727,8 @@ Examples:
 			// Determine table name
 			tableName := ingestTableName
 			if tableName == "" {
-				// Auto-generate from content hash
-				sampleSize := 3
-				if len(td.Rows) < sampleSize {
-					sampleSize = len(td.Rows)
-				}
-				var parts []string
-				parts = append(parts, strings.Join(td.Columns, "|"))
-				for i := 0; i < sampleSize; i++ {
-					parts = append(parts, strings.Join(td.Rows[i], "|"))
-				}
-				tableName = "tbl_" + store.ComputeHash(strings.Join(parts, "\n"))
+				// Identity covers every row, matching automatic tabular interception.
+				tableName = "tbl_" + store.SHA256Full(string(data))[:12]
 			}
 
 			if err := s.ImportTabular(tableName, td.Columns, td.Rows); err != nil {
@@ -915,7 +906,7 @@ Examples:
 	var impactRevision string
 
 	impactCmd := &cobra.Command{
-		Use:   "impact",
+		Use:   "impact [files...]",
 		Short: "Assemble change-impact context packs from git diff or symbol with coverage guarantees",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
@@ -932,7 +923,12 @@ Examples:
 			var pack *tzroctx.ContextPack
 			var err error
 
-			if impactSymbol != "" {
+			if len(args) > 0 {
+				if impactSymbol != "" || impactFile != "" || impactRevision != "" || cmd.Flags().Changed("staged") || cmd.Flags().Changed("unstaged") || cmd.Flags().Changed("all") {
+					return fmt.Errorf("explicit impact files cannot be combined with diff or symbol scope flags")
+				}
+				report, pack, err = analyzer.AnalyzeFiles(cmd.Context(), cwd, args, impactBudget, impactIncludeGenerated)
+			} else if impactSymbol != "" {
 				report, pack, err = analyzer.AnalyzeSymbolWithFile(cwd, impactSymbol, impactFile, impactBudget, impactIncludeGenerated)
 			} else {
 				// Check conflicting scope flags

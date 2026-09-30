@@ -42,6 +42,7 @@ func NewAdapterRegistry(s *store.Store, policy *dlp.PolicyEngine) *AdapterRegist
 	r.Register("go", goAdapter)
 	tsAdapter := NewTypeScriptAdapter(s, policy)
 	r.Register("typescript", tsAdapter)
+	r.Register("tsx", tsAdapter)
 	r.Register("javascript", tsAdapter)
 	pyAdapter := NewPythonAdapter(s, policy)
 	r.Register("python", pyAdapter)

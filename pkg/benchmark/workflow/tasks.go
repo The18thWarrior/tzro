@@ -2,7 +2,7 @@ package workflow
 
 import "tzro/pkg/benchmark/signaldensity"
 
-// DefaultTasks reuse the diagnostic fixtures with native edit-in-place instructions.
+// DefaultTasks returns both baseline diagnostic fixtures and advanced realistic workflow tasks.
 // Every profile receives exactly the same task and grading files.
 func DefaultTasks() []Task {
 	cases, _ := signaldensity.LoadWorkflowCases()
@@ -16,5 +16,6 @@ func DefaultTasks() []Task {
 	for _, c := range cases {
 		tasks = append(tasks, Task{ID: c.ID, Prompt: goals[c.ID] + " Edit the files in this workspace and run the Go tests. Preserve the provided tests and go.mod.", Files: c.Scaffold})
 	}
+	tasks = append(tasks, RealisticTasks()...)
 	return tasks
 }

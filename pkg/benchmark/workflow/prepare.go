@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -20,22 +19,22 @@ func prepare(ctx context.Context, cfg Config, profile Profile, task Task, index 
 	p.result.PromptSHA256 = digest([]byte(task.Prompt))
 	fixture, _ := json.Marshal(task.Files)
 	p.result.FixtureSHA256 = digest(fixture)
+	grading, _ := json.Marshal(struct {
+		Files    map[string]string
+		ReadOnly []string
+	}{task.GradeFiles, task.ReadOnlyFiles})
+	p.result.GradingSHA256 = digest(grading)
 	toolsDir := filepath.Join(root, "tools")
 	for _, dir := range []string{p.result.Home, p.result.Workspace, toolsDir, filepath.Join(p.result.Home, "tmp"), filepath.Join(p.result.Home, ".pi", "agent")} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return p, err
 		}
 	}
-	// A controlled PATH prevents the host's tzro from leaking into Baseline.
-	for _, name := range []string{"sh", "bash", "env", "node", "go", "git", "rg", "grep", "find", "ls", "cat", "sed", "awk", "sort", "head", "tail", "cut", "tr", "wc", "xargs", "uname", "mkdir", "mktemp", "dirname", "chmod", "cp", "mv", "rm", "curl", "sha256sum", "shasum", "which", "sleep", "tee", "touch", "pwd"} {
-		if path, err := exec.LookPath(name); err == nil {
-			absolute, err := filepath.Abs(path)
-			if err != nil {
-				return p, err
-			}
-			if err := os.Symlink(absolute, filepath.Join(toolsDir, name)); err != nil {
-				return p, err
-			}
+	// Preserve ordinary host tools equally. A hand-picked allowlist accidentally
+	// removed Python, uniq, and gofmt and changed the agent's workflow.
+	for name, path := range hostTools(cfg.TzroBinary) {
+		if err := os.Symlink(path, filepath.Join(toolsDir, name)); err != nil {
+			return p, err
 		}
 	}
 	if err := os.Symlink(cfg.PiBinary, filepath.Join(toolsDir, "pi")); err != nil {

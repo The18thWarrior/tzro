@@ -526,6 +526,10 @@ func findEnclosingDecl(decls []Symbol, line int) *Symbol {
 
 // extractDeclarationsFromAST uses Tree-sitter to parse declarations in a file.
 func extractDeclarationsFromAST(filePath string, source []byte) ([]Symbol, error) {
+	return extractFileDeclarationsFromAST(filePath, source, false)
+}
+
+func extractFileDeclarationsFromAST(filePath string, source []byte, fileScope bool) ([]Symbol, error) {
 	if len(source) == 0 {
 		return nil, nil
 	}
@@ -631,6 +635,12 @@ func extractDeclarationsFromAST(filePath string, source []byte) ([]Symbol, error
 			}
 		}
 
+		// Record the callable itself, but do not expose its local declarations
+		// as workspace-wide anchors. Class and impl scopes remain traversable.
+		if fileScope && isCallableScope(langName, nodeType) {
+			return
+		}
+
 		for i := 0; i < node.ChildCount(); i++ {
 			walk(node.Child(i))
 		}
@@ -638,4 +648,23 @@ func extractDeclarationsFromAST(filePath string, source []byte) ([]Symbol, error
 
 	walk(root)
 	return decls, nil
+}
+
+// isCallableScope covers the languages supported by declaration extraction.
+// Diff extraction still descends into these scopes to identify changed locals.
+func isCallableScope(language, nodeType string) bool {
+	switch language {
+	case "go":
+		return nodeType == "function_declaration" || nodeType == "method_declaration" || nodeType == "func_literal"
+	case "python":
+		return nodeType == "function_definition" || nodeType == "lambda"
+	case "javascript", "typescript", "tsx":
+		switch nodeType {
+		case "function_declaration", "method_definition", "arrow_function", "function", "function_expression", "generator_function", "generator_function_declaration":
+			return true
+		}
+	case "rust":
+		return nodeType == "function_item" || nodeType == "closure_expression"
+	}
+	return false
 }

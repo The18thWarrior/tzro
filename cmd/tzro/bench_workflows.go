@@ -55,6 +55,13 @@ func newWorkflowBenchCmd() *cobra.Command {
 				cfg.Profiles = append(cfg.Profiles, workflow.Profile(p))
 			}
 			all := workflow.DefaultTasks()
+			switch cfg.Suite {
+			case "representative":
+				all = workflow.RepresentativeTasks()
+			case "legacy":
+			default:
+				return fmt.Errorf("unknown suite %q; use representative or legacy", cfg.Suite)
+			}
 			selected := map[string]bool{}
 			for _, id := range taskIDs {
 				selected[id] = true
@@ -120,10 +127,12 @@ func newWorkflowBenchCmd() *cobra.Command {
 	f.StringVar(&cfg.WorkDir, "work-dir", "", "New directory outside the source checkout for isolated profiles")
 	f.StringVar(&output, "output", "", "New JSON report path (default: work-dir/report.json)")
 	f.StringSliceVar(&profiles, "profiles", []string{"baseline", "standard", "full"}, "Installation profiles to compare")
-	f.StringSliceVar(&taskIDs, "tasks", nil, "Optional task IDs; default: all four coding fixtures")
+	f.StringSliceVar(&taskIDs, "tasks", nil, "Optional task IDs; default: all coding fixtures")
+	f.StringVar(&cfg.Suite, "suite", "representative", "Task battery: representative (hidden checks) or legacy (historical diagnostics)")
 	f.DurationVar(&cfg.SetupTimeout, "setup-timeout", 2*time.Minute, "Per-profile installation and readiness limit")
 	f.DurationVar(&cfg.Timeout, "timeout", 3*time.Minute, "Per-task native client limit; grading has a separate equal limit")
 	f.IntVar(&cfg.MaxTurns, "max-turns", 20, "Stop after this many reported assistant turns")
+	f.IntVar(&cfg.Repeats, "repeats", 1, "Independent repetitions; profile order rotates across tasks and repetitions")
 	f.Float64Var(&cfg.MaxCost, "max-cost", 2, "Suite USD guard, checked after reported usage; in-flight cost may exceed it")
 	f.Float64Var(&prices.Input, "input-price", 0, "Uncached input USD per million tokens")
 	f.Float64Var(&prices.Output, "output-price", 0, "Output USD per million tokens")

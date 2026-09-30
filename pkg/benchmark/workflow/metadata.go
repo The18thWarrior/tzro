@@ -88,7 +88,16 @@ func metadata(ctx context.Context, cfg Config) map[string]any {
 		"max_turns":  cfg.MaxTurns, "task_timeout_seconds": cfg.Timeout.Seconds(),
 		"model_context_window": 128000, "model_max_output_tokens": 8192,
 		"download_cost": "not measured; models must be provisioned before running this recipe",
+		"repeats":       cfg.Repeats, "profile_order": "rotate by task index and repetition",
+		"max_cost_usd": cfg.MaxCost, "automatic_retries": false,
 	}
+	ids := make([]string, 0, len(cfg.Tasks))
+	for _, task := range cfg.Tasks {
+		ids = append(ids, task.ID)
+	}
+	m["task_ids"] = ids
+	m["suite"] = cfg.Suite
+	m["shared_host_tools"] = hostTools(cfg.TzroBinary)
 	if runtime.GOOS == "darwin" {
 		for key, name := range map[string]string{"hardware_model": "hw.model", "memory_bytes": "hw.memsize", "cpu_model": "machdep.cpu.brand_string"} {
 			if out, err := exec.CommandContext(ctx, "/usr/sbin/sysctl", "-n", name).Output(); err == nil {

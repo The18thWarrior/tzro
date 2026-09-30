@@ -21,15 +21,24 @@ description: >-
 
 tzro is a fast, zero-dependency local CLI (<50 MB RAM) for token optimization, symbol discovery, and output compaction.
 
-## When to Use tzro
+For a known sequence of steps, use the native ` + "`tzro_execute_graph`" + ` tool or ` + "`tzro execute graph.json --result selected`" + `.
+One call runs the workflow locally, passes intermediate results between steps, and returns selected evidence.
+Configured System 1 workers can make bounded decisions and extract values without cloud turns. Tool-only graphs need no models.
+Use individual commands for single steps. Keep planning and code generation in the host model.
 
-- **Codebase Exploration**: Run ` + "`tzro probe \"<symbol or query>\"`" + ` for sub-millisecond AST symbol discovery (<5ms, 0 cloud tokens).
-- **Large Files (>200 lines)**: Run ` + "`tzro skeleton <file>`" + ` to view structural declarations and signatures when a file is too large to read in full.
-- **Verbose Command & Test Output**: Run ` + "`tzro compact --run \"<cmd>\"`" + ` or pipe ` + "`... | tzro compact`" + ` to compact compiler diagnostics, test logs, or large JSON responses into high-signal summaries.
-- **Tabular Data (CSV, TSV, JSON)**: Ingest with ` + "`tzro ingest <file>`" + ` and query with ` + "`tzro query <table> \"<sql>\"`" + ` instead of dumping large files into context.
-- **Blast Radius Analysis**: Run ` + "`tzro impact [files...]`" + ` before modifying shared code to discover callers, dependents, and tests to run.
+## Best Practices & Efficient Pipelining
 
-For complete CLI reference and options (including ` + "`tzro expand`" + `, ` + "`tzro context`" + `, and System 1 graph calls), see ` + "`REFERENCE.md`" + ` in this skill directory.
+To minimize turns and save tokens, pipeline tzro commands within single tool invocations:
+
+- **Tabular Data (CSV, TSV, JSON)**: Name the table during ingest to query in a single turn:
+  ` + "`tzro ingest <file> --name <tbl> && tzro query <tbl> \"<sql>\"`" + `
+  All columns are TEXT; use ` + "`CAST(col AS INTEGER)`" + ` or ` + "`CAST(col AS REAL)`" + ` for math/ordering.
+- **Large Files (>200 lines)**: Run ` + "`tzro skeleton <file>`" + ` to view method signatures and structural declarations without dumping the entire file. Use ` + "`tzro expand <hash>`" + ` only for specific elided method bodies.
+- **Verbose Builds & Tests**: Run ` + "`tzro compact --run \"<cmd>\"`" + ` (e.g. ` + "`tzro compact --run \"go test ./...\"`" + `) to capture failure diagnostics within an inline 10-line cap.
+- **Codebase Exploration**: Run ` + "`tzro probe \"<symbol>\"`" + ` for sub-millisecond AST symbol discovery (<5ms, 0 cloud tokens) before opening files.
+- **Blast Radius**: Run ` + "`tzro impact [files...]`" + ` before modifying shared code to discover callers, dependents, and tests to run.
+
+For full CLI reference, options, and System 1 graph calls (including ` + "`tzro expand`" + ` and ` + "`tzro context`" + `), see ` + "`REFERENCE.md`" + ` in this skill directory.
 `
 
 // tzroReferenceMD is the detailed reference manual stored alongside SKILL.md.
@@ -60,6 +69,7 @@ Detailed reference for tzro commands, System 1 graph calls, and proxy administra
 ## Tabular Data Querying (` + "`tzro query`" + `)
 
 When data is imported via ` + "`tzro ingest`" + `, all columns are stored as ` + "`TEXT`" + ` in local SQLite.
+- **Single-turn pipeline**: ` + "`tzro ingest data.csv --name my_data && tzro query my_data \"SELECT ...\"`" + `
 - Numeric comparisons: ` + "`SELECT col, CAST(col AS INTEGER) FROM table WHERE CAST(col AS REAL) > 10.0`" + `
 - Aggregations: ` + "`SELECT category, COUNT(*), AVG(CAST(price AS REAL)) FROM table GROUP BY category`" + `
 - Results are returned in clean Markdown table format.
@@ -68,21 +78,51 @@ When data is imported via ` + "`tzro ingest`" + `, all columns are stored as ` +
 
 ## System 1 Graph Calls (` + "`tzro execute`" + `)
 
-When ` + "`TZRO_EXPERIMENTAL_RUNTIMES=1`" + ` is configured, declarative graph DAGs can be executed locally without cloud API calls:
+Submit a known local workflow once instead of returning to the cloud model after each step.
+The Go executor schedules the graph. Configured System 1 workers supply bounded decisions and extracted values for later steps.
+The result contains requested evidence or a yield when a decision misses its confidence threshold.
+Set ` + "`accept.min_confidence`" + ` on decision nodes and validate the resulting work. Execution success does not establish answer correctness.
+Tool-only graphs work in Standard without models. Decision and extraction nodes require configured workers and ` + "`TZRO_EXPERIMENTAL_RUNTIMES=1`" + `.
 
 ` + "```sh" + `
-tzro execute graph.json
-echo '{"version":"3.0","task_id":"t1","nodes":[...]}' | tzro execute -
+tzro execute graph.json --result selected
+cat graph.json | tzro execute - --result selected
 ` + "```" + `
+
+Native Pi and MCP expose ` + "`tzro_execute_graph({graph: ...})`" + ` directly, without a separate graph-file write.
+For exact UTF-8 file text, use a tool node with ` + "`tool: \"read\"`" + ` and ` + "`args: {file, offset?, limit?}`" + `.
+Offset and limit are positive line numbers/counts; offset starts at one. Relative paths use the workspace root.
+Read returns body, file, start_line, and end_line. Each result and line is limited to 1 MiB; request smaller slices for larger files.
+Blocked paths, binary files, and policies requiring redaction fail explicitly. Exact reads do not substitute skeletons.
+Select ` + "`/nodes/id/output/body`" + ` for text or ` + "`/nodes/id/output`" + ` for the whole node result.
+Query also accepts an optional file to import. Its table name is the basename without extension, with spaces and hyphens replaced by underscores.
+For example, import a file and compute a result in one call:
+
+` + "```json" + `
+{
+  "version": "3.0",
+  "task_id": "summarize-data",
+  "nodes": [
+    {"id": "load", "type": "tool", "tool": "ingest", "args": {"file": "data.csv", "table": "measurements"}},
+    {"id": "summary", "type": "tool", "tool": "query", "depends_on": ["load"], "args": {"sql": "SELECT COUNT(*) AS rows FROM measurements"}}
+  ],
+  "returns": ["/nodes/summary/output/rows"]
+}
+` + "```" + `
+
+Use ` + "`depends_on`" + ` for every required ordering dependency. Wire argument or input values with ` + "`{\"$ref\":\"/nodes/id/output/field\"}`" + `.
+Select only useful ` + "`returns`" + `. Intermediate output is retained locally with an artifact ID for ` + "`tzro expand`" + `.
+Without explicit returns, selected mode returns terminal outputs and failures. Large results return an expansion pointer.
+Local storage failure preserves the full response. Graph commands run with the caller's existing permissions.
 
 ### Graph Structure
 - ` + "`version`" + `: "3.0"
 - ` + "`task_id`" + `: Identifier string
 - ` + "`nodes`" + `: Array of node objects, each containing ` + "`id`" + `, ` + "`type`" + `, and input/configuration:
-  - **` + "`tool`" + `**: Executes a tzro CLI or system tool (` + "`probe`" + `, ` + "`skeleton`" + `, ` + "`search`" + `, ` + "`bash`" + `).
+  - **` + "`tool`" + `**: Executes ` + "`probe`" + `, ` + "`skeleton`" + `, ` + "`expand`" + `, ` + "`search`" + `, ` + "`ingest`" + `, ` + "`query`" + `, or ` + "`bash`" + `. Expand accepts an id and returns body. Shell nodes can run other CLI commands.
   - **` + "`decision`" + `**: Evaluates a question locally via ` + "`bin/jev-score`" + ` (` + "`choice`" + `, ` + "`score`" + `, ` + "`noul`" + `).
   - **` + "`extract`" + `**: Extracts typed spans (e.g. ` + "`file_path`" + `) from text via GLiNER worker.
-  - **` + "`group`" + `**: Groups child nodes with fanout or conditional execution.
+  - **` + "`group`" + `**: Evaluates a template for each item with bounded concurrency. Each child's input receives item and index.
 - References between nodes use JSON pointers: ` + "`{\"$ref\": \"/nodes/node-id/output/stdout\"}`" + `.
 `
 

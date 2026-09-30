@@ -36,8 +36,12 @@ func (b *BuiltinDispatcher) Dispatch(ctx context.Context, tool string, args map[
 		return b.dispatchBash(ctx, args)
 	case "probe":
 		return b.dispatchProbe(ctx, args)
+	case "read":
+		return b.dispatchRead(ctx, args)
 	case "skeleton":
 		return b.dispatchSkeleton(ctx, args)
+	case "expand":
+		return b.dispatchExpand(args)
 	case "search":
 		return b.dispatchSearch(ctx, args)
 	case "ingest":
@@ -49,6 +53,26 @@ func (b *BuiltinDispatcher) Dispatch(ctx context.Context, tool string, args map[
 	}
 }
 
+func (b *BuiltinDispatcher) dispatchExpand(args map[string]interface{}) (map[string]interface{}, error) {
+	id, _ := args["id"].(string)
+	id = strings.TrimPrefix(id, "#")
+	if id == "" || b.StoreDB == nil {
+		return nil, fmt.Errorf("expand requires an id and a local store")
+	}
+	if strings.HasPrefix(id, "art_") {
+		artifact, err := b.StoreDB.GetArtifact(id, b.WorkspaceRoot)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"body": artifact.Body, "artifact_id": id, "redacted": artifact.IsRedacted}, nil
+	}
+	blob, err := b.StoreDB.GetBlob(id)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"body": blob.Body, "file": blob.FilePath, "start_line": blob.StartLine, "end_line": blob.EndLine}, nil
+}
+
 // dispatchBash executes a sandboxed bash command.
 func (b *BuiltinDispatcher) dispatchBash(ctx context.Context, args map[string]interface{}) (map[string]interface{}, error) {
 	cmdStr, _ := args["command"].(string)
@@ -56,7 +80,7 @@ func (b *BuiltinDispatcher) dispatchBash(ctx context.Context, args map[string]in
 		return nil, fmt.Errorf("bash tool requires 'command' argument")
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
+	cmd := shellCommand(ctx, cmdStr)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -108,19 +132,24 @@ func (b *BuiltinDispatcher) dispatchProbe(ctx context.Context, args map[string]i
 			"symbol_name":   m.SymbolName,
 			"kind":          m.Kind,
 			"start_line":    m.StartLine,
+			"match_line":    m.MatchLine,
 			"end_line":      m.EndLine,
 			"matching_line": m.MatchingLine,
 			"hash":          m.Hash,
 		}
 	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"query":         report.Query,
 		"matches":       matches,
 		"scanned_files": report.ScannedFiles,
 		"duration_ms":   report.DurationMs,
 		"markdown":      report.FormatMarkdown(),
-	}, nil
+	}
+	if report.SkippedNontextFiles > 0 {
+		result["skipped_nontext_files"] = report.SkippedNontextFiles
+	}
+	return result, nil
 }
 
 // dispatchSkeleton runs in-process AST skeletonization via pkg/ast.
@@ -195,11 +224,18 @@ func (b *BuiltinDispatcher) dispatchIngest(ctx context.Context, args map[string]
 		return nil, fmt.Errorf("importing tabular data: %w", err)
 	}
 
-	return map[string]interface{}{
-		"table":     tableName,
-		"columns":   columns,
-		"row_count": len(rows),
-	}, nil
+	queryColumns, err := store.NormalizeTabularColumns(columns)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]interface{}{"table": tableName, "columns": queryColumns, "row_count": len(rows)}
+	for i := range columns {
+		if columns[i] != queryColumns[i] {
+			result["source_columns"] = columns
+			break
+		}
+	}
+	return result, nil
 }
 
 // dispatchQuery runs a SQL query, auto-ingesting a file if provided.

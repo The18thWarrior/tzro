@@ -26,6 +26,8 @@ _Map of system features, product requirements, and specs._
 
 ## Bugs & Post-Mortems
 
+- [Workflow benchmark savings discontinuity](bugs/workflow-benchmark-savings-20260928.md) - Compare earlier prepared-context benchmarks with native installation results, tool adoption, and reporting defects. (Audited: 2026-09-28)
+
 - [CI preflight: timing limits and missing test references](bugs/ci-race-and-impact-preflight.md) - Separate performance limits from race instrumentation and preserve declaration paths for inferred test references. (Verified locally: 2026-09-28)
 
 _Analyses of critical bugs, diagnostic loops, and prevention measures._
@@ -165,3 +167,5 @@ _Immutable third-party references, notes, and raw inputs._
 - [Native agent installation contracts](sources/agent-installation-contracts.md) - Primary client schemas, native approval boundaries, and activation checks still pending. (Reviewed: 2026-09-28)
 - [LLM Wiki Reference (Karpathy)](../agents/wiki.md) - Design guidelines and templates for local wiki maintenance.
 - [Edge-Cloud LLM Task Offloading Research](sources/edge-cloud-task-offloading.md) - Bleeding-edge architectures for edge-cloud LLM task offloading beyond Directed Acyclic Graphs.
+
+- [Registry test budget coupled to live campaign](bugs/hypothesis-budget-fixture-20260929.md) — fixed readiness fixture after authorized cap change.

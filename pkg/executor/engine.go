@@ -340,7 +340,7 @@ func (e *Engine) executeBash(ctx context.Context, nodeID string, args map[string
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", cmdStr)
+	cmd := shellCommand(ctx, cmdStr)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

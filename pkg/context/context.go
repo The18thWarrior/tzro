@@ -64,7 +64,7 @@ type TokenizerMetadata struct {
 	VocabularyVersion    string `json:"vocabulary_version,omitempty"`
 	Mode                 string `json:"mode"` // exact | estimated
 	ContentTokens        int    `json:"content_tokens"`
-	SerializedPackTokens int    `json:"serialized_pack_tokens"`
+	SerializedPackTokens int    `json:"serialized_pack_tokens"` // Complete Markdown representation, including its envelope.
 }
 
 // ContextPack represents the assembled context bundle.
@@ -298,7 +298,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 
 		syms, err := a.store.SearchSymbols(workspaceRoot, query, 25)
 		if err == nil {
-			for _, sym := range syms {
+			for rank, sym := range syms {
 				relPath := sym.FilePath
 				if filepath.IsAbs(relPath) {
 					relPath, _ = filepath.Rel(workspaceRoot, relPath)
@@ -320,15 +320,25 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 					StartLine:  sym.Line,
 					EndLine:    sym.Line + 20, // default window if body not expanded
 					Reason:     fmt.Sprintf("FTS5 symbol index match for %q", sym.Symbol),
-					Score:      100.0,
-					Hash:       sym.Hash,
+					// Preserve search relevance within the symbol tier instead of
+					// replacing BM25 order with alphabetical file order below.
+					Score: 100.0 + float64(len(syms)-rank)/float64(len(syms)),
+					Hash:  sym.Hash,
 				}
 			}
 		}
 	}
 
 	// 3. Scan workspace for literal matches, tests, and related files
-	queryWords := strings.Fields(strings.ToLower(query))
+	var queryWords []string
+	for _, word := range strings.Fields(strings.ToLower(query)) {
+		// Sentence punctuation is not part of an explicitly named file.
+		// Keep internal dots, slashes, and underscores intact.
+		word = strings.Trim(word, ".,;:!?()[]{}<>\"'`“”‘’")
+		if word != "" {
+			queryWords = append(queryWords, word)
+		}
+	}
 	_ = filepath.WalkDir(workspaceRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -572,15 +582,6 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 		}
 	}
 
-	serializedTokens := EstimateTokens(pack.FormatMarkdown())
-	pack.Tokenizer = &TokenizerMetadata{
-		Encoding:             tokenizer.EncodingDefault,
-		VocabularyVersion:    "tiktoken-cl100k_base",
-		Mode:                 tokenizer.ModeExact,
-		ContentTokens:        pack.UsedTokens,
-		SerializedPackTokens: serializedTokens,
-	}
-
 	// Always-on trace recording
 	if a.store != nil {
 		traceID := fmt.Sprintf("trace_%d", time.Now().UTC().UnixNano())
@@ -630,6 +631,15 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 		}
 		_ = inspector.NewEngine(a.store, a.policy).RecordTrace(tr)
 		pack.TraceID = traceID
+	}
+
+	// Count the final envelope, including the trace link added above.
+	pack.Tokenizer = &TokenizerMetadata{
+		Encoding:             tokenizer.EncodingDefault,
+		VocabularyVersion:    "tiktoken-cl100k_base",
+		Mode:                 tokenizer.ModeExact,
+		ContentTokens:        pack.UsedTokens,
+		SerializedPackTokens: EstimateTokens(pack.FormatMarkdown()),
 	}
 
 	return pack, nil

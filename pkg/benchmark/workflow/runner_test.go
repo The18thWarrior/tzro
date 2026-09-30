@@ -11,6 +11,14 @@ import (
 
 func TestInstalledProfilesAreIsolated(t *testing.T) {
 	root := t.TempDir()
+	hostTools := filepath.Join(root, "host-tools")
+	if err := os.Mkdir(hostTools, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostTools, "ordinary-helper"), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", hostTools+string(os.PathListSeparator)+os.Getenv("PATH"))
 	binary := filepath.Join(root, "tzro-source")
 	build := exec.Command("go", "build", "-o", binary, "./cmd/tzro")
 	build.Dir = "../../.."
@@ -33,6 +41,13 @@ func TestInstalledProfilesAreIsolated(t *testing.T) {
 		t.Fatalf("profiles not ready: %+v", report)
 	}
 	for _, result := range report.Results {
+		for _, name := range []string{"python3", "node", "awk", "uniq", "gofmt", "ordinary-helper"} {
+			if _, err := exec.LookPath(name); err == nil {
+				if _, err := os.Stat(filepath.Join(filepath.Dir(result.Home), "tools", name)); err != nil {
+					t.Errorf("ordinary analysis tool %s missing from %s: %v", name, result.Profile, err)
+				}
+			}
+		}
 		if result.Status != "ready" || result.Usage.Requests != 0 {
 			t.Fatalf("preflight made provider calls: %+v", result)
 		}

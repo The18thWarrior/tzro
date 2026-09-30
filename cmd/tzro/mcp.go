@@ -174,17 +174,8 @@ func (s *MCPServer) handleRequest(ctx context.Context, req *jsonRPCRequest, noti
 		tools := []mcpTool{
 			{
 				Name:        "tzro_execute_graph",
-				Description: "Execute a System 1 Graph Call DAG. Returns structured results or a yield envelope.",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"graph": map[string]interface{}{
-							"type":        "object",
-							"description": "The System 1 Graph Call JSON object with version, task_id, nodes, and returns.",
-						},
-					},
-					"required": []string{"graph"},
-				},
+				Description: executor.GraphToolDescription,
+				InputSchema: executor.GraphToolParameters(),
 			},
 			{
 				Name:        "tzro_get_context_pack",
@@ -331,12 +322,13 @@ func (s *MCPServer) handleExecuteGraph(ctx context.Context, req *jsonRPCRequest,
 		},
 	})
 
-	resultBytes, _ := json.Marshal(result)
+	resultBytes, _ := json.Marshal(selectedGraphResult(&g, result, s.storeDB, s.workspace))
 	return &jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: mcpToolCallResult{
 			Content: []mcpContent{{Type: "text", Text: string(resultBytes)}},
+			IsError: result.Status == "failed",
 		},
 	}
 }

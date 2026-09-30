@@ -19,6 +19,9 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 180 * time.Second
 	}
+	if cfg.Repeats <= 0 {
+		cfg.Repeats = 1
+	}
 	if cfg.MaxTurns <= 0 {
 		cfg.MaxTurns = 20
 	}
@@ -86,65 +89,89 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 	}
 	report := &Report{Schema: RecipeVersion, Ready: true}
 	report.Metadata = metadata(ctx, cfg)
+	if cfg.Run {
+		path, hash, err := snapshotSource(ctx, filepath.Dir(cfg.Installer), cfg.WorkDir)
+		if err != nil {
+			return nil, err
+		}
+		report.Metadata["source_snapshot_path"] = path
+		report.Metadata["source_snapshot_sha256"] = hash
+	}
 	var cells []*prepared
 	var tasks []Task
-	for _, task := range cfg.Tasks {
-		for _, profile := range cfg.Profiles {
-			setupCtx, cancel := context.WithTimeout(ctx, cfg.SetupTimeout)
-			p, err := prepare(setupCtx, cfg, profile, task, len(report.Results))
-			if err == nil && report.ClientVersion == "" {
-				out, versionErr := command(setupCtx, p.env, p.result.Workspace, cfg.PiBinary, "--version").Output()
-				if versionErr != nil {
-					err = versionErr
-				} else {
-					report.ClientVersion = strings.TrimSpace(string(out))
-				}
-			}
-			if err == nil {
-				start := time.Now()
-				if profile == Full {
-					err = configureFull(cfg, p)
-					if err == nil && report.Metadata["runtimes"] == nil {
-						report.Metadata["runtimes"], err = runtimeIdentity(cfg)
-					}
-					if err == nil {
-						err = checkRuntimes(setupCtx, p)
-					}
-					if err == nil {
-						_, stop, proxyErr := startProxy(setupCtx, cfg, p)
-						stop()
-						err = proxyErr
-					}
-				}
-				if err == nil {
-					p.result.SkillLoaded, err = discoverSkill(setupCtx, cfg, p)
-				}
-				if err == nil && profile == Full {
-					// Readiness uses a separate process; remove its store before task timing.
-					for _, suffix := range []string{"", "-shm", "-wal"} {
-						removeErr := os.Remove(filepath.Join(p.result.Home, ".tzro", "token_shield.db") + suffix)
-						if removeErr != nil && !os.IsNotExist(removeErr) {
-							err = removeErr
-							break
+	var (
+		fullRuntimeChecked bool
+		fullRuntimeErr     error
+	)
+	for repeat := 0; repeat < cfg.Repeats; repeat++ {
+		for taskIndex, task := range cfg.Tasks {
+			for position := range cfg.Profiles {
+				profile := cfg.Profiles[(position+repeat+taskIndex)%len(cfg.Profiles)]
+				setupCtx, cancel := context.WithTimeout(ctx, cfg.SetupTimeout)
+				p, err := prepare(setupCtx, cfg, profile, task, len(report.Results))
+				p.result.Repeat = repeat + 1
+				if err == nil && report.ClientVersion == "" {
+					out, versionErr := command(setupCtx, p.env, p.result.Workspace, cfg.PiBinary, "--version").CombinedOutput()
+					if versionErr != nil {
+						err = versionErr
+					} else {
+						report.ClientVersion = strings.TrimSpace(string(out))
+						if report.ClientVersion == "" {
+							err = fmt.Errorf("client --version returned no version")
 						}
 					}
 				}
-				p.result.PreflightMS = time.Since(start).Milliseconds()
-				if err == nil && p.result.SkillLoaded != (profile != Baseline) {
-					err = fmt.Errorf("installed skill discovery does not match %s", profile)
+				if err == nil {
+					start := time.Now()
+					if profile == Full {
+						err = configureFull(cfg, p)
+						if err == nil && report.Metadata["runtimes"] == nil {
+							report.Metadata["runtimes"], err = runtimeIdentity(cfg)
+						}
+						if err == nil {
+							if !fullRuntimeChecked {
+								fullRuntimeErr = checkRuntimes(setupCtx, p)
+								fullRuntimeChecked = true
+							}
+							err = fullRuntimeErr
+							p.result.RuntimeReady = err == nil
+						}
+						if err == nil {
+							_, stop, proxyErr := startProxy(setupCtx, cfg, p)
+							stop()
+							err = proxyErr
+						}
+					}
+					if err == nil {
+						p.result.SkillLoaded, err = discoverSkill(setupCtx, cfg, p)
+					}
+					if err == nil && profile == Full {
+						// Readiness uses a separate process; remove its store before task timing.
+						for _, suffix := range []string{"", "-shm", "-wal"} {
+							removeErr := os.Remove(filepath.Join(p.result.Home, ".tzro", "token_shield.db") + suffix)
+							if removeErr != nil && !os.IsNotExist(removeErr) {
+								err = removeErr
+								break
+							}
+						}
+					}
+					p.result.PreflightMS = time.Since(start).Milliseconds()
+					if err == nil && p.result.SkillLoaded != (profile != Baseline) {
+						err = fmt.Errorf("installed skill discovery does not match %s", profile)
+					}
 				}
+				cancel()
+				if err != nil {
+					p.result.Error = cleanText(cfg, err.Error())
+					p.result.Status = "setup_incomplete"
+					report.Ready = false
+				} else {
+					p.result.Status = "ready"
+				}
+				report.Results = append(report.Results, p.result)
+				cells = append(cells, p)
+				tasks = append(tasks, task)
 			}
-			cancel()
-			if err != nil {
-				p.result.Error = cleanText(cfg, err.Error())
-				p.result.Status = "setup_incomplete"
-				report.Ready = false
-			} else {
-				p.result.Status = "ready"
-			}
-			report.Results = append(report.Results, p.result)
-			cells = append(cells, p)
-			tasks = append(tasks, task)
 		}
 	}
 	// Every selected profile must pass preflight before any paid request.
@@ -168,6 +195,9 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 				}
 			}
 			report.Results[i] = p.result
+			if err := saveProgress(cfg.WorkDir, report); err != nil {
+				return report, err
+			}
 		}
 	} else if cfg.Run {
 		for i := range report.Results {
@@ -175,6 +205,9 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 				report.Results[i].Status, report.Results[i].Error = "not_run", "another selected profile failed preflight"
 			}
 		}
+	}
+	if err := saveProgress(cfg.WorkDir, report); err != nil {
+		return report, err
 	}
 	return report, nil
 }

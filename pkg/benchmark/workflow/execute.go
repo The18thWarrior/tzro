@@ -7,14 +7,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
 
 type piEvent struct {
-	Type    string
-	IsError bool
-	Message struct {
+	Type       string
+	IsError    bool
+	ToolName   string
+	ToolCallID string
+	Args       json.RawMessage
+	Result     json.RawMessage
+	Message    struct {
 		Role, StopReason, ErrorMessage string
 		Content                        []struct{ Type, Text string }
 		Usage                          *struct{ Input, Output, CacheRead, CacheWrite *int }
@@ -23,6 +28,12 @@ type piEvent struct {
 
 func runTask(ctx context.Context, cfg Config, task Task, p *prepared) {
 	r := &p.result
+	recorder, err := newEventRecorder(cfg, r)
+	if err != nil {
+		r.Status, r.Error = "evidence_incomplete", err.Error()
+		return
+	}
+	defer recorder.close()
 	trace := filepath.Join(r.Home, "task-activity.jsonl")
 	p.env = append(p.env, "TZRO_RUNTIME_TRACE="+trace)
 	defer func() {
@@ -52,7 +63,9 @@ func runTask(ctx context.Context, cfg Config, task Task, p *prepared) {
 	taskCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 	if r.Profile == Full {
-		base, stop, err := startProxy(taskCtx, cfg, p)
+		// Keep the local proxy alive until its final metrics are collected even
+		// when the native task context is canceled on a limit or provider error.
+		base, stop, err := startProxy(ctx, cfg, p)
 		if err != nil {
 			r.Status, r.Error = "failed", cleanText(cfg, err.Error())
 			return
@@ -103,6 +116,12 @@ func runTask(ctx context.Context, cfg Config, task Task, p *prepared) {
 			cancel()
 			break
 		}
+		if err := recorder.record(event, scanner.Bytes()); err != nil {
+			r.EvidenceComplete = false
+			reason = cleanText(cfg, err.Error())
+			cancel()
+			break
+		}
 		switch event.Type {
 		case "auto_compaction_start", "auto_retry_start":
 			r.Usage.Complete = false
@@ -123,6 +142,7 @@ func runTask(ctx context.Context, cfg Config, task Task, p *prepared) {
 			}
 			r.Usage.Requests++
 			u := m.Usage
+			turn := Turn{Number: r.Usage.Requests, StopReason: m.StopReason}
 			if u == nil || u.Input == nil || u.Output == nil || u.CacheRead == nil || u.CacheWrite == nil || *u.Input < 0 || *u.Output < 0 || *u.CacheRead < 0 || *u.CacheWrite < 0 || (*u.Input == 0 && *u.Output == 0 && *u.CacheRead == 0 && *u.CacheWrite == 0) {
 				r.Usage.Complete = false
 				reason = "native client usage incomplete"
@@ -134,7 +154,10 @@ func runTask(ctx context.Context, cfg Config, task Task, p *prepared) {
 				r.Usage.CacheWrite += *u.CacheWrite
 				cost := (float64(r.Usage.Input)*cfg.Prices.Input + float64(r.Usage.Output)*cfg.Prices.Output + float64(r.Usage.CacheRead)*cfg.Prices.CacheRead + float64(r.Usage.CacheWrite)*cfg.Prices.CacheWrite) / 1e6
 				r.Usage.EstimatedCostUSD = &cost
+				turnCost := (float64(*u.Input)*cfg.Prices.Input + float64(*u.Output)*cfg.Prices.Output + float64(*u.CacheRead)*cfg.Prices.CacheRead + float64(*u.CacheWrite)*cfg.Prices.CacheWrite) / 1e6
+				turn.Usage = Usage{Requests: 1, Input: *u.Input, Output: *u.Output, CacheRead: *u.CacheRead, CacheWrite: *u.CacheWrite, Complete: true, EstimatedCostUSD: &turnCost}
 			}
+			r.Turns = append(r.Turns, turn)
 			for _, content := range m.Content {
 				if content.Type == "text" {
 					r.FinalResponse = cleanText(cfg, content.Text)
@@ -186,7 +209,7 @@ func runTask(ctx context.Context, cfg Config, task Task, p *prepared) {
 
 func grade(ctx context.Context, cfg Config, task Task, p *prepared) (bool, error) {
 	for name, original := range task.Files {
-		if !strings.HasSuffix(name, "_test.go") && name != "go.mod" {
+		if !strings.HasSuffix(name, "_test.go") && name != "go.mod" && !slices.Contains(task.ReadOnlyFiles, name) {
 			continue
 		}
 		path := filepath.Join(p.result.Workspace, name)
@@ -201,7 +224,32 @@ func grade(ctx context.Context, cfg Config, task Task, p *prepared) (bool, error
 	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	cmd := command(ctx, p.env, p.result.Workspace, filepath.Join(filepath.Dir(p.result.Home), "tools", "go"), "test", "-count=1", "./...")
+	gradeDir := p.result.Workspace
+	if len(task.GradeFiles) > 0 {
+		var err error
+		gradeDir, err = os.MkdirTemp(filepath.Dir(p.result.Home), "grade-")
+		if err != nil {
+			return false, err
+		}
+		defer os.RemoveAll(gradeDir)
+		if err := os.CopyFS(gradeDir, os.DirFS(p.result.Workspace)); err != nil {
+			return false, err
+		}
+		for name, body := range task.GradeFiles {
+			name = filepath.Clean(name)
+			if filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, ".."+string(os.PathSeparator)) {
+				return false, fmt.Errorf("grading path escapes workspace: %s", name)
+			}
+			path := filepath.Join(gradeDir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				return false, err
+			}
+			if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+				return false, err
+			}
+		}
+	}
+	cmd := command(ctx, p.env, gradeDir, filepath.Join(filepath.Dir(p.result.Home), "tools", "go"), "test", "-count=1", "./...")
 	var out outputBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()

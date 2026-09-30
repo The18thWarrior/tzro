@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"tzro/pkg/store"
 )
 
 // DefaultTabularThreshold is the default byte threshold for external-tool tabular interception.
@@ -254,6 +255,11 @@ func detectDelimitedLenient(content string, delimiter rune, format string) (*Tab
 // FormatEnvelope generates the compact data envelope that replaces the raw tabular output.
 // Includes schema, row count, sample rows, and the query pointer.
 func FormatEnvelope(tableName string, td *TabularData, sampleCount int) string {
+	columns, err := store.NormalizeTabularColumns(td.Columns)
+	if err != nil {
+		return fmt.Sprintf("Invalid tabular schema: %v\n", err)
+	}
+
 	if sampleCount <= 0 {
 		sampleCount = 5
 	}
@@ -268,13 +274,18 @@ func FormatEnvelope(tableName string, td *TabularData, sampleCount int) string {
 
 	// Column list
 	sb.WriteString("Columns: ")
-	sb.WriteString(strings.Join(td.Columns, ", "))
+	sb.WriteString(strings.Join(columns, ", "))
 	sb.WriteString("\n\n")
+	for i, column := range columns {
+		if column != td.Columns[i] {
+			sb.WriteString(fmt.Sprintf("Source column %q -> SQL column %q\n", td.Columns[i], column))
+		}
+	}
 
 	// Sample rows as markdown table
 	sb.WriteString(fmt.Sprintf("## Sample (first %d rows)\n", sampleCount))
 	sb.WriteString("| ")
-	sb.WriteString(strings.Join(td.Columns, " | "))
+	sb.WriteString(strings.Join(columns, " | "))
 	sb.WriteString(" |\n")
 	sb.WriteString("|")
 	sb.WriteString(strings.Repeat(" --- |", len(td.Columns)))
@@ -287,6 +298,7 @@ func FormatEnvelope(tableName string, td *TabularData, sampleCount int) string {
 	}
 
 	sb.WriteString(fmt.Sprintf("\nQuery with: `tzro query %s \"SELECT ... FROM %s WHERE ...\"`\n", tableName, tableName))
+	sb.WriteString("The complete data is already imported. Query this table directly; do not ingest the file again. Columns are TEXT; use CAST for numeric operations.\n")
 
 	return sb.String()
 }
