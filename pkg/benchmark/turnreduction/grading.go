@@ -50,6 +50,11 @@ func GradeFixture(ctx context.Context, fixture Fixture, workspaceDir string) (bo
 				return false, log, fmt.Errorf("required private test did not pass: %s", name)
 			}
 		}
+	} else if err == nil && zeroTestsRan(fixture, log) {
+		// Command exited non-zero with no tests discovered (e.g. Python 3.12+ exits 5
+		// when zero tests are found). Surface the same explicit guard so callers always
+		// see an error explaining *why* the grade failed, rather than a bare passed=false.
+		return false, log, fmt.Errorf("no passing private tests: %s", fixture.Language)
 	}
 	return passed, log, err
 }
@@ -78,6 +83,23 @@ func passingPrivateTests(fixture Fixture, log string) map[string]bool {
 		}
 	}
 	return tests
+}
+
+// zeroTestsRan returns true when the test runner log indicates that no tests
+// were discovered or executed. This covers Python 3.12+ which exits non-zero
+// with "Ran 0 tests" when zero tests match the discovery pattern, and Go's
+// "no test files" or "no tests to run" messages.
+func zeroTestsRan(fixture Fixture, log string) bool {
+	switch fixture.Language {
+	case "python":
+		return strings.Contains(log, "Ran 0 tests") || strings.Contains(log, "NO TESTS RAN")
+	case "go":
+		return strings.Contains(log, "no test files") || strings.Contains(log, "no tests to run")
+	case "typescript":
+		// Node test runner with zero tests reports "# tests 0".
+		return strings.Contains(log, "# tests 0")
+	}
+	return false
 }
 
 func gradeGo(ctx context.Context, fixture Fixture, workspaceDir string) (bool, string, error) {

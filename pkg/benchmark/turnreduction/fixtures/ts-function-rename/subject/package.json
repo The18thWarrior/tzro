@@ -9,8 +9,5 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
-  "devDependencies": {
-    "@types/node": "^26.6.4"
-  }
+  "type": "commonjs"
 }

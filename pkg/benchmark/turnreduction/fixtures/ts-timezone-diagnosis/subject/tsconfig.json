@@ -1,1 +1,1 @@
-{"compilerOptions":{"module":"commonjs","target":"ES2022","strict":true,"outDir":"dist","types":["node"],"skipLibCheck":true}}
+{"compilerOptions":{"module":"commonjs","target":"ES2022","strict":true,"outDir":"dist","skipLibCheck":true}}
