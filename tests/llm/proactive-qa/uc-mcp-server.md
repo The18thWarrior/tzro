@@ -22,8 +22,9 @@ A developer's IDE needs to execute System 1 Graph Calls through tzro without she
 
 - [ ] `initialize` request returns server info with protocol version `2024-11-05` and tool capabilities
 - [ ] `notifications/initialized` is acknowledged without error
-- [ ] `tools/list` returns a tool declaration for `tzro_execute_graph` with a valid JSON schema
+- [ ] `tools/list` returns tool declarations for `tzro_execute_graph`, `tzro_get_context_pack`, `tzro_get_impact_report`, and `tzro_edit_and_verify` with valid JSON schemas
 - [ ] `tools/call` with `tzro_execute_graph` and a valid graph returns a structured execution result
+- [ ] `tools/call` with `tzro_edit_and_verify` applies edits and returns structured verification summary
 - [ ] Progress notifications are emitted: 0% at start and 100% at completion
 - [ ] Yielded graph execution returns a yield envelope through the MCP response
 - [ ] Multiple sequential tool calls on the same stdio connection work correctly

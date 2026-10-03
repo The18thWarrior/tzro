@@ -5,18 +5,18 @@
 </p>
 
 <p align="center">
-  <strong>Find code, assemble context, and compact tool output locally.</strong>
+  <strong>43% fewer agent turns. 37% faster completion. Measured.</strong>
 </p>
 
 <p align="center">
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a>
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Go-1.26+-00ADD8.svg" alt="Go Version" /></a>
-  <a href="#benchmark"><img src="https://img.shields.io/badge/Memory%20Footprint-%3C50MB%20RAM-success.svg" alt="Memory" /></a>
-  <a href="#benchmark"><img src="https://img.shields.io/badge/Code%20Read%20Reduction-70%25--90%25-purple.svg" alt="Code read reduction" /></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/Agent%20Turns-%E2%86%9343%25-success.svg" alt="Turn Reduction" /></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/Completion%20Time-%E2%86%9337%25-purple.svg" alt="Completion time" /></a>
   <a href="https://github.com/The18thWarrior/tzro/actions/workflows/test.yml"><img src="https://github.com/The18thWarrior/tzro/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
 </p>
 
-Tzro is a native Go CLI for developers and coding agents. It returns relevant code, compact source files, and build diagnostics that fit a context budget.
+Tzro is a native Go CLI for developers and coding agents. It assembles relevant code, runs automatic verification, and delivers high-signal context locally — so your agent solves tasks in fewer model turns.
 
 The CLI Toolkit runs without a proxy, API key, Python, PyTorch, or GPU. The optional Proxy Shield adds request normalization and secret masking for cloud API traffic.
 
@@ -96,10 +96,10 @@ For another repository, replace the file, test command, and task description wit
                        v                            v
           Local files / Content-Hash Store    Cloud API provider
           No API keys or interception         Opt-in API routing
-          70-90% smaller code reads [1]       +4.1 cache points [2]
+          43% fewer agent turns [1]           +4.1 cache points [2]
 ```
 
-[1] Code-read reduction depends on the source file. [2] The earlier MiniMax run shows a 4.1-percentage-point difference in warm-cache hit ratio across different tool sequences. [Measurement details](#benchmark).
+[1] Measured across 9 coding tasks: 63 model invocations (Tzro) vs 111 (Native), same correctness. [Instrumented results](docs/wiki/architecture/instrumented-turn-reduction-results.md). [2] The earlier MiniMax run shows a 4.1-percentage-point difference in warm-cache hit ratio across different tool sequences. [Measurement details](#benchmark).
 
 ## CLI Toolkit
 
@@ -293,6 +293,22 @@ The [security policy](SECURITY.md) documents the threat model, credential handli
 
 ## Performance and benchmark evidence
 
+### Turn Reduction (Instrumented Native Comparison)
+
+The instrumented comparison (E070, October 2026) ran 9 coding tasks across three conditions using the same frozen client, model, and independent grading:
+
+| Condition | Correct | Total time | Model invocations | vs. Native |
+| --- | ---: | ---: | ---: | --- |
+| Native (no Tzro) | 9/9 | 201.07 s | 111 | — |
+| Simple helper | 9/9 | 198.58 s | 106 | 4.5% fewer invocations |
+| Guided Tzro | 9/9 | 125.28 s | 63 | **43.2% fewer invocations, 37.7% faster** |
+
+Tzro was faster on 7 of 9 tasks against Native and 8 of 9 against the Simple helper. It used fewer model invocations on 8 of 9 tasks against each control, with one tie in each comparison. All 27 tasks passed independent grading. No task was removed from the comparison.
+
+The comparison used Antigravity 1.2.15 with Gemini gemini-3.8-flash-low. Each task ran in an isolated workspace. Model invocations were counted with a passive observer recording matched pre/post invocation pairs. [Full instrumented results](docs/wiki/architecture/instrumented-turn-reduction-results.md).
+
+These results establish a measured benefit for the guided integration on this development suite. They do not establish performance on unseen tasks or other models.
+
 ### Developer Workflows (Installation Profiles)
 
 `tzro bench workflows` evaluates real coding tasks using native client agent loops across three installation profiles: **Baseline**, **Tzro Standard** (default installer with CLI, skills, and hooks), and **Tzro Full** (Standard + loopback Proxy Shield, JEV decision engine, and GLiNER span extractor).
@@ -331,6 +347,9 @@ The [installation-profile recipe](docs/benchmark-workflows.md) documents native 
 
 ## v3.1.0 highlights
 
+- **43% Fewer Agent Turns — Measured**: Instrumented 3-condition comparison across 9 real coding tasks shows Guided Tzro uses 43.2% fewer model invocations and completes 37.7% faster than a native agent, with the same 9/9 correctness. [Full results](docs/wiki/architecture/instrumented-turn-reduction-results.md).
+- **Turn Reduction Benchmark Harness**: `pkg/benchmark/turnreduction` provides reproducible 3-condition (Native/Simple/Tzro) comparisons with passive invocation recording, fixture-based grading, and evidence retention.
+- **Edit Verification Service**: Automatic post-edit verification with file access sandboxing, partial write detection, and preset-based test selection.
 - **Multi-Language Context Packs**: `tzro context` now resolves references across Go, TypeScript/JavaScript, Python, and Rust using Tree-sitter AST adapters. TypeScript barrel re-exports, Python relative imports, and Rust `crate::`/`super::` paths are fully traced.
 - **Symbol-Anchored Context** (`tzro context --symbol`): Assembles context around a symbol declaration. The `--file` flag selects its source file.
 - **Predictive Test Selection** (`tzro test --impact`): Identifies tests affected by staged or unstaged changes across Go, Jest/Vitest, and pytest. It runs those tests with compacted output.

@@ -11,30 +11,46 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/spf13/cobra"
 	tzroctx "tzro/pkg/context"
 	"tzro/pkg/dlp"
 	"tzro/pkg/executor"
 	"tzro/pkg/store"
+	"tzro/pkg/verification"
 )
 
-// MCPServer implements a JSON-RPC 2.0 stdio MCP server exposing context, impact, and graph tools.
+// MCPServer implements a JSON-RPC 2.0 stdio MCP server exposing context, impact, graph, and verification tools.
 type MCPServer struct {
-	engine          *executor.Engine
-	storeDB         *store.Store
-	workspace       string
-	protocolVersion string
-	reqID           atomic.Int64
+	engine              *executor.Engine
+	storeDB             *store.Store
+	workspace           string
+	protocolVersion     string
+	reqID               atomic.Int64
+	verificationService *verification.Service
+	activeMu            sync.Mutex
+	activeCalls         map[string]context.CancelFunc
 }
 
 // NewMCPServer creates a new MCP server wrapping the executor engine and store.
 func NewMCPServer(engine *executor.Engine, s *store.Store, workspace string) *MCPServer {
+	fa, _ := verification.NewWorkspaceFileAccess(workspace)
+	runner := verification.NewExactCommandRunner(workspace)
+	storeAdapter := verification.NewProductionEvidenceStore(s, workspace)
+	vService := verification.NewService(workspace, verification.Dependencies{
+		FileAccess:    fa,
+		CommandRunner: runner,
+		EvidenceStore: storeAdapter,
+	})
+
 	return &MCPServer{
-		engine:          engine,
-		storeDB:         s,
-		workspace:       workspace,
-		protocolVersion: "2024-11-05",
+		engine:              engine,
+		storeDB:             s,
+		workspace:           workspace,
+		protocolVersion:     "2024-11-05",
+		verificationService: vService,
+		activeCalls:         make(map[string]context.CancelFunc),
 	}
 }
 
@@ -93,10 +109,64 @@ type mcpContent struct {
 	Text string `json:"text"`
 }
 
-// ServeStdio runs the MCP server over stdin/stdout.
-func (s *MCPServer) ServeStdio(ctx context.Context) error {
-	reader := bufio.NewReader(os.Stdin)
-	writer := os.Stdout
+func reqIDKey(id interface{}) string {
+	switch v := id.(type) {
+	case string:
+		return "s:" + v
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("n:%d", int64(v))
+		}
+		return fmt.Sprintf("f:%g", v)
+	case float32:
+		if v == float32(int64(v)) {
+			return fmt.Sprintf("n:%d", int64(v))
+		}
+		return fmt.Sprintf("f:%g", v)
+	case int:
+		return fmt.Sprintf("n:%d", v)
+	case int64:
+		return fmt.Sprintf("n:%d", v)
+	case nil:
+		return "nil"
+	default:
+		return fmt.Sprintf("v:%v", v)
+	}
+}
+
+func (s *MCPServer) registerActiveRequest(id interface{}, parent context.Context) (context.Context, context.CancelFunc) {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if s.activeCalls == nil {
+		s.activeCalls = make(map[string]context.CancelFunc)
+	}
+	ctx, cancel := context.WithCancel(parent)
+	key := reqIDKey(id)
+	s.activeCalls[key] = cancel
+	return ctx, cancel
+}
+
+func (s *MCPServer) unregisterActiveRequest(id interface{}) {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if s.activeCalls != nil {
+		delete(s.activeCalls, reqIDKey(id))
+	}
+}
+
+func (s *MCPServer) cancelActiveRequest(id interface{}) {
+	s.activeMu.Lock()
+	defer s.activeMu.Unlock()
+	if s.activeCalls != nil {
+		if cancel, ok := s.activeCalls[reqIDKey(id)]; ok {
+			cancel()
+		}
+	}
+}
+
+// Serve runs the MCP server over an input reader and output writer.
+func (s *MCPServer) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	reader := bufio.NewReader(in)
 	var writerMu sync.Mutex
 
 	writeResponse := func(resp interface{}) error {
@@ -106,7 +176,7 @@ func (s *MCPServer) ServeStdio(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(writer, "%s\n", data)
+		_, err = fmt.Fprintf(out, "%s\n", data)
 		return err
 	}
 
@@ -122,7 +192,7 @@ func (s *MCPServer) ServeStdio(ctx context.Context) error {
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("reading stdin: %w", err)
+			return fmt.Errorf("reading input: %w", err)
 		}
 
 		var req jsonRPCRequest
@@ -135,11 +205,44 @@ func (s *MCPServer) ServeStdio(ctx context.Context) error {
 			continue
 		}
 
-		resp := s.handleRequest(ctx, &req, writeResponse)
-		if resp != nil {
-			_ = writeResponse(resp)
+		// Handle cancellation notification
+		if req.Method == "notifications/cancelled" {
+			if req.Params != nil {
+				if targetID, exists := req.Params["requestId"]; exists {
+					s.cancelActiveRequest(targetID)
+				}
+			}
+			continue
 		}
+
+		// Handle initialize and discovery synchronously
+		if req.Method == "initialize" || req.Method == "notifications/initialized" || req.Method == "tools/list" {
+			resp := s.handleRequest(ctx, &req, writeResponse)
+			if resp != nil {
+				_ = writeResponse(resp)
+			}
+			continue
+		}
+
+		// Execute tools/call asynchronously so the reader remains available for cancellation
+		reqCtx, cancel := s.registerActiveRequest(req.ID, ctx)
+		go func(r jsonRPCRequest, cCtx context.Context, cFunc context.CancelFunc) {
+			defer func() {
+				cFunc()
+				s.unregisterActiveRequest(r.ID)
+			}()
+
+			resp := s.handleRequest(cCtx, &r, writeResponse)
+			if resp != nil {
+				_ = writeResponse(resp)
+			}
+		}(req, reqCtx, cancel)
 	}
+}
+
+// ServeStdio runs the MCP server over stdin/stdout.
+func (s *MCPServer) ServeStdio(ctx context.Context) error {
+	return s.Serve(ctx, os.Stdin, os.Stdout)
 }
 
 func (s *MCPServer) handleRequest(ctx context.Context, req *jsonRPCRequest, notify func(interface{}) error) *jsonRPCResponse {
@@ -207,6 +310,32 @@ func (s *MCPServer) handleRequest(ctx context.Context, req *jsonRPCRequest, noti
 					},
 				},
 			},
+			{
+				Name:        "tzro_edit_and_verify",
+				Description: "Apply a batch of literal text edits and execute repository verification preset.",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"edits": map[string]interface{}{
+							"type":        "array",
+							"description": "List of literal replacements or creations to preflight and apply",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"kind":             map[string]interface{}{"type": "string", "enum": []string{"replace", "create"}},
+									"path":             map[string]interface{}{"type": "string"},
+									"old_text":         map[string]interface{}{"type": "string"},
+									"new_text":         map[string]interface{}{"type": "string"},
+									"expected_matches": map[string]interface{}{"type": "integer"},
+									"content":          map[string]interface{}{"type": "string"},
+								},
+								"required": []string{"kind", "path"},
+							},
+						},
+					},
+					"required": []string{"edits"},
+				},
+			},
 		}
 
 		if s.protocolVersion == "2025-06-18" {
@@ -229,6 +358,19 @@ func (s *MCPServer) handleRequest(ctx context.Context, req *jsonRPCRequest, noti
 					"reference_edges":      map[string]interface{}{"type": "array"},
 					"candidate_test_files": map[string]interface{}{"type": "array"},
 					"coverage":             map[string]interface{}{"type": "object"},
+				},
+			}
+			tools[3].OutputSchema = map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"schema":          map[string]interface{}{"type": "string"},
+					"application":     map[string]interface{}{"type": "string"},
+					"changed_files":   map[string]interface{}{"type": "array"},
+					"uncertain_files": map[string]interface{}{"type": "array"},
+					"verification":    map[string]interface{}{"type": "string"},
+					"checks":          map[string]interface{}{"type": "array"},
+					"termination":     map[string]interface{}{"type": "string"},
+					"retention":       map[string]interface{}{"type": "string"},
 				},
 			}
 		}
@@ -262,6 +404,8 @@ func (s *MCPServer) handleToolCall(ctx context.Context, req *jsonRPCRequest, not
 		return s.handleGetContextPack(ctx, req, notify)
 	case "tzro_get_impact_report":
 		return s.handleGetImpactReport(ctx, req, notify)
+	case "tzro_edit_and_verify":
+		return s.handleEditAndVerify(ctx, req, notify)
 	default:
 		return errorResult(req.ID, fmt.Sprintf("Unknown tool: %s", toolName))
 	}
@@ -574,9 +718,50 @@ func errorResult(id interface{}, msg string) *jsonRPCResponse {
 	}
 }
 
+func (s *MCPServer) handleEditAndVerify(ctx context.Context, req *jsonRPCRequest, notify func(interface{}) error) *jsonRPCResponse {
+	arguments, _ := req.Params["arguments"].(map[string]interface{})
+	data, err := json.Marshal(arguments)
+	if err != nil {
+		return errorResult(req.ID, fmt.Sprintf("invalid arguments: %v", err))
+	}
+
+	var vReq verification.Request
+	if err := json.Unmarshal(data, &vReq); err != nil {
+		return errorResult(req.ID, fmt.Sprintf("failed to parse verification request: %v", err))
+	}
+
+	if s.verificationService == nil {
+		fa, _ := verification.NewWorkspaceFileAccess(s.workspace)
+		runner := verification.NewExactCommandRunner(s.workspace)
+		storeAdapter := verification.NewProductionEvidenceStore(s.storeDB, s.workspace)
+		s.verificationService = verification.NewService(s.workspace, verification.Dependencies{
+			FileAccess:    fa,
+			CommandRunner: runner,
+			EvidenceStore: storeAdapter,
+		})
+	}
+
+	summary := s.verificationService.ApplyAndVerify(ctx, vReq, verification.Options{})
+
+	var structured map[string]interface{}
+	if s.protocolVersion == "2025-06-18" {
+		structured = summary.ToMap()
+	}
+
+	return &jsonRPCResponse{
+		JSONRPC: "2.0",
+		ID:      req.ID,
+		Result: mcpToolCallResult{
+			Content:           []mcpContent{{Type: "text", Text: summary.FormatText()}},
+			StructuredContent: structured,
+		},
+	}
+}
+
 // 22. MCP COMMAND
 func newMCPCmd() *cobra.Command {
 	var mcpWorkspace string
+	var mcpDeadline string
 
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -597,10 +782,25 @@ func newMCPCmd() *cobra.Command {
 			}
 			defer closeWorkers()
 			server := NewMCPServer(engine, s, mcpWorkspace)
-			return server.ServeStdio(cmd.Context())
+
+			runCtx := cmd.Context()
+			if mcpDeadline != "" {
+				if dTime, err := time.Parse(time.RFC3339Nano, mcpDeadline); err == nil {
+					var cancel context.CancelFunc
+					runCtx, cancel = context.WithDeadline(runCtx, dTime)
+					defer cancel()
+				} else if dTime, err := time.Parse(time.RFC3339, mcpDeadline); err == nil {
+					var cancel context.CancelFunc
+					runCtx, cancel = context.WithDeadline(runCtx, dTime)
+					defer cancel()
+				}
+			}
+
+			return server.ServeStdio(runCtx)
 		},
 	}
 
 	cmd.Flags().StringVar(&mcpWorkspace, "workspace", "", "Bound workspace directory (defaults to current working directory)")
+	cmd.Flags().StringVar(&mcpDeadline, "deadline", "", "RFC3339Nano external session deadline")
 	return cmd
 }

@@ -49,12 +49,14 @@ v1 was a durable local-first agentic runtime with a DAG execution engine, strate
 │ 14. Git Hook Manager (`tzro hook install`)                 │
 │ 15. Shell Integration (`tzro shell init`)                  │
 │ 16. Session Pause/Resume (`tzro pause` / `tzro resume`)   │
+│ 17. Turn Reduction Benchmark (`pkg/benchmark/turnreduction`)│
+│ 18. Edit Verification Service (`pkg/verification`)         │
 └──────────────────────────────┬──────────────────────────────┘
                                │ (Dense, High-Signal, Cache-Locked Payload)
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │           Cloud LLM Provider (Anthropic / OpenAI)           │
-│           ~80% Token Reduction / Zero Rate Limits           │
+│     43% Fewer Agent Turns / 37% Faster / Zero Rate Limits   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

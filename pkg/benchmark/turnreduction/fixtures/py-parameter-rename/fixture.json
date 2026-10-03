@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "id": "py-parameter-rename",
+  "language": "python",
+  "shape": "rename",
+  "prompt": "Rename the qty parameter to quantity in both process_order and handle_cli_order, their callers, and visible tests. Both functions must accept quantity as a keyword argument. Preserve positional calls and returned fields. Old qty keyword compatibility is not required. You may edit service.py, cli.py, test_service.py, test_cli.py. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": [
+    "service.py",
+    "cli.py",
+    "test_service.py",
+    "test_cli.py"
+  ],
+  "required_grade_tests": [
+    "test_service_kwargs",
+    "test_cli_kwargs"
+  ],
+  "reference_edits": [
+    {
+      "kind": "replace",
+      "path": "service.py",
+      "old_text": "qty",
+      "new_text": "quantity",
+      "expected_matches": 2
+    },
+    {
+      "kind": "replace",
+      "path": "cli.py",
+      "old_text": "qty",
+      "new_text": "quantity",
+      "expected_matches": 3
+    },
+    {
+      "kind": "replace",
+      "path": "test_service.py",
+      "old_text": "qty",
+      "new_text": "quantity",
+      "expected_matches": 1
+    }
+  ]
+}

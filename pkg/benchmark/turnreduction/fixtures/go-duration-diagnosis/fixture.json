@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "id": "go-duration-diagnosis",
+  "language": "go",
+  "shape": "diagnosis",
+  "prompt": "Diagnose the duration formatting failure. Preserve whole-second components even when hours are present, omit zero components, and retain zero and negative duration behavior. You may edit timeutil.go. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": [
+    "timeutil.go"
+  ],
+  "required_grade_tests": [
+    "TestGrading_SecondsWithHours",
+    "TestGrading_EdgeCases"
+  ],
+  "reference_edits": [
+    {
+      "kind": "replace",
+      "path": "timeutil.go",
+      "old_text": "if seconds > 0 && hours == 0",
+      "new_text": "if seconds > 0",
+      "expected_matches": 1
+    }
+  ]
+}

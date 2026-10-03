@@ -1893,14 +1893,15 @@ Examples:
 	signalDensityCmd.Flags().StringVar(&benchBaseURL, "base-url", "", "Custom base URL for LLM API (defaults to OpenRouter)")
 	signalDensityCmd.Flags().StringVar(&benchAPIKey, "api-key", "", "API key for LLM provider (defaults to env vars)")
 
-	benchCmd.AddCommand(signalDensityCmd, newWorkflowBenchCmd())
+	benchCmd.AddCommand(signalDensityCmd, newWorkflowBenchCmd(), newTurnReductionBenchCmd())
 
 	// System 1 Graph Execution commands (v3)
 	executeCmd := newExecuteCmd()
 	mcpCmd := newMCPCmd()
 	shellCmd := newShellCmd()
+	editAndVerifyCmd := newEditAndVerifyCmd()
 
-	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, testCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd, benchCmd, executeCmd, mcpCmd, pauseCmd, resumeCmd, shellCmd)
+	rootCmd.AddCommand(startCmd, probeCmd, skeletonCmd, expandCmd, compactCmd, hookCmd, initCmd, statusCmd, doctorCmd, queryCmd, ingestCmd, dlpCmd, contextCmd, impactCmd, testCmd, searchCmd, inspectCmd, sessionCmd, artifactsCmd, benchCmd, executeCmd, mcpCmd, pauseCmd, resumeCmd, shellCmd, editAndVerifyCmd)
 
 	return rootCmd
 }

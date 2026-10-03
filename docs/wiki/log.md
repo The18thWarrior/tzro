@@ -2,6 +2,21 @@
 
 Chronological append-only record of wiki operations and major agent engineering activities.
 
+## [2026-10-02T11:10:00-07:00] turn-reduction | Automatic Verification & Turn Reduction Evaluation Completed (14 Slices)
+
+- **Activity**: Implemented and verified the complete 14-slice Turn Reduction Evaluation and Automatic Verification plan from `.scratch/turn-reduction/implementation_plan.md`.
+- **Key Enhancements**:
+  1. **Grouped Edit & Verify (`pkg/verification`, `tzro_edit_and_verify`)**: Atomic multi-file text replacement and file creation with preflight validation, failure retention (no rollbacks on test failure), partial-write state reporting on disk failure, and automatic `.tzro/verification.yaml` preset check execution.
+  2. **Timeout & Process Group Cancellation**: Strict deadline inheritance derived from caller options or presets, with Unix process group cancellation via `-pgid` SIGKILL.
+  3. **Dependency Scheduling & Parallel Groups**: Independent checks continue across failures, dependent checks (`depends_on`) are marked blocked, and parallel group checks execute concurrently.
+  4. **Active MCP Request Cancellation**: Non-blocking `MCPServer.Serve` JSON-RPC 2.0 loop with request-scoped contexts handling `notifications/cancelled`.
+  5. **Large Failure Expansion**: Inline summary compaction target (soft 8,000 bytes) with primary diagnostic grouping and uncompressed complete failure logs stored in SQLite as expandable artifacts (`tzro expand <artifact_id>`).
+  6. **Client Setup & Generic Automation**: Antigravity Standard installation with MCP registration and edit-and-verify contract guidance; generic bulk-update helper (`scripts/bulk_update.py`) for Simple automation condition.
+  7. **Frozen 9-Fixture Multi-Language Suite**: 3 Go, 3 Python, and 3 TypeScript fixtures across single-file, multi-file, and diagnosis tasks; all starting fixtures fail private grading and reference corrections pass.
+  8. **Guarded Native Gemini API Launch**: Persistent launch reservation ledger in `scripts/run_workflow_validation.py` preventing duplicate launches and preserving interrupted attempts without silent retry.
+  9. **27-Cell Evaluation Matrix & Observed Speed Report**: Balanced cyclic condition scheduling across 9 cases, whole-suite totals, mean time, lower eligible comparator selection, and exact 20% speed screen reporting.
+- **Verification**: Complete Go test suite (`pkg/verification`, `pkg/benchmark/turnreduction`, `cmd/tzro`) and Python suite passing with zero race conditions (`-race`).
+
 ## [2026-09-28T14:50:00-07:00] adoption-readiness | Issue 04: Published Benchmark Artifacts (Map Complete)
 
 - **Activity**: Resolved `04-publish-benchmark-artifacts.md` under `.scratch/adoption-readiness/`, marking the entire 14-ticket Adoption Readiness Wayfinder map 100% complete!
@@ -3048,3 +3063,541 @@ Opened a wayfinder map to decide whether Verified Task Execution (ADR-0067) and 
 - 2026-09-29: Diagnostic-v7 passed 14/14 checks but used 27.2% more Standard tokens. First successful natural graph batched six SQL queries; its data task saved 43.2%. Retained verified source/traces and reconciled all 134 receipts ($0.067973578). Release remains unvalidated. See [benchmark diagnosis](bugs/workflow-benchmark-savings-20260928.md).
 
 - 2026-09-29: Fixed registry tests that mixed the live campaign cap with a fixed fixture ledger. All 12 tests passed. See [post-mortem](bugs/hypothesis-budget-fixture-20260929.md).
+
+## [2026-10-01] grill-with-docs | Turn reduction outcome
+
+- **Decision**: With equal correctness and provider cost, faster verified completion wins even with more cloud rounds.
+- **Language**: Added Verified Completion Time and Cloud Decision Round to the [domain glossary](../../CONTEXT.md).
+- **Documents**: Updated the [hypotheses catalog](../turn-reduction-hypotheses.md) and added the [evaluation summary](architecture/turn-reduction-evaluation.md).
+- **Open**: Cost tradeoffs, incremental product value, target workload, and improvement thresholds.
+- **Scope**: Documentation only. No ADR, product changes, benchmarks, or provider spending.
+
+## [2026-10-01] grill-with-docs | Speed, cost, and provider latency
+
+- **Decision**: Faster verified completion can justify higher provider cost. The discussed example accepts half the completion time at twice the cost.
+- **Qualification**: Provider latency can confound wall-clock comparisons. The general cost limit and timing comparison method remain open.
+- **Evidence**: The workflow result fields report task and tool durations without a per-request provider latency breakdown.
+- **Proposal**: Repeated matched runs, balanced run order, and a separate timing model under common service conditions remain pending discussion.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Controlled speed claims
+
+- **Decision**: Speed claims require repeated, controlled evidence that Tzro caused the improvement.
+- **Method**: Matched model, provider route, and task conditions. Balanced run order and explicit uncertainty.
+- **Measurements**: Completion time, correctness, provider cost, and cloud rounds remain separate.
+- **Boundary**: Modeled timing supplies supporting evidence. The comparison retains waiting time saved by eliminating sequential service calls.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md).
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Native automation tie rule
+
+- **Decision**: If simple native automation matches a mechanism's speed, correctness, and provider cost, that mechanism leaves Tzro's performance thesis.
+- **Comparison**: Capable native tools, the smallest credible native automation, and Tzro under matched task conditions.
+- **Boundary**: Setup, portability, and maintenance claims need separate evidence. This rule does not establish a tie or remove product code.
+- **Scope evidence**: Standard supports graph execution without model workers. Full adds optional runtimes. T46 proposes a change in orchestration ownership.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Standard validation scope
+
+- **Decision**: The first validation targets Standard within an existing cloud agent, which retains strategy and code generation.
+- **Boundary**: Deterministic graph execution remains available. Full's optional runtimes and T46's replacement orchestration remain outside this first validation.
+- **Capability audit**: T39 already has impact-based test selection and execution. T09 already has file ingest plus supplied SQL in one executor call.
+- **Evidence limit**: Source and CLI checks do not establish natural adoption, correctness, or a performance win.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Open**: The first workload, client, and practical improvement threshold.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Automatic Verification workload
+
+- **Decision**: Automatic Verification is the first Standard validation workload. The first comparison keeps the required check set constant.
+- **Language**: Added Automatic Verification to the [domain glossary](../../CONTEXT.md), with scheduling separate from selection and delivery.
+- **Boundary**: T07's agent-supplied verification command is a related composite-tool treatment. T39's test selection remains separate.
+- **Capability audit**: Current native hooks handle privacy and supported output compaction without automatic test execution or check-result delivery.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Open**: The automatic trigger boundary, result delivery, client, and practical improvement threshold.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Automatic result delivery
+
+- **Decision**: Automatic Verification delivers check results, including failures, without a separate agent polling call.
+- **Mechanism**: Prescribed local verification replaces repeated cloud coordination. Local checks and their time remain part of the measured workflow.
+- **Language**: Updated Automatic Verification in the [domain glossary](../../CONTEXT.md) to include automatic result delivery.
+- **Proposal**: One submitted batch of related edits defines the verification boundary, without a separate cloud call to close the batch.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Open**: The batch boundary, delivery channel, blocking behavior, client, and practical improvement threshold.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Edit boundary reliability challenge
+
+- **Challenge**: The user asked how a verification batch boundary can be detected reliably.
+- **Evidence**: Current hooks expose individual tool results. Graphs expose declared dependencies. Neither exposes an implicit end-of-intended-change marker.
+- **Proposal**: One grouped edit request explicitly lists the submitted patches. Verification follows their completion without a separate batch-closing call.
+- **Boundary**: Completion applies to the submitted batch, not the entire task. File-save events and idle timers do not prove the end of a multi-file change.
+- **Tradeoff**: The agent must use the grouped operation. Its natural adoption needs validation. This proposal remains unresolved.
+- **Documents**: Updated the [evaluation summary](architecture/turn-reduction-evaluation.md) and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Explicit Edit Batch accepted
+
+- **Decision**: One grouped edit-and-verify operation defines the first design's batch boundary. The submitted edit list defines membership.
+- **Language**: Added Edit Batch to the [domain glossary](../../CONTEXT.md) and connected it to Automatic Verification.
+- **Result delivery**: Verification results return with the grouped operation, without separate batch-closing or polling calls.
+- **Boundary**: The illustrative API is not an existing product tool. Completion of the submitted batch does not establish completion of the task.
+- **Open policy**: T19 proposes rollback after test failure. Retaining successfully applied edits is the proposed alternative for discussion.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Retain edits after failed checks
+
+- **Decision**: If an Edit Batch applies successfully but a required check fails, retain the applied edits and return failure diagnostics for repair.
+- **Catalog change**: T19 now reflects this policy. Its earlier test-failure rollback proposal is superseded for this design. Application failure handling remains open.
+- **Proposal**: Validate every patch before writes. A detected patch conflict rejects the batch without applying its other patches.
+- **Boundary**: This preflight proposal does not settle mid-write errors, interruption, or concurrent external edits.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Whole-batch preflight rejection
+
+- **Decision**: Verify that every submitted patch can apply before any batch writes. One invalid patch rejects the whole batch without applying its edits.
+- **Language**: Added Batch Rejection to the [domain glossary](../../CONTEXT.md), distinct from check failure and partial application.
+- **Boundary**: Preflight validation does not establish atomic writes across files. Write-time errors, interruption, and external edits remain open.
+- **Proposal**: Preserve observed state after a write-time failure and report changed files and uncertainty instead of automatic restoration.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Preserve and report Partial Application
+
+- **Decision**: A write-time failure preserves observed workspace state and reports Partial Application, changed files, and uncertainty. Verification is marked as not run.
+- **Language**: Added Partial Application to the [domain glossary](../../CONTEXT.md), distinct from Batch Rejection and failed checks.
+- **Capability audit**: The existing context configuration defines test-file conventions and a command allowlist, without a required verification preset.
+- **Proposal**: Define required checks once for the workspace and reuse the same preset across all three comparison conditions.
+- **Open**: Required check ownership, interruption handling, blocking behavior, result details, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Repository-defined Verification Preset
+
+- **Decision**: Required checks come from a repository-defined Verification Preset, reused for each grouped operation. The agent does not choose arbitrary required check commands per batch.
+- **Comparison**: Native scheduling, simple automation, and Tzro use the same preset in the first scheduling comparison.
+- **Language**: Added Verification Preset to the [domain glossary](../../CONTEXT.md).
+- **Capability audit**: The existing Pi integration has a 60-second tool execution limit. This does not establish the proposed operation's time limits.
+- **Proposal**: Preset-defined time limits stop verification and return an incomplete result with available diagnostics while retaining applied edits.
+- **Open**: Timeout and interruption handling, blocking behavior, result details, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Adaptive waiting for long checks
+
+- **Direction**: Required checks can legitimately take minutes or hours. Use adaptive waiting rather than a guessed universal timeout.
+- **Distinction**: An expired wait interval extends waiting for the existing execution. It does not automatically kill or restart the check.
+- **Evidence boundary**: Silence and long runtime alone do not establish a hang. Waiting intervals and process termination require separate policies.
+- **Capability audit**: The shell dispatcher waits for process exit. Unix cancellation stops the process group. MCP graph notifications report start and completion, without adaptive waits or intermediate check progress.
+- **Proposal**: Keep routine waiting and backoff local, return completion promptly, and reserve cloud decisions for actionable exceptions.
+- **Open**: Waiting ownership, numerical schedule, hard stop policy, interruption, result delivery, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), including T14's deadline boundary, the [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Local ownership of verification waits
+
+- **Decision**: Tzro owns routine waiting and backoff locally. Timer extensions do not require cloud decisions. The agent participates when an exception needs its judgment.
+- **Delivery**: Process exit triggers prompt completion delivery, regardless of the next status interval.
+- **Language**: Updated Automatic Verification in the [domain glossary](../../CONTEXT.md) to include local ownership of routine waits.
+- **Capability audit**: The MCP server currently handles requests serially and waits for graph execution. Progress notifications do not establish detached job completion delivery.
+- **Proposal**: For long checks, return an applied-but-running status and deliver the final result automatically. This would revise the earlier assumption that results return within the original call.
+- **Open**: Delivery for long checks, client support, numerical schedule, hard stop and interruption policies, result details, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Configurable five-minute timeout supersedes extended waits
+
+- **Decision**: Use a five-minute default timeout that users can configure differently. Results return through the original tool call.
+- **Revision**: The user explicitly acknowledges reversing the earlier waiting decision. Local waiting cannot automatically extend the configured cutoff.
+- **Rejected proposal**: Delayed final result delivery after the original call returns is excluded from the first design. The user cites harness compatibility.
+- **Outcome**: Timeout stops verification and returns an incomplete result with available diagnostics while retaining applied edits.
+- **Language**: Updated Automatic Verification in the [domain glossary](../../CONTEXT.md) to retain result delivery within the operation.
+- **Integration constraint**: The current Pi wrapper has a shorter 60-second limit. It cannot support the proposed default unchanged.
+- **Proposal**: Apply the timeout to the whole grouped operation instead of restarting it for each check.
+- **Open**: Timeout scope, interruption handling, result details, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. Earlier log entries remain historical records.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | One timeout for the entire operation
+
+- **Decision**: One configured timeout covers patch validation, edit application, and required checks. The default is five minutes.
+- **Budget**: Each stage uses the remaining time. Starting another required check does not reset the deadline.
+- **Application boundary**: Timeout during writes uses the existing Partial Application policy when edits remain partly applied.
+- **Capability audit**: TestSelector continues through selected targets after a nonzero exit. Graph execution blocks dependents unless they accept failed dependencies.
+- **Proposal**: Continue independent required checks after failure within the shared budget, while reporting blocked checks as not run.
+- **Open**: Check failure scheduling, interruption handling, result details, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Continue independent checks after failure
+
+- **Decision**: Continue independent required checks after one fails, within the remaining shared operation budget.
+- **Dependency boundary**: Checks blocked by a failed prerequisite are reported as not run, not passed.
+- **Timeout boundary**: Expiry stops further verification. Earlier failures and completed results remain evidence in the returned response.
+- **Capability audit**: The selected graph result can remove inline outputs above 8,000 bytes and require expansion. This does not guarantee primary failure diagnostics in the original response.
+- **Proposal**: Preserve a compact check summary and actionable failure diagnostics inline, with full logs available through explicit expansion references.
+- **Open**: Minimum result evidence, inline limits, interruption handling, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Mandatory Verification Summary
+
+- **Decision**: Every operation returns a bounded Verification Summary in its original response, even when full logs require expansion.
+- **Evidence**: The summary includes application state, check outcomes, and available failure diagnostics. Unknown details and omitted output remain explicit.
+- **Language**: Added Verification Summary to the [domain glossary](../../CONTEXT.md).
+- **Capability audit**: TestSelector labels selection scope but executes worktree files. Session checks have file hashes and dependency fingerprints, without establishing isolation during execution.
+- **Proposal**: Detected changes to checked inputs produce stale evidence and prevent a claim that the current workspace is verified. Unknown freshness remains explicit.
+- **Boundary**: Matching before-and-after hashes cannot rule out a change that was later reversed. Isolation and input coverage remain open.
+- **Open**: Source freshness, exact inline limits, interruption handling, remaining result details, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), T29's result boundary, the [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Native check outcomes remain authoritative
+
+- **Decision**: Treat the native check's reported outcome as authoritative. Detected source changes during execution do not automatically invalidate a passing check.
+- **Rejected proposal**: Source freshness does not gate successful verification in the first design. Isolated snapshots and input fingerprint vetoes are not required.
+- **Outcome boundary**: All required checks must report success for successful verification. Timeout and unrun checks retain their incomplete or blocked outcomes. Task correctness is independently evaluated.
+- **Language**: Updated Automatic Verification in the [domain glossary](../../CONTEXT.md) to describe reported check outcomes.
+- **Capability audit**: Context configuration supplies defaults when absent, but defines no required verification preset.
+- **Proposal**: Require a valid, nonempty Verification Preset before batch writes. Missing configuration would return setup diagnostics without applying edits.
+- **Open**: Missing preset behavior, interruption handling, exact inline limits, remaining result details, target client, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. Historical freshness proposals remain in prior log entries.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Apply edits when verification is unavailable
+
+- **Decision**: Missing verification configuration or inability to run checks does not block valid edits. Existing patch validation and write failure policies still apply.
+- **Reporting**: The mandatory summary separates edit application from verification that is not configured or unavailable, including the reason checks did not run.
+- **Harness role**: The harness agent can report missing setup to the user. Unavailable checks do not produce a verification pass.
+- **Language**: Updated Automatic Verification and Verification Summary in the [domain glossary](../../CONTEXT.md) to cover checks that cannot run.
+- **Rejected proposal**: Missing verification configuration does not reject the batch before writes.
+- **Proposal**: Target Antigravity for the first workflow validation, matching the original thesis. Existing Standard setup registers MCP, but the grouped tool is not implemented.
+- **Open**: Target client, interruption handling, exact inline limits, remaining result details, and improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, provider spending, or product changes.
+
+## [2026-10-01] grill-with-docs | Antigravity model access and credentials checked
+
+- **Question**: How Antigravity model support works and whether the proposed integration requires another API key.
+- **Finding**: Antigravity supplies reasoning model selection through account access, with model availability tied to the plan. Tzro Standard supplies local tools without another model API key.
+- **Primary sources**: [Models](https://antigravity.google/docs/models), [CLI authentication](https://antigravity.google/docs/cli/install/), and [headless mode](https://antigravity.google/docs/cli/headless/).
+- **CLI option**: Native CLI account sign-in supports cached credentials for headless use. A Gemini API key is an optional alternative authentication route.
+- **Repository boundary**: The existing workflow runner launches Pi using provider credentials. Native Antigravity validation needs an adapter or explicit workflow protocol.
+- **Open**: Client selection, account or API-key route, model, and the remaining validation decisions. The user's question does not select Antigravity or authorize runs.
+- **Documents**: Updated the [evaluation summary](architecture/turn-reduction-evaluation.md) with dated primary evidence.
+- **Scope**: Documentation and read-only research. No credentials read, client configuration changes, experiments, or provider spending.
+
+## [2026-10-01] grill-with-docs | Antigravity with existing account selected
+
+- **Decision**: The first validation targets Tzro Standard in Antigravity using the user's existing account for model access. No additional model API key is required for the integration.
+- **Surface boundary**: Antigravity is selected as the client. The native CLI or IDE execution surface remains open; the current runner still launches Pi.
+- **Proposal**: Start with the user's usual Antigravity coding model, with identical pinned model and reasoning effort across native, simple automation, and Tzro conditions.
+- **Primary evidence**: [Headless mode](https://antigravity.google/docs/cli/headless/) documents explicit model and effort controls and a five-minute default timeout for the whole headless run.
+- **Timeout distinction**: The native harness run timeout differs from the agreed timeout for each edit-and-verify operation. Validation must account for both.
+- **Open**: Model, effort, execution surface, interruption handling, remaining result details, and practical improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation and read-only research. No experiments, client configuration changes, credential reads, or provider spending.
+
+## [2026-10-01] grill-with-docs | Gemini 3.8 Flash Low selected and listed locally
+
+- **Decision**: Pin the exact model gemini-3.8-flash-low and its Low reasoning variant across native, simple automation, and Tzro conditions.
+- **Native evidence**: Installed Antigravity CLI version 1.2.14. The read-only agy models command listed the selected model and completed with exit code zero.
+- **Sandbox boundary**: Initial model discovery was blocked by log-file writes and a local listener. The authorized metadata retry completed outside the sandbox. No inference prompt was sent.
+- **Readiness limit**: Model discovery does not establish successful inference, Tzro activation, or the proposed grouped tool's availability.
+- **Proposal**: Start controlled comparisons in the native CLI for repeatability. IDE claims require IDE evidence; the first execution surface remains open.
+- **Measurement boundary**: The documented CLI user-turn counter is distinct from Cloud Decision Rounds. Instrumentation must not conflate them.
+- **Primary source**: [Headless mode](https://antigravity.google/docs/cli/headless/).
+- **Open**: Execution surface, interruption handling, remaining result details, and practical improvement thresholds.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation and read-only CLI metadata checks. No benchmark run, inference prompt, or intentional client configuration changes.
+
+## [2026-10-01] grill-with-docs | Native Antigravity CLI selected
+
+- **Decision**: Use the native Antigravity CLI for the first comparison across all three conditions, with existing account access and gemini-3.8-flash-low.
+- **Evidence boundary**: CLI workflow results support CLI conclusions. IDE claims require corresponding IDE evidence.
+- **Readiness**: The client and model are selected. The proposed grouped tool and native runner adapter still require implementation and validation.
+- **Proposal**: Require at least 20% lower median Verified Completion Time than the fastest correct native or simple automation comparator, with preserved correctness and causal evidence from matched repeats.
+- **Example**: A 120-second comparator would require 96 seconds or less under the proposed speed threshold.
+- **Open**: Practical threshold, general cost tradeoff, repetitions and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation only. No experiments, inference prompts, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Net 20% workflow speed threshold
+
+- **Decision**: Require at least 20% lower median Verified Completion Time for the complete enabled Tzro workflow against the fastest correct native or simple automation comparison.
+- **Clarification**: The user confirmed 20% and specified a net result. Individual improvements do not each need to achieve 20%.
+- **Measurement**: Include local overhead and component interactions. Measure the combined workflow directly; do not add component percentages. Preserve correctness, report completion rates, and retain matched-repeat causal evidence requirements.
+- **Language**: Updated Verified Completion Time in the [domain glossary](../../CONTEXT.md) to include every enabled component's local overhead on the critical path.
+- **Cost evidence**: The [native result schema](https://antigravity.google/docs/cli/headless/) documents token usage without a dollar-cost field. [Plans](https://antigravity.google/docs/plans) describe baseline quotas and optional credit overages.
+- **Proposal**: Report observed usage and available charge evidence separately. Leave monetary cost unknown when reliable charges are unavailable; do not infer zero or reuse OpenRouter pricing.
+- **Open**: Account-based cost reporting, general cost tradeoff, repetitions and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation and read-only primary-source research. No experiments, inference prompts, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Observed usage and actual charge evidence
+
+- **Decision**: Report observed token usage, observable quota or credit consumption, and actual charge evidence separately for Antigravity account-based access.
+- **Monetary boundary**: Leave monetary cost unknown without reliable charge evidence. Do not infer zero, apply earlier OpenRouter pricing, or equate token reductions with dollar savings.
+- **Capability audit**: Existing representative and realistic workflow fixtures include Go coding tasks and graders.
+- **Proposal**: Start the first complete comparison with several Go edit-and-verify tasks. Additional language and build-system comparisons are necessary for broader claims.
+- **Open**: Initial language scope, task mix, independent correctness grading, general cost tradeoff, repetitions and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index.
+- **Scope**: Documentation and read-only fixture discovery. No experiments, inference prompts, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Go, Python, and TypeScript from the start
+
+- **Decision**: Include Go, Python, and TypeScript in the initial Automatic Verification task set. The user selected all three instead of starting with Go alone.
+- **Comparison**: Reuse task inputs and required native checks across all three conditions within each language. Keep independent task correctness grading distinct from reported verification outcomes.
+- **Capability audit**: The current workflow grader runs Go tests and protects Go test files and module configuration. It can inject private grading files into a copy of the final workspace. Python and TypeScript need corresponding fixtures and grading support.
+- **Proposal**: Start with a single-file bug fix, a multi-file change, and diagnosis of an existing test failure in each language: nine initial cases. Prompts do not prescribe tool use or a fixed failure sequence. This mix and case count remain pending.
+- **Open**: Task mix, grading details, general cost tradeoff, repetitions and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only grader inspection. No experiments, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Nine initial edit-and-verify cases
+
+- **Decision**: Use one single-file bug fix, one multi-file change, and one task diagnosing an existing test failure in each of Go, Python, and TypeScript: nine initial cases.
+- **Evaluation**: Repeat each case across the native, simple automation, and Tzro conditions. Prompts do not prescribe tool use or a fixed sequence of edits and failures. Independent grading checks requested behavior separately from reported verification outcomes.
+- **Capability audit**: The current report generator includes pooled cell latency medians and a token-savings gate. It does not implement the agreed net workflow speed evaluation.
+- **Proposal**: Apply the net 20% speed threshold to the combined suite, with per-case and per-language results exposed. A suite-level win does not establish improvement in every language. Separate language gates remain an alternative pending discussion.
+- **Open**: Concrete fixtures, grading details, speed threshold scope and calculation, general cost tradeoff, repetitions and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only benchmark reporting inspection. No experiments, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Combined-suite speed gate
+
+- **Decision**: Apply the net 20% speed threshold to the combined nine-case suite. Each language does not need to meet the threshold separately.
+- **Reporting**: Expose per-task and per-language gains and slowdowns. A suite-level win does not establish improvement in every language or task. Correctness and completion rates still accompany timing.
+- **Capability boundary**: Existing pooled cell latency medians and the historical token-savings gate do not implement this speed evaluation.
+- **Proposal**: Sum the nine task Verified Completion Times for each condition in each repeated suite. Compare the median Tzro suite total with the lower median total of the correct native and simple automation conditions; require a ratio at most 0.8. Longer tasks contribute more because the proposal measures seconds saved across the agreed task mix.
+- **Open**: Suite timing calculation, incomplete suite handling, concrete fixtures and grading details, general cost tradeoff, repetitions and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only review. No experiments, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Median suite totals selected
+
+- **Decision**: For each repeated suite, sum the nine task Verified Completion Times separately for each condition. Compare the median Tzro suite total with the lower median suite total of the correct native and simple automation conditions.
+- **Threshold**: The Tzro total must be at most 80% of the comparator total. A 1,000-second comparator requires 800 seconds or less.
+- **Weighting**: Longer tasks contribute more because the calculation measures total seconds saved across the agreed task mix. Per-task and per-language results remain visible.
+- **Proposal**: Require every planned Tzro repetition to finish all nine tasks correctly with required checks complete before the initial evaluation can pass. Final failures and timeouts prevent a passing claim; retain them without replacement by successful reruns. Repairs within a task run remain part of its measured completion time.
+- **Open**: Initial correctness gate, incomplete suite handling, concrete fixtures and grading details, general cost tradeoff, repetitions and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). Clarified that the median applies to suite totals. No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only review of existing failure accounting. No experiments, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Strict initial correctness gate accepted
+
+- **Decision**: Every planned Tzro repetition must finish all nine tasks correctly with required checks complete before the initial evaluation can pass.
+- **Failure accounting**: A final incorrect result or timeout prevents a passing claim. Keep unsuccessful attempts in the result matrix without replacing them with successful reruns. Failed checks repaired within the same task run contribute to its completion time and are not final task failures.
+- **Proposal**: Use six matched repetitions: 162 task runs across nine cases and three conditions. For each case, use all six condition execution orders once, interleaving conditions within the case.
+- **Evidence limit**: Six repeats balance execution order and provide initial variation evidence; they do not guarantee a conclusive speed result. Repetition count and uncertainty rules remain pending.
+- **Open**: Repetition count, uncertainty and timing instrumentation, comparator eligibility, concrete fixtures and grading details, general cost tradeoff, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only discovery of existing repetition controls. No experiments, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | One-pass initial screen instead of six repeats
+
+- **Decision**: Start with one matched suite pass per condition: nine cases across native, simple automation, and Tzro, or 27 task runs. The user rejected six initial repetitions as too expensive.
+- **Averaging**: Report mean task completion time for each condition: the sum of its nine task times divided by nine. Comparing these means gives exactly the same percentage reduction as comparing suite totals. This does not average per-task percentage reductions.
+- **Evidence boundary**: The initial result is a screen. A single pass does not measure repeat variation within a task. Previously agreed median suite totals still apply if follow-up repetitions are planned; no follow-up count is settled.
+- **Ordering**: Interleave conditions within each case, balance execution positions across cases, and preserve the actual order.
+- **Proposal**: A speed comparator must complete all nine tasks correctly with required checks complete in every planned pass. Use the other comparator if only one qualifies. If neither qualifies, report correctness without a passing comparative speed claim. Do not omit failed cases or mix comparator conditions by task.
+- **Open**: Comparator eligibility, confirmation scope and uncertainty, concrete fixtures and grading details, general cost tradeoff, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. No new glossary term or ADR was needed.
+- **Scope**: Documentation only. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Fully correct speed comparators accepted
+
+- **Decision**: Native and simple automation qualify as speed comparators only when all nine tasks finish correctly with required checks complete in every planned pass.
+- **Eligibility**: If only one comparator qualifies, use it and retain both conditions' outcomes. If neither qualifies, report correctness without a passing comparative speed claim. Do not omit failed tasks or mix conditions by task to construct a faster baseline.
+- **Native evidence**: Installed Antigravity CLI version 1.2.14 advertises a zero print-mode timeout default in its help, with zero meaning wait until completion.
+- **Documentation discrepancy**: The official [headless documentation](https://antigravity.google/docs/cli/headless/) lists a five-minute default. No inference run tested the effective default. The comparison should set its task limit explicitly.
+- **Proposal**: Use a ten-minute ceiling for each complete agent task in all three conditions, while retaining the five-minute default for each grouped edit-and-verify operation. The task ceiling leaves time for discovery, edits, and repair. It remains pending discussion.
+- **Open**: Whole-task limit, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). No new glossary term or ADR was needed.
+- **Scope**: Documentation, read-only CLI help/version checks, and primary-source research. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Configurable ten-minute benchmark task limit
+
+- **Decision**: Default each complete agent task to a ten-minute ceiling. Users can configure a different value when launching the benchmark.
+- **Comparison**: Select the whole-task limit once, apply it identically across native, simple automation, and Tzro, and record its value in the report. Pass the selected value explicitly to the native Antigravity CLI.
+- **Boundary**: The benchmark task limit remains separate from the five-minute default for a grouped edit-and-verify operation. An operation also uses the remaining whole-task budget.
+- **Capability audit**: The existing Pi benchmark command exposes a per-task timeout flag with a three-minute default. It does not implement the new Antigravity adapter or ten-minute default.
+- **Proposal**: Give simple automation a repository-local script that applies an Edit Batch and runs the shared preset in one native command invocation. Return application state, check outcomes, and available diagnostics within that call, while preserving natural agent choice of tools.
+- **Open**: Simple automation interface, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only discovery of existing benchmark options. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Bulk-update script as the credible simple alternative
+
+- **Direction**: The user prefers a bulk-update script as the simple automation alternative, citing repeated function renames across many references. This supersedes the generic grouped edit-and-verify wrapper proposal.
+- **Native capability**: Preserve ordinary native batching, language tools, and agent-authored scripts. The agent can combine bulk edits with the shared native verification commands in one invocation. Script creation and adaptation during a task contribute to completion time.
+- **Capability evidence**: Existing host-tool discovery preserves ordinary executable access. The comparison contract already allows normal native batching. This establishes available capabilities, not the frequency of script adoption in future Antigravity runs.
+- **Proposal**: Provide simple automation with an existing generic bulk-edit helper before the task, without fixture-specific solutions. Native remains free to write its own scripts during the task. Report helper setup effort separately.
+- **Open**: Helper availability, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only capability and historical record inspection. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Existing simple helper available before each task
+
+- **Decision**: Simple automation receives an existing generic bulk-edit helper before the task starts. The agent supplies edits and scope; the helper contains no fixture-specific solution.
+- **Timing**: Report helper setup effort separately. Native can write its own scripts, with creation and adaptation time included in the task. Supplying the helper can save script-authoring work; actual time and cloud-round savings remain measured outcomes.
+- **Comparison impact**: This gives Tzro a stronger simple automation comparator. Matching speed, correctness, and provider cost retains the agreed conclusion that this mechanism lacks an incremental Tzro performance advantage. The 27-run screen is unchanged.
+- **Capability audit**: The existing Go grader rejects all fixture Go test changes. A rename that legitimately changes test references can therefore fail that grader.
+- **Proposal**: Permit visible test updates required by the requested change while keeping independent grading inputs fixed. Declare the same editable and protected inputs in all three conditions. This policy remains pending.
+- **Open**: Visible test policy, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only fixture/grader inspection. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Visible test edits allowed when the task requires them
+
+- **Decision**: Allow visible test edits required by the requested task while keeping independent grading inputs fixed. Declare the same editable and protected inputs for native, simple automation, and Tzro.
+- **Grading boundary**: A reported native check pass alone does not establish task correctness. The current Go grader still rejects all fixture Go test changes; adapting it is future implementation work.
+- **Capability audit**: TestSelector executes selected commands sequentially. The graph executor supports concurrent nodes with a default limit of four. The proposed grouped operation has no scheduling policy yet.
+- **Proposal**: Run required check commands sequentially by default, with explicit parallel groups in the Verification Preset. Use the same policy across benchmark conditions. Sequential ordering does not turn independent checks into prerequisites or change the agreed continuation-after-failure rule.
+- **Open**: Check concurrency policy, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only verification-runner discovery. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Parallel checks require preset opt-in
+
+- **Decision**: Required check commands run sequentially by default. Parallel groups require explicit opt-in in the Verification Preset. Individual commands retain their configured internal parallelism.
+- **Comparison**: Use the same preset scheduling policy across native, simple automation, and Tzro. Continue independent checks after failure as previously agreed; sequential ordering does not create prerequisite relationships.
+- **Capability audit**: The compactor prints every diagnostic and caps each diagnostic's output at ten lines. This does not bound the combined output from a large failure set. The current graph response can remove primary outputs when its byte limit is exceeded.
+- **Proposal**: For large failure sets, keep every required check command's outcome, known counts, and grouped representative primary diagnostics in the mandatory summary. Retain complete parsed diagnostics and logs for expansion; report omission and retrieval availability explicitly. Leave counts unknown when the native output does not establish them.
+- **Open**: Large failure summaries and inline limits, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only diagnostic-contract inspection. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Grouped summaries for large failure sets accepted
+
+- **Decision**: Large failure sets use each required check command's outcome, known counts, and grouped representative diagnostics with available messages and source locations in the mandatory summary.
+- **Evidence**: Retain complete parsed diagnostics and full logs for expansion. Make omitted detail explicit and leave counts unknown when the native output does not establish them.
+- **Language**: Clarified representative diagnostics in Verification Summary in the [domain glossary](../../CONTEXT.md). The separate Compaction Evidence Contract remains the basis for complete parsed evidence.
+- **Proposal**: Use a configurable 8,000-byte inline target. Keep application state, every required check outcome, and representative primary failure diagnostics inline. Allow the target to be exceeded when mandatory evidence alone cannot fit; reduce verbose detail through grouping and expansion.
+- **Open**: Inline target and mandatory-evidence exception, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, interruption handling, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), glossary, and index. No ADR was needed.
+- **Scope**: Documentation and read-only inline-limit inspection. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-01] grill-with-docs | Soft inline target preserves mandatory evidence
+
+- **Decision**: Use a configurable 8,000-byte target for the Verification Summary. Keep application state, every required check outcome, and representative primary failure diagnostics inline even when mandatory fields exceed the target.
+- **Detail handling**: Use grouping and expansion for verbose diagnostic detail. The target is soft for mandatory evidence; it does not permit removing required outcomes.
+- **Language**: Updated Verification Summary in the [domain glossary](../../CONTEXT.md) to describe a size target that preserves mandatory evidence, replacing the ambiguous claim of a bounded entire result.
+- **Capability audit**: The Unix shell executor cancels its process group on context cancellation. The MCP server processes requests sequentially, so active-call cancellation requires a delivery path.
+- **Proposal**: On harness cancellation during execution, stop remaining work, cancel owned check process groups, retain applied edits and completed check outcomes, and report the unfinished operation as incomplete. Preserve observed partial application. Return a summary through the original call when possible, or retain observed state locally if the caller disconnected.
+- **Open**: Cancellation and interrupted-operation recovery, concrete fixtures and grading details, general cost tradeoff, confirmation scope and uncertainty, and remaining result details.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and glossary. No ADR was needed.
+- **Scope**: Documentation and read-only cancellation-path inspection. No benchmark runs, inference prompts, implementation, client configuration changes, or provider spending.
+
+## [2026-10-02] grill-with-docs | Cancellation retains observed work
+
+- **Decision**: Harness cancellation stops remaining edits and checks, including owned check process groups. Retain applied edits and completed check outcomes; unfinished verification is incomplete.
+- **Application**: Use the agreed Partial Application policy if cancellation interrupts application. Return the mandatory summary through the original call when possible; retain observed state locally when possible if the caller disconnects.
+- **Discussion scope**: Cancellation is settled. Detailed crash recovery and concurrent external edits remain implementation planning topics.
+- **Proposal**: Use nine small, self-contained fixtures across the agreed languages and task types. Validate starting failures and passing reference solutions before model runs. Grade explicit behavior and regressions with private tests, without matching exact patches or prescribing tool use.
+- **Open**: Fixture and grading approach, timing and confirmation methods, and the general time/provider cost tradeoff.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. No new glossary term or ADR was needed.
+- **Scope**: Documentation only. No benchmark runs, inference, implementation, client configuration changes, or provider spending.
+
+## [2026-10-02] grill-with-docs | Fixture and independent grading approach agreed
+
+- **Decision**: Use nine small, self-contained projects with realistic structure, visible tests, and fixed dependency versions. Include a multi-file function rename across modules and tests as one bulk-edit case.
+- **Grading**: Check explicit behavior and regressions with private tests, without exact-patch matching or undisclosed requirements. Before model runs, confirm initial task-specific grading failures and passing reference solutions.
+- **Remaining fixture work**: Select and review concrete cases before running the benchmark. The existing grader still requires the previously identified adaptations.
+- **Proposal**: Measure full elapsed completion through independent grading, with agent and grading durations reported separately. Report observable timing spans without adding overlapping durations or inventing latency weights. Treat one pass as an initial screen; declare any later confirmation budget separately.
+- **Open**: Timing and initial-result interpretation, and the general time/provider cost tradeoff.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md) and [evaluation summary](architecture/turn-reduction-evaluation.md). No new glossary term or ADR was needed.
+- **Scope**: Documentation and read-only measurement-field inspection. No fixtures implemented, benchmark runs, inference, or provider spending.
+
+## [2026-10-02] grill-with-docs | Completion timing and screen interpretation agreed
+
+- **Decision**: Measure task launch through independent grading completion. Include CLI startup, provider waiting, local work, checks, and task-specific initialization on the elapsed path. Report agent and grading durations separately.
+- **Instrumentation**: Report observable provider and tool spans without adding overlapping durations. Missing segments remain unknown; do not infer provider waiting by subtraction or use invented latency weights.
+- **Interpretation**: A single-pass 20% result is an observed initial screen. Any confirmation campaign needs a separately declared repeat count, uncertainty method, and budget; no automatic extra paid runs follow.
+- **Language**: Clarified that [Verified Completion Time](../../CONTEXT.md) includes independent correctness grading.
+- **Proposal**: Keep speed and usage/cost outcomes separate, with explicit reporting of increases. Allow optional limits declared before a benchmark, with no universal cost ceiling by default. Missing monetary evidence leaves monetary outcomes unknown.
+- **Open**: Speed and cost reporting policy is the last discussion topic. Concrete fixture selection and implementation remain future work.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and glossary. No ADR was needed.
+- **Scope**: Documentation only. No benchmark runs, inference, implementation, or provider spending.
+
+## [2026-10-02] grill-with-docs | Evaluation design discussion complete
+
+- **Decision**: Keep the 20% speed screen separate from usage and cost outcomes, without a combined weighted score. A speed result can pass with higher usage when the increase is explicit; this does not establish cost savings or improvement across all measures.
+- **Limits**: Users can declare optional usage or cost limits at benchmark launch, naming the measure and limit before the run. There is no universal ceiling by default. Missing reliable monetary evidence leaves monetary cost and monetary-limit outcomes unknown.
+- **Session outcome**: All discussion topics are resolved for the initial evaluation design. The agreed screen has nine tasks across native, simple automation, and Tzro, for 27 task runs. Strict correctness and the observed 20% net suite speed gate remain in force.
+- **Future work**: Concrete fixture selection, independent graders, the grouped operation, and the native benchmark adapter still need implementation and validation. Detailed crash recovery and concurrent external edits belong to implementation planning. Any confirmation campaign needs separately declared parameters and budget.
+- **Documentation review**: Replaced stale open-decision wording for cancellation, scheduling, result summaries, and cost. Marked the evaluation page and index as design agreed, with implementation and experiments pending.
+- **Documents**: Updated the [catalog](../turn-reduction-hypotheses.md), [evaluation summary](architecture/turn-reduction-evaluation.md), and index. No new glossary term or ADR was needed.
+- **Scope**: Documentation only. No fixtures implemented, benchmark runs, inference, client configuration changes, or provider spending.
+
+## [2026-10-02] plan | Automatic Verification and native evaluation implementation draft
+
+- **Artifact**: Wrote the [draft implementation plan](../../.scratch/turn-reduction/implementation_plan.md), with request_feedback set to true, and a [wiki summary](features/turn-reduction-implementation.md).
+- **Structure**: Fourteen vertical slices, starting with a local MCP edit/check path and a fake Antigravity client, then application failures, deadlines, scheduling, cancellation, evidence, ordinary setup, the simple helper, fixtures, guarding, and the complete report.
+- **Proposed interfaces**: One verification service behind CLI/MCP; literal replacement and creation edits; a repository Verification Preset; and a separate native evaluation command preserving the existing Pi runner. These proposals remain for review.
+- **Evidence**: Inspected current transport, installation, process execution, compaction/storage, workflow types, grading, and campaign guards. Used task context and symbol-based impact analysis. Checked official native-client and MCP cancellation documentation.
+- **Limits**: The current wrapper requires priced API access; native account execution needs a distinct authorization/accounting mode. Account/configuration isolation, long-call behavior, and detailed stream instrumentation still need installed-client evidence.
+- **Measurement**: Independent grading stays within the shared whole-task deadline. Final grading does not count as in-task tool adoption or saved cloud calls. Single-pass results remain an observed screen.
+- **Documents**: Linked the plan from the evaluation page and wiki index. No accepted design decision, glossary term, or ADR was changed.
+- **Scope**: Planning and read-only inspection only. No implementation, model requests, benchmark runs, client configuration writes, campaign resume, or provider spending.
+
+## [2026-10-02] plan | Implementation approved; Gemini API key selected
+
+- **Approval**: The user approved the implementation plan and selected the existing GEMINI_API_KEY as the credential source. This supersedes the earlier cached-account route.
+- **Authentication evidence**: Official Antigravity CLI documentation requires provider gemini in settings as well as the exported variable. The CLI does not load .env automatically.
+- **Plan update**: Configure provider settings in each isolated client home. Pass the key through the environment; allow explicit wrapper loading from an environment file. Do not serialize the key or copy credential files into evidence.
+- **Model control**: Keep gemini-3.8-flash-low unchanged. Earlier account-based model discovery does not establish its availability on the Gemini API route; validate the chosen route before live evaluation without fallback.
+- **Accounting**: Use evidence for the Gemini API route, preserving the previous ledger history. Actual monetary charges remain unknown without reliable evidence; any estimates and reservation ceilings are separate.
+- **Documents**: Updated the [approved plan](../../.scratch/turn-reduction/implementation_plan.md), [implementation summary](features/turn-reduction-implementation.md), [evaluation design](architecture/turn-reduction-evaluation.md), catalog, and index.
+- **Scope**: Documentation only. The credential value was not read or printed. No user configuration was changed and no model or benchmark request was made.
+
+## 2026-10-02 — Repair turn reduction measurement
+
+Audited the historical loop report. Added the evidence audit and updated the evaluation and implementation pages. Native harness and complete offline matrix are validated. A single live 27-launch screen is authorized; no performance claim yet.
+
+## 2026-10-02 — Native client update interrupted the first screen
+
+The exact-model native launch passed its task and grading. Antigravity self-updated from 1.2.14 to 1.2.15; the source guard stopped before another launch. Disabled self-updates for benchmark children and readiness, froze a client copy, and added guarded contract-amendment tests. Retained the first launch and requested one extra launch for a fresh complete matrix. Updated the evidence audit.
+
+## 2026-10-02 — Real native screens and explicit tool guidance
+
+Two complete Antigravity matrices passed all 54 tasks. Workspace Tzro was 2.96% slower than Native; global Tzro was 0.98% faster. Neither passed the 20% screen. The workspace trace proves two successful production MCP calls. This corrects the earlier false inference that an empty global MCP listing meant workspace MCP was unavailable. The global screen had zero Tzro adoption. Results remain separate.
+
+The user set the allowance to 100 launches and requested task-level AGENTS.md guidance. Registered E068 before implementation. The optional --tzro-guidance input is frozen, retained, and applied only to Tzro workspaces. Native/Simple and the production Tzro binary remain unchanged. Local regression and native readiness passed. A fresh 27-cell guided screen started with 55 prior launches retained. Added the native results page and updated the audit, evaluation, implementation, and index pages.
+
+## 2026-10-02 — Explicit guidance passes the native screen
+
+E068 completed all 27 tasks correctly. Guided Tzro made nine successful production composite calls and totaled 137.56 seconds. Simple totaled 179.46 seconds and Native 186.65 seconds. The 23.35% reduction against the fastest control passed the unchanged 20% screen. This is a promising development result, not a confirmed causal claim.
+
+Registered E069 before a paired repeat against Simple, the fastest screening control. The frozen candidate and instructions remain unchanged. The repeat uses the final 18 launches of the approved 100. Its separate paired summary preserves the original three-condition evaluator's incomplete status. Updated the native report and registry.
+
+## 2026-10-02 — Guided result repeated; native allowance exhausted
+
+E069 passed all 18 tasks. Guided Tzro totaled 114.03 seconds versus Simple at 213.98 seconds, a 46.71% reduction. All nine Tzro tasks used the production composite successfully. Together, E068 and E069 show successful tool use on 18/18 guided tasks and pass the 20% timing gate in both comparisons. Results apply to the inspected development suite; generalization and controlled causal attribution remain unestablished.
+
+The ledger retains 100 completed launches, including the initial client-update attempt. Charges and cloud decision rounds remain unknown. Evidence checks matched 6,220 retained file hashes and the frozen candidate. The full Go suite and subsequent affected suites passed. Updated the final report, audit, evaluation, implementation summary, index, registry, and validation record. Historical registry schema errors still prevent automatic rendering; the registry index links the current evidence explicitly.
+
+## 2026-10-02 — Add passive native invocation instrumentation
+
+The user requested actual model-round instrumentation through hooks and another full comparison. Added a standalone metadata recorder for PreInvocation, PostInvocation, and Stop. The benchmark merges the same passive observer into every condition, preserves existing hooks, freezes its binary, and stops on incomplete evidence. Local recorder, strict parser, and all-condition integration tests passed. Recorder race tests passed. Full regression and readiness checks are in progress.
+
+Registered E070 and retained the parent and candidate snapshots. The previous allowance is exhausted at 100 launches. An explicit request for 127 total launches is pending. No additional paid task has started. Added the instrumentation page and linked it from the index, evaluation design, and historical results.
+
+## 2026-10-02 — Instrumentation ready; live allowance pending
+
+The full Go suite, recorder race tests, and native offline readiness checks passed. Added a required cross-check between completed hook pairs and deduplicated native agent_response events. The affected benchmark and CLI suites passed after this change. Frozen candidate v2 and its source snapshot preserve the tested implementation; the previous candidate remains available.
+
+Local calibration retained 100 recorder process executions: median 7.99 ms, p95 11.02 ms, and maximum 314.53 ms. Live completion time will include all observer overhead. The prepared full comparison uses the same production binary, model, guidance, and graders. The allowance increase to 127 is still pending, with zero additional live launches.
+
+## 2026-10-02 — Instrumented native comparison passed
+
+The user approved 127 aggregate launches. E070 used the 27 additional launches for a complete Native/Simple/Tzro comparison. All tasks passed prescribed checks and private grading. Guided Tzro totaled 125.28 seconds versus Native 201.07 seconds and Simple 198.58 seconds. The 36.91% reduction against Simple, the fastest control, passed the 20% timing gate.
+
+Passive invocation hooks measured 63 completed Tzro model invocations versus Native 111 and Simple 106. Hook pairs matched native agent_response events in all 27 tasks. All nine Tzro tasks successfully used the production MCP composite. Independent analysis verified task receipts, workspace hashes, hook configuration, frozen inputs, and 1,773 retained evidence files.
+
+Added the [instrumented results](architecture/instrumented-turn-reduction-results.md) and reconciled the instrumentation, historical results, evaluation, audit, index, and registry. All 127 launches are complete. Charges, HTTP retries, and isolated provider latency remain unknown. Results establish a measured development-suite benefit; unseen tasks and other models remain untested.

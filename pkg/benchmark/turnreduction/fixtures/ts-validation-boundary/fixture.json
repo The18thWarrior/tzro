@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "id": "ts-validation-boundary",
+  "language": "typescript",
+  "shape": "bugfix",
+  "prompt": "Fix validateEmail so an address of at most 20 characters containing @ is accepted. Reject addresses longer than 20 characters or without @. You may edit validator.ts. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": [
+    "validator.ts"
+  ],
+  "required_grade_tests": [
+	"accepts exact maximum length",
+	"rejects missing at sign",
+    "boundary minus one",
+    "boundary plus one"
+  ],
+  "reference_edits": [
+    {
+      "kind": "replace",
+      "path": "validator.ts",
+      "old_text": "email.length >= MAX_LENGTH",
+      "new_text": "email.length > MAX_LENGTH",
+      "expected_matches": 1
+    }
+  ]
+}

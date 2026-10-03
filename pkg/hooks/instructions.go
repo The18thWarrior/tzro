@@ -36,6 +36,7 @@ To minimize turns and save tokens, pipeline tzro commands within single tool inv
 - **Large Files (>200 lines)**: Run ` + "`tzro skeleton <file>`" + ` to view method signatures and structural declarations without dumping the entire file. Use ` + "`tzro expand <hash>`" + ` only for specific elided method bodies.
 - **Verbose Builds & Tests**: Run ` + "`tzro compact --run \"<cmd>\"`" + ` (e.g. ` + "`tzro compact --run \"go test ./...\"`" + `) to capture failure diagnostics within an inline 10-line cap.
 - **Codebase Exploration**: Run ` + "`tzro probe \"<symbol>\"`" + ` for sub-millisecond AST symbol discovery (<5ms, 0 cloud tokens) before opening files.
+- **Automatic Verification**: Use ` + "`tzro_edit_and_verify`" + ` (or ` + "`tzro edit-and-verify --request -`" + `) to apply multi-file literal replacements/creations with preflight validation and automatic execution of ` + "`.tzro/verification.yaml`" + ` presets in a single turn.
 - **Blast Radius**: Run ` + "`tzro impact [files...]`" + ` before modifying shared code to discover callers, dependents, and tests to run.
 
 For full CLI reference, options, and System 1 graph calls (including ` + "`tzro expand`" + ` and ` + "`tzro context`" + `), see ` + "`REFERENCE.md`" + ` in this skill directory.
@@ -57,12 +58,23 @@ Detailed reference for tzro commands, System 1 graph calls, and proxy administra
 | ` + "`tzro skeleton <file>`" + ` | Skeletons a code file, eliding function bodies into SHA-256 hashes | **70%–90% token reduction** |
 | ` + "`tzro expand <hash>`" + ` | Retrieves elided code body or stored artifact with optional ` + "`--lines`" + ` | Fetches only the required ~20 lines |
 | ` + "`tzro compact [--run \"<cmd>\"]`" + ` | Compactor with evidence contract, exit code confidence, 10-line cap | **80% token reduction on test/build logs** |
+| ` + "`tzro edit-and-verify`" + ` | Atomic multi-file text replacements/creations and verification presets | **Eliminates separate edit-and-check turns** |
 | ` + "`tzro session save / load`" + ` | Portable, git-aware agent session manifest with freshness validation | **Eliminates full transcript/repo re-reads** |
 | ` + "`tzro ingest <file>`" + ` | Import CSV/TSV/JSON into SQLite, returns envelope with table pointer | **97%+ token reduction on tabular data** |
 | ` + "`tzro query <table> \"<sql>\"`" + ` | Execute read-only SQL against imported tabular data | Fetches only the query results |
 | ` + "`tzro doctor`" + ` | Synthetic health check for proxy, routes, FTS5 engine, and agent hooks | Instant diagnostic verification |
 | ` + "`tzro start --port 7878`" + ` | Launches the transparent loopback reverse proxy | **Locks KV-cache prefix (70–99% hit rate)** |
 | ` + "`tzro status`" + ` | Displays real-time shielded tokens, memory usage, and proxy metrics | Diagnostic monitoring |
+
+---
+
+## Automatic Verification (` + "`tzro_edit_and_verify`" + ` / ` + "`tzro edit-and-verify`" + `)
+
+Applies multi-file literal text replacements or file creations with atomic preflight validation and executes ` + "`.tzro/verification.yaml`" + ` presets in a single operation.
+- **Edits**: Array of ` + "`{path, old_text, new_text}`" + `. Replaces exact text occurrences. If ` + "`old_text`" + ` is empty, creates or overwrites the file.
+- **Preflight**: Validates all edits in memory before modifying disk. Rejects entire batch if any ` + "`old_text`" + ` is not found or matches multiple times (unless ` + "`allow_multiple: true`" + `), preventing partial or conflicting edits.
+- **Failure retention**: Retains applied changes on verification check failure so diagnostics reflect current state; does not roll back applied code.
+- **Presets**: Runs checks configured in ` + "`.tzro/verification.yaml`" + `. Presets can define dependency ordering and parallel execution groups.
 
 ---
 

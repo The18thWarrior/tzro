@@ -44,7 +44,225 @@ def reservation(ledger, total_cap, run_cap, prices):
     return available, available - margin
 
 
+# --- Native Antigravity Gemini API Launch Guard & Persistent Reservation ---
+
+
+def reserve_native_gemini_cell(
+    ledger_path: Path,
+    run_id: str,
+    cell_id: str,
+    model: str,
+    contract_hash: str,
+    max_launches: int = 27,
+    authorized: bool = False,
+    is_fake: bool = False,
+    *,
+    amends_contract: str = "",
+    amendment_reason: str = "",
+):
+    """Reserves a single execution cell in the native Gemini API ledger.
+    Raises ValueError on duplicates, missing authorization, exhausted allowance, or contract mismatch.
+    """
+    if not authorized and not is_fake:
+        raise ValueError("Explicit authorization is required for live native Gemini API launches")
+    if not run_id:
+        raise ValueError("run_id is required")
+    if not cell_id:
+        raise ValueError("cell_id is required")
+    if not contract_hash:
+        raise ValueError("contract_hash is required")
+    if not model:
+        raise ValueError("model is required")
+
+    ledger_path = Path(ledger_path)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = ledger_path.with_suffix(".lock")
+
+    with lock_path.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            if ledger_path.exists():
+                ledger = json.loads(ledger_path.read_text())
+            else:
+                if amends_contract:
+                    raise ValueError("Cannot amend a missing ledger or discard prior launches")
+                ledger = {
+                    "mode": "gemini-native",
+                    "contract_hash": contract_hash,
+                    "max_launches": max_launches,
+                    "model": model,
+                    "runs": [],
+                }
+
+            # An amendment is explicit, locked, and retains every historical reservation.
+            if ledger.get("model") != model:
+                raise ValueError("Ledger model mismatch: cannot reuse ledger across different models")
+            if ledger.get("contract_hash") != contract_hash:
+                if not authorized or not amends_contract or amends_contract != ledger.get("contract_hash") or not amendment_reason.strip():
+                    raise ValueError("Ledger contract hash mismatch: an explicit authorized amendment is required")
+                if any(r.get("status") != "completed" for r in ledger.get("runs", []) if not r.get("fake", False)):
+                    raise ValueError("Cannot amend a ledger with unfinished live reservations")
+                if max_launches < len([r for r in ledger.get("runs", []) if not r.get("fake", False)]):
+                    raise ValueError("New allowance cannot discard prior launches")
+                ledger.setdefault("amendments", []).append({
+                    "previous_contract_hash": ledger["contract_hash"], "contract_hash": contract_hash,
+                    "previous_max_launches": ledger["max_launches"], "max_launches": max_launches,
+                    "reason": amendment_reason, "authorized_at": datetime.now(timezone.utc).isoformat(),
+                })
+                ledger["contract_hash"] = contract_hash
+                ledger["max_launches"] = max_launches
+            if ledger.get("max_launches") != max_launches:
+                raise ValueError("Launch allowance differs from the frozen ledger")
+
+            # Check for existing reservation with same run_id and cell_id
+            for entry in ledger.get("runs", []):
+                if entry.get("run_id") == run_id and entry.get("cell_id") == cell_id:
+                    raise ValueError(
+                        f"Cell {cell_id} in run {run_id} already exists in ledger with status={entry.get('status')}; cannot silently retry"
+                    )
+
+            # Check launch allowance (fake client does not consume live provider allowance)
+            if not is_fake:
+                live_launches = sum(1 for r in ledger.get("runs", []) if not r.get("fake", False))
+                if live_launches >= ledger.get("max_launches", max_launches):
+                    raise ValueError(f"Launch allowance exhausted ({live_launches}/{max_launches})")
+
+            # Create reservation
+            res = {
+                "run_id": run_id,
+                "cell_id": cell_id,
+                "model": model,
+                "provider": "gemini",
+                "contract_hash": contract_hash,
+                "fake": is_fake,
+                "status": "reserved",
+                "started": datetime.now(timezone.utc).isoformat(),
+                "finished": None,
+                "exit_code": None,
+                "usage": "unknown",
+                "charged_usd": "unknown",
+            }
+            ledger.setdefault("runs", []).append(res)
+
+            # Write ledger atomically
+            tmp = ledger_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(ledger, indent=2) + "\n")
+            os.replace(tmp, ledger_path)
+            return res
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def complete_native_gemini_cell(
+    ledger_path: Path,
+    run_id: str,
+    cell_id: str,
+    exit_code: int,
+    usage: dict = None,
+):
+    """Marks a reserved cell as completed in the ledger."""
+    ledger_path = Path(ledger_path)
+    lock_path = ledger_path.with_suffix(".lock")
+
+    with lock_path.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            if not ledger_path.exists():
+                raise ValueError("Ledger file does not exist")
+            ledger = json.loads(ledger_path.read_text())
+
+            target = None
+            for entry in ledger.get("runs", []):
+                if entry.get("run_id") == run_id and entry.get("cell_id") == cell_id:
+                    target = entry
+                    break
+
+            if not target:
+                raise ValueError(f"Reservation for cell {cell_id} in run {run_id} not found")
+
+            target["status"] = "completed"
+            target["finished"] = datetime.now(timezone.utc).isoformat()
+            target["exit_code"] = exit_code
+            if usage:
+                target["usage"] = usage
+            # Native token usage and estimates do not establish actual charges.
+            target["charged_usd"] = "unknown"
+
+            tmp = ledger_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(ledger, indent=2) + "\n")
+            os.replace(tmp, ledger_path)
+            return target
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def launch_guarded_native_cell(
+    ledger_path: Path,
+    run_id: str,
+    cell_id: str,
+    model: str,
+    contract_hash: str,
+    spawn_func,
+    max_launches: int = 27,
+    authorized: bool = False,
+    is_fake: bool = False,
+):
+    """Guards a single cell execution: reserves before spawn, leaves 'reserved' on interrupt, updates on clean exit."""
+    reserve_native_gemini_cell(
+        ledger_path, run_id, cell_id, model, contract_hash, max_launches, authorized, is_fake
+    )
+    result = spawn_func()
+    exit_code = result.get("exit_code", 0) if isinstance(result, dict) else 0
+    usage = result.get("usage") if isinstance(result, dict) else None
+    complete_native_gemini_cell(ledger_path, run_id, cell_id, exit_code, usage)
+    return result
+
+
+def native_guard_main(argv):
+    """Expose durable per-cell reservations to the native Go runner."""
+    parser = argparse.ArgumentParser(description="Reserve or complete one native benchmark cell")
+    parser.add_argument("action", choices=("native-reserve", "native-complete"))
+    parser.add_argument("--ledger", type=Path, required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--cell-id", required=True)
+    parser.add_argument("--model")
+    parser.add_argument("--contract-hash")
+    parser.add_argument("--amends-contract", default="")
+    parser.add_argument("--amendment-reason", default="")
+    parser.add_argument("--max-launches", type=int, default=27)
+    parser.add_argument("--authorized", action="store_true")
+    parser.add_argument("--fake", action="store_true")
+    parser.add_argument("--receipt", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        if args.action == "native-reserve":
+            if args.max_launches < 1:
+                raise ValueError("max-launches must be positive")
+            result = reserve_native_gemini_cell(
+                args.ledger, args.run_id, args.cell_id, args.model,
+                args.contract_hash, args.max_launches, args.authorized, args.fake,
+                amends_contract=args.amends_contract, amendment_reason=args.amendment_reason,
+            )
+        else:
+            if args.receipt is None:
+                raise ValueError("receipt is required")
+            receipt = json.loads(args.receipt.read_text())
+            if "exit_code" not in receipt:
+                raise ValueError("receipt must contain exit_code")
+            result = complete_native_gemini_cell(
+                args.ledger, args.run_id, args.cell_id,
+                receipt["exit_code"], receipt.get("usage"),
+            )
+        print(json.dumps(result))
+        return 0
+    except (ValueError, OSError, TypeError) as exc:
+        print(f"Native launch guard: {exc}", file=sys.stderr)
+        return 1
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("native-reserve", "native-complete"):
+        return native_guard_main(sys.argv[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--profiles", default="baseline,standard")

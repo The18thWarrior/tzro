@@ -1,12 +1,139 @@
 # Turn Reduction Hypotheses Catalog
 
-> **Core Value Proposition**: *Reduce the number of turns your agentic workflows need to take to achieve their goals.*
+> **Core Value Proposition**: *Shorten the time to a correct, verified result by removing avoidable cloud coordination.*
+
+## Agreed Evaluation Direction (2026-10-01 to 2026-10-02)
+
+Verified Completion Time is the user-facing timing outcome. Cloud Decision Round count is a diagnostic for the proposed mechanism.
+Measure elapsed time from task launch through independent grading completion, including CLI startup and all task-specific work on the elapsed path.
+Report agent and grading durations separately. Report observable provider and local tool spans without adding overlapping durations.
+Unavailable timing segments remain unknown. Do not estimate provider wait by subtracting tool durations or apply invented latency weights.
+Installation and pre-task fixture preparation are reported separately from completion time.
+With equal correctness and provider cost, a five-round, 40-second workflow beats a three-round, 80-second workflow.
+Completion rate accompanies timing results. Early failure does not count as fast completion.
+Every planned Tzro pass must finish all nine tasks correctly with required checks complete before the initial evaluation can pass.
+A final incorrect result or timeout prevents a passing claim. Unsuccessful attempts remain in the result matrix without replacement by successful reruns.
+Failed checks repaired within the same task run contribute to its completion time and do not count as final task failures.
+Native and simple automation qualify as speed comparators only when all nine tasks finish correctly with required checks complete in every planned pass.
+If only one comparator qualifies, use it and retain both conditions' outcomes. If neither qualifies, report correctness without a passing comparative speed claim.
+Do not omit failed tasks or mix comparator conditions by task to construct a faster baseline.
+
+Speed can justify higher provider cost. Halving completion time at twice the provider cost is acceptable in the discussed example.
+Provider latency must be controlled before attributing timing differences to Tzro.
+Wall-clock time alone does not establish a causal benefit. No universal cost ceiling applies by default.
+Confirmed speed claims require repeated, matched comparisons with the same model, provider route, and task conditions.
+Comparisons balance run order and report uncertainty. Completion time, correctness, provider cost, and cloud rounds remain separate measurements.
+The initial screen uses one matched suite pass per condition: nine cases across three conditions, or 27 task runs.
+The user rejected six initial repetitions as too expensive.
+Each complete agent task has a ten-minute default ceiling, configurable when launching the benchmark.
+One selected task limit applies to all three conditions and is recorded in the report. It is separate from the edit-and-verify operation timeout.
+Sum the nine task Verified Completion Times separately for each condition. Its mean task completion time is that total divided by nine.
+Comparing these means gives the same percentage reduction as comparing suite totals. Do not average per-task percentage reductions instead.
+The practical speed threshold is at least 20% lower suite total for the complete enabled Tzro workflow.
+For the initial screen, compare the observed Tzro suite total with the lower total of the correct native and simple automation conditions.
+If follow-up repetitions are planned, compare median suite totals as previously agreed.
+The Tzro total must be at most 80% of that comparator total. Correctness and completion rates accompany the timing result.
+One pass provides initial timing evidence without measuring repeat variation within a task. A 20% result is an observed initial screen, not confirmed causation.
+Any confirmation campaign needs a separately declared repeat count, uncertainty method, and budget. The screen does not trigger further paid runs automatically.
+This is a net workflow threshold, including local overhead and interactions. Individual improvements do not each need a 20% gain.
+The 20% gate applies to the combined nine-case suite. Each language does not need to meet the threshold separately.
+Per-task and per-language results expose slowdowns. A suite-level win does not establish improvement in every language or task.
+The combined result is measured directly. Component percentages are not added to claim a net improvement.
+For the selected Antigravity Gemini API route, reports separate observed token usage, available provider usage evidence, and actual charge evidence.
+Monetary cost remains unknown without reliable charge evidence. Token reductions alone do not establish dollar savings.
+The 20% speed screen and usage or cost outcomes are reported separately, without a combined weighted score.
+A speed result can pass with higher usage when that increase is explicit. It does not establish cost savings or improvement across all measures.
+Users can declare an optional maximum usage or cost increase at benchmark launch, naming the measure and limit before the run.
+Report that limit's outcome separately from the speed screen. A monetary limit remains unknown without reliable monetary evidence.
+Timing models under common provider conditions supply supporting, counterfactual evidence.
+The comparison retains waiting time saved by eliminating sequential service calls.
+
+A Cloud Decision Round can contain multiple tool calls. Tool calls and provider request attempts have separate counts.
+The current workflow runner counts completed assistant responses separately from tool executions.
+Retries and interrupted requests need separate accounting.
+
+The numerical savings in this catalog remain predictions until matched workflow evidence supports them.
+Comparisons include the capable native workflow, simple native automation, and the Tzro mechanism under evaluation.
+The native comparison retains normal batching and language tools.
+It can create bulk-update scripts during a task and combine edits with native verification commands in one invocation.
+Script creation and adaptation during a task contribute to its completion time.
+The simple automation direction uses a bulk-update script, such as applying a function rename across references.
+Verification uses the shared native checks. The agent can combine those checks with the bulk updates.
+Simple automation receives an existing generic bulk-edit helper before the task begins.
+The agent supplies edits and scope; the helper contains no fixture-specific solution. Helper setup effort is reported separately from task completion time.
+If simple native automation matches speed, correctness, and provider cost, the mechanism leaves Tzro's performance thesis.
+Setup, portability, and maintenance benefits remain separate claims that need their own evidence.
+The first validation targets Tzro Standard integrated into the native Antigravity CLI, using the existing `GEMINI_API_KEY` from the process environment.
+The user selected this route on 2026-10-02, superseding cached-account authentication.
+Set `modelProvider: "gemini"` in each isolated client's settings. Load the key explicitly if its source is `.env`; the CLI does not load that file.
+Tzro Standard's local tools require no separate model credential.
+All three comparison conditions use the exact model `gemini-3.8-flash-low`, with the same Low reasoning variant.
+The cloud agent retains strategy and code generation. Local deterministic graph execution remains available.
+Full's optional decision and extraction runtimes, and T46's replacement orchestration, remain outside this first validation.
+The first workload is Automatic Verification after source edits.
+The initial task set includes Go, Python, and TypeScript from the start.
+Each language has one single-file bug fix, one multi-file change, and one task diagnosing an existing test failure: nine initial cases.
+Each language needs native verification checks and independent task correctness grading.
+Use small, self-contained projects with realistic source structure, visible tests, and fixed dependency versions.
+Include a multi-file function rename across modules and tests as one bulk-edit case.
+Before model runs, confirm each starting fixture fails its task-specific grader and a reference solution passes.
+Private behavior tests and regression checks grade stated requirements, without matching an exact patch or adding undisclosed requirements.
+Visible tests may change when the requested task requires it. Independent grading inputs remain fixed.
+All three conditions use the same declared editable and protected inputs.
+Prompts state the requested behavior without prescribing tool use or a fixed sequence of edits and failures.
+The agent receives check results automatically, including failures, without a separate polling call.
+The intended mechanism replaces repeated cloud coordination with a prescribed local verification workflow.
+Local checks still run, and their time and tool executions remain part of the measured workflow.
+The first comparison uses the same required checks to isolate scheduling from impact-based test selection.
+T07 and T29 inform this workload. T07's agent-supplied test command differs from an automatic edit-triggered check.
+The boundary is an explicit Edit Batch submitted through one grouped edit-and-verify operation.
+The submitted edit list defines the batch. Verification results return with that operation, without a separate batch-closing or polling call.
+Every result includes a Verification Summary with application state, check outcomes, and available failure diagnostics.
+Its configurable default size target is 8,000 bytes. Mandatory application state, check outcomes, and primary failure diagnostics remain inline even when they exceed that target.
+The summary remains in the original response when full logs require expansion. Unknown details and omitted output remain explicit.
+For large failure sets, it includes each required check command's outcome, known counts, and grouped representative diagnostics with available messages and source locations.
+Complete parsed diagnostics and full logs remain expansion evidence. Counts stay unknown when the native output does not establish them.
+`edit_and_verify({ edits: [...] })` is the illustrative interface, not an existing product tool.
+If the batch applies but a required check fails, the applied edits remain available for repair and the operation returns diagnostics.
+Independent required checks continue after failure within the remaining operation budget.
+Checks blocked by a failed prerequisite are reported as not run. A blocked check does not count as a pass.
+Native check outcomes determine verification status. Detected source changes during execution do not automatically invalidate a passing check.
+Task correctness remains a separate evaluation outcome.
+Every submitted patch is validated before any batch writes. If one patch cannot apply, the whole batch is rejected without applying its edits.
+If a write-time error leaves Partial Application, the operation preserves observed state and reports changed files and uncertainty.
+Verification is not run for an incompletely applied batch.
+Required checks come from a repository-defined Verification Preset, reused for every grouped operation.
+Required check commands run sequentially by default. Parallel groups require explicit opt-in in the preset.
+Each command retains its configured internal parallelism. All three benchmark conditions use the same preset scheduling policy.
+The agent does not choose arbitrary required check commands per batch. All three comparison conditions use the same preset.
+Missing verification configuration or unavailable checks do not block valid edits.
+The summary reports edit application separately from verification that is not configured or unavailable, including the reason checks did not run.
+The harness agent can report the missing setup to the user. No executed checks means no reported verification pass.
+The first design uses a five-minute default timeout that users can configure differently for long jobs.
+One shared timeout covers the entire operation, including patch validation, edit application, and required checks.
+Each stage uses the remaining budget. Starting another check does not reset the timeout.
+This revises the earlier direction of extending waits for unknown runtimes. Local waiting cannot automatically extend the configured timeout.
+Verification stays within the original tool call. Delayed final results after that call returns are rejected for the first design.
+The user cites harness compatibility as the reason for retaining ordinary tool results.
+Tzro owns routine waiting locally. The cloud agent participates when an exception requires its judgment.
+On timeout, verification stops and returns an incomplete result with available diagnostics. Applied edits remain available for repair.
+Harness cancellation stops remaining edits and checks, including owned check process groups.
+Applied edits and completed check outcomes remain. Unfinished verification is incomplete; incomplete application retains the Partial Application policy.
+Return the summary through the original call when possible. If the caller disconnects, retain observed state locally when possible.
+Process exit triggers prompt result delivery before the timeout.
+Concrete fixtures still need selection and review before a benchmark run. Their design and independent grading approach are agreed.
+The [implementation plan](../.scratch/turn-reduction/implementation_plan.md) is approved. Provider configuration and exact-model availability on the Gemini API route still need runtime verification.
+The evaluation design discussion is complete. Concrete fixtures, runner integration, and the grouped operation still require implementation and validation.
+Confirmation parameters belong to any separately budgeted follow-up campaign.
+Detailed crash recovery and concurrent external edits remain implementation planning topics.
+The [thesis handoff](../.scratch/turn-reduction-thesis.md) describes the three comparison conditions.
 
 ---
 
 ## 1. Executive Summary & Problem Context
 
-In autonomous AI agentic workflows, **turn count is the ultimate multiplier of latency, cost, and failure probability**:
+Cloud Decision Round count can affect workflow latency, cost, and correctness. Fewer rounds alone do not establish an improvement.
+The following estimates motivate hypotheses. They do not establish measured savings or a causal effect:
 - **Quadratic Context Cost ($O(N^2)$)**: Because frontier chat models ingest the cumulative conversation history on every turn, a 15-turn workflow re-reads prior context 15 times. Reducing turns from 14 to 3 eliminates up to 75% of cumulative prompt tokens.
 - **Latency Multiplication**: Each cloud inference turn incurs network transit, pre-fill queuing, and generative latency (typically 5–20 seconds per turn). A 15-turn task takes 3–5 minutes; a 3-turn task finishes in 20 seconds.
 - **Drift & Compounding Hallucinations**: Each turn boundary introduces an opportunity for the model to lose context, pursue irrelevant tangents, misunderstand prior tool outputs, or terminate prematurely.
@@ -86,6 +213,7 @@ In autonomous AI agentic workflows, **turn count is the ultimate multiplier of l
 * **Mechanism**: Agent supplies the target file edit and the verification command. The tool applies the patch and immediately executes the test command locally, returning the edit status and test outcome in a single response.
 * **Turn & Quality Impact**: Compresses a 3-turn cycle into 1 turn. Multiplied across 2–3 edit attempts, saves 4–6 turns per task.
 * **Implementation Surface**: `pkg/executor/tools.go`.
+* **Initial Workload Boundary**: The selected Automatic Verification workload concerns checks triggered by source edits without a separate cloud scheduling decision. This entry's agent-supplied verification command is a related composite-tool treatment. The first scheduling comparison keeps the required check set constant.
 
 #### T08: `diagnose_incident` (Automated Stack-to-Source Traceback)
 * **Type**: Visionary
@@ -100,6 +228,7 @@ In autonomous AI agentic workflows, **turn count is the ultimate multiplier of l
 * **Mechanism**: A single primitive that takes a file path and a SQL query (or aggregation goal), auto-imports the table into SQLite, runs the query, and returns formatted results or writes them to the target file.
 * **Turn & Quality Impact**: Slashes tabular tasks from 12+ turns down to 1–2 turns.
 * **Implementation Surface**: `pkg/compactor/tabular.go`, `cmd/tzro/mcp.go`.
+* **Existing Capability**: The [executor query tool](../pkg/executor/tools.go) already ingests a provided file and runs supplied SQL in one call. Natural-language query generation and result-file writing are additional parts of this hypothesis. The capability check does not establish a workflow advantage.
 
 #### T10: `refactor_symbol` (Global Multi-File Rename/Update)
 * **Type**: Architectural
@@ -140,6 +269,10 @@ In autonomous AI agentic workflows, **turn count is the ultimate multiplier of l
 * **Turn & Quality Impact**: Eliminates 2–3 turns of blind concurrency debugging and timeout retries.
 * **Implementation Surface**: `pkg/executor/shell_unix.go`, `pkg/compactor/`.
 
+**Initial Verification Boundary**: This hypothesis does not establish a universal deadline for Automatic Verification.
+A long runtime or silent output alone does not establish deadlock.
+The first design uses a configurable five-minute default timeout. Longer jobs require an appropriate configured limit.
+
 #### T15: Speculative Search-and-Expand
 * **Type**: Architectural
 * **Target Bottleneck**: Receiving a skeleton, realizing a function body is needed, and calling `expand` on the next turn.
@@ -172,12 +305,13 @@ In autonomous AI agentic workflows, **turn count is the ultimate multiplier of l
 * **Turn & Quality Impact**: Cuts 2–3 turns of mechanical branch evaluation.
 * **Implementation Surface**: `pkg/executor/engine.go`.
 
-#### T19: Multi-File Atomic Batch Patching in Single Graph
+#### T19: Multi-File Batch Patching in Single Graph
 * **Type**: Pragmatic
 * **Target Bottleneck**: Applying changes across 4 files sequentially over 4 separate turns.
-* **Mechanism**: Submit an array of file patches in a single graph invocation. The engine applies them transactionally, verifies tests, and rolls back if tests fail.
+* **Mechanism**: Submit an array of file patches in one graph invocation. After the batch applies, run the required checks. If a check fails, retain the applied edits and return diagnostics for repair.
 * **Turn & Quality Impact**: Cuts multi-file editing from $N$ turns down to 1 turn.
 * **Implementation Surface**: `pkg/executor/tools.go`.
+* **Agreed Policies**: Failed checks retain successfully applied edits. Preflight validates every patch before batch writes. One invalid patch rejects the whole batch without applying its edits. Write-time failures preserve and report observed partial state, with verification not run. This entry describes a hypothesis, rather than an existing grouped editing capability.
 
 #### T20: Deterministic Tabular Analysis Pipeline
 * **Type**: Pragmatic
@@ -257,6 +391,9 @@ In autonomous AI agentic workflows, **turn count is the ultimate multiplier of l
 * **Turn & Quality Impact**: Reduces post-edit verification from 3 turns to 1 turn.
 * **Implementation Surface**: `pkg/executor/tools.go`.
 
+**Agreed Result Boundary**: Automatic Verification returns a mandatory Verification Summary in the original tool response, with a configurable size target that preserves mandatory evidence.
+Full logs can require expansion, but the operation does not replace the summary with an artifact pointer.
+
 #### T30: Batched Tabular Ingest & Multi-Query Array
 * **Type**: Pragmatic
 * **Target Bottleneck**: Calling `tzro query` 5 separate times across 5 turns to calculate 5 numbers.
@@ -334,6 +471,7 @@ In autonomous AI agentic workflows, **turn count is the ultimate multiplier of l
 * **Mechanism**: Use `tzro impact` to automatically select and execute *only* the specific test that covers the modified function, running in <500ms.
 * **Turn & Quality Impact**: Eliminates timeout failures and lets agents verify edits instantly in 1 turn.
 * **Implementation Surface**: `pkg/context/impact.go`.
+* **Existing Capability**: `tzro test` already provides impact-based selection and execution through the [TestSelector](../pkg/context/test_selection.go). The proposed latency and coverage claims still need validation. Automatic scheduling after edits is a separate treatment from test selection.
 
 #### T40: Deterministic NL-to-SQL Template Engine
 * **Type**: Pragmatic

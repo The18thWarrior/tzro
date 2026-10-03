@@ -15,9 +15,9 @@
   <!-- Page Description -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TZRO — The Local Token Shield for AI Coding Agents | Stop Hitting Rate Limits</title>
+  <title>TZRO — 43% Fewer Agent Turns, Measured | The Local Context Engine for AI Coding Agents</title>
   <meta name="description"
-    content="TZRO is an ultra-lightweight native token shield and context optimization engine. Lock prompt cache prefixes, skeletonize code via Tree-sitter, and run sub-millisecond local discovery to avoid rate limits." />
+    content="TZRO is a native context engine that cuts AI agent turns by 43% and completion time by 37% — measured across 9 real coding tasks with independent grading. Sub-millisecond local discovery, AST skeletonization, and automatic verification." />
 
   <!-- Modern Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -73,11 +73,11 @@
           <div class="hero-left">
             <div class="hero-badge">WORKS WITH CLAUDE CODE, CURSOR, ANTIGRAVITY & AIDER</div>
             <h1 class="hero-title text-balance">
-              Stop hitting API rate limits. <span class="glow-text">Shield your token budget.</span>
+              43% fewer agent turns. <span class="glow-text">37% faster completion.</span>
             </h1>
-            <p class="hero-subtitle">The Local Token Shield & Context Optimization Engine</p>
+            <p class="hero-subtitle">The Local Context Engine — Measured Turn Reduction for AI Coding Agents</p>
             <p class="hero-desc text-pretty">
-              TZRO runs a transparent &lt;50MB native loopback proxy that locks KV-cache prefixes (70–99% cache read hit rate, benchmarked across 8 models), skeletonizes source code via Tree-sitter, and provides sub-millisecond local discovery.
+              TZRO assembles relevant code, runs automatic verification, and delivers high-signal context locally — so your agent solves tasks in fewer model turns. Measured across 9 real coding tasks with independent grading and full evidence retention.
             </p>
             <div class="hero-ctas">
               <a href="#install" class="hero-cta-primary">Install Free</a>
@@ -216,10 +216,10 @@
     <!-- ============================================================ -->
     <section class="architecture-flow-section" id="architecture">
       <div class="hero-container">
-        <span class="section-eyebrow">Zero-Overhead Local Token Shield</span>
-        <h2 class="section-title text-balance">How Tzro v3.1 Works</h2>
+        <span class="section-eyebrow">Measured Turn Reduction Engine</span>
+        <h2 class="section-title text-balance">How Tzro v3.1 Cuts Agent Turns</h2>
         <p class="section-desc text-pretty">
-          Tzro sits transparently between your AI coding agent and cloud providers, intercepting heavy context and locking prompt cache prefixes.
+          Tzro delivers relevant context and automatic verification locally, eliminating the exploration and scheduling turns that slow agents down. 63 model invocations instead of 111 — same 9 tasks, same correctness.
         </p>
 
         <!-- 3-Column Phase Layout -->
@@ -323,86 +323,74 @@
       <div class="hero-container">
         <span class="section-eyebrow">Measured, Not Claimed</span>
         <h2 class="section-title text-balance">
-          KV-Cache Prefix Locking — Benchmarked Across Real Models
+          43% Fewer Agent Turns — Instrumented Across 9 Real Tasks
         </h2>
         <p class="section-desc text-pretty">
-          We run two-phase benchmarks against live cloud APIs (via OpenRouter):
-          a 20-turn incremental agent loop tracking per-turn cache hit ratios,
-          then a controlled token-size sweep to find the cache cliff. All
-          numbers below are from real runs — not synthetic micro-benchmarks.
+          We ran a full 3-condition comparison: Native agent (no Tzro), Simple helper (bulk-update script), and Guided Tzro — same 9 coding tasks, same model (Gemini gemini-3.8-flash-low), same frozen client, independent grading. All 27 executions passed.
         </p>
 
-        <!-- Metrics Table -->
+        <!-- Turn Reduction Matrix -->
         <div class="benchmark-table-wrap">
           <table class="benchmark-table">
             <thead>
               <tr>
-                <th>What We Measure</th>
-                <th>Without kvlock</th>
-                <th>With kvlock</th>
-                <th>Impact</th>
+                <th>Condition</th>
+                <th>Correct</th>
+                <th>Total Time</th>
+                <th>Model Invocations</th>
+                <th>vs. Native</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td class="benchmark-metric-name">Prompt Cache Hit Rate</td>
-                <td class="benchmark-baseline">~13% (provider default)</td>
-                <td class="benchmark-tzro">63–96% (avg 79% warm)</td>
-                <td class="benchmark-win">5–10pp improvement over native caching <span class="benchmark-dot green">🟢</span></td>
+                <td class="benchmark-metric-name">Native (no Tzro)</td>
+                <td class="benchmark-baseline">9/9</td>
+                <td class="benchmark-baseline">201.07 s</td>
+                <td class="benchmark-baseline">111</td>
+                <td class="benchmark-baseline">—</td>
               </tr>
               <tr>
-                <td class="benchmark-metric-name">Prefix Hash Stability</td>
-                <td class="benchmark-baseline">Varies across turns</td>
-                <td class="benchmark-tzro">100% stable (20/20 turns)</td>
-                <td class="benchmark-win">Byte-for-byte prefix reproducibility across every turn <span
-                    class="benchmark-dot green">🟢</span></td>
+                <td class="benchmark-metric-name">Simple Helper</td>
+                <td class="benchmark-baseline">9/9</td>
+                <td class="benchmark-baseline">198.58 s</td>
+                <td class="benchmark-baseline">106</td>
+                <td class="benchmark-baseline">4.5% fewer turns</td>
               </tr>
               <tr>
-                <td class="benchmark-metric-name">E2E Agent Loop Cost</td>
-                <td class="benchmark-baseline">$0.0080 (19 turns, direct)</td>
-                <td class="benchmark-tzro">$0.00035 (2 turns, proxied)</td>
-                <td class="benchmark-win">95.6% cost reduction — same task, same model <span class="benchmark-dot green">🟢</span>
-                </td>
+                <td class="benchmark-metric-name">Guided Tzro</td>
+                <td class="benchmark-tzro">9/9</td>
+                <td class="benchmark-tzro">125.28 s</td>
+                <td class="benchmark-tzro">63</td>
+                <td class="benchmark-win">43.2% fewer turns, 37.7% faster <span class="benchmark-dot green">🟢</span></td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <!-- Case Study Card -->
+        <!-- Turn Reduction Case Study -->
         <div class="case-study-card">
           <div class="case-study-header">
-            <span class="case-study-icon">🔒</span>
-            <h3>How Prefix Locking Eliminates the 12.5× Cache Miss Penalty</h3>
+            <span class="case-study-icon">⚡</span>
+            <h3>How Turn Reduction Works: Fewer Decisions, Same Correctness</h3>
           </div>
           <p class="case-study-intro">
-            Cloud LLM providers charge 12.5× more for cache misses than cache
-            reads. A single reordered tool definition or volatile timestamp in
-            the system prompt breaks the prefix — and every subsequent turn pays
-            full price.
+            Agent turns are the real bottleneck. Each model invocation adds latency, accumulates context, and risks wrong-turn recovery loops. Tzro eliminates unnecessary exploration and scheduling turns by delivering relevant context and verification locally.
           </p>
           <div class="case-study-task">
-            <strong>Benchmark:</strong> 20-turn agent exploration of a Go repository (Kimi K2.6 via OpenRouter)
+            <strong>Example:</strong> ts-function-rename — Native used 23 model invocations in 34.68s. Tzro completed the same task in 6 invocations in 20.55s. The agent received relevant code upfront instead of exploring file-by-file.
           </div>
           <div class="case-study-comparison">
             <div class="case-study-before">
-              <div class="case-study-label case-study-label-red">Without kvlock</div>
-              <p>Cache hit ratio swings wildly — <strong>0% on turn 1</strong>,
-                <strong>40% on turn 6</strong>, <strong>48% on turn 10</strong>.
-                Every cache miss triggers the full 1.25× write cost.
-              </p>
+              <div class="case-study-label case-study-label-red">Without Tzro (Native)</div>
+              <p>The agent explores incrementally — <strong>23 model turns</strong> to discover files, read implementations, plan the rename, execute edits, and verify. Each exploration turn adds latency and context accumulation.</p>
             </div>
             <div class="case-study-after">
-              <div class="case-study-label case-study-label-green">With kvlock</div>
-              <p>Prefix hash <code>f9e6d771245a</code> locked stable across all
-                <strong>20 turns</strong>. Avg cache hit ratio: <strong>63.5%</strong>.
-                Peak: <strong>96.4%</strong> (turn 18). Zero prefix drift.</p>
+              <div class="case-study-label case-study-label-green">With Tzro (Guided)</div>
+              <p>Tzro delivers relevant code and runs verification as part of the edit workflow — <strong>6 model turns</strong>. The agent starts with context and ends with a verified result. <strong>74% fewer turns</strong> on this task.</p>
             </div>
           </div>
           <div class="case-study-result">
-            <strong>The Result:</strong> kvlock pins system prompts, tool schemas,
-            and workspace rules byte-for-byte so the KV-cache prefix never
-            breaks — saving 5–10 percentage points over native provider caching
-            with zero changes to agent behavior.
+            <strong>The Result:</strong> Tzro was faster on 7 of 9 tasks against Native and 8 of 9 against the Simple helper. It used fewer model invocations on 8 of 9 tasks against each control. All results independently graded with full evidence retention.
           </div>
         </div>
       </div>
@@ -413,16 +401,15 @@
     <!-- ============================================================ -->
     <section class="execution-surfaces-section" id="execution-surfaces">
       <div class="hero-container">
-        <span class="section-eyebrow">Local Token Shield &amp; Discovery</span>
+        <span class="section-eyebrow">Local Context Engine &amp; Turn Reducer</span>
         <h2 class="section-title exec-section-title text-balance">
           Core Execution Surfaces
         </h2>
         <p class="section-desc text-pretty">
-          Tzro intercepts every outgoing LLM request through a transparent
-          loopback proxy — normalizing prefixes, redacting secrets, and
-          compacting context before the request leaves your machine. A native
-          CLI toolkit handles sub-millisecond codebase discovery with zero
-          cloud tokens.
+          Tzro provides relevant code, compact diagnostics, and automatic
+          verification locally — eliminating the exploration turns that slow
+          agents down. The optional Proxy Shield adds KV-cache prefix locking
+          and secret masking for cloud API traffic.
         </p>
 
         <!-- 2-Column Execution Grid -->
@@ -629,13 +616,13 @@
         <!-- Token Reduction Stat Bar -->
         <div class="exec-stat-bar">
           <div class="exec-stat">
-            <span class="exec-stat-value" id="exec-stat-reduction">70–99%</span>
-            <span class="exec-stat-label">Cache Hit Rate</span>
+            <span class="exec-stat-value" id="exec-stat-reduction">43%</span>
+            <span class="exec-stat-label">Fewer Agent Turns</span>
           </div>
           <div class="exec-stat-divider" aria-hidden="true"></div>
           <div class="exec-stat">
-            <span class="exec-stat-value">&lt;50 MB</span>
-            <span class="exec-stat-label">Peak Memory</span>
+            <span class="exec-stat-value">37%</span>
+            <span class="exec-stat-label">Faster Completion</span>
           </div>
           <div class="exec-stat-divider" aria-hidden="true"></div>
           <div class="exec-stat">
@@ -648,10 +635,10 @@
         <div class="exec-cta-banner">
           <div class="exec-cta-content">
             <p class="exec-cta-headline">
-              Every token your agent sends to the cloud costs 12.5× more without cache prefix locking.
+              Every unnecessary exploration turn costs time, tokens, and momentum. Tzro eliminates 43% of them.
             </p>
             <p class="exec-cta-sub">
-              Tzro normalizes prefixes, redacts secrets, and skeletonizes code — all before the request leaves your machine.
+              Local context assembly, automatic verification, and AST-aware discovery — your agent gets relevant code on the first turn, not the tenth.
             </p>
           </div>
           <div class="exec-cta-actions">
@@ -948,9 +935,9 @@
           <span class="footer-brand-name">TZRO</span>
         </div>
         <p class="footer-brand-desc">
-          The Local Token Shield for AI coding agents. A transparent proxy
-          that locks KV-cache prefixes, redacts secrets, and provides
-          sub-millisecond codebase discovery — all on your machine.
+          The Local Context Engine for AI coding agents. Cuts agent turns by
+          43% with local context assembly, automatic verification, and
+          sub-millisecond codebase discovery — measured across 9 real tasks.
         </p>
       </div>
 

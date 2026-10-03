@@ -1,6 +1,6 @@
-# tzro — The Local Token Shield & Context Optimization Engine
+# tzro — The Local Context Engine for AI Coding Agents
 
-`tzro` is a compiled, zero-dependency native Go engine (<50 MB RAM) that eliminates cloud API rate limits, locks prompt cache prefixes (70–99% cache read hit rate), and provides sub-millisecond local codebase discovery, context pack assembly, and log compaction.
+`tzro` is a compiled, zero-dependency native Go engine (<50 MB RAM) that cuts AI agent turns by 43% and completion time by 37% — measured across 9 real coding tasks with independent grading. It provides sub-millisecond local codebase discovery, context pack assembly, automatic edit verification, and log compaction.
 
 ## Onboarding & Installation for Agents
 

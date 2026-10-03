@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "id": "go-pricing-rename",
+  "language": "go",
+  "shape": "rename",
+  "prompt": "Rename CalcTotal to CalculateTotal across its definition, package callers, and visible tests. Preserve discount, tax, order totals, and price formatting behavior. You may edit pricing.go, order.go, pricing_test.go. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": [
+    "pricing.go",
+    "order.go",
+    "pricing_test.go"
+  ],
+  "required_grade_tests": [
+    "TestGrading_RenameComplete",
+    "TestGrading_OrderUsesNewName",
+    "TestGrading_FormatStillWorks"
+  ],
+  "reference_edits": [
+    {
+      "kind": "replace",
+      "path": "pricing.go",
+      "old_text": "CalcTotal",
+      "new_text": "CalculateTotal",
+      "expected_matches": 3
+    },
+    {
+      "kind": "replace",
+      "path": "order.go",
+      "old_text": "CalcTotal",
+      "new_text": "CalculateTotal",
+      "expected_matches": 1
+    }
+  ]
+}
