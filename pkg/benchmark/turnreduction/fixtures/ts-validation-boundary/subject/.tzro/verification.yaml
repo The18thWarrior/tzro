@@ -1,0 +1,10 @@
+version: 1
+timeout: 30s
+checks:
+  - id: ts_compile
+    argv: [tsc]
+    cwd: .
+  - id: ts_test
+    argv: [node, --test, "dist/*.test.js"]
+    cwd: .
+    depends_on: [ts_compile]

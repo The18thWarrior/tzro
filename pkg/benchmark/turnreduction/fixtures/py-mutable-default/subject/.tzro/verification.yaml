@@ -1,0 +1,6 @@
+version: 1
+timeout: 30s
+checks:
+  - id: python_test
+    argv: [python3, -m, unittest, discover, -s, ., -p, "test_*.py"]
+    cwd: .
