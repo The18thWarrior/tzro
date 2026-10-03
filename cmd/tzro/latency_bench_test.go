@@ -45,7 +45,7 @@ func TestLatency_Compaction_100kLines(t *testing.T) {
 	}
 
 	t.Logf("Compaction 100K lines: elapsed = %v (target: <100ms), diagnostics = %d", elapsed, len(res.Diagnostics))
-	if elapsed > 100*time.Millisecond {
+	if !raceEnabled && elapsed > 100*time.Millisecond {
 		t.Errorf("Compaction exceeded target 100ms: took %v", elapsed)
 	}
 }
@@ -95,7 +95,7 @@ func TestLatency_ContextInspector_WriteAndReplay(t *testing.T) {
 	}
 
 	t.Logf("Inspector trace write: elapsed = %v (target: <100ms)", writeElapsed)
-	if writeElapsed > 100*time.Millisecond {
+	if !raceEnabled && writeElapsed > 100*time.Millisecond {
 		t.Errorf("Trace write exceeded target 100ms: took %v", writeElapsed)
 	}
 
@@ -108,7 +108,7 @@ func TestLatency_ContextInspector_WriteAndReplay(t *testing.T) {
 	}
 
 	t.Logf("Inspector trace replay: elapsed = %v (target: <200ms), packed = %d", replayElapsed, len(replayRes.IncludedItems))
-	if replayElapsed > 200*time.Millisecond {
+	if !raceEnabled && replayElapsed > 200*time.Millisecond {
 		t.Errorf("Trace replay exceeded target 200ms: took %v", replayElapsed)
 	}
 }
@@ -148,14 +148,15 @@ func TestLatency_EvidenceSearch_5kFiles(t *testing.T) {
 	}
 
 	var m runtime.MemStats
+	runtime.GC()
 	runtime.ReadMemStats(&m)
 	allocMB := float64(m.Alloc) / (1024 * 1024)
 
 	t.Logf("Evidence search 5k files: elapsed = %v (target: <500ms), found = %d, alloc = %.2fMB (target: <50MB)", elapsed, len(res.Items), allocMB)
-	if elapsed > 500*time.Millisecond {
+	if !raceEnabled && elapsed > 500*time.Millisecond {
 		t.Errorf("Evidence search exceeded target 500ms: took %v", elapsed)
 	}
-	if allocMB > 50.0 {
+	if !raceEnabled && allocMB > 50.0 {
 		t.Errorf("Evidence search exceeded target 50MB RSS/Alloc: alloc was %.2fMB", allocMB)
 	}
 }
@@ -194,7 +195,7 @@ func TestLatency_ImpactContext_5kFiles(t *testing.T) {
 	}
 
 	t.Logf("Impact analysis 5k files: elapsed = %v (target: <2s), items = %d", elapsed, len(pack.Items))
-	if elapsed > 2*time.Second {
+	if !raceEnabled && elapsed > 2*time.Second {
 		t.Errorf("Impact analysis exceeded target 2s: took %v", elapsed)
 	}
 }

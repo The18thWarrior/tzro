@@ -48,12 +48,31 @@ func (c *WorkerClient) startInternal(ctx context.Context) error {
 	c.stdout = bufio.NewScanner(stdout)
 	c.running = true
 
-	// Consume the initial "ready" status line from the worker.
-	if c.stdout.Scan() {
-		// Optionally parse to verify readiness, but for now just discard.
-		_ = c.stdout.Text()
+	scanner := c.stdout
+	ready := make(chan error, 1)
+	go func() {
+		if !scanner.Scan() {
+			ready <- fmt.Errorf("worker closed before readiness")
+			return
+		}
+		var status struct{ Status string }
+		if err := json.Unmarshal(scanner.Bytes(), &status); err != nil || status.Status != "ready" {
+			ready <- fmt.Errorf("invalid worker readiness response")
+			return
+		}
+		ready <- nil
+	}()
+	select {
+	case <-ctx.Done():
+		c.stopInternal()
+		<-ready
+		return ctx.Err()
+	case err := <-ready:
+		if err != nil {
+			c.stopInternal()
+		}
+		return err
 	}
-	return nil
 }
 
 func (c *WorkerClient) stopInternal() {
@@ -116,16 +135,22 @@ func (c *WorkerClient) Extract(ctx context.Context, req *ExtractionRequest) (*Ex
 	}
 	resCh := make(chan result, 1)
 
+	scanner := c.stdout
 	go func() {
-		if c.stdout.Scan() {
-			var resp ExtractionResponse
-			if err := json.Unmarshal(c.stdout.Bytes(), &resp); err != nil {
+		if scanner.Scan() {
+			var resp struct {
+				ExtractionResponse
+				Error string
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
 				resCh <- result{err: fmt.Errorf("unmarshal response: %w", err)}
+			} else if resp.Error != "" {
+				resCh <- result{err: fmt.Errorf("worker error: %s", resp.Error)}
 			} else {
-				resCh <- result{resp: &resp}
+				resCh <- result{resp: &resp.ExtractionResponse}
 			}
 		} else {
-			if err := c.stdout.Err(); err != nil {
+			if err := scanner.Err(); err != nil {
 				resCh <- result{err: fmt.Errorf("read response: %w", err)}
 			} else {
 				resCh <- result{err: fmt.Errorf("worker closed connection")}
@@ -135,6 +160,8 @@ func (c *WorkerClient) Extract(ctx context.Context, req *ExtractionRequest) (*Ex
 
 	select {
 	case <-ctx.Done():
+		c.stopInternal()
+		<-resCh
 		return nil, ctx.Err()
 	case res := <-resCh:
 		if res.err != nil {

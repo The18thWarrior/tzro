@@ -13,6 +13,7 @@ import (
 	"tzro/pkg/dlp"
 	"tzro/pkg/inspector"
 	"tzro/pkg/store"
+	"tzro/pkg/tokenizer"
 )
 
 // PackItem represents a single code snippet, symbol, or test in a context pack.
@@ -20,6 +21,7 @@ type PackItem struct {
 	FilePath     string  `json:"file_path"`
 	SymbolName   string  `json:"symbol_name,omitempty"`
 	Kind         string  `json:"kind,omitempty"`
+	Signature    string  `json:"signature,omitempty"`
 	StartLine    int     `json:"start_line"`
 	EndLine      int     `json:"end_line"`
 	Reason       string  `json:"reason"`
@@ -28,7 +30,8 @@ type PackItem struct {
 	TokenWeight  int     `json:"token_weight"`
 	Hash         string  `json:"hash,omitempty"`
 	Precision    string  `json:"precision,omitempty"`    // precise | syntactic | inferred
-	Relationship string  `json:"relationship,omitempty"` // caller | implementor | embedder | test | config
+	Relationship string  `json:"relationship,omitempty"` // caller | implementor | embedder | test | config | anchor | callee
+	Direction    string  `json:"direction,omitempty"`    // incoming | outgoing
 }
 
 // UnresolvedImport records an import that could not be resolved during analysis.
@@ -39,31 +42,47 @@ type UnresolvedImport struct {
 
 // CoverageReport discloses candidate discovery, inclusion, and truncation statistics.
 type CoverageReport struct {
-	TotalCandidates    int                `json:"total_candidates"`
-	IncludedCandidates int                `json:"included_candidates"`
-	TruncatedCount     int                `json:"truncated_count"`
-	TruncatedManifest  []string           `json:"truncated_manifest"`
-	Unresolved         []UnresolvedImport `json:"unresolved,omitempty"`
-	FallbackUsed       bool               `json:"fallback_used"`
+	TotalCandidates     int                `json:"total_candidates"`
+	IncludedCandidates  int                `json:"included_candidates"`
+	TruncatedCount      int                `json:"truncated_count"`
+	TruncatedManifest   []string           `json:"truncated_manifest"`
+	Unresolved          []UnresolvedImport `json:"unresolved,omitempty"`
+	FallbackUsed        bool               `json:"fallback_used"`
+	FallbackReason      string             `json:"fallback_reason,omitempty"`
+	NoChanges           bool               `json:"no_changes,omitempty"`
+	NoReferences        bool               `json:"no_references,omitempty"`
+	UnsupportedSyntax   []string           `json:"unsupported_syntax,omitempty"`
+	UnresolvedImports   []string           `json:"unresolved_imports,omitempty"`
+	AdapterErrors       []string           `json:"adapter_errors,omitempty"`
+	ResourceLimits      []string           `json:"resource_limits,omitempty"`
+	IncompleteDiscovery bool               `json:"incomplete_discovery,omitempty"`
+}
+
+// TokenizerMetadata carries exact token accounting metadata.
+type TokenizerMetadata struct {
+	Encoding             string `json:"encoding"`
+	VocabularyVersion    string `json:"vocabulary_version,omitempty"`
+	Mode                 string `json:"mode"` // exact | estimated
+	ContentTokens        int    `json:"content_tokens"`
+	SerializedPackTokens int    `json:"serialized_pack_tokens"` // Complete Markdown representation, including its envelope.
 }
 
 // ContextPack represents the assembled context bundle.
 type ContextPack struct {
-	Query       string          `json:"query"`
-	Budget      int             `json:"budget"`
-	UsedTokens  int             `json:"used_tokens"`
-	Items       []PackItem      `json:"items"`
-	GeneratedAt time.Time       `json:"generated_at"`
-	Coverage    *CoverageReport `json:"coverage,omitempty"`
+	Query       string             `json:"query"`
+	Budget      int                `json:"budget"`
+	UsedTokens  int                `json:"used_tokens"`
+	Items       []PackItem         `json:"items"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Coverage    *CoverageReport    `json:"coverage,omitempty"`
+	Impact      *ImpactReport      `json:"impact,omitempty"`
+	Tokenizer   *TokenizerMetadata `json:"tokenizer,omitempty"`
+	TraceID     string             `json:"trace_id,omitempty"`
 }
 
-// EstimateTokens provides a deterministic rule-of-thumb estimate (~4 chars per token).
+// EstimateTokens calculates exact BPE token count using the centralized tokenizer.
 func EstimateTokens(text string) int {
-	tokens := len(text) / 4
-	if tokens == 0 && len(text) > 0 {
-		return 1
-	}
-	return tokens
+	return tokenizer.CountDefault(text)
 }
 
 // FormatMarkdown formats the context pack into a clean, agent-readable context document.
@@ -71,13 +90,29 @@ func (cp *ContextPack) FormatMarkdown() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Context Pack: %q (Budget: %d tokens, Used: ~%d tokens)\n\n", cp.Query, cp.Budget, cp.UsedTokens))
 
+	if cp.TraceID != "" {
+		sb.WriteString(fmt.Sprintf("**Trace ID:** `%s` — inspect via `tzro inspect explain %s`\n\n", cp.TraceID, cp.TraceID))
+	}
+
 	if cp.Coverage != nil {
 		sb.WriteString("### Coverage Report\n")
 		sb.WriteString(fmt.Sprintf("- **Candidates Found:** %d\n", cp.Coverage.TotalCandidates))
 		sb.WriteString(fmt.Sprintf("- **Candidates Included:** %d\n", cp.Coverage.IncludedCandidates))
 		if cp.Coverage.TruncatedCount > 0 {
 			sb.WriteString(fmt.Sprintf("- **Truncated Due to Budget:** %d\n", cp.Coverage.TruncatedCount))
-			sb.WriteString(fmt.Sprintf("- **Truncated Files:** %s\n", strings.Join(cp.Coverage.TruncatedManifest, ", ")))
+			if len(cp.Coverage.TruncatedManifest) > 0 {
+				display := cp.Coverage.TruncatedManifest
+				extra := 0
+				if len(display) > 10 {
+					extra = len(display) - 10
+					display = display[:10]
+				}
+				sb.WriteString(fmt.Sprintf("- **Truncated Files:** %s", strings.Join(display, ", ")))
+				if extra > 0 {
+					sb.WriteString(fmt.Sprintf(" (and %d more)", extra))
+				}
+				sb.WriteString("\n")
+			}
 		}
 		if len(cp.Coverage.Unresolved) > 0 {
 			sb.WriteString("- **Unresolved Imports:**\n")
@@ -94,8 +129,24 @@ func (cp *ContextPack) FormatMarkdown() string {
 			sb.WriteString(fmt.Sprintf(" : `%s` (%s)", item.SymbolName, item.Kind))
 		}
 		sb.WriteString(fmt.Sprintf("\n- **Reason:** %s\n", item.Reason))
-		if item.Precision != "" || item.Relationship != "" {
-			sb.WriteString(fmt.Sprintf("- **Impact:** `%s` (%s)\n", item.Relationship, item.Precision))
+		if item.Precision != "" || item.Relationship != "" || item.Direction != "" {
+			parts := []string{}
+			if item.Direction != "" {
+				parts = append(parts, item.Direction)
+			}
+			if item.Precision != "" {
+				parts = append(parts, item.Precision)
+			}
+			meta := strings.Join(parts, ", ")
+			if item.Relationship != "" {
+				if meta != "" {
+					sb.WriteString(fmt.Sprintf("- **Impact:** `%s` (%s)\n", item.Relationship, meta))
+				} else {
+					sb.WriteString(fmt.Sprintf("- **Impact:** `%s`\n", item.Relationship))
+				}
+			} else if meta != "" {
+				sb.WriteString(fmt.Sprintf("- **Impact:** (%s)\n", meta))
+			}
 		}
 		if item.StartLine > 0 && item.EndLine >= item.StartLine {
 			sb.WriteString(fmt.Sprintf("- **Lines:** %d-%d\n", item.StartLine, item.EndLine))
@@ -106,6 +157,41 @@ func (cp *ContextPack) FormatMarkdown() string {
 	}
 
 	return sb.String()
+}
+
+// EnforceEnvelopeBudget ensures that the serialized markdown representation does not exceed maxTokens.
+// Items are pruned from least relevant, and if the base envelope cannot fit, ErrBudgetTooSmall is returned.
+func (cp *ContextPack) EnforceEnvelopeBudget(maxTokens int) error {
+	emptyPack := &ContextPack{
+		Query:       cp.Query,
+		Budget:      maxTokens,
+		GeneratedAt: cp.GeneratedAt,
+	}
+	baseTokens := EstimateTokens(emptyPack.FormatMarkdown())
+	if maxTokens < baseTokens {
+		return fmt.Errorf("%w: budget %d cannot fit minimum envelope (%d tokens)", tokenizer.ErrBudgetTooSmall, maxTokens, baseTokens)
+	}
+
+	for EstimateTokens(cp.FormatMarkdown()) > maxTokens && len(cp.Items) > 0 {
+		popped := cp.Items[len(cp.Items)-1]
+		cp.Items = cp.Items[:len(cp.Items)-1]
+		if cp.Coverage != nil {
+			cp.Coverage.IncludedCandidates = len(cp.Items)
+			cp.Coverage.TruncatedCount++
+			cp.Coverage.TruncatedManifest = append(cp.Coverage.TruncatedManifest, popped.FilePath)
+		}
+		cp.UsedTokens -= popped.TokenWeight
+	}
+
+	finalTokens := EstimateTokens(cp.FormatMarkdown())
+	if finalTokens > maxTokens {
+		return fmt.Errorf("%w: budget %d cannot fit envelope (%d tokens)", tokenizer.ErrBudgetTooSmall, maxTokens, finalTokens)
+	}
+	if cp.Tokenizer != nil {
+		cp.Tokenizer.ContentTokens = cp.UsedTokens
+		cp.Tokenizer.SerializedPackTokens = finalTokens
+	}
+	return nil
 }
 
 // Assembler manages building token-budgeted context packs.
@@ -212,7 +298,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 
 		syms, err := a.store.SearchSymbols(workspaceRoot, query, 25)
 		if err == nil {
-			for _, sym := range syms {
+			for rank, sym := range syms {
 				relPath := sym.FilePath
 				if filepath.IsAbs(relPath) {
 					relPath, _ = filepath.Rel(workspaceRoot, relPath)
@@ -234,15 +320,25 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 					StartLine:  sym.Line,
 					EndLine:    sym.Line + 20, // default window if body not expanded
 					Reason:     fmt.Sprintf("FTS5 symbol index match for %q", sym.Symbol),
-					Score:      100.0,
-					Hash:       sym.Hash,
+					// Preserve search relevance within the symbol tier instead of
+					// replacing BM25 order with alphabetical file order below.
+					Score: 100.0 + float64(len(syms)-rank)/float64(len(syms)),
+					Hash:  sym.Hash,
 				}
 			}
 		}
 	}
 
 	// 3. Scan workspace for literal matches, tests, and related files
-	queryWords := strings.Fields(strings.ToLower(query))
+	var queryWords []string
+	for _, word := range strings.Fields(strings.ToLower(query)) {
+		// Sentence punctuation is not part of an explicitly named file.
+		// Keep internal dots, slashes, and underscores intact.
+		word = strings.Trim(word, ".,;:!?()[]{}<>\"'`“”‘’")
+		if word != "" {
+			queryWords = append(queryWords, word)
+		}
+	}
 	_ = filepath.WalkDir(workspaceRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -392,6 +488,7 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 					item.StartLine = span.StartLine
 					item.EndLine = span.EndLine
 					item.Kind = span.Kind
+					item.Signature = span.Signature
 					item.Hash = span.BodyHash
 					continue
 				}
@@ -450,19 +547,31 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 
 	// 6. Strict knapsack packing under token budget — no unconditional bypasses
 	used := 0
+	var included []PackItem
 	var truncatedManifest []string
 	for _, c := range sortedCandidates {
-		// Strict invariant: NEVER allow used + TokenWeight > budget
 		if used+c.TokenWeight <= budget {
-			pack.Items = append(pack.Items, *c)
+			included = append(included, *c)
 			used += c.TokenWeight
-		} else {
-			truncatedManifest = append(truncatedManifest, c.FilePath)
+			continue
 		}
-		if used == budget {
-			break
+
+		// Try degrading to signature stub if possible
+		if c.Signature != "" && c.Signature != c.Content {
+			stubItem := *c
+			stubItem.Content = stubItem.Signature + " { /* body omitted to fit budget */ }"
+			stubItem.TokenWeight = EstimateTokens(stubItem.Content)
+			if used+stubItem.TokenWeight <= budget {
+				included = append(included, stubItem)
+				used += stubItem.TokenWeight
+				continue
+			}
 		}
+
+		truncatedManifest = append(truncatedManifest, c.FilePath)
 	}
+
+	pack.Items = included
 	pack.UsedTokens = used
 	if pack.Coverage == nil {
 		pack.Coverage = &CoverageReport{
@@ -521,6 +630,16 @@ func (a *Assembler) Assemble(workspaceRoot, query string, budget int) (*ContextP
 			},
 		}
 		_ = inspector.NewEngine(a.store, a.policy).RecordTrace(tr)
+		pack.TraceID = traceID
+	}
+
+	// Count the final envelope, including the trace link added above.
+	pack.Tokenizer = &TokenizerMetadata{
+		Encoding:             tokenizer.EncodingDefault,
+		VocabularyVersion:    "tiktoken-cl100k_base",
+		Mode:                 tokenizer.ModeExact,
+		ContentTokens:        pack.UsedTokens,
+		SerializedPackTokens: EstimateTokens(pack.FormatMarkdown()),
 	}
 
 	return pack, nil

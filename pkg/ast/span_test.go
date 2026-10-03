@@ -20,6 +20,8 @@ import "fmt"
 // Add computes the sum of two integers.
 func Add(a, b int) int {
 	fmt.Println("Adding numbers")
+	fmt.Println("Validating inputs and state")
+	fmt.Println("Performing 64-bit integer addition")
 	res := a + b
 	return res
 }
@@ -135,12 +137,12 @@ func (s *Store) Revoke(token string) {
 		t.Errorf("expected docstring, got %q", span.Docstring)
 	}
 
-	// Body elided
+	// This short body stays visible, with its recovery identity intact.
 	if span.BodyHash == "" {
 		t.Error("expected body hash")
 	}
-	if strings.Contains(span.Code, "s.tokens[token]") {
-		t.Error("expected body elided from rendered code")
+	if !strings.Contains(span.Code, "s.tokens[token]") {
+		t.Error("expected small body retained in rendered code")
 	}
 
 	// Must NOT include the Revoke method — only the targeted symbol

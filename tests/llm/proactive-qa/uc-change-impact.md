@@ -20,13 +20,21 @@ Before modifying code, an agent needs to determine the blast radius of changes: 
 ## Success Criteria
 
 - [ ] Running `tzro impact` with no arguments detects uncommitted git modifications and computes blast radius
-- [ ] Running `tzro impact <path/to/file>` analyzes target file and reports direct callers and consumers
+- [ ] Running `tzro impact --symbol <name>` analyzes a target symbol and reports direct callers and consumers
+- [ ] Running `tzro impact --symbol <name> --file <path>` disambiguates when multiple files define the same symbol
 - [ ] Direct callers across the repository are accurately mapped with file path and line numbers
 - [ ] Dependent downstream files are enumerated with dependency depth
 - [ ] Existing test suites covering the modified files or their callers are surfaced as recommended test runs
 - [ ] Output categorizes impact into risk tiers (High / Medium / Low blast radius)
 - [ ] Output is formatted in concise Markdown suitable for immediate inclusion in agent plans
 - [ ] Analysis completes in under 100ms for typical projects
+- [ ] `tzro impact --staged` analyzes only staged git changes
+- [ ] `tzro impact --unstaged` analyzes only unstaged working directory changes
+- [ ] `tzro impact --all` combines staged and unstaged analysis
+- [ ] `tzro impact --format tree` renders blast radius as an ANSI hierarchical tree
+- [ ] `tzro impact --format json` outputs structured JSON for machine consumption
+- [ ] Impact analysis works across Python, Rust, and TypeScript files in addition to Go
+- [ ] Comment-only changes are filtered out from impact computation
 
 ## Edge Cases to Probe
 
@@ -35,6 +43,8 @@ Before modifying code, an agent needs to determine the blast radius of changes: 
 - Circular dependency chains between modules
 - Modifying a central interface or utility used by hundreds of files
 - Files in non-standard directories or excluded by `.gitignore`
+- Running impact analysis on a Python package with complex `__init__.py` re-export chains
+- Running impact on a Rust workspace with multiple crates
 
 ## Anti-Patterns to Watch For
 
@@ -42,3 +52,5 @@ Before modifying code, an agent needs to determine the blast radius of changes: 
 - [ ] Missing direct callers because of relative import path resolution errors
 - [ ] Failing to identify co-located unit test files (`_test.go`, `.test.ts`, `.spec.ts`)
 - [ ] Dumping entire file contents of callers instead of concise symbol references and signatures
+- [ ] Tree rendering contains unescaped ANSI codes that corrupt agent context
+- [ ] Python adapter fails on `from . import x` relative imports

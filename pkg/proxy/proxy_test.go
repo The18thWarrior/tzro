@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"tzro/pkg/dlp"
 	"tzro/pkg/store"
 )
 
@@ -28,11 +29,16 @@ func TestProxy_AnthropicInterceptionAndDLP(t *testing.T) {
 		t.Fatalf("OpenStore failed: %v", err)
 	}
 	defer s.Close()
+	policy, err := dlp.LoadWorkspacePolicy(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	proxySrv := NewServer(Config{
 		ListenAddr:        "127.0.0.1:0",
 		UpstreamAnthropic: mockUpstream.URL,
 		Store:             s,
+		Policy:            dlp.NewPolicyEngine(policy),
 	})
 
 	testClient := httptest.NewServer(proxySrv.httpSrv.Handler)
@@ -62,6 +68,15 @@ func TestProxy_AnthropicInterceptionAndDLP(t *testing.T) {
 	}
 	if !strings.Contains(receivedBody, "[REDACTED_OPENAI_KEY_") {
 		t.Errorf("expected redacted placeholder in upstream payload, got:\n%s", receivedBody)
+	}
+	before := receivedBody
+	blocked, err := http.Post(testClient.URL+"/v1/messages", "application/json", strings.NewReader(`{"messages":[{"role":"user","content":"Read /workspace/.env.local"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocked.Body.Close()
+	if blocked.StatusCode != http.StatusForbidden || receivedBody != before {
+		t.Fatal("blocked path reached upstream")
 	}
 }
 

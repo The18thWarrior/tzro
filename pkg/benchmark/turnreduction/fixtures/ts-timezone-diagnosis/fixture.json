@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "id": "ts-timezone-diagnosis",
+  "language": "typescript",
+  "shape": "diagnosis",
+  "prompt": "Diagnose formatDate timezone conversion. A positive whole-hour UTC offset must advance the displayed time; a negative offset must move it back. Preserve zero offsets, milliseconds, and the explicit timezone suffix. You may edit formatter.ts. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": [
+    "formatter.ts"
+  ],
+  "required_grade_tests": [
+    "formats date for negative timezone",
+    "formats date for zero timezone"
+  ],
+  "reference_edits": [
+    {
+      "kind": "replace",
+      "path": "formatter.ts",
+      "old_text": "date.getTime() - (sign",
+      "new_text": "date.getTime() + (sign",
+      "expected_matches": 1
+    }
+  ]
+}

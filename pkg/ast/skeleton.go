@@ -33,8 +33,9 @@ type SkeletonResult struct {
 	Hashes       []string
 }
 
-// Skeletonize parses a source file with Tree-sitter, stubs function bodies with hash markers,
-// saves the elided bodies into the provided Store, and returns the SkeletonResult.
+// Skeletonize parses source with Tree-sitter and replaces larger function bodies
+// with hash markers. Bodies no larger than their markers stay visible. All bodies
+// remain indexed and recoverable through the provided Store.
 func Skeletonize(filePath string, source []byte, s *store.Store, workspace string) (*SkeletonResult, error) {
 	originalLen := len(source)
 	if originalLen == 0 {
@@ -130,6 +131,9 @@ func Skeletonize(filePath string, source []byte, s *store.Store, workspace strin
 			if nodeType == "method_declaration" || nodeType == "function_definition" {
 				bodyNode = bt.ChildByField(node, "body")
 				nameNode = bt.ChildByField(node, "name")
+				if nameNode == nil && (langName == "c" || langName == "cpp") {
+					nameNode = cCallableName(bt, node)
+				}
 			}
 		case "markdown":
 			// Markdown skeletonization: elide heavy content blocks, preserve document spine
@@ -246,6 +250,10 @@ func Skeletonize(filePath string, source []byte, s *store.Store, workspace strin
 				repStr = fmt.Sprintf("{\n\t%s [body elided: #%s]\n}", commentPrefix, hash)
 			}
 
+			if EstimateTokens(origBody) <= EstimateTokens(repStr) {
+				repStr = origBody
+			}
+
 			replacements = append(replacements, bodyReplacement{
 				startByte:   startByte,
 				endByte:     endByte,
@@ -293,7 +301,9 @@ func Skeletonize(filePath string, source []byte, s *store.Store, workspace strin
 		out.Write(source[lastOffset:rep.startByte])
 		out.WriteString(rep.replacement)
 		lastOffset = rep.endByte
-		hashes = append(hashes, rep.hash)
+		if rep.replacement != rep.original {
+			hashes = append(hashes, rep.hash)
+		}
 
 		// Store in SQLite if available
 		if s != nil {

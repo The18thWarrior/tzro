@@ -164,8 +164,8 @@ func TestDetectAndInstallHooksWorkspace(t *testing.T) {
 		t.Fatalf("DetectAndInstallHooks failed: %v", err)
 	}
 
-	if len(results) != 5 {
-		t.Errorf("expected 5 configured harnesses for 'all', got %d", len(results))
+	if len(results) != 6 {
+		t.Errorf("expected 6 configured harnesses for 'all', got %d", len(results))
 	}
 
 	// Verify Claude settings.json exists
@@ -181,15 +181,15 @@ func TestDetectAndInstallHooksWorkspace(t *testing.T) {
 	}
 
 	// Verify Hermes hooks exist
-	hermesPre := filepath.Join(tempDir, ".hermes", "hooks", "pre_tool.sh")
+	hermesPre := filepath.Join(tempDir, ".hermes", "config.yaml")
 	if _, err := os.Stat(hermesPre); err != nil {
-		t.Errorf("expected .hermes/hooks/pre_tool.sh created: %v", err)
+		t.Errorf("expected .hermes/config.yaml created: %v", err)
 	}
 
 	// Verify Copilot hooks exist
-	copilotPre := filepath.Join(tempDir, ".github", "hooks", "pre-tool.sh")
+	copilotPre := filepath.Join(tempDir, ".github", "hooks", "tzro.json")
 	if _, err := os.Stat(copilotPre); err != nil {
-		t.Errorf("expected .github/hooks/pre-tool.sh created: %v", err)
+		t.Errorf("expected .github/hooks/tzro.json created: %v", err)
 	}
 
 	// Verify Pi-Coder extension exists
@@ -203,7 +203,8 @@ func TestDetectAndInstallHooksWorkspace(t *testing.T) {
 		"Antigravity": filepath.Join(tempDir, ".agents", "skills", "tzro", "SKILL.md"),
 		"Claude":      filepath.Join(tempDir, ".claude", "skills", "tzro", "SKILL.md"),
 		"Copilot":     filepath.Join(tempDir, ".github", "skills", "tzro", "SKILL.md"),
-		"Hermes":      filepath.Join(tempDir, ".agents", "skills", "tzro", "SKILL.md"),
+		"Hermes":      filepath.Join(tempDir, ".hermes", "skills", "tzro", "SKILL.md"),
+		"Codex":       filepath.Join(tempDir, ".agents", "skills", "tzro", "SKILL.md"),
 		"Pi-Coder":    filepath.Join(tempDir, ".pi", "skills", "tzro", "SKILL.md"),
 	}
 	for harness, skillPath := range skillFiles {

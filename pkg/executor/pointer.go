@@ -60,22 +60,25 @@ func resolveValue(v interface{}, outputs map[string]NodeOutput) (interface{}, er
 	}
 }
 
-// resolvePointer resolves a JSON pointer path like "/nodes/<id>/output/<field>"
+// resolvePointer resolves a whole node output or a field within that output.
 // against the completed node outputs.
 func resolvePointer(ref string, outputs map[string]NodeOutput) (interface{}, error) {
 	// Expected format: /nodes/<node_id>/output/<field>
 	parts := strings.Split(strings.TrimPrefix(ref, "/"), "/")
-	if len(parts) < 4 || parts[0] != "nodes" || parts[2] != "output" {
+	if len(parts) < 3 || parts[0] != "nodes" || parts[2] != "output" {
 		return nil, fmt.Errorf("invalid $ref pointer format: %q (expected /nodes/<id>/output/<field>)", ref)
 	}
 
 	nodeID := parts[1]
-	field := parts[3]
 
 	output, ok := outputs[nodeID]
 	if !ok {
 		return nil, fmt.Errorf("$ref references unknown node %q", nodeID)
 	}
+	if len(parts) == 3 {
+		return output, nil
+	}
+	field := parts[3]
 
 	switch field {
 	case "stdout":

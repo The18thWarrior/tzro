@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"tzro/pkg/decision"
 	"tzro/pkg/executor"
 	"tzro/pkg/extractor"
-	layaPkg "tzro/pkg/laya"
 	"tzro/pkg/store"
 )
 
@@ -208,43 +208,52 @@ func buildContextPack(t *testing.T, tzroBin, workspaceDir string, sourceExts []s
 		}
 	}
 
-	// Signal 2: Laya choice classification
-	layaWorker := filepath.Join(repoRoot, "bin", "laya_worker.py")
+	// Signal 2: System 1 choice classification
+	jevWorker := filepath.Join(repoRoot, "bin", "jev-score")
+	if _, err := os.Stat(jevWorker); err != nil {
+		jevWorker = filepath.Join(repoRoot, "bin", "laya_worker.py")
+	}
 	layaClassScores := make(map[string]float64)
 
-	if _, err := os.Stat(layaWorker); err == nil {
-		layaClient := layaPkg.NewDaemonClient("python3", layaWorker)
+	if _, err := os.Stat(jevWorker); err == nil {
+		var client decision.DecisionProvider
+		if strings.HasSuffix(jevWorker, ".py") {
+			client = decision.NewLocalDaemonProvider("python3", jevWorker)
+		} else {
+			client = decision.NewLocalDaemonProvider(jevWorker)
+		}
 		layaCtx, layaCancel := context.WithTimeout(ctx, 60*time.Second)
 		defer layaCancel()
-		if err := layaClient.Start(layaCtx); err == nil {
-			defer layaClient.Close()
+		if daemonClient, ok := client.(*decision.LocalDaemonProvider); ok {
+			if err := daemonClient.Start(layaCtx); err == nil {
+				defer client.Close()
 
-			// Build a compact error summary (just the key phrases)
-			errorSummary := strings.Join(errorKeywords, "; ")
-			if errorSummary == "" {
-				errorSummary = "unknown errors in codebase"
-			}
-
-			for file, skeleton := range pack.Skeletons {
-				// Build file-specific state: include keyword match info
-				kwHits := int(keywordScores[file] * float64(len(errorKeywords)))
-
-				// Only send the imports + first few signatures (not the full skeleton)
-				skelPreview := skeleton
-				if len(skelPreview) > 600 {
-					skelPreview = skelPreview[:600]
+				// Build a compact error summary (just the key phrases)
+				errorSummary := strings.Join(errorKeywords, "; ")
+				if errorSummary == "" {
+					errorSummary = "unknown errors in codebase"
 				}
 
-				resp, err := layaClient.Evaluate(layaCtx, &layaPkg.DecisionRequest{
-					QuestionType: "choice",
-					Prompt:       fmt.Sprintf("What is this file's relationship to these errors: %s", errorSummary),
-					Options:      []string{"root_cause", "propagates_error", "affected_by_error", "unrelated"},
-					State: map[string]interface{}{
-						"file":            file,
-						"keyword_matches": kwHits,
-						"preview":         skelPreview,
-					},
-				})
+				for file, skeleton := range pack.Skeletons {
+					// Build file-specific state: include keyword match info
+					kwHits := int(keywordScores[file] * float64(len(errorKeywords)))
+
+					// Only send the imports + first few signatures (not the full skeleton)
+					skelPreview := skeleton
+					if len(skelPreview) > 600 {
+						skelPreview = skelPreview[:600]
+					}
+
+					resp, err := client.Evaluate(layaCtx, &decision.DecisionRequest{
+						QuestionType: decision.QuestionTypeChoice,
+						Prompt:       fmt.Sprintf("What is this file's relationship to these errors: %s", errorSummary),
+						Options:      []string{"root_cause", "propagates_error", "affected_by_error", "unrelated"},
+						State: map[string]interface{}{
+							"file":            file,
+							"keyword_matches": kwHits,
+							"preview":         skelPreview,
+						},
+					})
 				if err != nil {
 					t.Logf("context pack: Laya classify %s failed: %v", file, err)
 					continue

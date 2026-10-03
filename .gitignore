@@ -5,6 +5,7 @@ bin/
 /tzrod
 /tzro_engine
 /tzro_cli
+/tzro_plugin
 cmd/tzro/tzro
 cmd/tzro-mcp/tzro-mcp
 cmd/tzrod/tzrod
@@ -17,6 +18,9 @@ tzro_quickstart.db7
 
 # Runtime data
 **/.tzro/
+# Track verification presets inside benchmark fixtures
+!pkg/benchmark/turnreduction/fixtures/**/subject/.tzro/
+!pkg/benchmark/turnreduction/fixtures/**/subject/.tzro/verification.yaml
 tzro.db
 *.db-journal
 *.db-wal
@@ -110,3 +114,6 @@ docs/superpowers/
 docs/working-specs/
 
 .sf
+
+docs/benchmarks
+docs/experiments

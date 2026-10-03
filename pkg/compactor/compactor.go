@@ -3,8 +3,10 @@ package compactor
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"tzro/pkg/store"
 )
@@ -75,6 +77,8 @@ var (
 	goRuntimeFrameRe    = regexp.MustCompile(`(?m)^\s*(runtime/|testing\.go|net/http/server\.go).*$`)
 	nodeInternalFrameRe = regexp.MustCompile(`(?m)^\s*at\s+.*\(node:internal/.*$`)
 	pyFrameworkFrameRe  = regexp.MustCompile(`(?m)^\s*File ".*/lib/python.*/site-packages/.*", line \d+, in .*$`)
+	goStdFunctionRe     = regexp.MustCompile(`^(?:runtime\.|internal/|testing\.|net\.|net/http\.)[^\n]*\(`)
+	goStdLocationRe     = regexp.MustCompile(`(?:^|/)src/(?:runtime|internal|testing|net)/[^\n]+:\d+(?: |$)`)
 )
 
 // StackTraceElider trims boilerplate framework stack frames, preserving application code and error messages.
@@ -83,8 +87,17 @@ func StackTraceElider(input string) string {
 	var pruned []string
 	elidedCount := 0
 
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
+		// Native Go traces put the function and source location on separate lines.
+		// Require both a standard-library function and location to avoid hiding
+		// application packages that happen to use names such as runtime or net.
+		if i+1 < len(lines) && goStdFunctionRe.MatchString(trimmed) && goStdLocationRe.MatchString(strings.TrimSpace(lines[i+1])) {
+			elidedCount++
+			i++
+			continue
+		}
 		isBoilerplate := goRuntimeFrameRe.MatchString(trimmed) ||
 			nodeInternalFrameRe.MatchString(trimmed) ||
 			pyFrameworkFrameRe.MatchString(trimmed)
@@ -114,6 +127,23 @@ func IsSSEPayload(text string) bool {
 	return strings.HasPrefix(trimmed, "event:") || strings.HasPrefix(trimmed, "data:")
 }
 
+// MinArtifactThreshold is the minimum byte size of an input before an artifact
+// is stored in SQLite and an expansion header is prepended to the compacted output.
+// Inputs smaller than this threshold that are compacted still return the compacted text,
+// but omit the artifact header to prevent token inflation on small outputs.
+const MinArtifactThreshold = 200
+
+// GetArtifactThreshold returns the configured minimum artifact threshold.
+// Defaults to MinArtifactThreshold (200 bytes) if unset or unparseable.
+func GetArtifactThreshold() int {
+	if v := os.Getenv("TZRO_COMPACT_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return MinArtifactThreshold
+}
+
 // CompactLog applies log and test output pruning.
 func CompactLog(input string) string {
 	return CompactWithArtifact(input, "", nil)
@@ -124,19 +154,6 @@ func CompactWithArtifact(input, workspace string, s *store.Store) string {
 	// Guard: Executable protocol payloads (SSE stream chunks) must never be converted or mutated
 	if IsSSEPayload(input) {
 		return input
-	}
-
-	var artifactID string
-	if s != nil {
-		id, err := s.PutArtifact(&store.Artifact{
-			Type:             "log",
-			Workspace:        workspace,
-			TransformVersion: "v2.0",
-			Body:             input,
-		})
-		if err == nil {
-			artifactID = id
-		}
 	}
 
 	var compacted string
@@ -150,12 +167,32 @@ func CompactWithArtifact(input, workspace string, s *store.Store) string {
 
 	if compacted == "" {
 		// Apply stack trace elision
-		compacted = StackTraceElider(input)
+		elided := StackTraceElider(input)
+		if len(elided) < len(input) {
+			compacted = elided
+		}
 	}
 
-	if artifactID != "" {
-		header := fmt.Sprintf("// [Tzro Artifact: %s | Full original retained (run `tzro expand %s` to retrieve)]\n", artifactID, artifactID)
-		return header + compacted
+	// If no compaction occurred (output not reduced), return raw input untouched.
+	// Never create an artifact or attach a retention header when nothing was elided.
+	if compacted == "" || len(compacted) >= len(input) {
+		return input
+	}
+
+	// If input was compacted, only store an artifact and attach the expansion header
+	// if the original input meets the minimum threshold.
+	threshold := GetArtifactThreshold()
+	if s != nil && len(input) >= threshold {
+		id, err := s.PutArtifact(&store.Artifact{
+			Type:             "log",
+			Workspace:        workspace,
+			TransformVersion: "v2.0",
+			Body:             input,
+		})
+		if err == nil {
+			header := fmt.Sprintf("// [Tzro Artifact: %s | Full original retained (run `tzro expand %s` to retrieve)]\n", id, id)
+			return header + compacted
+		}
 	}
 
 	return compacted

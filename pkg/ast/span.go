@@ -8,6 +8,7 @@ import (
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 	"tzro/pkg/store"
+	"tzro/pkg/tokenizer"
 )
 
 // DeclarationSpan holds a concise AST-extracted declaration for a symbol match.
@@ -26,17 +27,14 @@ type DeclarationSpan struct {
 	TokenWeight     int    `json:"token_weight"`
 }
 
-// EstimateTokens provides a deterministic rule-of-thumb estimate (~4 chars per token).
+// EstimateTokens calculates the exact BPE token count using the centralized cl100k_base tokenizer.
 func EstimateTokens(text string) int {
-	tokens := len(text) / 4
-	if tokens == 0 && len(text) > 0 {
-		return 1
-	}
-	return tokens
+	return tokenizer.CountDefault(text)
 }
 
 // ExtractDeclarationSpan extracts a concise AST declaration span for a symbol at targetLine.
-// It preserves the signature, docstring, and body elision tag, storing the full body in the store.
+// It preserves the signature and docstring, retaining a body if elision would not
+// save tokens. The full body is stored for recovery either way.
 // Falls back to a bounded 25-line window when Tree-sitter is unavailable.
 func ExtractDeclarationSpan(
 	filePath string,
@@ -133,6 +131,9 @@ func ExtractDeclarationSpan(
 			if nodeType == "method_declaration" || nodeType == "function_definition" {
 				bodyNode = bt.ChildByField(node, "body")
 				nameNode = bt.ChildByField(node, "name")
+				if nameNode == nil && (langName == "c" || langName == "cpp") {
+					nameNode = cCallableName(bt, node)
+				}
 			}
 		}
 
@@ -188,6 +189,9 @@ func ExtractDeclarationSpan(
 		elidedBody = fmt.Sprintf("%s [body elided: #%s]\n\tpass", commentPrefix, bodyHash)
 	} else {
 		elidedBody = fmt.Sprintf("{\n\t%s [body elided: #%s]\n}", commentPrefix, bodyHash)
+	}
+	if EstimateTokens(origBody) <= EstimateTokens(elidedBody) {
+		elidedBody = origBody
 	}
 
 	// Build rendered code

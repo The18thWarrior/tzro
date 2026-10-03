@@ -3870,6 +3870,12 @@ body[data-mode="developer"] [data-audience="user"] {
   border-top: 1px solid var(--border-color);
 }
 
+.whats-new-section {
+  padding: 6rem 2rem;
+  position: relative;
+  border-top: 1px solid var(--border-color);
+}
+
 .phase-grid {
   display: grid;
   grid-template-columns: 1fr;

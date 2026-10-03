@@ -1,11 +1,12 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"tzro/pkg/executor"
@@ -15,14 +16,19 @@ import (
 func newExecuteCmd() *cobra.Command {
 	var maxConcurrency int
 	var outputFormat string
+	var resultMode string
 
 	cmd := &cobra.Command{
 		Use:   "execute [graph.json | -]",
-		Short: "Execute a System 1 Graph Call from a JSON file or stdin",
-		Long: `Execute a declarative System 1 Graph Call DAG.
+		Short: "Run multiple local steps in one call, with optional System 1 decisions",
+		Long: `Run a multi-step workflow locally without a cloud round trip between steps.
 
 The graph is a JSON object containing typed nodes (tool, decision, extract, group)
 connected by explicit data dependencies via JSON pointers ($ref).
+Tool-only graphs work without local models. Decision and extraction nodes use
+configured local workers. Low-confidence decisions can yield to the caller.
+Use --result selected to retain intermediate evidence locally and return only
+requested results, terminal outputs, and failures.
 
 Examples:
   tzro execute graph.json
@@ -30,12 +36,15 @@ Examples:
   cat graph.json | tzro execute -`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if resultMode != "full" && resultMode != "selected" {
+				return fmt.Errorf("--result must be full or selected")
+			}
 			// Read graph from file or stdin
 			var graphData []byte
 			var err error
 
 			if len(args) == 0 || args[0] == "-" {
-				graphData, err = io.ReadAll(os.Stdin)
+				graphData, err = io.ReadAll(cmd.InOrStdin())
 			} else {
 				graphData, err = os.ReadFile(args[0])
 			}
@@ -58,23 +67,28 @@ Examples:
 			defer s.Close()
 
 			workspaceRoot, _ := os.Getwd()
-			toolDisp := executor.NewBuiltinDispatcher(workspaceRoot, s)
-
-			engine := executor.NewEngine(
-				executor.WithMaxConcurrency(maxConcurrency),
-				executor.WithToolDispatcher(toolDisp),
-			)
+			engine, closeWorkers, err := configuredEngine(workspaceRoot, s, maxConcurrency)
+			if err != nil {
+				return err
+			}
+			defer closeWorkers()
 
 			// Execute the graph
-			result, err := engine.Execute(context.Background(), &g)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			result, err := engine.Execute(ctx, &g)
 			if err != nil {
 				return fmt.Errorf("execution failed: %w", err)
 			}
+			recordActivity("graph", result.Status, 0)
 
 			// Output the result
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(cmd.OutOrStdout())
 			if outputFormat == "pretty" {
 				enc.SetIndent("", "  ")
+			}
+			if resultMode == "selected" {
+				return enc.Encode(selectedGraphResult(&g, result, s, workspaceRoot))
 			}
 
 			// If status is yielded, also emit a yield envelope
@@ -104,6 +118,7 @@ Examples:
 
 	cmd.Flags().IntVar(&maxConcurrency, "concurrency", 4, "Maximum concurrent node executions")
 	cmd.Flags().StringVar(&outputFormat, "format", "compact", "Output format: compact or pretty")
+	cmd.Flags().StringVar(&resultMode, "result", "full", "Result content: full or selected (recoverable intermediate evidence)")
 
 	return cmd
 }

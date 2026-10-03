@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "id": "ts-function-rename",
+  "language": "typescript",
+  "shape": "rename",
+  "prompt": "Rename the exported formatPrice function to formatCurrency in utils.ts, all module callers, and visible tests. Preserve currency formatting and displayCartTotal behavior. Old formatPrice compatibility is not required. You may edit utils.ts, display.ts, utils.test.ts, display.test.ts. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": [
+    "utils.ts",
+    "display.ts",
+    "utils.test.ts",
+    "display.test.ts"
+  ],
+  "required_grade_tests": [
+    "grading formatCurrency"
+  ],
+  "reference_edits": [
+    {
+      "kind": "replace",
+      "path": "utils.ts",
+      "old_text": "formatPrice",
+      "new_text": "formatCurrency",
+      "expected_matches": 1
+    },
+    {
+      "kind": "replace",
+      "path": "display.ts",
+      "old_text": "formatPrice",
+      "new_text": "formatCurrency",
+      "expected_matches": 2
+    },
+    {
+      "kind": "replace",
+      "path": "utils.test.ts",
+      "old_text": "formatPrice",
+      "new_text": "formatCurrency",
+      "expected_matches": 2
+    }
+  ]
+}

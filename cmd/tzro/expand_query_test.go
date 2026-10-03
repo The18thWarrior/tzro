@@ -9,6 +9,25 @@ import (
 	"tzro/pkg/store"
 )
 
+func TestCLIExpandAcceptsDisplayedHash(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "store.db")
+	t.Setenv("TZRO_DB_PATH", dbPath)
+	s, err := store.OpenStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := s.PutBlob("example.go", 1, 1, "return 42")
+	s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"expand", "#" + hash})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCLI_ExpandAndQueryArtifacts(t *testing.T) {
 	tempHome := t.TempDir()
 	tzroDir := filepath.Join(tempHome, ".tzro")

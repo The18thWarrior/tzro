@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "id": "go-pricing-bugfix",
+  "language": "go",
+  "shape": "bugfix",
+  "prompt": "Fix DiscountedPrice so valid discounts round to the nearest cent instead of truncating. Preserve the existing behavior for discounts outside 0 through 100 and all BulkDiscount thresholds. You may edit pricing.go. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": ["pricing.go"],
+  "required_grade_tests": ["TestGrading_RoundingBoundaries", "TestGrading_UsesRound"],
+  "reference_edits": [
+    {"kind": "replace", "path": "pricing.go", "old_text": "math.Floor", "new_text": "math.Round", "expected_matches": 1}
+  ]
+}

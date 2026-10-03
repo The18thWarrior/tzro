@@ -82,7 +82,7 @@ func HandlePiCoderPostTool(r io.Reader, w io.Writer, s *store.Store) error {
 	toolName := input.ToolName
 	switch v := input.ToolOutput.(type) {
 	case string:
-		processed := CompactOrIntercept(v, toolName, s)
+		processed := ProcessToolOutput(toolName, input.ToolInput, v, s)
 		return json.NewEncoder(w).Encode(PiCoderPostToolOutput{ToolOutput: processed})
 	default:
 		return json.NewEncoder(w).Encode(PiCoderPostToolOutput{ToolOutput: input.ToolOutput})

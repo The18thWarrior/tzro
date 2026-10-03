@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"tzro/pkg/decision"
 	"tzro/pkg/proxy"
 	"tzro/pkg/store"
 )
@@ -183,5 +184,45 @@ func TestProbeUpstreams_RespectsContextTimeout(t *testing.T) {
 	}
 	if elapsed > 1*time.Second {
 		t.Errorf("expected fast failure with cancelled context, took %v", elapsed)
+	}
+}
+
+type mockDoctorDecisionProvider struct {
+	answer string
+}
+
+func (m *mockDoctorDecisionProvider) Evaluate(ctx context.Context, req *decision.DecisionRequest) (*decision.DecisionResponse, error) {
+	return &decision.DecisionResponse{
+		Answer:     m.answer,
+		Confidence: 0.95,
+	}, nil
+}
+
+func (m *mockDoctorDecisionProvider) Close() error {
+	return nil
+}
+
+func TestProbeDecisionEngine_Ready(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	mock := &mockDoctorDecisionProvider{answer: "yes"}
+	rpt := ProbeDecisionEngine(ctx, mock, "models/decision/Jev-Style-0.8B.gguf")
+
+	if rpt.Status != DecisionStatusReady {
+		t.Errorf("expected READY, got %s", rpt.Status)
+	}
+	if rpt.Model != "models/decision/Jev-Style-0.8B.gguf" {
+		t.Errorf("expected model path, got %s", rpt.Model)
+	}
+}
+
+func TestProbeDecisionEngine_Missing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	rpt := ProbeDecisionEngine(ctx, nil, "")
+	if rpt.Status != DecisionStatusMissing {
+		t.Errorf("expected MISSING, got %s", rpt.Status)
 	}
 }

@@ -1,8 +1,10 @@
 package session
 
 import (
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -10,52 +12,114 @@ import (
 	"tzro/pkg/store"
 )
 
-// FileSnapshot tracks a modified file path and its cryptographic hash.
+// FileSnapshot tracks a modified file path and its cryptographic hashes and status.
 type FileSnapshot struct {
-	Path string `json:"path"`
-	Hash string `json:"hash"`
+	Path           string `json:"path"`
+	Hash           string `json:"hash,omitempty"`            // Legacy / primary hash
+	OldPath        string `json:"old_path,omitempty"`        // Original path if renamed
+	StagedHash     string `json:"staged_hash,omitempty"`     // SHA-256 of index version
+	WorktreeHash   string `json:"worktree_hash,omitempty"`   // SHA-256 of worktree version
+	Status         string `json:"status,omitempty"`          // "modified", "untracked", "deleted", "renamed", etc.
+	StagedStatus   string `json:"staged_status,omitempty"`   // Git index status code (e.g. M, A, D, R)
+	WorktreeStatus string `json:"worktree_status,omitempty"` // Git worktree status code (e.g. M, D, ?)
 }
 
 // CheckExecution records an executed test, build, or verify command.
 type CheckExecution struct {
-	Command    string    `json:"command"`
-	ExitCode   int       `json:"exit_code"`
-	Timestamp  time.Time `json:"timestamp"`
-	OutputID   string    `json:"output_id,omitempty"`   // Artifact ID of full output
-	ScopeFiles []string  `json:"scope_files,omitempty"` // Per-check files covered
+	Command      string            `json:"command"`
+	ExitCode     int               `json:"exit_code"`
+	Timestamp    time.Time         `json:"timestamp"`
+	OutputID     string            `json:"output_id,omitempty"`    // Artifact ID of full output
+	ScopeFiles   []string          `json:"scope_files,omitempty"`  // Per-check files covered
+	ScopeHashes  map[string]string `json:"scope_hashes,omitempty"` // Execution-time hashes: path -> sha256
+	Fingerprints map[string]string `json:"fingerprints,omitempty"` // Execution-time config/dependency fingerprints
+}
+
+// ActiveSymbol captures an affected symbol definition from git diff analysis.
+type ActiveSymbol struct {
+	Name           string `json:"name"`
+	Kind           string `json:"kind,omitempty"`
+	FilePath       string `json:"file_path"`
+	Line           int    `json:"line"`
+	EndLine        int    `json:"end_line,omitempty"`
+	Package        string `json:"package,omitempty"`
+	SourceSnapshot string `json:"source_snapshot,omitempty"`
+	Precision      string `json:"precision,omitempty"` // "precise" | "syntactic"
+}
+
+// CommandEvent records a structured shell command execution for task continuity.
+type CommandEvent struct {
+	ID          string     `json:"id"`
+	DisplayText string     `json:"display_text"`
+	Cwd         string     `json:"cwd"`
+	Workspace   string     `json:"workspace"`
+	SessionID   string     `json:"session_id"`
+	ShellID     string     `json:"shell_id,omitempty"`
+	StartedAt   time.Time  `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ExitStatus  *int       `json:"exit_status,omitempty"`
 }
 
 // SessionManifest represents a complete, portable agent session state.
 type SessionManifest struct {
-	SchemaVersion int              `json:"schema_version"`
-	ID            string           `json:"id"`
-	Workspace     string           `json:"workspace"`
-	Branch        string           `json:"branch"`
-	CreatedAt     time.Time        `json:"created_at"`
-	Objective     string           `json:"objective"`
-	Constraints   []string         `json:"constraints"`
-	Decisions     []string         `json:"decisions"`
-	ChangedFiles  []FileSnapshot   `json:"changed_files"`
-	Checks        []CheckExecution `json:"checks"`
-	PendingTasks  []string         `json:"pending_tasks"`
-	ArtifactIDs   []string         `json:"artifact_ids"`
+	SchemaVersion  int              `json:"schema_version"`
+	ID             string           `json:"id"`
+	Workspace      string           `json:"workspace"`
+	Worktree       string           `json:"worktree,omitempty"`
+	Branch         string           `json:"branch"`
+	IsDetached     bool             `json:"is_detached,omitempty"`
+	HeadCommit     string           `json:"head_commit,omitempty"`
+	IndexState     string           `json:"index_state,omitempty"`
+	CreatedAt      time.Time        `json:"created_at"`
+	PausedAt       *time.Time       `json:"paused_at,omitempty"`
+	Objective      string           `json:"objective"`
+	Constraints    []string         `json:"constraints"`
+	Decisions      []string         `json:"decisions"`
+	ChangedFiles   []FileSnapshot   `json:"changed_files"`
+	ActiveSymbols  []ActiveSymbol   `json:"active_symbols,omitempty"`
+	Checks         []CheckExecution `json:"checks"`
+	RecentCommands []CommandEvent   `json:"recent_commands,omitempty"`
+	PendingTasks   []string         `json:"pending_tasks"`
+	ArtifactIDs    []string         `json:"artifact_ids"`
 }
 
 // NewSessionManifest creates a new initialized SessionManifest with SchemaVersion 2.
 func NewSessionManifest(id, workspace, branch, objective string) *SessionManifest {
 	return &SessionManifest{
-		SchemaVersion: 2,
-		ID:            id,
-		Workspace:     workspace,
-		Branch:        branch,
-		CreatedAt:     time.Now().UTC(),
-		Objective:     objective,
-		Constraints:   []string{},
-		Decisions:     []string{},
-		ChangedFiles:  []FileSnapshot{},
-		Checks:        []CheckExecution{},
-		PendingTasks:  []string{},
-		ArtifactIDs:   []string{},
+		SchemaVersion:  2,
+		ID:             id,
+		Workspace:      workspace,
+		Branch:         branch,
+		CreatedAt:      time.Now().UTC(),
+		Objective:      objective,
+		Constraints:    []string{},
+		Decisions:      []string{},
+		ChangedFiles:   []FileSnapshot{},
+		ActiveSymbols:  []ActiveSymbol{},
+		Checks:         []CheckExecution{},
+		RecentCommands: []CommandEvent{},
+		PendingTasks:   []string{},
+		ArtifactIDs:    []string{},
+	}
+}
+
+// NewSessionManifestV3 creates a new initialized SessionManifest with SchemaVersion 3.
+func NewSessionManifestV3(id, workspace, branch, objective string) *SessionManifest {
+	return &SessionManifest{
+		SchemaVersion:  3,
+		ID:             id,
+		Workspace:      workspace,
+		Branch:         branch,
+		CreatedAt:      time.Now().UTC(),
+		Objective:      objective,
+		Constraints:    []string{},
+		Decisions:      []string{},
+		ChangedFiles:   []FileSnapshot{},
+		ActiveSymbols:  []ActiveSymbol{},
+		Checks:         []CheckExecution{},
+		RecentCommands: []CommandEvent{},
+		PendingTasks:   []string{},
+		ArtifactIDs:    []string{},
 	}
 }
 
@@ -74,8 +138,8 @@ func FromJSON(data string) (*SessionManifest, error) {
 	if err := json.Unmarshal([]byte(data), &sm); err != nil {
 		return nil, fmt.Errorf("invalid session manifest JSON: %w", err)
 	}
-	if sm.SchemaVersion < 1 || sm.SchemaVersion > 2 {
-		return nil, fmt.Errorf("incompatible schema version %d (expected 1 or 2)", sm.SchemaVersion)
+	if sm.SchemaVersion < 1 || sm.SchemaVersion > 3 {
+		return nil, fmt.Errorf("incompatible schema version %d (expected 1, 2, or 3)", sm.SchemaVersion)
 	}
 	return &sm, nil
 }
@@ -159,7 +223,7 @@ type FileDrift struct {
 }
 
 // ValidateFreshness compares snapshot hashes with current workspace files on disk.
-// Supports both full 64-char SHA-256 hashes and legacy 8-char prefix hashes.
+// Supports full 64-char SHA-256 hashes, legacy 8-char prefixes, and expected deletions.
 func (sm *SessionManifest) ValidateFreshness(workspaceRoot string) []FileDrift {
 	var drifts []FileDrift
 	for _, f := range sm.ChangedFiles {
@@ -167,6 +231,15 @@ func (sm *SessionManifest) ValidateFreshness(workspaceRoot string) []FileDrift {
 
 		fullHash, err := StreamSHA256(fullPath)
 		if err != nil {
+			// Expected deletion: if marked deleted, not existing is expected (fresh)
+			if f.Status == "deleted" || f.WorktreeStatus == "D" {
+				drifts = append(drifts, FileDrift{
+					Path:         f.Path,
+					ExpectedHash: f.Hash,
+					Status:       "fresh",
+				})
+				continue
+			}
 			drifts = append(drifts, FileDrift{
 				Path:         f.Path,
 				ExpectedHash: f.Hash,
@@ -175,18 +248,34 @@ func (sm *SessionManifest) ValidateFreshness(workspaceRoot string) []FileDrift {
 			continue
 		}
 
-		if hashesMatch(f.Hash, fullHash) {
+		// File exists on disk, but was marked deleted
+		if f.Status == "deleted" || f.WorktreeStatus == "D" {
 			drifts = append(drifts, FileDrift{
 				Path:         f.Path,
 				ExpectedHash: f.Hash,
 				ActualHash:   truncateHash(fullHash, len(f.Hash)),
+				Status:       "modified",
+			})
+			continue
+		}
+
+		expectedHash := f.WorktreeHash
+		if expectedHash == "" {
+			expectedHash = f.Hash
+		}
+
+		if hashesMatch(expectedHash, fullHash) {
+			drifts = append(drifts, FileDrift{
+				Path:         f.Path,
+				ExpectedHash: expectedHash,
+				ActualHash:   truncateHash(fullHash, len(expectedHash)),
 				Status:       "fresh",
 			})
 		} else {
 			drifts = append(drifts, FileDrift{
 				Path:         f.Path,
-				ExpectedHash: f.Hash,
-				ActualHash:   truncateHash(fullHash, len(f.Hash)),
+				ExpectedHash: expectedHash,
+				ActualHash:   truncateHash(fullHash, len(expectedHash)),
 				Status:       "modified",
 			})
 		}
@@ -212,7 +301,7 @@ func truncateHash(hash string, targetLen int) string {
 	return hash
 }
 
-// ImportSession loads a session manifest, strictly verifying workspace isolation and schema version.
+// ImportSession loads a session manifest, strictly verifying workspace isolation, path boundaries, and schema version.
 func ImportSession(manifestData, targetWorkspace string) (*SessionManifest, error) {
 	sm, err := FromJSON(manifestData)
 	if err != nil {
@@ -223,18 +312,44 @@ func ImportSession(manifestData, targetWorkspace string) (*SessionManifest, erro
 		return nil, fmt.Errorf("cross-workspace import rejected: manifest is for %q, current workspace is %q", sm.Workspace, targetWorkspace)
 	}
 
+	// Validate path boundaries: reject paths escaping workspace
+	for _, f := range sm.ChangedFiles {
+		if filepath.IsAbs(f.Path) {
+			rel, err := filepath.Rel(targetWorkspace, f.Path)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				return nil, fmt.Errorf("path escape rejected: file %q is outside workspace %q", f.Path, targetWorkspace)
+			}
+		} else {
+			clean := filepath.Clean(f.Path)
+			if strings.HasPrefix(clean, "..") || clean == ".." {
+				return nil, fmt.Errorf("path escape rejected: file %q is outside workspace", f.Path)
+			}
+		}
+	}
+
 	return sm, nil
 }
 
+// FreshnessStatus represents the honest evidence freshness state.
+type FreshnessStatus string
+
+const (
+	FreshnessFresh   FreshnessStatus = "fresh"
+	FreshnessStale   FreshnessStatus = "stale"
+	FreshnessUnknown FreshnessStatus = "unknown"
+)
+
 // CheckFreshnessReport provides freshness status for a single check execution.
 type CheckFreshnessReport struct {
-	Check        CheckExecution `json:"check"`
-	Fresh        bool           `json:"fresh"`
-	DriftedFiles []string       `json:"drifted_files,omitempty"`
+	Check        CheckExecution  `json:"check"`
+	Fresh        bool            `json:"fresh"`
+	Status       FreshnessStatus `json:"status"` // "fresh", "stale", "unknown"
+	DriftedFiles []string        `json:"drifted_files,omitempty"`
 }
 
 // ValidateCheckFreshness evaluates freshness of changed files and individual check executions.
-// A check is fresh if and only if every file in its ScopeFiles matches its snapshot hash.
+// When execution-time scope hashes are present, checks against those exact hashes.
+// Without execution-time hashes, marks the check unknown (or uses legacy file drift).
 func (sm *SessionManifest) ValidateCheckFreshness(workspaceRoot string) ([]FileDrift, []CheckFreshnessReport) {
 	fileDrifts := sm.ValidateFreshness(workspaceRoot)
 	driftMap := make(map[string]FileDrift)
@@ -249,8 +364,27 @@ func (sm *SessionManifest) ValidateCheckFreshness(workspaceRoot string) ([]FileD
 			Fresh: true,
 		}
 
-		if len(check.ScopeFiles) == 0 {
-			// Conservative fallback for v1 or unscoped checks: stale if any changed file drifted
+		if len(check.ScopeHashes) > 0 {
+			// v3: Strict execution-time scope hash validation
+			isFresh := true
+			for sf, expectedHash := range check.ScopeHashes {
+				fullPath := filepath.Join(workspaceRoot, sf)
+				currHash, err := StreamSHA256(fullPath)
+				if err != nil || !hashesMatch(expectedHash, currHash) {
+					isFresh = false
+					report.DriftedFiles = append(report.DriftedFiles, sf)
+				}
+			}
+			if isFresh {
+				report.Status = FreshnessFresh
+				report.Fresh = true
+			} else {
+				report.Status = FreshnessStale
+				report.Fresh = false
+			}
+		} else if len(check.ScopeFiles) == 0 {
+			// Missing execution-time scope: status is unknown
+			report.Status = FreshnessUnknown
 			var anyDrifted []string
 			for _, fd := range fileDrifts {
 				if fd.Status != "fresh" {
@@ -262,6 +396,10 @@ func (sm *SessionManifest) ValidateCheckFreshness(workspaceRoot string) ([]FileD
 				report.DriftedFiles = anyDrifted
 			}
 		} else {
+			// Legacy v2 record with ScopeFiles but without execution-time ScopeHashes
+			// Freshness status in v3 is unknown (since execution-time hash wasn't captured),
+			// but Fresh bool preserves v2 compatibility.
+			report.Status = FreshnessUnknown
 			for _, sf := range check.ScopeFiles {
 				if d, ok := driftMap[sf]; ok {
 					if d.Status != "fresh" {
@@ -269,7 +407,6 @@ func (sm *SessionManifest) ValidateCheckFreshness(workspaceRoot string) ([]FileD
 						report.DriftedFiles = append(report.DriftedFiles, sf)
 					}
 				} else {
-					// Check file directly if not in ChangedFiles list
 					fullPath := filepath.Join(workspaceRoot, sf)
 					if _, err := StreamSHA256(fullPath); err != nil {
 						report.Fresh = false
@@ -283,6 +420,78 @@ func (sm *SessionManifest) ValidateCheckFreshness(workspaceRoot string) ([]FileD
 	}
 
 	return fileDrifts, reports
+}
+
+// SymbolDrift represents the status of an active symbol definition on resume.
+type SymbolDrift struct {
+	Name         string `json:"name"`
+	OriginalPath string `json:"original_path"`
+	OriginalLine int    `json:"original_line"`
+	CurrentLine  int    `json:"current_line"`
+	Status       string `json:"status"` // "intact", "moved", "missing"
+	Precision    string `json:"precision"`
+}
+
+// ReResolveSymbols checks whether active symbols are still intact, moved, or missing on disk.
+func (sm *SessionManifest) ReResolveSymbols(workspaceRoot string) []SymbolDrift {
+	var drifts []SymbolDrift
+	for _, sym := range sm.ActiveSymbols {
+		d := SymbolDrift{
+			Name:         sym.Name,
+			OriginalPath: sym.FilePath,
+			OriginalLine: sym.Line,
+			CurrentLine:  sym.Line,
+			Precision:    sym.Precision,
+		}
+		if d.Precision == "" {
+			d.Precision = "precise"
+		}
+
+		fullPath := filepath.Join(workspaceRoot, sym.FilePath)
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			d.Status = "missing"
+			drifts = append(drifts, d)
+			continue
+		}
+
+		lines := strings.Split(string(data), "\n")
+		// Check original line first (1-indexed)
+		if sym.Line >= 1 && sym.Line <= len(lines) && strings.Contains(lines[sym.Line-1], sym.Name) {
+			d.Status = "intact"
+			d.CurrentLine = sym.Line
+			drifts = append(drifts, d)
+			continue
+		}
+
+		// Search in file
+		foundLine := -1
+		for i, line := range lines {
+			if strings.Contains(line, sym.Name) {
+				foundLine = i + 1
+				break
+			}
+		}
+
+		if foundLine != -1 {
+			d.Status = "moved"
+			d.CurrentLine = foundLine
+		} else {
+			d.Status = "missing"
+		}
+		drifts = append(drifts, d)
+	}
+	return drifts
+}
+
+// GenerateSessionID creates a collision-resistant session ID using nano timestamp and random bytes.
+func GenerateSessionID() string {
+	nano := time.Now().UTC().UnixNano()
+	b := make([]byte, 4)
+	if _, err := cryptoRand.Read(b); err != nil {
+		return fmt.Sprintf("sess_%d_%08x", nano, time.Now().Nanosecond())
+	}
+	return fmt.Sprintf("sess_%d_%x", nano, b)
 }
 
 // CheckMissingArtifacts identifies any referenced artifact IDs that are absent from the store.

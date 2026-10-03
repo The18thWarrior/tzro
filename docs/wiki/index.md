@@ -8,6 +8,8 @@ Welcome to the persistent repository knowledge base for the `tzro` project.
 
 ## Features & PRDs
 
+- [Turn reduction implementation](features/turn-reduction-implementation.md) - Approved plan with 14 vertical TDD slices for grouped Automatic Verification and native Antigravity evaluation using GEMINI_API_KEY. (Status: implemented & verified | Last Updated: 2026-10-02)
+
 _Map of system features, product requirements, and specs._
 
 - [Tzro v2 — The Local Token Shield](features/tzro-v2-token-shield.md) - Ground-up rewrite into an ultra-lean native token shield, transparent proxy, Tree-sitter AST skeletonizer, and deterministic probe engine. (Sources: 1 | Last Updated: 2026-08-26)
@@ -25,6 +27,10 @@ _Map of system features, product requirements, and specs._
 - [Astra Context Capabilities](features/astra-context-capabilities.md) - Five high-impact additions: task-aware context packs, reversible compaction, portable session handoffs, enforceable privacy policies, and compatibility-aware automatic shielding. (Sources: 3 | Last Updated: 2026-09-08)
 
 ## Bugs & Post-Mortems
+
+- [Workflow benchmark savings discontinuity](bugs/workflow-benchmark-savings-20260928.md) - Compare earlier prepared-context benchmarks with native installation results, tool adoption, and reporting defects. (Audited: 2026-09-28)
+
+- [CI preflight: timing limits and missing test references](bugs/ci-race-and-impact-preflight.md) - Separate performance limits from race instrumentation and preserve declaration paths for inferred test references. (Verified locally: 2026-09-28)
 
 _Analyses of critical bugs, diagnostic loops, and prevention measures._
 
@@ -49,6 +55,13 @@ _Analyses of critical bugs, diagnostic loops, and prevention measures._
 - [Cooperative Engine Benchmark Evaluation (2026-05-31 Run 15:15)](bugs/benchmark-analysis-2026-05-31-1515.md) - Full-scale 100-case diagnostic validation achieving 100.0% overall pass rate by resolving the "\_exec" suffix template mismatch and persistent sidecar daemon context orphanage bugs. (Verified: 2026-05-31)
 
 ## Architecture & Concepts
+
+- [Native invocation instrumentation](architecture/native-invocation-instrumentation.md) - Passive Antigravity model-boundary hooks and strict completeness checks, verified in 27 live tasks.
+- [Instrumented turn reduction results](architecture/instrumented-turn-reduction-results.md) - All 27 tasks passed; guided Tzro used 37.69% less time and 43.24% fewer model invocations than Native.
+- [Native turn reduction screens](architecture/turn-reduction-screen-results.md) - Real Antigravity evidence: guided screen and repeat pass with 18/18 successful composite uses.
+- [Turn reduction evaluation](architecture/turn-reduction-evaluation.md) - Agreed evaluation design: native Antigravity CLI, a 27-run initial screen, a combined-suite 20% speed gate, strict correctness, and separate usage/cost reporting. Implementation, offline suites, guided native screen, and paired replication complete. (Status: implemented & verified | Last Updated: 2026-10-02)
+
+- [Adoption readiness](architecture/adoption-readiness.md) - CLI-first README, automatic Standard setup, local checks, and remaining benchmark and publication work. (Status: in progress | Last Updated: 2026-09-28)
 
 _Glossary terms, data models, ADR summaries, and architectural diagrams._
 
@@ -147,10 +160,21 @@ _Glossary terms, data models, ADR summaries, and architectural diagrams._
 - [ADR-0093: Benchmark Harness Hardening and Architecture Invariant Enforcement](../adr/0093-benchmark-harness-hardening-and-invariant-enforcement.md) - Robust error handling, non-zero judge failure detection, and architectural invariant enforcement in the benchmark harness.
 - [ADR-0094: RecallPolicy Field and Embedding-Based Chunk Dedup in Sectioned Synthesis](../adr/0094-recall-policy-and-embedding-prune.md) - Declarative RecallPolicy field on GraphNode, embedding-based semantic chunk deduplication, and removal of illegal LLM compaction loops from the Recall Node.
 - [ADR-0095: System 1 Graph Calls and Non-Autoregressive Decision Engine](../adr/0095-system1-graph-calls-and-encoder-decision-engine.md) - Replaces autonomous generative loops with deterministic System 1 Graph Calls, supervising ModernBERT (`mys/laya-GGUF`) for sub-30ms decisions and GLiNER for zero-shot span extraction with zero KV-cache overhead.
+- [ADR-0096: Migration to Jev-Style-0.8B and libllama Decision Engine](../adr/0096-migration-to-jev-style-and-libllama-decision-engine.md) - Replaces Laya/ModernBERT with Jev-Style-0.8B (Qwen3.5) running on native libllama (bin/jev-score), expanding context to 2,048 tokens and introducing pluggable dual-provider support.
+
+## Local implementation guides
+
+- [Installation-profile benchmarks](../benchmark-workflows.md) — Native Pi recipes, optional runtime setup, and evidence boundaries.
+- [JEV decision worker](../../cmd/jev-score/README.md) — Native verdict scoring, typed JSONL protocol, calibration, and real-model checks.
 
 ## Ingested Sources
 
 _Immutable third-party references, notes, and raw inputs._
 
+- [Native agent installation contracts](sources/agent-installation-contracts.md) - Primary client schemas, native approval boundaries, and activation checks still pending. (Reviewed: 2026-09-28)
 - [LLM Wiki Reference (Karpathy)](../agents/wiki.md) - Design guidelines and templates for local wiki maintenance.
 - [Edge-Cloud LLM Task Offloading Research](sources/edge-cloud-task-offloading.md) - Bleeding-edge architectures for edge-cloud LLM task offloading beyond Directed Acyclic Graphs.
+
+- [Registry test budget coupled to live campaign](bugs/hypothesis-budget-fixture-20260929.md) — fixed readiness fixture after authorized cap change.
+
+- [Turn reduction evidence audit](bugs/turn-reduction-evidence-audit.md): historical claim invalidation, native harness repairs, and screening evidence.

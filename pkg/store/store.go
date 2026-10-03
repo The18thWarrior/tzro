@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -343,6 +344,40 @@ func (s *Store) initSchema() error {
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_accessed ON artifacts(workspace, last_accessed_at)`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_expires ON artifacts(pinned, expires_at)`)
 
+	// Schema migration for existing sessions table if paused_at is missing
+	_, _ = s.db.Exec(`ALTER TABLE sessions ADD COLUMN paused_at INTEGER DEFAULT 0`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_ws_branch_paused ON sessions(workspace, branch, paused_at DESC)`)
+
+	// Create active_tasks table for task continuity
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS active_tasks (
+		workspace TEXT NOT NULL,
+		shell_id TEXT NOT NULL DEFAULT '',
+		session_id TEXT NOT NULL,
+		activated_at INTEGER NOT NULL,
+		PRIMARY KEY (workspace, shell_id)
+	)`)
+
+	// Create command_events and command_capture_gaps tables for shell integration
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS command_events (
+		id TEXT PRIMARY KEY,
+		workspace TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		shell_id TEXT NOT NULL DEFAULT '',
+		display_text TEXT NOT NULL,
+		cwd TEXT NOT NULL,
+		started_at INTEGER NOT NULL,
+		completed_at INTEGER,
+		exit_status INTEGER
+	)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_cmd_events_ws_sess ON command_events(workspace, session_id, started_at DESC)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_cmd_events_ws_started ON command_events(workspace, started_at DESC)`)
+
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS command_capture_gaps (
+		workspace TEXT PRIMARY KEY,
+		gap_count INTEGER NOT NULL DEFAULT 0,
+		last_gap_at INTEGER NOT NULL DEFAULT 0
+	)`)
+
 	// Attempt to create FTS5 virtual table and triggers; fall back gracefully if unsupported
 	ftsSchema := `
 	CREATE VIRTUAL TABLE IF NOT EXISTS symbol_fts USING fts5(
@@ -392,16 +427,94 @@ func (s *Store) PutSession(id, workspace, branch string, schemaVersion int, mani
 	defer s.mu.Unlock()
 
 	now := time.Now().UTC().UnixNano()
+
+	// Probe manifest for paused_at timestamp
+	var pausedAtNano int64
+	var probe struct {
+		PausedAt *time.Time `json:"paused_at"`
+	}
+	if err := json.Unmarshal([]byte(manifestJSON), &probe); err == nil && probe.PausedAt != nil {
+		pausedAtNano = probe.PausedAt.UTC().UnixNano()
+	}
+
 	query := `
-	INSERT INTO sessions (id, workspace, branch, created_at, schema_version, manifest_json)
-	VALUES (?, ?, ?, ?, ?, ?)
+	INSERT INTO sessions (id, workspace, branch, created_at, schema_version, manifest_json, paused_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		workspace=excluded.workspace,
 		branch=excluded.branch,
 		schema_version=excluded.schema_version,
-		manifest_json=excluded.manifest_json;
+		manifest_json=excluded.manifest_json,
+		paused_at=excluded.paused_at;
 	`
-	_, err := s.db.Exec(query, id, workspace, branch, now, schemaVersion, manifestJSON)
+	_, err := s.db.Exec(query, id, workspace, branch, now, schemaVersion, manifestJSON, pausedAtNano)
+	return err
+}
+
+// GetLatestPausedSession returns the most recent session manifest for a workspace and branch,
+// ordered by paused_at descending.
+func (s *Store) GetLatestPausedSession(workspace, branch string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT manifest_json FROM sessions WHERE workspace = ? AND branch = ? ORDER BY CASE WHEN paused_at > 0 THEN paused_at ELSE created_at END DESC, rowid DESC LIMIT 1`
+	var manifestJSON string
+	err := s.db.QueryRow(query, workspace, branch).Scan(&manifestJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no paused session found for workspace %q on branch %q", workspace, branch)
+		}
+		return "", err
+	}
+	return manifestJSON, nil
+}
+
+// SetActiveTask binds the active session ID for a workspace and optional shell ID.
+func (s *Store) SetActiveTask(workspace, shellID, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().UTC().UnixNano()
+	query := `
+	INSERT INTO active_tasks (workspace, shell_id, session_id, activated_at)
+	VALUES (?, ?, ?, ?)
+	ON CONFLICT(workspace, shell_id) DO UPDATE SET
+		session_id=excluded.session_id,
+		activated_at=excluded.activated_at;
+	`
+	_, err := s.db.Exec(query, workspace, shellID, sessionID, now)
+	return err
+}
+
+// GetActiveTask retrieves the active session ID for a workspace and optional shell ID.
+func (s *Store) GetActiveTask(workspace, shellID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT session_id FROM active_tasks WHERE workspace = ? AND shell_id = ?`
+	var sessionID string
+	err := s.db.QueryRow(query, workspace, shellID).Scan(&sessionID)
+	if err != nil {
+		if err == sql.ErrNoRows && shellID != "" {
+			err = s.db.QueryRow(`SELECT session_id FROM active_tasks WHERE workspace = ? AND shell_id = ''`, workspace).Scan(&sessionID)
+		}
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return "", nil
+			}
+			return "", err
+		}
+	}
+	return sessionID, nil
+}
+
+// ClearActiveTask clears the active session binding for a workspace and shell ID.
+func (s *Store) ClearActiveTask(workspace, shellID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := `DELETE FROM active_tasks WHERE workspace = ? AND (shell_id = ? OR shell_id = '')`
+	_, err := s.db.Exec(query, workspace, shellID)
 	return err
 }
 
@@ -1318,11 +1431,15 @@ func (s *Store) SearchSymbols(workspace, queryStr string, limit int) ([]SymbolEn
 
 // systemTables are protected from QuerySQL access.
 var systemTables = map[string]bool{
-	"content_blobs":  true,
-	"symbol_index":   true,
-	"cache_sessions": true,
-	"sqlite_master":  true,
-	"sqlite_schema":  true,
+	"content_blobs":        true,
+	"symbol_index":         true,
+	"cache_sessions":       true,
+	"sessions":             true,
+	"active_tasks":         true,
+	"command_events":       true,
+	"command_capture_gaps": true,
+	"sqlite_master":        true,
+	"sqlite_schema":        true,
 }
 
 // ImportTabular creates a dynamic table and bulk-inserts rows from tabular data.
@@ -1343,14 +1460,10 @@ func (s *Store) ImportTabular(tableName string, columns []string, rows [][]strin
 		return fmt.Errorf("cannot import into system table: %s", tableName)
 	}
 
-	// Sanitize column names
-	safeCols := make([]string, len(columns))
-	for i, col := range columns {
-		safe := sanitizeIdentifier(col)
-		if safe == "" {
-			safe = fmt.Sprintf("col_%d", i)
-		}
-		safeCols[i] = safe
+	// Use the same query identifiers advertised by every ingestion surface.
+	safeCols, err := NormalizeTabularColumns(columns)
+	if err != nil {
+		return err
 	}
 
 	// Build CREATE TABLE
@@ -1420,12 +1533,10 @@ func (s *Store) QuerySQL(sql string) ([]map[string]string, []string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Validate: must be SELECT
-	trimmed := strings.TrimSpace(sql)
-	upper := strings.ToUpper(trimmed)
-	if !strings.HasPrefix(upper, "SELECT") {
-		return nil, nil, fmt.Errorf("only SELECT queries are allowed, got: %s", trimmed[:min(len(trimmed), 20)])
+	if err := validateSingleSelect(sql); err != nil {
+		return nil, nil, err
 	}
+	trimmed := strings.TrimSpace(sql)
 
 	// Reject queries that reference system tables
 	lowerSQL := strings.ToLower(trimmed)
@@ -1444,6 +1555,14 @@ func (s *Store) QuerySQL(sql string) ([]map[string]string, []string, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, nil, err
+	}
+
+	seen := make(map[string]struct{}, len(cols))
+	for _, col := range cols {
+		if _, exists := seen[col]; exists {
+			return nil, nil, fmt.Errorf("duplicate result column %q: use distinct AS aliases", col)
+		}
+		seen[col] = struct{}{}
 	}
 
 	var results []map[string]string
@@ -1468,6 +1587,26 @@ func (s *Store) QuerySQL(sql string) ([]map[string]string, []string, error) {
 	}
 
 	return results, cols, rows.Err()
+}
+
+// NormalizeTabularColumns returns exact SQL identifiers without changing input.
+// Ambiguous names are rejected before an import can replace existing rows.
+func NormalizeTabularColumns(columns []string) ([]string, error) {
+	names := make([]string, len(columns))
+	seen := make(map[string]bool, len(columns))
+	for i, column := range columns {
+		name := sanitizeIdentifier(column)
+		if name == "" {
+			name = fmt.Sprintf("col_%d", i)
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return nil, fmt.Errorf("ambiguous tabular column %q normalizes to duplicate %q", column, name)
+		}
+		seen[key] = true
+		names[i] = name
+	}
+	return names, nil
 }
 
 // sanitizeIdentifier strips non-alphanumeric chars (except underscore) from a SQL identifier.

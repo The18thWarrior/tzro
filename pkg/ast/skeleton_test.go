@@ -34,8 +34,11 @@ func Multiply(a, b int) int {
 		t.Fatalf("Skeletonize failed: %v", err)
 	}
 
-	if res.ElidedBlocks != 2 {
-		t.Errorf("expected 2 elided blocks, got %d", res.ElidedBlocks)
+	if res.ElidedBlocks != 1 {
+		t.Errorf("expected only the larger Add body to be elided, got %d blocks", res.ElidedBlocks)
+	}
+	if !strings.Contains(res.SkeletonCode, "return a * b") {
+		t.Error("small Multiply body should stay visible")
 	}
 
 	if !strings.Contains(res.SkeletonCode, "func Add(a, b int) int") {

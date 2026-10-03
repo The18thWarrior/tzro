@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "id": "py-mutable-default",
+  "language": "python",
+  "shape": "diagnosis",
+  "prompt": "Diagnose repeated state across handle_request calls. Calls without explicit tags must each return exactly one processed tag. Preserve caller-supplied tags and append processed to them. You may edit handler.py. Run the checks listed in .tzro/verification.yaml.",
+  "editable_files": [
+    "handler.py"
+  ],
+  "required_grade_tests": [
+    "test_five_calls",
+    "test_custom_tags"
+  ],
+  "reference_edits": [
+    {
+      "kind": "replace",
+      "path": "handler.py",
+      "old_text": "tags=[]",
+      "new_text": "tags=None",
+      "expected_matches": 1
+    },
+    {
+      "kind": "replace",
+      "path": "handler.py",
+      "old_text": "    tags.append(\"processed\")",
+      "new_text": "    if tags is None:\n        tags = []\n    tags.append(\"processed\")",
+      "expected_matches": 1
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "graph": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "string", "enum": ["3.0"]},
+        "task_id": {"type": "string"},
+        "nodes": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "type": {"type": "string", "enum": ["tool", "decision", "extract", "group"]},
+              "depends_on": {"type": "array", "items": {"type": "string"}},
+              "tool": {"type": "string", "enum": ["bash", "probe", "read", "skeleton", "expand", "search", "ingest", "query"]},
+              "args": {"type": "object", "description": "bash: command, optional accepted_exit_codes; probe/search: query; read: file, optional positive offset/limit (lines); skeleton/ingest: file; expand: id; ingest: optional table; query: sql, optional file to import as its basename without extension (spaces/hyphens become underscores). SQL numbers require CAST. Values can be $ref objects."},
+              "input": {"type": "object", "description": "Decision state or extraction text. Values can reference earlier outputs."},
+              "question": {"type": "object", "properties": {"type": {"type": "string", "enum": ["choice", "score", "noul"]}, "prompt": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}, "required": ["type", "prompt"]},
+              "accept": {"type": "object", "properties": {"min_confidence": {"type": "number", "minimum": 0, "maximum": 1}}},
+              "labels": {"type": "array", "items": {"type": "string"}},
+              "allow_failed_dependencies": {"type": "boolean"},
+              "items": {"description": "Group items array or $ref to an array."},
+              "template": {"type": "object", "description": "Group child node; item and index are supplied in its input."},
+              "max_concurrency": {"type": "integer", "minimum": 1}
+            },
+            "required": ["id", "type"]
+          }
+        },
+        "returns": {"type": "array", "items": {"type": "string"}, "description": "Paths /nodes/id/output for a whole output or /nodes/id/output/field. Fields: stdout, stderr, exit_code, status, or tool data such as body, rows, table, answer, or an extracted label."}
+      },
+      "required": ["version", "task_id", "nodes"]
+    }
+  },
+  "required": ["graph"],
+  "additionalProperties": false
+}

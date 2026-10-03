@@ -1,0 +1,6 @@
+version: 1
+timeout: 30s
+checks:
+  - id: go_test
+    argv: [go, test, -count=1, ./...]
+    cwd: .
